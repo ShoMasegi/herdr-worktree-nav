@@ -135,7 +135,8 @@ pub struct RepoIdentity {
     pub branch: Option<String>,
 }
 
-pub trait GitPort {
+/// `Sync` because pane working directories are resolved from several threads at once.
+pub trait GitPort: Sync {
     /// Resolve which repository and branch a directory belongs to. `Ok(None)` when the path
     /// is not inside a work tree — that is an ordinary answer, not an error.
     fn identify(&self, cwd: &str) -> Result<Option<RepoIdentity>>;

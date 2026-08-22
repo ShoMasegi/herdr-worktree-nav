@@ -11,6 +11,7 @@
 //! - [`ui`] renders and handles keys.
 
 pub mod adapter;
+pub mod app;
 pub mod domain;
 pub mod port;
 pub mod ui;
