@@ -12,7 +12,7 @@ Plugins cannot set your keybindings. Add them to `~/.config/herdr/config.toml`:
 
 ```toml
 [[keys.command]]
-key = "prefix+g"
+key = "prefix+f"
 type = "plugin_action"
 command = "herdr-worktree-nav.open-panes"
 description = "list open panes"
@@ -23,6 +23,11 @@ type = "plugin_action"
 command = "herdr-worktree-nav.open-branches"
 description = "open a branch as a worktree"
 ```
+
+Pick keys herdr has not already taken. In 0.7.4 `prefix+f` and `prefix+shift+b` are free,
+while `prefix+g` is herdr's own `goto`, `prefix+shift+g` is `new_worktree`, `prefix+w` is
+`workspace_picker`, and `prefix+b` toggles the sidebar. A binding here wins, so one that
+collides silently costs you a herdr command you already had.
 
 Reload with `herdr server reload-config`.
 

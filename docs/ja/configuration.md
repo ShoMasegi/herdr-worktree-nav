@@ -10,7 +10,7 @@ herdr-worktree-nav は独自の設定ファイルを持ちません。参照す�
 
 ```toml
 [[keys.command]]
-key = "prefix+g"
+key = "prefix+f"
 type = "plugin_action"
 command = "herdr-worktree-nav.open-panes"
 description = "list open panes"
@@ -21,6 +21,8 @@ type = "plugin_action"
 command = "herdr-worktree-nav.open-branches"
 description = "open a branch as a worktree"
 ```
+
+herdr が既に使っているキーは避けてください。0.7.4 では `prefix+f` と `prefix+shift+b` が空いています。一方 `prefix+g` は herdr 自身の `goto`、`prefix+shift+g` は `new_worktree`、`prefix+w` は `workspace_picker`、`prefix+b` はサイドバーの開閉です。ここでの設定が優先されるため、衝突すると元からあった herdr のコマンドが黙って使えなくなります。
 
 `herdr server reload-config` で反映します。
 

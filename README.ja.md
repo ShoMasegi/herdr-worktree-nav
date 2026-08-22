@@ -118,7 +118,7 @@ herdr のプラグインは利用者のキーバインドを勝手に設定で�
 
 ```toml
 [[keys.command]]
-key = "prefix+g"
+key = "prefix+f"
 type = "plugin_action"
 command = "herdr-worktree-nav.open-panes"
 description = "list open panes"
@@ -130,7 +130,7 @@ command = "herdr-worktree-nav.open-branches"
 description = "open a branch as a worktree"
 ```
 
-追加したら `herdr server reload-config` を実行します。
+`prefix+f` と `prefix+shift+b` は herdr 0.7.4 の既定と衝突しません。`prefix+g` は herdr 自身の `goto`、`prefix+shift+g` は `new_worktree` です。追加したら `herdr server reload-config` を実行します。
 
 どちらのアクションも herdr のアクションメニューに出るほか、直接実行もできます。
 

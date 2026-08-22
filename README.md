@@ -139,7 +139,7 @@ herdr plugins cannot set your keybindings for you. Add these to
 
 ```toml
 [[keys.command]]
-key = "prefix+g"
+key = "prefix+f"
 type = "plugin_action"
 command = "herdr-worktree-nav.open-panes"
 description = "list open panes"
@@ -151,7 +151,8 @@ command = "herdr-worktree-nav.open-branches"
 description = "open a branch as a worktree"
 ```
 
-Then `herdr server reload-config`.
+`prefix+f` and `prefix+shift+b` are free in herdr 0.7.4; `prefix+g` is its own `goto` and
+`prefix+shift+g` is `new_worktree`. Then `herdr server reload-config`.
 
 Both actions also appear in herdr's action menu, and can be run directly:
 
