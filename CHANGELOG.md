@@ -20,6 +20,10 @@ All notable changes to this project are documented here. The format follows
   holds while a filter is typed — the fuzzy score decides what is in the list, not where it
   sits — and across a change of repository. Branches with no date stay at the bottom in both
   directions. See [ADR 0006](docs/adr/0006-repository-step-and-branch-order.md).
+- **`←` and `→` in the panes view** move to the head of the previous or next repository —
+  its first pane, or its first checkout with nothing running. One press is exactly one
+  repository wherever in the current one you were, both ends wrap, the panes in no
+  repository count as a section, and the keys work while the search box has focus.
 - **A picker that says what it is doing.** Opening a branch — a fetch across the network,
   a checkout of a whole working tree, then the move — used to happen after the picker had
   closed its screen, so herdr's popup framed an empty box for the seconds it took and looked

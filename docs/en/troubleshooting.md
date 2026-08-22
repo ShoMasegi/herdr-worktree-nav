@@ -120,6 +120,8 @@ through this against a real session.
 - [ ] A worktree with no pane appears with `no pane`, and `Enter` opens it.
 - [ ] `↑`/`↓` stop only on panes and on checkouts with nothing running: repository headings
       and checkouts that already have panes are stepped over, and still drawn.
+- [ ] `←`/`→` move one repository per press, landing on its first pane or first idle
+      checkout, wrapping at both ends and including the panes in no repository.
 - [ ] `Enter` on a pane in another space lands there — and stays there after the popup
       closes.
 - [ ] `n` adds a pane to the checkout under the cursor.

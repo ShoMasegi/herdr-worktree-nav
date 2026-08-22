@@ -27,14 +27,14 @@
 │   │  └── · shell                              w1:p2                          │
 │   └── · loop-review-fix-request  no pane      ~/.herdr/worktrees/harbour/…   │
 │                                                                              │
-│ ShoMasegi/herdr-gh-nav · 1 worktree · 2 panes · ~/Workspace/herdr-gh-nav ─────│
-│ ↵ jump  n new pane  ⇥ branches  / search  b/w/i/d/a states  h other  esc close│
+│ ShoMasegi/herdr-gh-nav · main · w7:p2 · working · ~/Workspace/herdr-gh-nav ───│
+│ ↵ jump  n new  ←→ repo  ⇥ branches  / search  b/w/i/d/a states  esc close    │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 `●` 実行中 `○` 待機中 `◆` ブロック中 `·` エージェントなし。グリフの種類は herdr の設定に従います。gutter の `◆` は、いまセッションがどこにいるかを示します。一覧の下の行には、カーソル位置の行の詳しい文脈（checkout パスを含む）が出ます。
 
-`Enter` でそこへ移動します。space をまたいでも tab をまたいでも、目的の pane に直接飛びます。pane が 1 つも無い worktree も一覧に出て、その行で `Enter` を押すと開きます。`b`/`w`/`i`/`d` でエージェントの状態を 1 つに絞り込み、`a` で解除できます（navigator と同じキーです）。
+`Enter` でそこへ移動します。space をまたいでも tab をまたいでも、目的の pane に直接飛びます。pane が 1 つも無い worktree も一覧に出て、その行で `Enter` を押すと開きます。`←`/`→` で前／次のリポジトリの先頭に飛べます。`b`/`w`/`i`/`d` でエージェントの状態を 1 つに絞り込み、`a` で解除できます（navigator と同じキーです）。
 
 ## Branches — そのブランチで作業を始める
 

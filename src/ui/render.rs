@@ -78,14 +78,20 @@ fn label_end(row: &Row) -> usize {
 const GUTTER_WIDTH: usize = 3;
 const IDLE_NOTE: &str = "  no pane";
 
+/// Widest first; the picker draws the first that fits. Each rung drops the least useful
+/// thing left, so a narrow pane loses `h other` before it loses how to move.
 const HELP_PANES: &[&str] = &[
-    "\u{21b5} jump  n new pane  \u{21e5} branches  / search  b/w/i/d/a states  h other  r reload  esc close",
-    "\u{21b5} jump  n new  \u{21e5} branches  / search  b/w/i/d/a states  esc close",
+    "\u{21b5} jump  n new pane  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  h other  r reload  esc close",
+    "\u{21b5} jump  n new pane  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  r reload  esc close",
+    "\u{21b5} jump  n new  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  esc close",
+    "\u{21b5} jump  n new  \u{2190}\u{2192} repo  \u{21e5} branches  / search  esc close",
+    // Narrow enough that something has to go: the other view outranks a way of moving
+    // around this one, which the arrow keys suggest on their own.
     "\u{21b5} jump  \u{21e5} branches  / search  esc close",
     "\u{21b5} jump  esc close",
 ];
 const HELP_PANES_SEARCH: &[&str] = &[
-    "\u{21b5} keep search  ctrl+u clear  esc cancel  \u{2191}\u{2193} move",
+    "\u{21b5} keep search  ctrl+u clear  esc cancel  \u{2191}\u{2193} move  \u{2190}\u{2192} repo",
     "\u{21b5} keep  esc cancel",
 ];
 

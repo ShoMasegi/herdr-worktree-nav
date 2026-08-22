@@ -34,8 +34,8 @@ Every open pane, grouped by repository and by the worktree it is checked out in.
 │   │  └── · shell                              w1:p2                          │
 │   └── · loop-review-fix-request  no pane      ~/.herdr/worktrees/harbour/…   │
 │                                                                              │
-│ ShoMasegi/herdr-gh-nav · 1 worktree · 2 panes · ~/Workspace/herdr-gh-nav ─────│
-│ ↵ jump  n new pane  ⇥ branches  / search  b/w/i/d/a states  h other  esc close│
+│ ShoMasegi/herdr-gh-nav · main · w7:p2 · working · ~/Workspace/herdr-gh-nav ───│
+│ ↵ jump  n new  ←→ repo  ⇥ branches  / search  b/w/i/d/a states  esc close    │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -44,8 +44,9 @@ Every open pane, grouped by repository and by the worktree it is checked out in.
 the fuller context for the row you are on, including the checkout path.
 
 `Enter` goes there — across spaces, across tabs, straight to the pane. A worktree with no
-pane in it is listed too, and `Enter` opens it. `b`/`w`/`i`/`d` narrow to one agent state and
-`a` clears that, exactly as they do in the navigator.
+pane in it is listed too, and `Enter` opens it. `←`/`→` jump to the head of the previous or
+next repository. `b`/`w`/`i`/`d` narrow to one agent state and `a` clears that, exactly as
+they do in the navigator.
 
 ## Branches — get me onto that branch
 

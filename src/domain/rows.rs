@@ -400,6 +400,49 @@ pub fn previous_row(rows: &[Row], lines: &[DisplayLine], from: usize) -> Option<
     })
 }
 
+/// The first line the cursor may sit on in the group `steps` away from the one holding
+/// `from`, wrapping at both ends. `None` when there is no group to go to.
+///
+/// A group here is whatever heads a section of the list, which includes the panes that are
+/// in no repository: on screen it is a heading with a blank line above it like any other,
+/// and leaving it out would put the bottom of the list beyond the reach of these keys.
+pub fn step_group(rows: &[Row], lines: &[DisplayLine], from: usize, steps: isize) -> Option<usize> {
+    let groups = groups(rows, lines);
+    if groups.is_empty() {
+        return None;
+    }
+    // The group the cursor is in is the last one that starts at or before it.
+    let current = groups
+        .iter()
+        .rposition(|(start, _)| *start <= from)
+        .unwrap_or(0);
+    let target = (current as isize + steps).rem_euclid(groups.len() as isize) as usize;
+    Some(groups[target].1)
+}
+
+/// Where each group begins, and the first line inside it the cursor may sit on. A group with
+/// nowhere to land is left out — it is not somewhere these keys can take you.
+fn groups(rows: &[Row], lines: &[DisplayLine]) -> Vec<(usize, usize)> {
+    let mut groups: Vec<(usize, Option<usize>)> = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let DisplayLine::Row(row) = line else {
+            continue;
+        };
+        if rows[*row].reference.is_group() {
+            groups.push((index, None));
+        }
+        if rows[*row].is_selectable() {
+            if let Some((_, head)) = groups.last_mut() {
+                head.get_or_insert(index);
+            }
+        }
+    }
+    groups
+        .into_iter()
+        .filter_map(|(start, head)| head.map(|head| (start, head)))
+        .collect()
+}
+
 fn selectable(rows: &[Row], lines: &[DisplayLine], index: usize) -> bool {
     match lines.get(index) {
         Some(DisplayLine::Row(row)) => rows[*row].is_selectable(),
@@ -896,6 +939,83 @@ mod tests {
         // A line that is already a stop is where it stays.
         assert_eq!(next_row(&rows, &lines, stops[1]), Some(stops[1]));
         assert_eq!(previous_row(&rows, &lines, stops[1]), Some(stops[1]));
+    }
+
+    #[test]
+    fn stepping_by_group_lands_on_the_first_thing_worth_going_to_in_it() {
+        let rows = flatten(
+            &tree(),
+            &ViewOptions {
+                show_ungrouped: true,
+                ..Default::default()
+            },
+        );
+        let lines = display_lines(&rows);
+        let label = |index: Option<usize>| match lines[index.unwrap()] {
+            DisplayLine::Row(row) => rows[row].label.clone(),
+            DisplayLine::Spacer => panic!("a blank line is not somewhere to go"),
+        };
+
+        // From the first group's head, forward through every group and back round.
+        let first = next_row(&rows, &lines, 0).unwrap();
+        assert_eq!(label(Some(first)), "claude");
+        let second = step_group(&rows, &lines, first, 1);
+        assert_eq!(label(second), "claude", "me/site's first pane");
+        let third = step_group(&rows, &lines, second.unwrap(), 1);
+        assert_eq!(label(third), "shell", "the panes in no repository");
+        assert_eq!(
+            step_group(&rows, &lines, third.unwrap(), 1),
+            Some(first),
+            "and round to the start"
+        );
+
+        // Backwards from the first wraps to the last.
+        assert_eq!(step_group(&rows, &lines, first, -1), third);
+    }
+
+    #[test]
+    fn one_press_moves_exactly_one_group_wherever_in_it_the_cursor_was() {
+        // The decision this pins: `←` never means "back to the head of the group I am in".
+        // From anywhere inside a group it leaves it.
+        let rows = flatten(&tree(), &ViewOptions::default());
+        let lines = display_lines(&rows);
+
+        let mut heads = Vec::new();
+        let mut looking = false;
+        for (index, line) in lines.iter().enumerate() {
+            let DisplayLine::Row(row) = line else {
+                continue;
+            };
+            looking |= rows[*row].reference.is_group();
+            if looking && rows[*row].is_selectable() {
+                heads.push(index);
+                looking = false;
+            }
+        }
+        assert_eq!(heads.len(), 2, "the fixture has two repositories");
+
+        let stops = |range: std::ops::Range<usize>| -> Vec<usize> {
+            range
+                .filter(|index| selectable(&rows, &lines, *index))
+                .collect()
+        };
+        let first = stops(heads[0]..heads[1]);
+        assert!(first.len() > 1, "the first group is more than its head");
+        for stop in first {
+            // Only two groups, so forward and back are the same place either way.
+            assert_eq!(step_group(&rows, &lines, stop, 1), Some(heads[1]));
+            assert_eq!(step_group(&rows, &lines, stop, -1), Some(heads[1]));
+        }
+        for stop in stops(heads[1]..lines.len()) {
+            assert_eq!(step_group(&rows, &lines, stop, -1), Some(heads[0]));
+            assert_eq!(step_group(&rows, &lines, stop, 1), Some(heads[0]));
+        }
+    }
+
+    #[test]
+    fn there_is_nowhere_to_step_in_an_empty_list() {
+        assert_eq!(step_group(&[], &[], 0, 1), None);
+        assert_eq!(step_group(&[], &[], 0, -1), None);
     }
 
     #[test]

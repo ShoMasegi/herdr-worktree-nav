@@ -211,6 +211,13 @@ impl PanesState {
         .unwrap_or(self.cursor);
     }
 
+    /// Jump to the head of the previous or next group.
+    fn move_group(&mut self, steps: isize) {
+        if let Some(index) = rows::step_group(&self.rows, &self.lines, self.cursor, steps) {
+            self.cursor = index;
+        }
+    }
+
     /// What Enter means on the current row.
     ///
     /// Every row the cursor can reach stands for somewhere to go, so this is total in the
@@ -318,6 +325,14 @@ impl PanesState {
                 self.move_cursor(-1);
                 Action::Consumed
             }
+            KeyCode::Right => {
+                self.move_group(1);
+                Action::Consumed
+            }
+            KeyCode::Left => {
+                self.move_group(-1);
+                Action::Consumed
+            }
             KeyCode::Enter => self.activate(),
             KeyCode::Char('n') => self.new_pane(),
             KeyCode::Char('r') => Action::Reload,
@@ -371,6 +386,15 @@ impl PanesState {
             }
             KeyCode::Up => {
                 self.move_cursor(-1);
+                Action::Consumed
+            }
+            // Arrows are not text, so they keep working while the search box has focus.
+            KeyCode::Right => {
+                self.move_group(1);
+                Action::Consumed
+            }
+            KeyCode::Left => {
+                self.move_group(-1);
                 Action::Consumed
             }
             KeyCode::Char(c) => {
@@ -525,6 +549,41 @@ mod tests {
                 "fix/crash"
             ]
         );
+    }
+
+    #[test]
+    fn the_arrows_move_between_repositories() {
+        // The fixture has one repository plus the panes in none of them, which `h` shows.
+        let mut state = state();
+        state.handle_key(key(KeyCode::Char('h')));
+        assert_eq!(state.selected().unwrap().label, "claude");
+
+        state.handle_key(key(KeyCode::Right));
+        assert_eq!(
+            state.selected().unwrap().label,
+            "zsh",
+            "the panes in no repository are a section like any other"
+        );
+        state.handle_key(key(KeyCode::Right));
+        assert_eq!(state.selected().unwrap().label, "claude", "and it wraps");
+
+        // From deep inside a group, one press still leaves it.
+        state.handle_key(key(KeyCode::Down));
+        state.handle_key(key(KeyCode::Down));
+        assert_eq!(state.selected().unwrap().label, "fix/crash");
+        state.handle_key(key(KeyCode::Left));
+        assert_eq!(state.selected().unwrap().label, "zsh");
+    }
+
+    #[test]
+    fn the_arrows_keep_working_while_the_search_box_has_focus() {
+        let mut state = state();
+        state.handle_key(key(KeyCode::Char('h')));
+        state.handle_key(key(KeyCode::Char('/')));
+        assert!(state.is_filtering());
+        state.handle_key(key(KeyCode::Right));
+        assert_eq!(state.selected().unwrap().label, "zsh");
+        assert_eq!(state.query(), "", "an arrow is not text");
     }
 
     #[test]
