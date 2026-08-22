@@ -130,10 +130,6 @@ impl PanesState {
         &self.tree
     }
 
-    pub fn showing_ungrouped(&self) -> bool {
-        self.options.show_ungrouped
-    }
-
     /// Every pane in the session, for the count beside the search box.
     pub fn pane_count(&self) -> usize {
         let grouped: usize = self
@@ -325,11 +321,11 @@ impl PanesState {
                 self.move_cursor(-1);
                 Action::Consumed
             }
-            KeyCode::Right => {
+            KeyCode::Right | KeyCode::Char('l') => {
                 self.move_group(1);
                 Action::Consumed
             }
-            KeyCode::Left => {
+            KeyCode::Left | KeyCode::Char('h') => {
                 self.move_group(-1);
                 Action::Consumed
             }
@@ -341,12 +337,6 @@ impl PanesState {
             KeyCode::Char('i') => self.set_state_filter(Some(StateFilter::Idle)),
             KeyCode::Char('d') => self.set_state_filter(Some(StateFilter::Done)),
             KeyCode::Char('a') => self.set_state_filter(None),
-            KeyCode::Char('h') => {
-                self.options.show_ungrouped = !self.options.show_ungrouped;
-                let anchor = self.selected_pane_id().map(str::to_string);
-                self.rebuild(anchor.as_deref());
-                Action::Consumed
-            }
             KeyCode::Char('/') => {
                 self.filtering = true;
                 Action::Consumed
@@ -535,7 +525,7 @@ mod tests {
             }
             stops.push(label);
         }
-        assert_eq!(stops, ["claude", "codex", "fix/crash"]);
+        assert_eq!(stops, ["claude", "codex", "fix/crash", "zsh"]);
 
         // And the rows it stepped over are still on screen.
         assert_eq!(
@@ -546,16 +536,17 @@ mod tests {
                 "claude",
                 "feat/login",
                 "codex",
-                "fix/crash"
+                "fix/crash",
+                "not in any repository (1)",
+                "zsh",
             ]
         );
     }
 
     #[test]
     fn the_arrows_move_between_repositories() {
-        // The fixture has one repository plus the panes in none of them, which `h` shows.
+        // The fixture has one repository plus the panes in none of them.
         let mut state = state();
-        state.handle_key(key(KeyCode::Char('h')));
         assert_eq!(state.selected().unwrap().label, "claude");
 
         state.handle_key(key(KeyCode::Right));
@@ -576,21 +567,33 @@ mod tests {
     }
 
     #[test]
+    fn h_and_l_are_the_arrows_by_another_name() {
+        let mut state = state();
+        state.handle_key(key(KeyCode::Char('l')));
+        assert_eq!(state.selected().unwrap().label, "zsh");
+        state.handle_key(key(KeyCode::Char('h')));
+        assert_eq!(state.selected().unwrap().label, "claude");
+    }
+
+    #[test]
     fn the_arrows_keep_working_while_the_search_box_has_focus() {
         let mut state = state();
-        state.handle_key(key(KeyCode::Char('h')));
         state.handle_key(key(KeyCode::Char('/')));
         assert!(state.is_filtering());
         state.handle_key(key(KeyCode::Right));
         assert_eq!(state.selected().unwrap().label, "zsh");
         assert_eq!(state.query(), "", "an arrow is not text");
+
+        // A letter is, though: `l` types rather than moves once the search box has focus.
+        state.handle_key(key(KeyCode::Char('l')));
+        assert_eq!(state.query(), "l");
     }
 
     #[test]
     fn moving_up_from_the_top_wraps_to_the_last_thing_worth_going_to() {
         let mut state = state();
         state.handle_key(key(KeyCode::Up));
-        assert_eq!(state.selected().unwrap().label, "fix/crash");
+        assert_eq!(state.selected().unwrap().label, "zsh");
     }
 
     #[test]
@@ -654,14 +657,9 @@ mod tests {
     }
 
     #[test]
-    fn h_toggles_panes_that_are_not_in_a_repository() {
-        let mut state = state();
-        assert!(!state.showing_ungrouped());
-        assert!(!row_labels(&state).contains(&"zsh".to_string()));
-
-        state.handle_key(key(KeyCode::Char('h')));
-        assert!(state.showing_ungrouped());
-        assert!(row_labels(&state).contains(&"zsh".to_string()));
+    fn panes_that_are_not_in_a_repository_are_always_listed() {
+        // They are still panes. A picker that hides some of them makes you wonder which.
+        assert!(row_labels(&state()).contains(&"zsh".to_string()));
     }
 
     #[test]

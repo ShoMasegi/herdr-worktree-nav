@@ -71,7 +71,7 @@ herdr pane get <pane_id>
 ```
 
 If `cwd` and `foreground_cwd` are both absent, herdr cannot see into that pane and it lands
-in "not in any repository". Press `h` to show that section.
+in "not in any repository", the section at the bottom of the list.
 
 ## A branch I can see on GitHub is not listed
 

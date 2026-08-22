@@ -20,10 +20,11 @@ All notable changes to this project are documented here. The format follows
   holds while a filter is typed — the fuzzy score decides what is in the list, not where it
   sits — and across a change of repository. Branches with no date stay at the bottom in both
   directions. See [ADR 0006](docs/adr/0006-repository-step-and-branch-order.md).
-- **`←` and `→` in the panes view** move to the head of the previous or next repository —
-  its first pane, or its first checkout with nothing running. One press is exactly one
-  repository wherever in the current one you were, both ends wrap, the panes in no
-  repository count as a section, and the keys work while the search box has focus.
+- **`←` and `→` in the panes view** — and `h`/`l`, as `↑`/`↓` are also `k`/`j` — move to the
+  head of the previous or next repository: its first pane, or its first checkout with nothing
+  running. One press is exactly one repository wherever in the current one you were, both
+  ends wrap, and the panes in no repository count as a section. The arrows work while the
+  search box has focus; the letters are text there.
 - **A picker that says what it is doing.** Opening a branch — a fetch across the network,
   a checkout of a whole working tree, then the move — used to happen after the picker had
   closed its screen, so herdr's popup framed an empty box for the seconds it took and looked
@@ -50,6 +51,10 @@ All notable changes to this project are documented here. The format follows
   repository, out — rather than closing outright from the branch list.
 - `Tab` in the panes view no longer refuses when the cursor is not in a repository; the
   branches view opens on its repository list either way.
+- **Panes that are not inside a repository are always listed**, in their own section at the
+  bottom, rather than hidden behind a toggle. They are still panes, and a picker that hides
+  some of them makes you wonder which. `h` — which was that toggle — now moves between
+  repositories.
 
 ### Fixed
 

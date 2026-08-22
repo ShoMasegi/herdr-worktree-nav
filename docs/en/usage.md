@@ -22,7 +22,7 @@ branch list starts on.
 | Key | Does |
 | --- | --- |
 | `↑` `↓`, `k` `j`, `Ctrl-P` `Ctrl-N` | move |
-| `←` `→` | the head of the previous or next repository |
+| `←` `→`, `h` `l` | the head of the previous or next repository |
 | `Enter` on a pane | go to it |
 | `Enter` on a checkout with nothing running | open it |
 | `n` | add a pane to the checkout under the cursor |
@@ -30,15 +30,20 @@ branch list starts on.
 | `/` | search |
 | `b` `w` `i` `d` | narrow to blocked, working, idle, or done |
 | `a` | clear the state filter |
-| `h` | show or hide panes that are not in a repository |
 | `r` | reload |
 | `q`, `Esc`, `Ctrl-C` | close |
 
-`←` and `→` land on the first thing worth going to in a repository — its first pane, or its
-first checkout with nothing running. One press is always exactly one repository, wherever in
-the current one you were: `←` from halfway down leaves it rather than returning to its top.
-Both wrap, and the panes that are in no repository count as a section like any other. They
-work while the search box has focus too, since an arrow is not text.
+`←` and `→` — or `h` and `l`, as `↑`/`↓` are also `k`/`j` — land on the first thing worth
+going to in a repository: its first pane, or its first checkout with nothing running. One
+press is always exactly one repository, wherever in the current one you were: `←` from
+halfway down leaves it rather than returning to its top. Both wrap, and the panes that are in
+no repository count as a section like any other.
+
+The arrows work while the search box has focus; the letters do not, because there they are
+what you are typing.
+
+Panes that are not inside a repository are always listed, in a section of their own at the
+bottom. They are still panes, and a picker that hides some of them makes you wonder which.
 
 The cursor stops only where there is somewhere to go: a pane, and a checkout with nothing
 running in it. Repository headings and checkouts that already have panes are stepped over —

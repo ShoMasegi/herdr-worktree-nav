@@ -79,9 +79,8 @@ const GUTTER_WIDTH: usize = 3;
 const IDLE_NOTE: &str = "  no pane";
 
 /// Widest first; the picker draws the first that fits. Each rung drops the least useful
-/// thing left, so a narrow pane loses `h other` before it loses how to move.
+/// thing left, so a narrow pane loses `r reload` before it loses how to move.
 const HELP_PANES: &[&str] = &[
-    "\u{21b5} jump  n new pane  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  h other  r reload  esc close",
     "\u{21b5} jump  n new pane  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  r reload  esc close",
     "\u{21b5} jump  n new  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  esc close",
     "\u{21b5} jump  n new  \u{2190}\u{2192} repo  \u{21e5} branches  / search  esc close",
@@ -220,7 +219,9 @@ fn render_rows(frame: &mut Frame, state: &PanesState, theme: &Theme, area: Rect)
     let lines = state.lines();
     if lines.is_empty() {
         let text = if state.query().is_empty() && state.state_filter().is_none() {
-            "no repositories open"
+            // Panes outside a repository are listed too, so an empty list means an empty
+            // session rather than a session with nothing checked out.
+            "no panes open"
         } else {
             "nothing matches"
         };
@@ -1229,7 +1230,9 @@ mod tests {
 
     #[test]
     fn draws_the_tree_the_gutter_and_the_meta_column() {
-        insta::assert_snapshot!(screen(&PanesState::new(tree(), None), 92, 16));
+        // Tall enough for the whole list, including the panes that are in no repository:
+        // they are a section of it like any other.
+        insta::assert_snapshot!(screen(&PanesState::new(tree(), None), 92, 18));
     }
 
     #[test]
@@ -1247,13 +1250,6 @@ mod tests {
         let mut state = PanesState::new(tree(), None);
         press(&mut state, KeyCode::Char('b'));
         insta::assert_snapshot!(screen(&state, 92, 12));
-    }
-
-    #[test]
-    fn draws_panes_outside_any_repository_as_their_own_group() {
-        let mut state = PanesState::new(tree(), None);
-        press(&mut state, KeyCode::Char('h'));
-        insta::assert_snapshot!(screen(&state, 92, 18));
     }
 
     #[test]

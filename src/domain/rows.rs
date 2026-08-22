@@ -135,8 +135,6 @@ const UNNAMED_PANE: &str = "shell";
 
 #[derive(Debug, Clone, Default)]
 pub struct ViewOptions {
-    /// Show panes that are not inside any git work tree.
-    pub show_ungrouped: bool,
     pub query: String,
     pub state_filter: Option<StateFilter>,
     /// The user's home directory, so paths can be shown as `~/...`. Passed in rather than
@@ -287,7 +285,9 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
     }
     let mut rows: Vec<Row> = groups.into_iter().flat_map(|(_, group)| group).collect();
 
-    if options.show_ungrouped {
+    // Panes in no repository are always listed. They are still panes, and a picker that
+    // hides some of them makes you wonder which.
+    {
         let mut panes = Vec::new();
         for (index, pane) in tree.ungrouped.iter().enumerate() {
             let haystack = format!(
@@ -634,6 +634,8 @@ mod tests {
                 "me/site (1)",
                 "  develop",
                 "    claude",
+                "not in any repository (1)",
+                "  shell",
             ]
         );
     }
@@ -649,11 +651,16 @@ mod tests {
             .filter(|(_, line)| **line == DisplayLine::Spacer)
             .map(|(index, _)| index)
             .collect();
-        assert_eq!(spacers.len(), 1, "one group boundary, one blank line");
+        assert_eq!(spacers.len(), 2, "one blank line per group boundary");
         assert_eq!(
             lines[spacers[0] + 1],
             DisplayLine::Row(7),
             "me/site follows"
+        );
+        assert_eq!(
+            lines[spacers[1] + 1],
+            DisplayLine::Row(10),
+            "then the panes in no repository"
         );
     }
 
@@ -788,23 +795,18 @@ mod tests {
     fn a_state_filter_that_matches_nothing_leaves_an_empty_list() {
         let options = ViewOptions {
             state_filter: Some(StateFilter::Done),
-            show_ungrouped: true,
             ..Default::default()
         };
         assert!(flatten(&tree(), &options).is_empty());
     }
 
     #[test]
-    fn panes_outside_a_repository_form_their_own_group_when_revealed() {
-        let options = ViewOptions {
-            show_ungrouped: true,
-            ..Default::default()
-        };
-        let rows = flatten(&tree(), &options);
+    fn panes_outside_a_repository_form_their_own_group() {
+        let rows = flatten(&tree(), &ViewOptions::default());
         let group = find(&rows, "not in any repository (1)");
         assert!(
             group.reference.is_group(),
-            "it folds and spaces like a repo"
+            "it heads a section and takes a blank line above it, like a repository"
         );
         assert_eq!(rows.last().unwrap().label, "shell");
     }
@@ -900,13 +902,7 @@ mod tests {
 
     #[test]
     fn cursor_movement_steps_over_everything_it_cannot_land_on_and_wraps() {
-        let rows = flatten(
-            &tree(),
-            &ViewOptions {
-                show_ungrouped: true,
-                ..Default::default()
-            },
-        );
+        let rows = flatten(&tree(), &ViewOptions::default());
         let lines = display_lines(&rows);
         let stops: Vec<usize> = (0..lines.len())
             .filter(|index| selectable(&rows, &lines, *index))
@@ -943,13 +939,7 @@ mod tests {
 
     #[test]
     fn stepping_by_group_lands_on_the_first_thing_worth_going_to_in_it() {
-        let rows = flatten(
-            &tree(),
-            &ViewOptions {
-                show_ungrouped: true,
-                ..Default::default()
-            },
-        );
+        let rows = flatten(&tree(), &ViewOptions::default());
         let lines = display_lines(&rows);
         let label = |index: Option<usize>| match lines[index.unwrap()] {
             DisplayLine::Row(row) => rows[row].label.clone(),
@@ -992,24 +982,45 @@ mod tests {
                 looking = false;
             }
         }
-        assert_eq!(heads.len(), 2, "the fixture has two repositories");
+        assert_eq!(heads.len(), 3, "two repositories and the panes in neither");
 
-        let stops = |range: std::ops::Range<usize>| -> Vec<usize> {
-            range
-                .filter(|index| selectable(&rows, &lines, *index))
-                .collect()
-        };
-        let first = stops(heads[0]..heads[1]);
-        assert!(first.len() > 1, "the first group is more than its head");
-        for stop in first {
-            // Only two groups, so forward and back are the same place either way.
-            assert_eq!(step_group(&rows, &lines, stop, 1), Some(heads[1]));
-            assert_eq!(step_group(&rows, &lines, stop, -1), Some(heads[1]));
+        // Which group each line belongs to: how many group rows have gone past.
+        let mut group_of = vec![0usize; lines.len()];
+        let mut group = 0;
+        for (index, line) in lines.iter().enumerate() {
+            if let DisplayLine::Row(row) = line {
+                if rows[*row].reference.is_group() && index > 0 {
+                    group += 1;
+                }
+            }
+            group_of[index] = group;
         }
-        for stop in stops(heads[1]..lines.len()) {
-            assert_eq!(step_group(&rows, &lines, stop, -1), Some(heads[0]));
-            assert_eq!(step_group(&rows, &lines, stop, 1), Some(heads[0]));
+
+        let mut checked = 0;
+        for (index, here) in group_of.iter().enumerate() {
+            if !selectable(&rows, &lines, index) {
+                continue;
+            }
+            let here = *here as isize;
+            let head = |steps: isize| {
+                Some(heads[(here + steps).rem_euclid(heads.len() as isize) as usize])
+            };
+            assert_eq!(
+                step_group(&rows, &lines, index, 1),
+                head(1),
+                "\u{2192} from {index}"
+            );
+            assert_eq!(
+                step_group(&rows, &lines, index, -1),
+                head(-1),
+                "\u{2190} from {index}"
+            );
+            checked += 1;
         }
+        assert!(
+            checked > heads.len(),
+            "some groups hold more than the head they are entered at"
+        );
     }
 
     #[test]

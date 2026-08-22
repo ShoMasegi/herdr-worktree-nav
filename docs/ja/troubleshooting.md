@@ -60,7 +60,7 @@ herdr が何を返しているか確認します。
 herdr pane get <pane_id>
 ```
 
-`cwd` と `foreground_cwd` の両方が無い場合、herdr はその pane の中を見られていないため「not in any repository」に入ります。`h` キーでそのセクションを表示できます。
+`cwd` と `foreground_cwd` の両方が無い場合、herdr はその pane の中を見られていないため、一覧の末尾にある「not in any repository」セクションに入ります。
 
 ## GitHub にあるはずのブランチが出てこない
 

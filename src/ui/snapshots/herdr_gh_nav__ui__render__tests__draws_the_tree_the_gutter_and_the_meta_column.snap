@@ -1,6 +1,6 @@
 ---
 source: src/ui/render.rs
-expression: "screen(&PanesState::new(tree(), None), 92, 16)"
+expression: "screen(&PanesState::new(tree(), None), 92, 18)"
 ---
 " / search panes                                                                     5 panes "
 "────────────────────────────────────────────────────────────────────────────────────────────"
@@ -16,5 +16,7 @@ expression: "screen(&PanesState::new(tree(), None), 92, 16)"
 "   └── ● develop               /wt/develop                                                  "
 "      └── ● claude             w3:p1                                                        "
 "                                                                                            "
+"   · not in any repository (1)                                                              "
+"   └── · shell                 w9:p1                                                        "
 " me/app · main · w1:p1 · working · /wt/main ────────────────────────────────────────────────"
 " ↵ jump  n new pane  ←→ repo  ⇥ branches  / search  b/w/i/d/a states  r reload  esc close   "
