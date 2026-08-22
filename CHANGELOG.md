@@ -53,7 +53,8 @@ All notable changes to this project are documented here. The format follows
   success.
 
 - **`Shift-D` deletes a checkout that has nothing running in it**, from the panes view, after
-  asking: the prompt line becomes the question and `y` is the only key that answers it. It
+  asking in a box over the list — naming the branch and the path that is about to go — where
+  `y` is the only key that answers. It
   runs `git worktree remove` and nothing else — the branch stays, and there is no `--force`,
   so git's refusal to throw away uncommitted work stands and is what you read. It is refused
   before the question on a pane, on a busy checkout, and on the repository's own checkout.

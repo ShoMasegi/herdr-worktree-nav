@@ -48,8 +48,13 @@ never anything with uncommitted work in it.
 The confirmation is one key rather than a typed branch name. This is housekeeping, done
 often, on things whose whole purpose was to be temporary; making the user type
 `feat/hbr-51-grant-table-privileges` each time would push them back to the shell, which is
-where they were before this existed. The question takes the whole prompt line and the key
-hint says `y remove  any other key cancels`, so the one key it does take is a deliberate one.
+where they were before this existed.
+
+It asks in a box over the list rather than on the prompt line, where every other message in
+this picker goes. A line that says "are you sure?" in the same place as "nothing matches" is
+asking the reader to notice a difference the design has not drawn; a bordered box over the
+thing being deleted is the difference. The box names the path as well as the branch, because
+the path is what goes.
 
 `Shift-D` rather than `d`, which is the `done` state filter, or `x`, which is unshifted and
 sits next to keys that move. The shift is the point: a destructive key should be slightly

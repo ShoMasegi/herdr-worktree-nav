@@ -12,7 +12,7 @@
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::domain::model::RepoNode;
@@ -23,7 +23,7 @@ use crate::domain::rows::{abbreviate, DisplayLine, Row};
 use crate::port::LayoutRect;
 use crate::ui::branches::{Activity, BranchesState, Step};
 use crate::ui::diagram::{Fit, Frame as DiagramFrame};
-use crate::ui::state::PanesState;
+use crate::ui::state::{PanesState, Removal};
 use crate::ui::theme::Theme;
 
 /// Which picker is on screen. They share the panel, the search line, and the footer.
@@ -90,8 +90,9 @@ const HELP_PANES: &[&str] = &[
     "\u{21b5} jump  \u{21e5} branches  / search  esc close",
     "\u{21b5} jump  esc close",
 ];
-/// While a deletion is waiting on a yes.
-const HELP_PANES_REMOVE: &[&str] = &["y remove  any other key cancels", "y remove"];
+/// While a deletion is waiting on a yes. Says what the dialog says, in case the dialog is
+/// too small a pane to have drawn everything.
+const HELP_PANES_REMOVE: &[&str] = &["y delete  any other key cancels", "y delete"];
 const HELP_PANES_SEARCH: &[&str] = &[
     "\u{21b5} keep search  ctrl+u clear  esc cancel  \u{2191}\u{2193} move  \u{2190}\u{2192} repo",
     "\u{21b5} keep  esc cancel",
@@ -133,6 +134,9 @@ pub fn draw(frame: &mut Frame, state: &PanesState, theme: &Theme, _mode: Mode) {
     frame.render_widget(search_line(state, theme, panel.search.width), panel.search);
     render_rule(frame, panel.rule, theme);
     render_rows(frame, state, theme, panel.body);
+    if let Some(removal) = state.pending_removal() {
+        render_removal(frame, removal, state.home(), theme, panel.body);
+    }
     render_detail(frame, &state.detail(), theme, panel.detail);
 
     let variants = match (state.pending_removal().is_some(), state.is_filtering()) {
@@ -145,21 +149,6 @@ pub fn draw(frame: &mut Frame, state: &PanesState, theme: &Theme, _mode: Mode) {
 
 /// `/ query` with the total on the right, or a state chip when one is active.
 fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'static> {
-    // A question about deleting something takes the line outright. Nothing else on it
-    // matters while it is up, and the count would read as an invitation to carry on.
-    if let Some(removal) = state.pending_removal() {
-        return Paragraph::new(Line::from(vec![
-            Span::styled(
-                " \u{d7} ",
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("delete the checkout for {}?", removal.label),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Span::styled("  y/n", theme.dim()),
-        ]));
-    }
     let focus = if state.is_filtering() {
         Style::default()
             .fg(theme.accent)
@@ -238,6 +227,88 @@ fn footer(variants: &[&'static str], theme: &Theme, width: u16) -> Paragraph<'st
         .copied()
         .unwrap_or_else(|| variants.last().copied().unwrap_or_default());
     Paragraph::new(Line::from(Span::styled(format!(" {text}"), theme.dim())))
+}
+
+/// The question a deletion asks, as a box over the list.
+///
+/// A dialog rather than a line in the search field: this is the one thing the picker does
+/// that cannot be undone by doing it again, and it should not look like the place where
+/// ordinary messages go.
+fn render_removal(
+    frame: &mut Frame,
+    removal: &Removal,
+    home: Option<&str>,
+    theme: &Theme,
+    body: Rect,
+) {
+    const TITLE: &str = "Delete this checkout?";
+    const KEYS_Y: &str = "y delete";
+    const KEYS_REST: &str = "     any other key cancels";
+
+    let path = abbreviate(&removal.checkout_path, home);
+    let widest = [
+        TITLE.chars().count(),
+        KEYS_Y.chars().count() + KEYS_REST.chars().count(),
+    ]
+    .into_iter()
+    .chain([removal.label.chars().count() + 2, path.chars().count() + 2])
+    .max()
+    .unwrap_or(0);
+    // Two columns of border and two of padding on each side, and a ceiling: a worktree path
+    // is long enough to turn a dialog into a banner across a wide pane. What will not fit
+    // loses its middle, and the breadcrumb under the list still carries the whole thing.
+    const MAX_WIDTH: usize = 80;
+    let width = (widest + 6).min(body.width as usize).min(MAX_WIDTH) as u16;
+
+    let blank = Line::from("");
+    let title = Line::from(Span::styled(
+        TITLE,
+        Style::default().add_modifier(Modifier::BOLD),
+    ));
+    let branch = Line::from(Span::raw(format!("  {}", removal.label)));
+    let inner_width = width.saturating_sub(6) as usize;
+    let path = Line::from(Span::styled(
+        format!("  {}", middle_elide(&path, inner_width)),
+        theme.dim(),
+    ));
+    let keys = Line::from(vec![
+        Span::raw("  "),
+        Span::styled(
+            KEYS_Y,
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(KEYS_REST, theme.dim()),
+    ]);
+
+    // Shrink by dropping the air first and the detail second, so a short pane still gets a
+    // question rather than a broken box.
+    let lines: Vec<Line> = match body.height {
+        8.. => vec![title, blank.clone(), branch, path, blank, keys],
+        6..=7 => vec![title, branch, path, keys],
+        _ => vec![title, keys],
+    };
+    let height = (lines.len() + 2) as u16;
+    if width < 8 || height > body.height {
+        return;
+    }
+
+    let area = Rect::new(
+        body.x + (body.width - width) / 2,
+        body.y + (body.height - height) / 2,
+        width,
+        height,
+    );
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::bordered()
+                .border_style(Style::default().fg(theme.accent))
+                .padding(ratatui::widgets::Padding::horizontal(1)),
+        ),
+        area,
+    );
 }
 
 fn render_rows(frame: &mut Frame, state: &PanesState, theme: &Theme, area: Rect) {
@@ -1349,6 +1420,18 @@ mod tests {
         }
         press(&mut state, KeyCode::Char('D'));
         insta::assert_snapshot!(screen(&state, 92, 12));
+    }
+
+    #[test]
+    fn the_question_shrinks_rather_than_breaking_in_a_short_pane() {
+        // The air goes first, then the detail. A pane too short for a box at all gets the
+        // key hint, which says the same thing.
+        let mut state = PanesState::new(tree(), None);
+        for _ in 0..3 {
+            press(&mut state, KeyCode::Char('j'));
+        }
+        press(&mut state, KeyCode::Char('D'));
+        insta::assert_snapshot!(screen(&state, 92, 10));
     }
 
     #[test]

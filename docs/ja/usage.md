@@ -37,13 +37,22 @@
 
 ### checkout を削除する
 
-`no pane` の行で `Shift-D` を押すと、その worktree を削除するか訊きます。プロンプト行が問いに変わり、答えられるのは `y` だけです。他のキーはすべて「いいえ」です。
+`no pane` の行で `Shift-D` を押すと、その worktree を削除するか訊きます。問いは検索フィールドの 1 行ではなく、一覧の上に重なる枠として出ます。もう一度やり直せば元に戻る、が成り立たない唯一の操作だからです。答えられるのは `y` だけで、他のキーはすべて「いいえ」です。
 
 ```
- × delete the checkout for fix/crash?  y/n
- …
- y remove  any other key cancels
+   └── · fix/crash  no pane    ~/.herdr/worktrees/app/fix-crash
+
+        ┌──────────────────────────────────────┐
+        │ Delete this checkout?                │
+        │                                      │
+        │   fix/crash                          │
+        │   ~/.herdr/worktrees/app/fix-crash   │
+        │                                      │
+        │   y delete     any other key cancels │
+        └──────────────────────────────────────┘
 ```
+
+パスを出しているのは、消えるのがブランチではなく**そのパスの checkout** だからです。長いパスは中央を省略します（一覧の下の詳細行には全体が残ります）。枠が入らない高さのペインでは、まず空行が、次に詳細が落ちます。キーヒントはどちらの場合も同じことを言います。
 
 実行するのは `git worktree remove <path>` だけです。**ブランチは残します**。checkout は作り直せますが、push していないブランチは作り直せないからです。`--force` は付けないので、コミットしていない変更や未追跡ファイルがあると git が拒否し、その理由がその行に出ます。この拒否は障害ではなく機能です。
 

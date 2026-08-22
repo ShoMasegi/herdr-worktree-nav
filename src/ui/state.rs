@@ -141,7 +141,12 @@ impl PanesState {
         self.filtering
     }
 
-    /// The removal being asked about, which the search line turns into a question.
+    /// Shortens checkout paths to `~`, for anything drawn outside the rows.
+    pub fn home(&self) -> Option<&str> {
+        self.options.home.as_deref()
+    }
+
+    /// The removal being asked about, which the picker turns into a dialog.
     pub fn pending_removal(&self) -> Option<&Removal> {
         self.pending_removal.as_ref()
     }

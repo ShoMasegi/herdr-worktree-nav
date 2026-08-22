@@ -1,0 +1,14 @@
+---
+source: src/ui/render.rs
+expression: "screen(&state, 92, 10)"
+---
+" / search panes                                                                     5 panes "
+"────────────────────────────────────────────────────────────────────────────────────────────"
+"   │  └── · shell         ┌──────────────────────────────────────┐                         │"
+"   ├── ○ feat/login       │ Delete this checkout?                │                         █"
+"   │  └── ○ codex         │   fix/crash                          │                         █"
+"   └── · fix/crash  no pan│   /wt/fix-crash                      │                         │"
+"                          │   y delete     any other key cancels │                         │"
+"   ● me/site (1)          └──────────────────────────────────────┘                         │"
+" me/app · fix/crash · /wt/fix-crash ────────────────────────────────────────────────────────"
+" y delete  any other key cancels                                                            "

@@ -53,14 +53,28 @@ only make the walk longer. They stay on screen; the arrow keys just pass through
 
 ### Deleting a checkout
 
-`Shift-D` on a `no pane` row offers to remove that worktree. The prompt line becomes the
-question and `y` is the only key that answers it; anything else is a no.
+`Shift-D` on a `no pane` row offers to remove that worktree. The question comes as a box over
+the list rather than as a line in the search field, because this is the one thing the picker
+does that cannot be undone by doing it again. `y` is the only key that answers it; anything
+else is a no.
 
 ```
- × delete the checkout for fix/crash?  y/n
- …
- y remove  any other key cancels
+   └── · fix/crash  no pane    ~/.herdr/worktrees/app/fix-crash
+
+        ┌──────────────────────────────────────┐
+        │ Delete this checkout?                │
+        │                                      │
+        │   fix/crash                          │
+        │   ~/.herdr/worktrees/app/fix-crash   │
+        │                                      │
+        │   y delete     any other key cancels │
+        └──────────────────────────────────────┘
 ```
+
+The path is there because that, rather than the branch, is what is about to go. A long one
+loses its middle; the breadcrumb under the list still carries the whole of it. In a pane too
+short for the box the blank rows go first and the detail second, and the key hint says the
+same thing either way.
 
 It runs `git worktree remove <path>` and nothing else. The branch stays — a checkout is
 rebuilt by making it again, and a branch that was never pushed is not. There is no `--force`,

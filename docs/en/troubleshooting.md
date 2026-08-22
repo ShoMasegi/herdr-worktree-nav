@@ -125,7 +125,7 @@ through this against a real session.
 - [ ] `Enter` on a pane in another space lands there — and stays there after the popup
       closes.
 - [ ] `n` adds a pane to the checkout under the cursor.
-- [ ] `Shift-D` on a `no pane` row asks, `y` removes the checkout and leaves the branch, and
+- [ ] `Shift-D` on a `no pane` row asks in a box naming the branch and the path, `y` removes the checkout and leaves the branch, and
       any other key cancels. It refuses on a pane, on a busy checkout, and on the
       repository's own checkout; a checkout with uncommitted work refuses with git's reason.
 - [ ] `Tab` reaches the branches view, on the repository under the cursor.
