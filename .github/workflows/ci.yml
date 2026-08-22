@@ -1,0 +1,77 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # check-docs-sync compares against the base branch, so it needs the history.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --all-targets
+      - name: Architecture invariants
+        run: ./scripts/check-invariants.sh
+      - name: Documentation is in sync
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          # On a push there is no pull request base; the pairing check still runs.
+          ./scripts/check-docs-sync.sh $base
+
+  commits:
+    # Conventional Commits, checked on the commits a pull request actually adds.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Check commit messages
+        run: |
+          pattern='^(feat|fix|docs|refactor|test|chore|ci|perf|build|revert)(\([a-z0-9./-]+\))?!?: .+'
+          failed=0
+          while read -r sha; do
+            subject=$(git log -1 --format=%s "$sha")
+            if ! printf '%s' "$subject" | grep -qE "$pattern"; then
+              echo "not a Conventional Commit: $sha $subject"
+              failed=1
+            fi
+          done < <(git rev-list ${{ github.event.pull_request.base.sha }}..HEAD --no-merges)
+          exit $failed
+        shell: bash
+
+  install:
+    # The path a user actually takes: a fresh checkout, then the manifest's build step.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run the plugin build step
+        run: ./scripts/fetch-or-build.sh
+      - name: The binary runs
+        run: |
+          ./bin/herdr-gh-nav 2>&1 | grep -q 'herdr-gh-nav'
+          # Without a herdr socket it must fail with an explanation, not a panic.
+          if ./bin/herdr-gh-nav dump 2>err.txt; then
+            echo "expected a failure with no herdr socket"; exit 1
+          fi
+          grep -q 'HERDR_SOCKET_PATH' err.txt
