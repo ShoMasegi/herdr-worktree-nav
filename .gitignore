@@ -1,0 +1,12 @@
+# Rust build output
+/target/
+
+# Plugin binary produced by scripts/fetch-or-build.sh (or a local dev symlink).
+# herdr launches ./bin/herdr-gh-nav, but the artifact itself is never committed.
+/bin/
+
+# insta snapshot review leftovers
+*.snap.new
+
+# macOS
+.DS_Store

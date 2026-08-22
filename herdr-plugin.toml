@@ -1,0 +1,59 @@
+# herdr-plugin.toml — manifest for herdr-gh-nav.
+#
+# Two overlay pickers backed by one binary:
+#   panes    — every open pane grouped as repo -> worktree(branch) -> pane, jump to one
+#   branches — every branch of the current repo, turn one into a worktree pane
+#
+# The two pickers are one UI that toggles with <Tab>, so they share a single binary and
+# differ only in which mode it starts in.
+
+id = "herdr-gh-nav"
+name = "herdr-gh-nav"
+version = "0.1.0"
+# 0.7.4 is the version this plugin is developed and verified against. It is the oldest
+# release we can claim: `WorktreeInfo.open_workspace_id` and the `worktree` field on
+# `PluginInvocationContext` are both load-bearing here and are present in 0.7.4.
+min_herdr_version = "0.7.4"
+description = "Navigate herdr panes by GitHub repo and worktree, and turn any branch into a worktree pane."
+# Windows is intentionally out of scope for v1: herdr resolves a relative pane command
+# against its own directory there (CreateProcessW), which needs absolute-path launchers.
+platforms = ["macos", "linux"]
+
+# Runs once at `herdr plugin install`, after the user confirms. It downloads the prebuilt
+# binary matching this version and platform and verifies its SHA-256; on any miss it falls
+# back to `cargo build --release`, so installing never needs a Rust toolchain but never
+# hard-fails without one either.
+[[build]]
+command = ["/bin/sh", "scripts/fetch-or-build.sh"]
+
+# Pane entrypoints. herdr launches these with the plugin root as cwd unless the opener
+# passes --cwd, which the `action` subcommand always does (it forwards the invoking pane's
+# cwd so the picker knows which repo it was summoned from).
+[[panes]]
+id = "panes"
+title = "Panes"
+placement = "overlay"
+command = ["./bin/herdr-gh-nav", "pane", "panes"]
+
+[[panes]]
+id = "branches"
+title = "Branches"
+placement = "overlay"
+command = ["./bin/herdr-gh-nav", "pane", "branches"]
+
+# Actions are what keybindings invoke (`type = "plugin_action"`). Each one reads
+# HERDR_PLUGIN_CONTEXT_JSON, then opens the matching pane entrypoint with the right cwd.
+# Bind them yourself in ~/.config/herdr/config.toml — see the README.
+[[actions]]
+id = "open-panes"
+title = "herdr-gh-nav: list open panes"
+description = "List every open pane grouped by repo and worktree, and jump to one."
+contexts = ["global", "workspace", "pane"]
+command = ["./bin/herdr-gh-nav", "action", "open-panes"]
+
+[[actions]]
+id = "open-branches"
+title = "herdr-gh-nav: open branch as worktree"
+description = "Pick a branch and open it as a worktree pane in the destination you choose."
+contexts = ["global", "workspace", "pane"]
+command = ["./bin/herdr-gh-nav", "action", "open-branches"]
