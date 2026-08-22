@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report privately through GitHub's
-[security advisories](https://github.com/ShoMasegi/herdr-gh-nav/security/advisories/new)
+[security advisories](https://github.com/ShoMasegi/herdr-worktree-nav/security/advisories/new)
 rather than in a public issue. Include what you did, what happened, and what you expected.
 
 You will get an acknowledgement within a week. This is a small project maintained in spare
@@ -17,7 +17,7 @@ A herdr plugin is ordinary code that runs on your machine, with your environment
 permissions. herdr validates the manifest and keeps each plugin's state in its own directory,
 but it does not sandbox plugin code.
 
-Specifically, herdr-gh-nav:
+Specifically, herdr-worktree-nav:
 
 - **Talks to the herdr API** over the socket at `HERDR_SOCKET_PATH`. It can see your session
   — every workspace, tab, pane, and working directory — and it can create worktrees, move

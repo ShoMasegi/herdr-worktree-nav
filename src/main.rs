@@ -8,15 +8,15 @@
 use std::process::ExitCode;
 
 use anyhow::{bail, Result};
-use herdr_gh_nav::adapter::{herdr_config, GhCli, GitCli, SocketHerdr};
-use herdr_gh_nav::app::{action, collect, run_picker, Entrypoint};
+use herdr_worktree_nav::adapter::{herdr_config, GhCli, GitCli, SocketHerdr};
+use herdr_worktree_nav::app::{action, collect, run_picker, Entrypoint};
 
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             // herdr surfaces a failed plugin command's stderr in `herdr plugin log list`.
-            eprintln!("herdr-gh-nav: {error:#}");
+            eprintln!("herdr-worktree-nav: {error:#}");
             ExitCode::FAILURE
         }
     }
@@ -45,11 +45,11 @@ fn run() -> Result<()> {
 }
 
 const USAGE: &str = "\
-herdr-gh-nav — navigate herdr panes by repo and worktree
+herdr-worktree-nav — navigate herdr panes by repo and worktree
 
-  herdr-gh-nav action <action-id>   open the picker for a plugin action (herdr calls this)
-  herdr-gh-nav pane <entrypoint>    run the picker itself (herdr calls this)
-  herdr-gh-nav dump                 print what the plugin currently sees, for troubleshooting";
+  herdr-worktree-nav action <action-id>   open the picker for a plugin action (herdr calls this)
+  herdr-worktree-nav pane <entrypoint>    run the picker itself (herdr calls this)
+  herdr-worktree-nav dump                 print what the plugin currently sees, for troubleshooting";
 
 fn pane(start: Entrypoint) -> Result<()> {
     run_picker(&SocketHerdr::from_env()?, &GitCli, &GhCli, start)

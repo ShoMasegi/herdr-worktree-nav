@@ -1,10 +1,10 @@
-# herdr-gh-nav
+# herdr-worktree-nav
 
 **[English](./README.md)**
 
 頭の中に収まらないほど大きくなった [herdr](https://herdr.dev) セッションを歩き回るためのプラグインです。
 
-複数のリポジトリ・複数の worktree にまたがってエージェントを走らせていると、問いは「このエージェントは何をしているか」から「あれは *どこ* にあるか」に変わります。herdr-gh-nav はそれに答えます。逆方向も同じで、GitHub 上にあるブランチを、キーボードから手を離さずに作業中の pane に変えられます。
+複数のリポジトリ・複数の worktree にまたがってエージェントを走らせていると、問いは「このエージェントは何をしているか」から「あれは *どこ* にあるか」に変わります。herdr-worktree-nav はそれに答えます。逆方向も同じで、GitHub 上にあるブランチを、キーボードから手を離さずに作業中の pane に変えられます。
 
 ピッカーが 2 つ、それぞれキー 1 つで開き、`Tab` で行き来します。どちらも生きているセッションの上に popup として開き、描画は herdr 本体の session navigator と同じ方式です（herdr が描く枠、tree グリフ、herdr のテーマの accent 色）。別のプログラムではなく herdr の一部として読めます。
 
@@ -13,11 +13,11 @@
 開いている pane を、リポジトリと、チェックアウトされている worktree でグループ化して並べます。
 
 ```
-┌─ herdr-gh-nav ───────────────────────────────────────────────────────────────┐
+┌─ herdr-worktree-nav ─────────────────────────────────────────────────────────┐
 │ / search panes                                                      13 panes │
 │──────────────────────────────────────────────────────────────────────────────│
-│ ◆ ● ShoMasegi/herdr-gh-nav (2)                                               │
-│   └── ● main                                  ~/Workspace/herdr-gh-nav       │
+│ ◆ ● ShoMasegi/herdr-worktree-nav (2)                                         │
+│   └── ● main                                  ~/Workspace/herdr-worktree-nav │
 │ ◆    ├── ● claude                             w7:p2                          │
 │      └── · shell                              w7:p3                          │
 │                                                                              │
@@ -27,7 +27,7 @@
 │   │  └── · shell                              w1:p2                          │
 │   └── · loop-review-fix-request  no pane      ~/.herdr/worktrees/harbour/…   │
 │                                                                              │
-│ ShoMasegi/herdr-gh-nav · main · w7:p2 · working · ~/Workspace/herdr-gh-nav ───│
+│ ShoMasegi/herdr-worktree-nav · main · w7:p2 · working · ~/Workspace/herdr-w… │
 │ ↵ jump  n new  ←→ repo  ⇥ branches  / search  b/w/i/d/a states  esc close    │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -41,14 +41,14 @@
 まずリポジトリを選びます。herdr が開いているものがすべて並び、呼び出した元のリポジトリには印が付き、最初からカーソルが当たっています。
 
 ```
-┌─ herdr-gh-nav ───────────────────────────────────────────────────────────────┐
+┌─ herdr-worktree-nav ─────────────────────────────────────────────────────────┐
 │ / search repositories█                                          4 repositories│
 │──────────────────────────────────────────────────────────────────────────────│
-│ ◆ ShoMasegi/herdr-gh-nav     1 worktree, 2 panes   ~/Workspace/herdr-gh-nav  │
-│   ShoMasegi/harbour-backend  3 worktrees, 5 panes  ~/Workspace/harbour-backe…│
-│   nightowl/harken            1 worktree, 1 pane    ~/Workspace/nightowl/lett…│
+│ ◆ ShoMasegi/herdr-worktree-nav  1 worktree, 2 panes   ~/Workspace/herdr-work…│
+│   ShoMasegi/harbour-backend     3 worktrees, 5 panes  ~/Workspace/harbour-ba…│
+│   nightowl/harken               1 worktree, 1 pane    ~/Workspace/nightowl/h…│
 │                                                                              │
-│ ShoMasegi/herdr-gh-nav · ~/Workspace/herdr-gh-nav ────────────────────────────│
+│ ShoMasegi/herdr-worktree-nav · ~/Workspace/herdr-worktree-nav ───────────────│
 │ ↵ branches  j/k move  / search  ⇥ panes  q close                             │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -56,7 +56,7 @@
 続いて、そのリポジトリのブランチを状態を問わず一覧します。
 
 ```
-┌─ herdr-gh-nav ───────────────────────────────────────────────────────────────┐
+┌─ herdr-worktree-nav ─────────────────────────────────────────────────────────┐
 │ / search branches                                   ⇅ state ↓    24 branches │
 │──────────────────────────────────────────────────────────────────────────────│
 │   ● feat/login    running      #123 Add the login screen (draft)             │
@@ -103,7 +103,7 @@ worktree の作成場所は herdr の設定に従います（herdr の設定フ�
 ## インストール
 
 ```sh
-herdr plugin install ShoMasegi/herdr-gh-nav
+herdr plugin install ShoMasegi/herdr-worktree-nav
 ```
 
 herdr 0.7.4 以降と `git` が必要です。対応は macOS と Linux です。
@@ -120,13 +120,13 @@ herdr のプラグインは利用者のキーバインドを勝手に設定で�
 [[keys.command]]
 key = "prefix+g"
 type = "plugin_action"
-command = "herdr-gh-nav.open-panes"
+command = "herdr-worktree-nav.open-panes"
 description = "list open panes"
 
 [[keys.command]]
 key = "prefix+shift+b"
 type = "plugin_action"
-command = "herdr-gh-nav.open-branches"
+command = "herdr-worktree-nav.open-branches"
 description = "open a branch as a worktree"
 ```
 
@@ -135,7 +135,7 @@ description = "open a branch as a worktree"
 どちらのアクションも herdr のアクションメニューに出るほか、直接実行もできます。
 
 ```sh
-herdr plugin action invoke herdr-gh-nav.open-panes
+herdr plugin action invoke herdr-worktree-nav.open-panes
 ```
 
 ## ドキュメント

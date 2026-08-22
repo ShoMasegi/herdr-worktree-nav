@@ -5,14 +5,14 @@
 One Rust binary. herdr launches it three ways:
 
 ```
-keybinding ──▶ herdr-gh-nav action open-panes
+keybinding ──▶ herdr-worktree-nav action open-panes
                    │  reads HERDR_PLUGIN_CONTEXT_JSON
                    │  forwards the invoking pane and repo as env
                    ▼
-               plugin.pane.open ──▶ herdr-gh-nav pane panes   ─▶ the picker
-                                    herdr-gh-nav pane branches
+               plugin.pane.open ──▶ herdr-worktree-nav pane panes   ─▶ the picker
+                                    herdr-worktree-nav pane branches
 
-troubleshooting ─▶ herdr-gh-nav dump
+troubleshooting ─▶ herdr-worktree-nav dump
 ```
 
 The action is not the picker. It runs with the plugin directory as its working directory and

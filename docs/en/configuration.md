@@ -2,9 +2,9 @@
 
 [日本語](../ja/configuration.md)
 
-herdr-gh-nav has no configuration file of its own. Everything it honours is either herdr's
-configuration or the state of your repository, which is deliberate: two tools disagreeing
-about where worktrees go is worse than one tool having fewer knobs.
+herdr-worktree-nav has no configuration file of its own. Everything it honours is either
+herdr's configuration or the state of your repository, which is deliberate: two tools
+disagreeing about where worktrees go is worse than one tool having fewer knobs.
 
 ## Keybindings
 
@@ -14,13 +14,13 @@ Plugins cannot set your keybindings. Add them to `~/.config/herdr/config.toml`:
 [[keys.command]]
 key = "prefix+g"
 type = "plugin_action"
-command = "herdr-gh-nav.open-panes"
+command = "herdr-worktree-nav.open-panes"
 description = "list open panes"
 
 [[keys.command]]
 key = "prefix+shift+b"
 type = "plugin_action"
-command = "herdr-gh-nav.open-branches"
+command = "herdr-worktree-nav.open-branches"
 description = "open a branch as a worktree"
 ```
 
@@ -29,8 +29,8 @@ Reload with `herdr server reload-config`.
 Both actions are available from herdr's action menu without a binding, and directly:
 
 ```sh
-herdr plugin action invoke herdr-gh-nav.open-panes
-herdr plugin action invoke herdr-gh-nav.open-branches
+herdr plugin action invoke herdr-worktree-nav.open-panes
+herdr plugin action invoke herdr-worktree-nav.open-branches
 ```
 
 A picker opens as a popup, and herdr routes every key into an open popup before its own
@@ -80,7 +80,7 @@ theme instead of fighting it. herdr's palette is not reachable from a plugin —
 exposes no theme at all — so matching it exactly is not on offer; see
 [ADR 0004](../adr/0004-navigator-appearance.md).
 
-`herdr-gh-nav dump` prints what it resolved, which is the quickest way to check.
+`herdr-worktree-nav dump` prints what it resolved, which is the quickest way to check.
 
 ## The remote
 

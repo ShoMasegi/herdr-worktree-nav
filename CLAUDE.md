@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Development conventions for herdr-gh-nav. This file is the single source of truth for how
+Development conventions for herdr-worktree-nav. This file is the single source of truth for how
 this repository is worked on. `CONTRIBUTING.md` covers only the human-facing "how do I send
 a PR" steps and deliberately does not repeat anything here.
 
@@ -88,9 +88,9 @@ cargo clippy --all-targets -- -D warnings   # lint gate
 ./scripts/check-docs-sync.sh                # en/ja documentation parity gate
 
 # Try it against the running herdr session
-cargo build --release && mkdir -p bin && ln -sf ../target/release/herdr-gh-nav bin/herdr-gh-nav
+cargo build --release && mkdir -p bin && ln -sf ../target/release/herdr-worktree-nav bin/herdr-worktree-nav
 herdr plugin link .
-herdr plugin action invoke herdr-gh-nav.open-panes
+herdr plugin action invoke herdr-worktree-nav.open-panes
 ```
 
 `herdr plugin link` does **not** run the `[[build]]` step, so build the binary yourself

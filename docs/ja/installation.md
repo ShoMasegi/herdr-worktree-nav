@@ -15,7 +15,7 @@
 ## インストール
 
 ```sh
-herdr plugin install ShoMasegi/herdr-gh-nav
+herdr plugin install ShoMasegi/herdr-worktree-nav
 ```
 
 herdr は実行前にマニフェストと実行するコマンドを表示します。必ず目を通してください。プラグインは、あなたの環境で、あなたの権限で動く普通のコードです。
@@ -27,7 +27,7 @@ herdr は実行前にマニフェストと実行するコマンドを表示し�
 `herdr plugin install` は確認後、`scripts/fetch-or-build.sh` を 1 回だけ実行します。
 
 1. `herdr-plugin.toml` からバージョンを、`uname` からターゲットを判定します。
-2. 対応する GitHub リリースから `herdr-gh-nav-<version>-<target>.tar.gz` と `SHA256SUMS` をダウンロードし、アーカイブを検証します。
+2. 対応する GitHub リリースから `herdr-worktree-nav-<version>-<target>.tar.gz` と `SHA256SUMS` をダウンロードし、アーカイブを検証します。
 3. **いずれかが失敗したら**（リリースが無い・ネットワークが無い・未対応プラットフォーム・チェックサム不一致）、`cargo build --release` にフォールバックします。
 
 そのため、ビルド済みバイナリがあれば Rust ツールチェーンは不要で、無い場合でもインストールは成立します。どちらの経路も使えない場合は、その旨を表示して中断します（中途半端な状態で終わりません）。
@@ -35,14 +35,14 @@ herdr は実行前にマニフェストと実行するコマンドを表示し�
 ## 更新
 
 ```sh
-herdr plugin uninstall herdr-gh-nav
-herdr plugin install ShoMasegi/herdr-gh-nav
+herdr plugin uninstall herdr-worktree-nav
+herdr plugin install ShoMasegi/herdr-worktree-nav
 ```
 
 ## アンインストール
 
 ```sh
-herdr plugin uninstall herdr-gh-nav
+herdr plugin uninstall herdr-worktree-nav
 ```
 
 追加した `[[keys.command]]` を削除し、`herdr server reload-config` を実行してください。
@@ -52,9 +52,9 @@ herdr のプラグインディレクトリ以外には何も触れません。�
 ## チェックアウトで開発する
 
 ```sh
-git clone https://github.com/ShoMasegi/herdr-gh-nav
-cd herdr-gh-nav
-cargo build --release && mkdir -p bin && ln -sf ../target/release/herdr-gh-nav bin/herdr-gh-nav
+git clone https://github.com/ShoMasegi/herdr-worktree-nav
+cd herdr-worktree-nav
+cargo build --release && mkdir -p bin && ln -sf ../target/release/herdr-worktree-nav bin/herdr-worktree-nav
 herdr plugin link .
 ```
 
@@ -63,7 +63,7 @@ herdr plugin link .
 リリース版に戻すには次を実行します。
 
 ```sh
-herdr plugin unlink herdr-gh-nav
+herdr plugin unlink herdr-worktree-nav
 ```
 
 ## Windows

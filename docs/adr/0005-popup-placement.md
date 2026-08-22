@@ -57,8 +57,9 @@ unchanged; and herdr tears the popup down on exit, so nothing has to call `popup
   pane is gone.
 - **The border title cannot change.** `Tab` switches views inside one process, and with no
   pane id nothing can rename the popup afterwards. Both entrypoints are titled
-  `herdr-gh-nav` so the frame is never contradicting the screen; the search line and the key
-  hint say which view you are in.
+  `herdr-worktree-nav` so the frame is never contradicting the screen; the search line and
+  the key hint say which view you are in.
 - **A popup is not addressable**, so `herdr pane read` and `herdr pane send-keys` cannot
-  reach the picker. Running `herdr-gh-nav pane panes` in an ordinary pane exercises exactly
-  the same code and is how the picker is checked; only the framing has to be looked at.
+  reach the picker. Running `herdr-worktree-nav pane panes` in an ordinary pane exercises
+  exactly the same code and is how the picker is checked; only the framing has to be looked
+  at.

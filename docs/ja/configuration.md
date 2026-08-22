@@ -2,7 +2,7 @@
 
 [English](../en/configuration.md)
 
-herdr-gh-nav は独自の設定ファイルを持ちません。参照するのは herdr の設定か、リポジトリの状態だけです。これは意図的な設計です。worktree の置き場所について 2 つのツールが食い違うことのほうが、ツマミが少ないことより有害だからです。
+herdr-worktree-nav は独自の設定ファイルを持ちません。参照するのは herdr の設定か、リポジトリの状態だけです。これは意図的な設計です。worktree の置き場所について 2 つのツールが食い違うことのほうが、ツマミが少ないことより有害だからです。
 
 ## キーバインド
 
@@ -12,13 +12,13 @@ herdr-gh-nav は独自の設定ファイルを持ちません。参照するの�
 [[keys.command]]
 key = "prefix+g"
 type = "plugin_action"
-command = "herdr-gh-nav.open-panes"
+command = "herdr-worktree-nav.open-panes"
 description = "list open panes"
 
 [[keys.command]]
 key = "prefix+shift+b"
 type = "plugin_action"
-command = "herdr-gh-nav.open-branches"
+command = "herdr-worktree-nav.open-branches"
 description = "open a branch as a worktree"
 ```
 
@@ -27,8 +27,8 @@ description = "open a branch as a worktree"
 どちらのアクションもキー割り当て無しで herdr のアクションメニューから使えるほか、直接実行もできます。
 
 ```sh
-herdr plugin action invoke herdr-gh-nav.open-panes
-herdr plugin action invoke herdr-gh-nav.open-branches
+herdr plugin action invoke herdr-worktree-nav.open-panes
+herdr plugin action invoke herdr-worktree-nav.open-branches
 ```
 
 ピッカーは popup として開きます。herdr は開いている popup に対して、自身のキーバインドを解釈する前にすべてのキーを送るため、ピッカーが出ている間は同じキーを押しても発火しません。まず `Esc` で閉じてください。
@@ -67,7 +67,7 @@ accent の解決順は herdr と同じです。明示的な `[theme.custom] acce
 
 それ以外は端末自身の 16 色を使うため、ピッカーは端末のテーマに逆らわず従います。herdr の palette はプラグインからは取得できず（socket API がテーマを一切公開していません）、完全一致は選択肢にありません。[ADR 0004](../adr/0004-navigator-appearance.md) を参照してください。
 
-解決結果は `herdr-gh-nav dump` で確認するのが最も手軽です。
+解決結果は `herdr-worktree-nav dump` で確認するのが最も手軽です。
 
 ## リモート
 

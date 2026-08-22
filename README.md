@@ -1,4 +1,4 @@
-# herdr-gh-nav
+# herdr-worktree-nav
 
 **[日本語](./README.ja.md)**
 
@@ -6,8 +6,8 @@ A [herdr](https://herdr.dev) plugin for finding your way around a session that h
 big to hold in your head.
 
 Run a few agents across a few repositories and a few worktrees, and the question stops being
-"what is this agent doing" and becomes "where *is* it". herdr-gh-nav answers that, and the
-other direction too: take a branch that exists on GitHub and turn it into a working pane
+"what is this agent doing" and becomes "where *is* it". herdr-worktree-nav answers that, and
+the other direction too: take a branch that exists on GitHub and turn it into a working pane
 without leaving the keyboard.
 
 Two pickers, one keystroke each, `Tab` between them. Each opens as a popup over the live
@@ -20,11 +20,11 @@ different program.
 Every open pane, grouped by repository and by the worktree it is checked out in.
 
 ```
-┌─ herdr-gh-nav ───────────────────────────────────────────────────────────────┐
+┌─ herdr-worktree-nav ─────────────────────────────────────────────────────────┐
 │ / search panes                                                      13 panes │
 │──────────────────────────────────────────────────────────────────────────────│
-│ ◆ ● ShoMasegi/herdr-gh-nav (2)                                               │
-│   └── ● main                                  ~/Workspace/herdr-gh-nav       │
+│ ◆ ● ShoMasegi/herdr-worktree-nav (2)                                         │
+│   └── ● main                                  ~/Workspace/herdr-worktree-nav │
 │ ◆    ├── ● claude                             w7:p2                          │
 │      └── · shell                              w7:p3                          │
 │                                                                              │
@@ -34,7 +34,7 @@ Every open pane, grouped by repository and by the worktree it is checked out in.
 │   │  └── · shell                              w1:p2                          │
 │   └── · loop-review-fix-request  no pane      ~/.herdr/worktrees/harbour/…   │
 │                                                                              │
-│ ShoMasegi/herdr-gh-nav · main · w7:p2 · working · ~/Workspace/herdr-gh-nav ───│
+│ ShoMasegi/herdr-worktree-nav · main · w7:p2 · working · ~/Workspace/herdr-w… │
 │ ↵ jump  n new  ←→ repo  ⇥ branches  / search  b/w/i/d/a states  esc close    │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -54,14 +54,14 @@ Which repository first — every one herdr has open, with the one you came from 
 already under the cursor:
 
 ```
-┌─ herdr-gh-nav ───────────────────────────────────────────────────────────────┐
+┌─ herdr-worktree-nav ─────────────────────────────────────────────────────────┐
 │ / search repositories█                                          4 repositories│
 │──────────────────────────────────────────────────────────────────────────────│
-│ ◆ ShoMasegi/herdr-gh-nav     1 worktree, 2 panes   ~/Workspace/herdr-gh-nav  │
-│   ShoMasegi/harbour-backend  3 worktrees, 5 panes  ~/Workspace/harbour-backe…│
-│   nightowl/harken            1 worktree, 1 pane    ~/Workspace/nightowl/lett…│
+│ ◆ ShoMasegi/herdr-worktree-nav  1 worktree, 2 panes   ~/Workspace/herdr-work…│
+│   ShoMasegi/harbour-backend     3 worktrees, 5 panes  ~/Workspace/harbour-ba…│
+│   nightowl/harken               1 worktree, 1 pane    ~/Workspace/nightowl/h…│
 │                                                                              │
-│ ShoMasegi/herdr-gh-nav · ~/Workspace/herdr-gh-nav ────────────────────────────│
+│ ShoMasegi/herdr-worktree-nav · ~/Workspace/herdr-worktree-nav ───────────────│
 │ ↵ branches  j/k move  / search  ⇥ panes  q close                             │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -69,7 +69,7 @@ already under the cursor:
 Then every branch of it, whatever state it is in:
 
 ```
-┌─ herdr-gh-nav ───────────────────────────────────────────────────────────────┐
+┌─ herdr-worktree-nav ─────────────────────────────────────────────────────────┐
 │ / search branches                                   ⇅ state ↓    24 branches │
 │──────────────────────────────────────────────────────────────────────────────│
 │   ● feat/login    running      #123 Add the login screen (draft)             │
@@ -121,7 +121,7 @@ location.
 ## Install
 
 ```sh
-herdr plugin install ShoMasegi/herdr-gh-nav
+herdr plugin install ShoMasegi/herdr-worktree-nav
 ```
 
 Requires herdr 0.7.4 or later, and `git`. macOS and Linux.
@@ -141,13 +141,13 @@ herdr plugins cannot set your keybindings for you. Add these to
 [[keys.command]]
 key = "prefix+g"
 type = "plugin_action"
-command = "herdr-gh-nav.open-panes"
+command = "herdr-worktree-nav.open-panes"
 description = "list open panes"
 
 [[keys.command]]
 key = "prefix+shift+b"
 type = "plugin_action"
-command = "herdr-gh-nav.open-branches"
+command = "herdr-worktree-nav.open-branches"
 description = "open a branch as a worktree"
 ```
 
@@ -156,7 +156,7 @@ Then `herdr server reload-config`.
 Both actions also appear in herdr's action menu, and can be run directly:
 
 ```sh
-herdr plugin action invoke herdr-gh-nav.open-panes
+herdr plugin action invoke herdr-worktree-nav.open-panes
 ```
 
 ## Documentation

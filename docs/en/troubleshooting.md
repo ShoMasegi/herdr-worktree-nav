@@ -5,14 +5,14 @@
 ## Start here
 
 ```sh
-herdr plugin log list --plugin herdr-gh-nav --limit 5
+herdr plugin log list --plugin herdr-worktree-nav --limit 5
 ```
 
 herdr records every plugin command it ran, with its exit code and stderr. A picker that did
 not appear almost always left an explanation there.
 
 ```sh
-herdr-gh-nav dump
+herdr-worktree-nav dump
 ```
 
 Prints the tree the panes view would draw. If `dump` is right and the picker is wrong, the
@@ -24,7 +24,7 @@ inside a herdr pane — it needs `HERDR_SOCKET_PATH`.
 Check the binding arrived:
 
 ```sh
-herdr plugin action list --plugin herdr-gh-nav
+herdr plugin action list --plugin herdr-worktree-nav
 ```
 
 If the actions are listed but the key does nothing, the binding is the problem, not the
@@ -32,7 +32,7 @@ plugin. Confirm the `[[keys.command]]` entry is present, then `herdr server relo
 Try the action directly to separate the two:
 
 ```sh
-herdr plugin action invoke herdr-gh-nav.open-panes
+herdr plugin action invoke herdr-worktree-nav.open-panes
 ```
 
 ## "Unable to spawn … because it does not exist"
@@ -40,7 +40,7 @@ herdr plugin action invoke herdr-gh-nav.open-panes
 The binary is missing from `bin/`. In a development checkout:
 
 ```sh
-cargo build --release && mkdir -p bin && ln -sf ../target/release/herdr-gh-nav bin/herdr-gh-nav
+cargo build --release && mkdir -p bin && ln -sf ../target/release/herdr-worktree-nav bin/herdr-worktree-nav
 ```
 
 `herdr plugin link` does not run the build step, so a linked checkout needs the binary built
@@ -49,7 +49,7 @@ by hand.
 For an installed plugin, reinstall — the build step will fetch or build it:
 
 ```sh
-herdr plugin uninstall herdr-gh-nav && herdr plugin install ShoMasegi/herdr-gh-nav
+herdr plugin uninstall herdr-worktree-nav && herdr plugin install ShoMasegi/herdr-worktree-nav
 ```
 
 ## "HERDR_SOCKET_PATH is not set"
@@ -115,8 +115,8 @@ through this against a real session.
 
 - [ ] `herdr plugin link .` registers both actions and both pane entrypoints
       (`herdr plugin list --json`).
-- [ ] The picker opens as a centred popup framed by herdr, titled `herdr-gh-nav`, with the
-      session still visible around it — and it does **not** list itself.
+- [ ] The picker opens as a centred popup framed by herdr, titled `herdr-worktree-nav`,
+      with the session still visible around it — and it does **not** list itself.
 - [ ] A worktree with no pane appears with `no pane`, and `Enter` opens it.
 - [ ] `↑`/`↓` stop only on panes and on checkouts with nothing running: repository headings
       and checkouts that already have panes are stepped over, and still drawn.
@@ -158,5 +158,5 @@ through this against a real session.
       search line and key hint follow the view.
 
 A popup is not addressable, so `herdr pane read` and `herdr pane send-keys` cannot drive the
-picker. Run `./bin/herdr-gh-nav pane panes` in an ordinary pane to exercise the same code with
-keys you can send; only the framing has to be looked at.
+picker. Run `./bin/herdr-worktree-nav pane panes` in an ordinary pane to exercise the same
+code with keys you can send; only the framing has to be looked at.

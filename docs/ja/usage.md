@@ -2,7 +2,7 @@
 
 [English](../en/usage.md)
 
-ピッカーは 2 つ、それぞれ対応するアクションで開き、`Tab` で切り替えます。どちらも popup として開きます。生きているセッションの上に浮く中央寄せの枠で、枠は herdr があなたの accent 色で描き、タイトルは `herdr-gh-nav` です。大きさは session navigator と同じ比率です。
+ピッカーは 2 つ、それぞれ対応するアクションで開き、`Tab` で切り替えます。どちらも popup として開きます。生きているセッションの上に浮く中央寄せの枠で、枠は herdr があなたの accent 色で描き、タイトルは `herdr-worktree-nav` です。大きさは session navigator と同じ比率です。
 
 枠の内側の描画は navigator と同じ方式です。検索行・詳細行・キーヒントの構成、tree グリフ、状態グリフが揃っています。navigator が定めているキーは、ここでも同じ意味を持ちます。
 
@@ -67,11 +67,11 @@
 ### 行の読み方
 
 ```
- ◆ ● ShoMasegi/herdr-gh-nav (2)
-   └── ● main                       ~/Workspace/herdr-gh-nav
+ ◆ ● ShoMasegi/herdr-worktree-nav (2)
+   └── ● main                       ~/Workspace/herdr-worktree-nav
  ◆    ├── ● claude                  w7:p2
       └── · shell                   w7:p3
-   └── · fix/crash  no pane         ~/.herdr/worktrees/herdr-gh-nav/fix-crash
+   └── · fix/crash  no pane         ~/.herdr/worktrees/herdr-worktree-nav/fix-crash
                                     ↑ four columns past the longest label
 ```
 
@@ -108,7 +108,7 @@ herdr が開いているリポジトリがすべて並びます。Panes ビュ�
 
 ```
  / search repositories                                        4 repositories
- ◆ ShoMasegi/herdr-gh-nav     1 worktree, 2 panes    ~/Workspace/herdr-gh-nav
+ ◆ ShoMasegi/herdr-worktree-nav     1 worktree, 2 panes    ~/Workspace/herdr-worktree-nav
    ShoMasegi/harbour-backend  3 worktrees, 5 panes   ~/Workspace/harbour/harbour-backend
    nightowl/harken            1 worktree, 1 pane     ~/Workspace/nightowl/harken
    nightowl/harken_android    1 worktree, 3 panes    ~/Workspace/nightowl/harken_android
@@ -264,7 +264,7 @@ new space       on its own
 ## 診断
 
 ```sh
-herdr-gh-nav dump
+herdr-worktree-nav dump
 ```
 
 ピッカーが描画するはずのツリーをプレーンテキストで出力します。「herdr や git が妙な値を返している」のか「描画が間違っている」のかを切り分けるのに使えます。`HERDR_SOCKET_PATH` が必要なので、herdr セッション内の pane から実行してください。

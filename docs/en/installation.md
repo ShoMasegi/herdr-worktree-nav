@@ -18,7 +18,7 @@ Optional:
 ## Install
 
 ```sh
-herdr plugin install ShoMasegi/herdr-gh-nav
+herdr plugin install ShoMasegi/herdr-worktree-nav
 ```
 
 herdr shows you the manifest and the commands it will run before anything happens. Read them
@@ -31,7 +31,7 @@ Then bind the actions to keys; see [Configuration](configuration.md).
 `herdr plugin install` runs `scripts/fetch-or-build.sh` once, after you confirm.
 
 1. It works out the version from `herdr-plugin.toml` and the target from `uname`.
-2. It downloads `herdr-gh-nav-<version>-<target>.tar.gz` from the matching GitHub release
+2. It downloads `herdr-worktree-nav-<version>-<target>.tar.gz` from the matching GitHub release
    along with `SHA256SUMS`, and verifies the archive against it.
 3. On **any** miss — no release, no network, an unsupported platform, a checksum mismatch —
    it falls back to `cargo build --release`.
@@ -43,14 +43,14 @@ leaving a half-installed plugin.
 ## Updating
 
 ```sh
-herdr plugin uninstall herdr-gh-nav
-herdr plugin install ShoMasegi/herdr-gh-nav
+herdr plugin uninstall herdr-worktree-nav
+herdr plugin install ShoMasegi/herdr-worktree-nav
 ```
 
 ## Uninstall
 
 ```sh
-herdr plugin uninstall herdr-gh-nav
+herdr plugin uninstall herdr-worktree-nav
 ```
 
 Remove the `[[keys.command]]` entries you added, then `herdr server reload-config`.
@@ -62,9 +62,9 @@ own "Delete worktree checkout" if you want them gone.
 ## Developing against a checkout
 
 ```sh
-git clone https://github.com/ShoMasegi/herdr-gh-nav
-cd herdr-gh-nav
-cargo build --release && mkdir -p bin && ln -sf ../target/release/herdr-gh-nav bin/herdr-gh-nav
+git clone https://github.com/ShoMasegi/herdr-worktree-nav
+cd herdr-worktree-nav
+cargo build --release && mkdir -p bin && ln -sf ../target/release/herdr-worktree-nav bin/herdr-worktree-nav
 herdr plugin link .
 ```
 
@@ -75,7 +75,7 @@ pointing at the fresh binary, and the next time a picker opens it runs the new c
 To go back to the released version:
 
 ```sh
-herdr plugin unlink herdr-gh-nav
+herdr plugin unlink herdr-worktree-nav
 ```
 
 ## Windows

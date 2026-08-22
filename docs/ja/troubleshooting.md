@@ -5,13 +5,13 @@
 ## まずここから
 
 ```sh
-herdr plugin log list --plugin herdr-gh-nav --limit 5
+herdr plugin log list --plugin herdr-worktree-nav --limit 5
 ```
 
 herdr は実行したプラグインコマンドを、終了コードと stderr つきで記録しています。ピッカーが出てこない場合、ほぼ必ずここに理由が残っています。
 
 ```sh
-herdr-gh-nav dump
+herdr-worktree-nav dump
 ```
 
 Panes ビューが描画するはずのツリーを出力します。`dump` が正しくてピッカーが誤っていれば描画の問題、`dump` の時点で誤っていれば herdr か git が返した内容の問題です。`HERDR_SOCKET_PATH` が必要なので herdr の pane 内から実行してください。
@@ -21,13 +21,13 @@ Panes ビューが描画するはずのツリーを出力します。`dump` が�
 まずアクションが登録されているか確認します。
 
 ```sh
-herdr plugin action list --plugin herdr-gh-nav
+herdr plugin action list --plugin herdr-worktree-nav
 ```
 
 アクションは出ているのにキーが効かない場合は、プラグインではなくキーバインドの問題です。`[[keys.command]]` の記述を確認し、`herdr server reload-config` を実行してください。切り分けにはアクションを直接実行します。
 
 ```sh
-herdr plugin action invoke herdr-gh-nav.open-panes
+herdr plugin action invoke herdr-worktree-nav.open-panes
 ```
 
 ## 「Unable to spawn … because it does not exist」
@@ -35,7 +35,7 @@ herdr plugin action invoke herdr-gh-nav.open-panes
 `bin/` にバイナリがありません。開発用チェックアウトの場合:
 
 ```sh
-cargo build --release && mkdir -p bin && ln -sf ../target/release/herdr-gh-nav bin/herdr-gh-nav
+cargo build --release && mkdir -p bin && ln -sf ../target/release/herdr-worktree-nav bin/herdr-worktree-nav
 ```
 
 `herdr plugin link` はビルドステップを実行しないため、link したチェックアウトでは手動でビルドする必要があります。
@@ -43,7 +43,7 @@ cargo build --release && mkdir -p bin && ln -sf ../target/release/herdr-gh-nav b
 インストール済みのプラグインの場合は入れ直してください。ビルドステップが取得またはビルドします。
 
 ```sh
-herdr plugin uninstall herdr-gh-nav && herdr plugin install ShoMasegi/herdr-gh-nav
+herdr plugin uninstall herdr-worktree-nav && herdr plugin install ShoMasegi/herdr-worktree-nav
 ```
 
 ## 「HERDR_SOCKET_PATH is not set」
@@ -98,7 +98,7 @@ checkout は `<directory>/<repo>/<branch-slug>` に置かれます。変更す�
 herdr 側は CI ではテストできません（サーバーが無いため）。リリース前に実セッションで一通り確認してください。
 
 - [ ] `herdr plugin link .` で 2 つのアクションと 2 つの pane エントリポイントが登録される（`herdr plugin list --json`）
-- [ ] ピッカーが herdr の枠付き（タイトル `herdr-gh-nav`）の中央寄せ popup として開き、周囲にセッションが見えたままで、**自分自身は一覧に出ない**
+- [ ] ピッカーが herdr の枠付き（タイトル `herdr-worktree-nav`）の中央寄せ popup として開き、周囲にセッションが見えたままで、**自分自身は一覧に出ない**
 - [ ] pane の無い worktree が `no pane` 付きで出て、`Enter` で開ける
 - [ ] `↑`/`↓` が pane と「何も動いていない checkout」にだけ止まる。リポジトリの見出しと、既に pane を持つ checkout は飛ばされ、表示自体は残る
 - [ ] `←`/`→` が 1 押しで 1 リポジトリ動き、その最初の pane または最初の idle checkout に着く。端で巻き戻り、リポジトリに属さない pane 群も対象に含まれる
@@ -121,4 +121,4 @@ herdr 側は CI ではテストできません（サーバーが無いため）�
 - [ ] herdr サーバーを停止した状態でバイナリを実行すると、panic せず説明を出して終了する
 - [ ] `Tab` を押しても枠のタイトルは変わらず（ビュー名ではなくプラグイン名のため）、検索行とキーヒントだけがビューに追従する
 
-popup はアドレス指定できないため、`herdr pane read` や `herdr pane send-keys` でピッカーを操作できません。同じコードをキー入力付きで確認するには、通常の pane で `./bin/herdr-gh-nav pane panes` を実行してください。枠だけは目視で確認する必要があります。
+popup はアドレス指定できないため、`herdr pane read` や `herdr pane send-keys` でピッカーを操作できません。同じコードをキー入力付きで確認するには、通常の pane で `./bin/herdr-worktree-nav pane panes` を実行してください。枠だけは目視で確認する必要があります。

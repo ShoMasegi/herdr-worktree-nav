@@ -3,8 +3,8 @@
 [日本語](../ja/usage.md)
 
 Two pickers, opened by two actions, toggled with `Tab`. Each opens as a popup: a centred box
-over the live session, framed by herdr in your accent colour and titled `herdr-gh-nav`, at
-the same proportions the session navigator uses.
+over the live session, framed by herdr in your accent colour and titled
+`herdr-worktree-nav`, at the same proportions the session navigator uses.
 
 Inside that frame they are drawn the way the navigator is — the same search line, breadcrumb
 and key hint, the same connected tree glyphs, the same status glyphs. The keys the navigator
@@ -96,11 +96,11 @@ to the keys above, `Esc` abandons it, and `Ctrl-U` empties it without leaving se
 ### Reading a row
 
 ```
- ◆ ● ShoMasegi/herdr-gh-nav (2)
-   └── ● main                       ~/Workspace/herdr-gh-nav
+ ◆ ● ShoMasegi/herdr-worktree-nav (2)
+   └── ● main                       ~/Workspace/herdr-worktree-nav
  ◆    ├── ● claude                  w7:p2
       └── · shell                   w7:p3
-   └── · fix/crash  no pane         ~/.herdr/worktrees/herdr-gh-nav/fix-crash
+   └── · fix/crash  no pane         ~/.herdr/worktrees/herdr-worktree-nav/fix-crash
                                     ↑ four columns past the longest label
 ```
 
@@ -161,7 +161,7 @@ panes view first.
 
 ```
  / search repositories                                        4 repositories
- ◆ ShoMasegi/herdr-gh-nav     1 worktree, 2 panes    ~/Workspace/herdr-gh-nav
+ ◆ ShoMasegi/herdr-worktree-nav     1 worktree, 2 panes    ~/Workspace/herdr-worktree-nav
    ShoMasegi/harbour-backend  3 worktrees, 5 panes   ~/Workspace/harbour/harbour-backend
    nightowl/harken            1 worktree, 1 pane     ~/Workspace/nightowl/harken
    nightowl/harken_android    1 worktree, 3 panes    ~/Workspace/nightowl/harken_android
@@ -374,7 +374,7 @@ either did not touch anything (the fetch) or completed. The same message also go
 ## Diagnostics
 
 ```sh
-herdr-gh-nav dump
+herdr-worktree-nav dump
 ```
 
 Prints the tree the picker would draw, as plain text. Useful for separating "herdr or git

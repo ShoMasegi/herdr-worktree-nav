@@ -1,16 +1,16 @@
 [package]
-name = "herdr-gh-nav"
+name = "herdr-worktree-nav"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.82"
-description = "Navigate herdr panes by GitHub repo and worktree, and turn any branch into a worktree pane."
+description = "Navigate herdr panes by repository and worktree, and turn any branch into a worktree pane."
 license = "MIT"
-repository = "https://github.com/ShoMasegi/herdr-gh-nav"
+repository = "https://github.com/ShoMasegi/herdr-worktree-nav"
 readme = "README.md"
 publish = false
 
 [[bin]]
-name = "herdr-gh-nav"
+name = "herdr-worktree-nav"
 path = "src/main.rs"
 
 [profile.release]

@@ -5,14 +5,14 @@
 Rust のバイナリ 1 つです。herdr はこれを 3 通りの方法で起動します。
 
 ```
-キーバインド ──▶ herdr-gh-nav action open-panes
+キーバインド ──▶ herdr-worktree-nav action open-panes
                      │  HERDR_PLUGIN_CONTEXT_JSON を読む
                      │  呼び出し元の pane とリポジトリを env で渡す
                      ▼
-                 plugin.pane.open ──▶ herdr-gh-nav pane panes    ─▶ ピッカー
-                                      herdr-gh-nav pane branches
+                 plugin.pane.open ──▶ herdr-worktree-nav pane panes    ─▶ ピッカー
+                                      herdr-worktree-nav pane branches
 
-診断 ──────────▶ herdr-gh-nav dump
+診断 ──────────▶ herdr-worktree-nav dump
 ```
 
 アクションはピッカーそのものではありません。アクションはプラグインディレクトリを作業ディレクトリとして起動され、利用者がどこにいたかを知りません。そのため、herdr から渡されたコンテキストを読み、正しい場所に pane を開くことだけが仕事です。

@@ -25,7 +25,7 @@ pub fn load() -> Chrome {
 /// The first candidate is derived from `HERDR_PLUGIN_CONFIG_DIR`, which herdr injects and
 /// which sits at `<herdr config>/plugins/config/<plugin id>` — following herdr's own answer
 /// beats guessing at it. The rest are the conventional locations, for a plugin run outside
-/// that environment (`herdr-gh-nav dump` from a plain shell, for instance).
+/// that environment (`herdr-worktree-nav dump` from a plain shell, for instance).
 fn config_path() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("HERDR_PLUGIN_CONFIG_DIR") {
         // <herdr config>/plugins/config/<plugin id> -> <herdr config>

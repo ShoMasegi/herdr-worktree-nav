@@ -8,8 +8,8 @@
 use std::path::Path;
 use std::process::Command;
 
-use herdr_gh_nav::adapter::GitCli;
-use herdr_gh_nav::port::{GitPort, RefKind};
+use herdr_worktree_nav::adapter::GitCli;
+use herdr_worktree_nav::port::{GitPort, RefKind};
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) {
@@ -361,12 +361,12 @@ fn recognises_a_github_origin_and_ignores_anything_else() {
             "remote",
             "add",
             "origin",
-            "git@github.com:ShoMasegi/herdr-gh-nav.git",
+            "git@github.com:ShoMasegi/herdr-worktree-nav.git",
         ],
     );
     assert_eq!(
         GitCli.github_slug(&root).unwrap().as_deref(),
-        Some("ShoMasegi/herdr-gh-nav")
+        Some("ShoMasegi/herdr-worktree-nav")
     );
 
     git(

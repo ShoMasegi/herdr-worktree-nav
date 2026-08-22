@@ -215,15 +215,15 @@ mod tests {
     #[test]
     fn extracts_the_slug_from_every_github_remote_form() {
         for url in [
-            "https://github.com/ShoMasegi/herdr-gh-nav.git",
-            "https://github.com/ShoMasegi/herdr-gh-nav",
-            "git@github.com:ShoMasegi/herdr-gh-nav.git",
-            "ssh://git@github.com/ShoMasegi/herdr-gh-nav.git",
-            "  https://github.com/ShoMasegi/herdr-gh-nav.git\n",
+            "https://github.com/ShoMasegi/herdr-worktree-nav.git",
+            "https://github.com/ShoMasegi/herdr-worktree-nav",
+            "git@github.com:ShoMasegi/herdr-worktree-nav.git",
+            "ssh://git@github.com/ShoMasegi/herdr-worktree-nav.git",
+            "  https://github.com/ShoMasegi/herdr-worktree-nav.git\n",
         ] {
             assert_eq!(
                 github_slug_from_url(url).as_deref(),
-                Some("ShoMasegi/herdr-gh-nav"),
+                Some("ShoMasegi/herdr-worktree-nav"),
                 "failed for {url}"
             );
         }

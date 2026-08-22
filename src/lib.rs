@@ -1,4 +1,4 @@
-//! herdr-gh-nav — navigate herdr panes by repo and worktree, and turn branches into
+//! herdr-worktree-nav — navigate herdr panes by repo and worktree, and turn branches into
 //! worktree panes.
 //!
 //! The crate is split so that the interesting decisions are testable without herdr or a
@@ -17,4 +17,4 @@ pub mod port;
 pub mod ui;
 
 /// Must match `id` in `herdr-plugin.toml`; herdr addresses panes and actions by it.
-pub const PLUGIN_ID: &str = "herdr-gh-nav";
+pub const PLUGIN_ID: &str = "herdr-worktree-nav";

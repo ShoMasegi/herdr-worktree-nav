@@ -126,7 +126,7 @@ First release. Two overlay pickers for herdr, backed by one Rust binary.
   into one with success and then does not move the pane, so the picker refuses up front.
 - **Pull request annotations** when `gh` is installed and authenticated. Entirely optional;
   branches are read from git so the picker works offline and against non-GitHub remotes.
-- `herdr-gh-nav dump`, a diagnostic that prints the resolved tree as plain text.
+- `herdr-worktree-nav dump`, a diagnostic that prints the resolved tree as plain text.
 - **The look of herdr's session navigator.** Both pickers open as popups over the live
   session — framed by herdr in your accent colour, at the navigator's own proportions — and
   inside that frame use its search line, tree glyphs, current-row gutter, meta column,
@@ -144,5 +144,5 @@ First release. Two overlay pickers for herdr, backed by one Rust binary.
 - Worktrees are placed wherever herdr is configured to put them. This plugin never computes
   that path itself.
 
-[Unreleased]: https://github.com/ShoMasegi/herdr-gh-nav/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/ShoMasegi/herdr-gh-nav/releases/tag/v0.1.0
+[Unreleased]: https://github.com/ShoMasegi/herdr-worktree-nav/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ShoMasegi/herdr-worktree-nav/releases/tag/v0.1.0

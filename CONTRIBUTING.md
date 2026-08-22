@@ -8,9 +8,9 @@ translation rules — live in [CLAUDE.md](./CLAUDE.md). This file is only the pr
 ## Getting set up
 
 ```sh
-git clone https://github.com/ShoMasegi/herdr-gh-nav
-cd herdr-gh-nav
-cargo build --release && mkdir -p bin && ln -sf ../target/release/herdr-gh-nav bin/herdr-gh-nav
+git clone https://github.com/ShoMasegi/herdr-worktree-nav
+cd herdr-worktree-nav
+cargo build --release && mkdir -p bin && ln -sf ../target/release/herdr-worktree-nav bin/herdr-worktree-nav
 herdr plugin link .
 ```
 
@@ -20,8 +20,8 @@ hand. After that `cargo build --release` is enough; the symlink keeps `bin/` cur
 Try it:
 
 ```sh
-herdr plugin action invoke herdr-gh-nav.open-panes
-herdr-gh-nav dump          # from a pane inside a herdr session
+herdr plugin action invoke herdr-worktree-nav.open-panes
+herdr-worktree-nav dump          # from a pane inside a herdr session
 ```
 
 ## Before you open a pull request
@@ -69,7 +69,7 @@ say in the pull request which parts you covered.
 Include:
 
 - `herdr --version` and your OS,
-- the output of `herdr plugin log list --plugin herdr-gh-nav --limit 5`,
-- the output of `herdr-gh-nav dump` if the picker showed something surprising.
+- the output of `herdr plugin log list --plugin herdr-worktree-nav --limit 5`,
+- the output of `herdr-worktree-nav dump` if the picker showed something surprising.
 
 Those three answer most of the questions a maintainer would otherwise have to ask.

@@ -69,9 +69,9 @@ jobs:
         run: ./scripts/fetch-or-build.sh
       - name: The binary runs
         run: |
-          ./bin/herdr-gh-nav 2>&1 | grep -q 'herdr-gh-nav'
+          ./bin/herdr-worktree-nav 2>&1 | grep -q 'herdr-worktree-nav'
           # Without a herdr socket it must fail with an explanation, not a panic.
-          if ./bin/herdr-gh-nav dump 2>err.txt; then
+          if ./bin/herdr-worktree-nav dump 2>err.txt; then
             echo "expected a failure with no herdr socket"; exit 1
           fi
           grep -q 'HERDR_SOCKET_PATH' err.txt

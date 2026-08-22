@@ -39,7 +39,7 @@ impl SocketHerdr {
     pub fn from_env() -> Result<Self> {
         let path = std::env::var_os("HERDR_SOCKET_PATH").ok_or_else(|| {
             anyhow!(
-                "HERDR_SOCKET_PATH is not set. herdr-gh-nav has to be run by herdr \
+                "HERDR_SOCKET_PATH is not set. herdr-worktree-nav has to be run by herdr \
                  (as a plugin action or pane), not directly from a shell."
             )
         })?;
@@ -53,7 +53,7 @@ impl SocketHerdr {
     fn call(&self, method: &str, params: Value) -> Result<Value> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let request = json!({
-            "id": format!("herdr-gh-nav:{id}"),
+            "id": format!("herdr-worktree-nav:{id}"),
             "method": method,
             // `params` is required even when empty; omitting it is an invalid_request.
             "params": params,

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Produce bin/herdr-gh-nav. herdr runs this once, at `herdr plugin install`.
+# Produce bin/herdr-worktree-nav. herdr runs this once, at `herdr plugin install`.
 #
 # Fast path: download the release binary matching this checkout's version and platform, and
 # verify its SHA-256 against the checksums published alongside it. On ANY miss — no matching
@@ -8,11 +8,11 @@
 # exists, and never hard-fails without one either.
 set -eu
 
-REPO="ShoMasegi/herdr-gh-nav"
+REPO="ShoMasegi/herdr-worktree-nav"
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-log() { printf 'herdr-gh-nav: %s\n' "$*" >&2; }
+log() { printf 'herdr-worktree-nav: %s\n' "$*" >&2; }
 
 version=$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' herdr-plugin.toml | head -n 1)
 [ -n "$version" ] || { log "could not read the version from herdr-plugin.toml"; exit 1; }
@@ -33,7 +33,7 @@ download() {
     command -v curl >/dev/null 2>&1 || return 1
 
     base="https://github.com/$REPO/releases/download/v$version"
-    archive="herdr-gh-nav-$version-$target.tar.gz"
+    archive="herdr-worktree-nav-$version-$target.tar.gz"
     tmp=$(mktemp -d) || return 1
     # Whatever happens next, do not leave the download lying around.
     trap 'rm -rf "$tmp"' EXIT
@@ -57,11 +57,11 @@ download() {
     [ "$actual" = "$expected" ] || { log "checksum mismatch for $archive"; return 1; }
 
     tar -xzf "$tmp/$archive" -C "$tmp" || return 1
-    [ -f "$tmp/herdr-gh-nav" ] || return 1
+    [ -f "$tmp/herdr-worktree-nav" ] || return 1
     # Replace rather than write through: a development checkout may have symlinked this.
-    rm -f bin/herdr-gh-nav
-    mv "$tmp/herdr-gh-nav" bin/herdr-gh-nav
-    chmod +x bin/herdr-gh-nav
+    rm -f bin/herdr-worktree-nav
+    mv "$tmp/herdr-worktree-nav" bin/herdr-worktree-nav
+    chmod +x bin/herdr-worktree-nav
     return 0
 }
 
@@ -77,8 +77,8 @@ command -v cargo >/dev/null 2>&1 || {
     exit 1
 }
 cargo build --release
-# Not a plain cp: bin/herdr-gh-nav is often a symlink to exactly this file in a checkout,
+# Not a plain cp: bin/herdr-worktree-nav is often a symlink to exactly this file in a checkout,
 # and copying a file onto itself is at best an error and at worst a truncation.
-rm -f bin/herdr-gh-nav
-cp target/release/herdr-gh-nav bin/herdr-gh-nav
+rm -f bin/herdr-worktree-nav
+cp target/release/herdr-worktree-nav bin/herdr-worktree-nav
 log "built v$version from source"

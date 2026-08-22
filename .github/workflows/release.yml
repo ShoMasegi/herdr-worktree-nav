@@ -48,8 +48,8 @@ jobs:
         shell: bash
         run: |
           version=$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' herdr-plugin.toml | head -n 1)
-          archive="herdr-gh-nav-$version-${{ matrix.target }}.tar.gz"
-          tar -czf "$archive" -C "target/${{ matrix.target }}/release" herdr-gh-nav
+          archive="herdr-worktree-nav-$version-${{ matrix.target }}.tar.gz"
+          tar -czf "$archive" -C "target/${{ matrix.target }}/release" herdr-worktree-nav
           # sha256sum on Linux, shasum on macOS; both print "<hash>  <file>".
           if command -v sha256sum >/dev/null; then
             sha256sum "$archive" > "$archive.sha256"
