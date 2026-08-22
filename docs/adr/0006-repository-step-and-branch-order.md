@@ -44,8 +44,12 @@ destination step already behaved this way; three steps under one rule beats two 
 
 Four things follow from this that a future reader might otherwise undo.
 
-**The keys are `Ctrl-` keys.** The branch list is a search box with no mode to enter, so `o`
-and `r` are branch names being typed, not commands. Any ordering control has to be a chord.
+**The keys are `Ctrl-` keys.** The branch list was a search box with no mode to enter, so `o`
+and `r` were branch names being typed, not commands. Any ordering control had to be a chord.
+
+> Superseded in part: the branch list gained the panes view's `/` mode, so `o` and `r` are
+> also plain letters now. The chords stayed — they are what lets an order be changed without
+> abandoning what has been typed, which is the whole reason `Esc` can afford to discard it.
 
 **The chosen order beats the fuzzy score.** Filtering used to sort by match score. It now
 sorts by the chosen order, and the score only decides membership. Score sorting is genuinely

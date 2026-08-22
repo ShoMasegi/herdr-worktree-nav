@@ -2,7 +2,7 @@
 source: src/ui/render.rs
 expression: "branches_screen(&state, 92, 12)"
 ---
-" / search branches█                                                ⇅ updated ↓   5 branches "
+" / search branches                                                 ⇅ updated ↓   5 branches "
 "────────────────────────────────────────────────────────────────────────────────────────────"
 "   · main         local        latest work on main                                          "
 "   ● feat/login   running      #123 Add the login screen (draft)                            "
@@ -13,4 +13,4 @@ expression: "branches_screen(&state, 92, 12)"
 "                                                                                            "
 "                                                                                            "
 " me/app · feat/login · open in w2:p1 · /wt/feat-login · #123 Add the login screen (draft) ──"
-" type to filter  ↵ choose  ctrl+o order  ctrl+r reverse  ctrl+f fetch  ⇥ panes  esc back    "
+" ↵ choose  j/k move  / search  f fetch  o order  r reverse  ⇥ panes  esc back  q close      "

@@ -477,30 +477,33 @@ pub(crate) fn truncate(text: &str, width: usize) -> String {
 // ---------------------------------------------------------------------------------------
 
 const HELP_REPO: &[&str] = &[
-    "type to filter  \u{21b5} branches  \u{21e5} panes  ctrl+u clear  esc close",
-    "\u{21b5} branches  \u{21e5} panes  esc close",
-    "\u{21b5} branches  esc",
+    "\u{21b5} branches  j/k move  / search  \u{21e5} panes  q close",
+    "\u{21b5} branches  / search  \u{21e5} panes  q close",
+    "\u{21b5} branches  esc close",
+];
+const HELP_REPO_SEARCH: &[&str] = &[
+    "\u{21b5} branches  ctrl+u clear  esc cancel  \u{2191}\u{2193} move",
+    "\u{21b5} branches  esc cancel",
 ];
 /// The branch step, when Esc has a repository list to go back to. Widest first, each rung
-/// dropping the least useful thing left — `type to filter` explains the whole interaction
-/// and is the last to go.
+/// dropping the least useful thing left.
 const HELP_BRANCH_BACK: &[&str] = &[
-    "type to filter  \u{21b5} choose  ctrl+o order  ctrl+r reverse  ctrl+f fetch  \u{21e5} panes  ctrl+u clear  esc back",
-    "type to filter  \u{21b5} choose  ctrl+o order  ctrl+r reverse  ctrl+f fetch  \u{21e5} panes  esc back",
-    "type to filter  \u{21b5} choose  ctrl+o order  ctrl+f fetch  \u{21e5} panes  esc back",
-    "type to filter  \u{21b5} choose  \u{21e5} panes  esc back",
-    "\u{21b5} choose  esc back",
+    "\u{21b5} choose  j/k move  / search  f fetch  o order  r reverse  \u{21e5} panes  esc back  q close",
+    "\u{21b5} choose  j/k move  / search  f fetch  o order  r reverse  esc back",
+    "\u{21b5} choose  / search  f fetch  o order  esc back",
+    "\u{21b5} choose  / search  esc back",
+    "\u{21b5} choose  esc",
 ];
 /// The same, with only one repository open: Esc has nowhere to go but out.
 const HELP_BRANCH: &[&str] = &[
-    "type to filter  \u{21b5} choose  ctrl+o order  ctrl+r reverse  ctrl+f fetch  \u{21e5} panes  ctrl+u clear  esc close",
-    "type to filter  \u{21b5} choose  ctrl+o order  ctrl+r reverse  ctrl+f fetch  \u{21e5} panes  esc close",
-    "type to filter  \u{21b5} choose  ctrl+o order  ctrl+f fetch  \u{21e5} panes  esc close",
-    "type to filter  \u{21b5} choose  \u{21e5} panes  esc close",
+    "\u{21b5} choose  j/k move  / search  f fetch  o order  r reverse  \u{21e5} panes  q close",
+    "\u{21b5} choose  j/k move  / search  f fetch  o order  r reverse  q close",
+    "\u{21b5} choose  / search  f fetch  o order  q close",
+    "\u{21b5} choose  / search  esc close",
     "\u{21b5} choose  esc",
 ];
 const HELP_DESTINATION: &[&str] = &[
-    "\u{21b5} open here  \u{2191}\u{2193} move  esc back",
+    "\u{21b5} open here  \u{2191}\u{2193} move  esc back  q close",
     "\u{21b5} open  esc back",
 ];
 /// While a step that can still be abandoned is running.
@@ -516,6 +519,14 @@ const SPINNER: [&str; 10] = [
     "\u{2807}", "\u{280f}",
 ];
 
+/// Searching either list: the `Ctrl-` forms keep working here, which is how an order or a
+/// fetch is reached without abandoning what has been typed.
+const HELP_BRANCH_SEARCH: &[&str] = &[
+    "\u{21b5} choose  ctrl+u clear  esc cancel  \u{2191}\u{2193} move  ctrl+f fetch  ctrl+o order  ctrl+r reverse",
+    "\u{21b5} choose  ctrl+u clear  esc cancel  \u{2191}\u{2193} move  ctrl+f fetch",
+    "\u{21b5} choose  esc cancel",
+];
+
 /// Widest branch name to give a column to. One very long name must not squeeze out the
 /// state and the pull request beside it.
 const MAX_BRANCH_COLUMN: usize = 40;
@@ -526,6 +537,18 @@ const STATE_COLUMN: usize = 12;
 const MAX_REPO_COLUMN: usize = 40;
 /// Fits "12 worktrees, 34 panes".
 const COUNT_COLUMN: usize = 22;
+
+/// The `/` lights up when the search field has the keyboard, exactly as it does in the
+/// panes view: it is the only thing on screen that says which of the two modes you are in.
+fn prompt_style(state: &BranchesState, theme: &Theme) -> Style {
+    if state.is_filtering() {
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        theme.dim()
+    }
+}
 
 fn spinner(frame: usize) -> &'static str {
     SPINNER[frame % SPINNER.len()]
@@ -545,7 +568,12 @@ pub fn draw_branches(frame: &mut Frame, state: &BranchesState, theme: &Theme) {
             render_rule(frame, panel.rule, theme);
             render_repo_rows(frame, state, theme, panel.body);
             render_detail(frame, &state.repo_detail(), theme, panel.detail);
-            frame.render_widget(footer(HELP_REPO, theme, panel.footer.width), panel.footer);
+            let variants = if state.is_filtering() {
+                HELP_REPO_SEARCH
+            } else {
+                HELP_REPO
+            };
+            frame.render_widget(footer(variants, theme, panel.footer.width), panel.footer);
         }
         Step::Branch => {
             frame.render_widget(
@@ -555,10 +583,10 @@ pub fn draw_branches(frame: &mut Frame, state: &BranchesState, theme: &Theme) {
             render_rule(frame, panel.rule, theme);
             render_branch_rows(frame, state, theme, panel.body);
             render_detail(frame, &state.detail(), theme, panel.detail);
-            let variants = if state.has_repo_step() {
-                HELP_BRANCH_BACK
-            } else {
-                HELP_BRANCH
+            let variants = match (state.is_filtering(), state.has_repo_step()) {
+                (true, _) => HELP_BRANCH_SEARCH,
+                (false, true) => HELP_BRANCH_BACK,
+                (false, false) => HELP_BRANCH,
             };
             frame.render_widget(footer(variants, theme, panel.footer.width), panel.footer);
         }
@@ -586,12 +614,7 @@ pub fn draw_branches(frame: &mut Frame, state: &BranchesState, theme: &Theme) {
 }
 
 fn branch_search_line(state: &BranchesState, theme: &Theme, width: u16) -> Paragraph<'static> {
-    let mut spans = vec![Span::styled(
-        " / ",
-        Style::default()
-            .fg(theme.accent)
-            .add_modifier(Modifier::BOLD),
-    )];
+    let mut spans = vec![Span::styled(" / ", prompt_style(state, theme))];
     if let Some(message) = state.message() {
         spans.push(Span::styled(
             message.to_string(),
@@ -604,7 +627,9 @@ fn branch_search_line(state: &BranchesState, theme: &Theme, width: u16) -> Parag
     } else {
         spans.push(Span::raw(state.query().to_string()));
     }
-    spans.push(Span::styled("\u{2588}", theme.dim()));
+    if state.is_filtering() {
+        spans.push(Span::styled("\u{2588}", theme.dim()));
+    }
     // Anything being waited for carries the spinner, so a picker that is busy never looks
     // like one that is stuck. A fetch says so louder than the listing that happens on its
     // own, because it was asked for.
@@ -647,12 +672,7 @@ fn branch_search_line(state: &BranchesState, theme: &Theme, width: u16) -> Parag
 const ORDER_GAP: usize = 3;
 
 fn repo_search_line(state: &BranchesState, theme: &Theme, width: u16) -> Paragraph<'static> {
-    let mut spans = vec![Span::styled(
-        " / ",
-        Style::default()
-            .fg(theme.accent)
-            .add_modifier(Modifier::BOLD),
-    )];
+    let mut spans = vec![Span::styled(" / ", prompt_style(state, theme))];
     if let Some(message) = state.message() {
         spans.push(Span::styled(
             message.to_string(),
@@ -665,7 +685,9 @@ fn repo_search_line(state: &BranchesState, theme: &Theme, width: u16) -> Paragra
     } else {
         spans.push(Span::raw(state.repo_query().to_string()));
     }
-    spans.push(Span::styled("\u{2588}", theme.dim()));
+    if state.is_filtering() {
+        spans.push(Span::styled("\u{2588}", theme.dim()));
+    }
 
     let count = count_of(state.repo_rows().len(), "repository", "repositories");
     let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
@@ -1559,6 +1581,14 @@ mod tests {
         state
     }
 
+    /// Open the search box and type into it: letters are commands until `/` is pressed.
+    fn search(state: &mut BranchesState, text: &str) {
+        state.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        for c in text.chars() {
+            state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+    }
+
     fn branches_screen(state: &BranchesState, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
@@ -1608,18 +1638,14 @@ mod tests {
     #[test]
     fn draws_the_offer_to_create_a_branch_that_does_not_exist() {
         let mut state = branches_state();
-        for c in "feat/brand-new".chars() {
-            state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
-        }
+        search(&mut state, "feat/brand-new");
         insta::assert_snapshot!(branches_screen(&state, 92, 10));
     }
 
     #[test]
     fn draws_the_step_it_is_on_instead_of_the_question_it_already_asked() {
         let mut state = branches_state();
-        for c in "chore".chars() {
-            state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
-        }
+        search(&mut state, "chore");
         state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         state.start_working(Stage::Fetching {
             remote: "origin".into(),
@@ -1631,9 +1657,7 @@ mod tests {
     #[test]
     fn draws_a_failure_where_the_step_was() {
         let mut state = branches_state();
-        for c in "chore".chars() {
-            state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
-        }
+        search(&mut state, "chore");
         state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         state.start_working(Stage::Fetching {
             remote: "origin".into(),
@@ -1646,9 +1670,7 @@ mod tests {
     #[test]
     fn draws_a_warning_instead_of_a_diagram_for_a_zoomed_tab() {
         let mut state = branches_state();
-        for c in "chore".chars() {
-            state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
-        }
+        search(&mut state, "chore");
         state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         // Move to the zoomed tab, which is the last destination in this fixture.
         state.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
@@ -1658,9 +1680,7 @@ mod tests {
     #[test]
     fn draws_the_destination_preview_at_a_realistic_size() {
         let mut state = branches_state();
-        for c in "chore".chars() {
-            state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
-        }
+        search(&mut state, "chore");
         state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         insta::assert_snapshot!(branches_screen(&state, 110, 22));
     }
@@ -1668,9 +1688,7 @@ mod tests {
     #[test]
     fn draws_the_destination_step_with_split_here_selected() {
         let mut state = branches_state();
-        for c in "chore".chars() {
-            state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
-        }
+        search(&mut state, "chore");
         state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         insta::assert_snapshot!(branches_screen(&state, 92, 12));
     }

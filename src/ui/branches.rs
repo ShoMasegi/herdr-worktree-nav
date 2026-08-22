@@ -127,6 +127,9 @@ pub struct BranchesState {
     query: String,
     order: Order,
 
+    /// `/` search mode: typing edits the query instead of running commands. Both lists
+    /// have one, and it is the same flag — only one of them is ever on screen.
+    filtering: bool,
     /// Frame of the spinner shown beside anything the picker is waiting for. Advanced by
     /// the caller's draw loop rather than read from a clock, so nothing here has to know
     /// the time.
@@ -181,6 +184,7 @@ impl BranchesState {
             cursor: 0,
             query: String::new(),
             order: Order::default(),
+            filtering: false,
             tick: 0,
             step: if has_repo_step {
                 Step::Repo
@@ -305,6 +309,11 @@ impl BranchesState {
 
     pub fn is_fetching(&self) -> bool {
         self.data.fetching
+    }
+
+    /// Whether the search field has the keyboard, rather than the list.
+    pub fn is_filtering(&self) -> bool {
+        self.filtering
     }
 
     /// Say something in the prompt line until the next key. Used for what a background job
@@ -609,10 +618,12 @@ impl BranchesState {
             };
         }
 
-        match self.step {
-            Step::Repo => self.handle_repo_key(key),
-            Step::Branch => self.handle_branch_key(key),
-            Step::Destination => self.handle_destination_key(key),
+        match (self.step, self.filtering) {
+            (Step::Repo, false) => self.handle_repo_key(key),
+            (Step::Repo, true) => self.handle_repo_search_key(key),
+            (Step::Branch, false) => self.handle_branch_key(key),
+            (Step::Branch, true) => self.handle_branch_search_key(key),
+            (Step::Destination, _) => self.handle_destination_key(key),
         }
     }
 
@@ -639,8 +650,34 @@ impl BranchesState {
 
     fn handle_repo_key(&mut self, key: KeyEvent) -> BranchAction {
         match key.code {
-            KeyCode::Esc => BranchAction::Quit,
+            KeyCode::Esc | KeyCode::Char('q') => BranchAction::Quit,
             KeyCode::Tab => BranchAction::ShowPanes,
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.move_cursor(1);
+                BranchAction::Consumed
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.move_cursor(-1);
+                BranchAction::Consumed
+            }
+            KeyCode::Char('/') => {
+                self.filtering = true;
+                BranchAction::Consumed
+            }
+            KeyCode::Enter => self.enter_repo(),
+            _ => BranchAction::Ignored,
+        }
+    }
+
+    fn handle_repo_search_key(&mut self, key: KeyEvent) -> BranchAction {
+        match key.code {
+            // Esc abandons the search rather than keeping it, as it does in the panes view.
+            KeyCode::Esc => {
+                self.filtering = false;
+                self.repo_query.clear();
+                self.refilter_repos();
+                BranchAction::Consumed
+            }
             KeyCode::Down => {
                 self.move_cursor(1);
                 BranchAction::Consumed
@@ -654,14 +691,9 @@ impl BranchesState {
                 self.refilter_repos();
                 BranchAction::Consumed
             }
-            KeyCode::Enter => {
-                let Some(index) = self.repo_visible.get(self.repo_cursor).copied() else {
-                    self.message = Some("no repository selected".into());
-                    return BranchAction::Consumed;
-                };
-                self.open_repo(index)
-            }
-            // Same bargain as the branch list: letters are text, not commands.
+            // Enter picks rather than committing the search: what you do with a narrowed
+            // list here is open the one thing left in it.
+            KeyCode::Enter => self.enter_repo(),
             KeyCode::Char(c) => {
                 self.repo_query.push(c);
                 self.refilter_repos();
@@ -671,10 +703,19 @@ impl BranchesState {
         }
     }
 
+    fn enter_repo(&mut self) -> BranchAction {
+        let Some(index) = self.repo_visible.get(self.repo_cursor).copied() else {
+            self.message = Some("no repository selected".into());
+            return BranchAction::Consumed;
+        };
+        self.open_repo(index)
+    }
+
     /// Move to a repository's branches. Whatever was on screen belonged to the repository
     /// being left, so it goes with it; the caller fills the gap before the next frame.
     fn open_repo(&mut self, index: usize) -> BranchAction {
         self.current = index;
+        self.filtering = false;
         self.data = BranchData {
             loading: true,
             ..BranchData::default()
@@ -690,15 +731,47 @@ impl BranchesState {
 
     fn handle_branch_key(&mut self, key: KeyEvent) -> BranchAction {
         match key.code {
-            KeyCode::Esc => {
-                if self.has_repo_step {
-                    self.step = Step::Repo;
-                    BranchAction::Consumed
-                } else {
-                    BranchAction::Quit
-                }
-            }
+            KeyCode::Esc => self.leave_branches(),
+            KeyCode::Char('q') => BranchAction::Quit,
             KeyCode::Tab => BranchAction::ShowPanes,
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.move_cursor(1);
+                BranchAction::Consumed
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.move_cursor(-1);
+                BranchAction::Consumed
+            }
+            KeyCode::Char('/') => {
+                self.filtering = true;
+                BranchAction::Consumed
+            }
+            KeyCode::Char('o') => {
+                self.reorder(self.order.cycle());
+                BranchAction::Consumed
+            }
+            KeyCode::Char('r') => {
+                self.reorder(self.order.reverse());
+                BranchAction::Consumed
+            }
+            KeyCode::Char('f') => BranchAction::Fetch {
+                repo_root: self.repo().repo_root.clone(),
+            },
+            KeyCode::Enter => self.choose_branch(),
+            _ => BranchAction::Ignored,
+        }
+    }
+
+    fn handle_branch_search_key(&mut self, key: KeyEvent) -> BranchAction {
+        match key.code {
+            // Esc abandons the search rather than keeping it, as it does in the panes view.
+            // What survives a search here is done with `Ctrl-`, which works in both modes.
+            KeyCode::Esc => {
+                self.filtering = false;
+                self.query.clear();
+                self.refilter();
+                BranchAction::Consumed
+            }
             KeyCode::Down => {
                 self.move_cursor(1);
                 BranchAction::Consumed
@@ -712,25 +785,9 @@ impl BranchesState {
                 self.refilter();
                 BranchAction::Consumed
             }
-            KeyCode::Enter => {
-                let Some(entry) = self.selected().cloned() else {
-                    self.message = Some("no branch selected".into());
-                    return BranchAction::Consumed;
-                };
-                // Already being worked on: go there. Asking where to put a second copy of
-                // work that is already open would be the wrong question.
-                if let BranchState::LivePane { pane_id, .. } = &entry.state {
-                    return BranchAction::Jump {
-                        pane_id: pane_id.clone(),
-                    };
-                }
-                self.chosen = Some(entry);
-                self.step = Step::Destination;
-                self.destination_cursor = 0;
-                BranchAction::Consumed
-            }
-            // The branch list is a search box: letters are text, not commands. There is no
-            // mode to enter, because typing a branch name is the common case.
+            // Enter picks rather than committing the search: narrowing the list here is how
+            // you reach the branch you are about to open, not a state worth stopping in.
+            KeyCode::Enter => self.choose_branch(),
             KeyCode::Char(c) => {
                 self.query.push(c);
                 self.refilter();
@@ -740,6 +797,37 @@ impl BranchesState {
         }
     }
 
+    /// Esc from the branch list: back to the repositories, or out if there are none to
+    /// choose between.
+    fn leave_branches(&mut self) -> BranchAction {
+        if self.has_repo_step {
+            self.step = Step::Repo;
+            self.filtering = false;
+            BranchAction::Consumed
+        } else {
+            BranchAction::Quit
+        }
+    }
+
+    fn choose_branch(&mut self) -> BranchAction {
+        let Some(entry) = self.selected().cloned() else {
+            self.message = Some("no branch selected".into());
+            return BranchAction::Consumed;
+        };
+        // Already being worked on: go there. Asking where to put a second copy of work that
+        // is already open would be the wrong question.
+        if let BranchState::LivePane { pane_id, .. } = &entry.state {
+            return BranchAction::Jump {
+                pane_id: pane_id.clone(),
+            };
+        }
+        self.chosen = Some(entry);
+        self.step = Step::Destination;
+        self.filtering = false;
+        self.destination_cursor = 0;
+        BranchAction::Consumed
+    }
+
     fn handle_destination_key(&mut self, key: KeyEvent) -> BranchAction {
         match key.code {
             KeyCode::Esc | KeyCode::Backspace => {
@@ -747,6 +835,7 @@ impl BranchesState {
                 self.chosen = None;
                 BranchAction::Consumed
             }
+            KeyCode::Char('q') => BranchAction::Quit,
             KeyCode::Down | KeyCode::Char('j') => {
                 self.move_cursor(1);
                 BranchAction::Consumed
@@ -834,6 +923,13 @@ mod tests {
         for c in text.chars() {
             state.handle_key(key(KeyCode::Char(c)));
         }
+    }
+
+    /// Open the search box and type into it, which is what most of these tests are after.
+    fn search(state: &mut BranchesState, text: &str) {
+        state.handle_key(key(KeyCode::Char('/')));
+        assert!(state.is_filtering(), "`/` should have taken the keyboard");
+        type_in(state, text);
     }
 
     fn local(name: &str, at: i64) -> GitRef {
@@ -981,11 +1077,88 @@ mod tests {
     }
 
     #[test]
-    fn typing_filters_immediately_with_no_mode_to_enter() {
+    fn typing_filters_once_the_search_box_has_been_opened() {
         let mut state = state();
-        type_in(&mut state, "chore");
+        search(&mut state, "chore");
         assert_eq!(state.query(), "chore");
         assert_eq!(names(&state)[0], "chore/deps");
+    }
+
+    #[test]
+    fn letters_are_commands_until_slash_is_pressed() {
+        let mut state = state();
+        assert!(!state.is_filtering());
+
+        // `j` and `k` move rather than typing themselves into the query.
+        assert_eq!(
+            state.handle_key(key(KeyCode::Char('j'))),
+            BranchAction::Consumed
+        );
+        assert_eq!(state.cursor(), 1);
+        state.handle_key(key(KeyCode::Char('k')));
+        assert_eq!(state.cursor(), 0);
+        assert_eq!(state.query(), "");
+
+        // The `Ctrl-` shortcuts lose their `Ctrl-`.
+        state.handle_key(key(KeyCode::Char('o')));
+        assert_eq!(state.order().key, SortKey::Updated);
+        state.handle_key(key(KeyCode::Char('r')));
+        assert!(state.order().reversed);
+        assert_eq!(
+            state.handle_key(key(KeyCode::Char('f'))),
+            BranchAction::Fetch {
+                repo_root: "/src/app".into()
+            }
+        );
+        assert_eq!(state.query(), "", "none of that was typing");
+
+        // And `q` closes, as it does in the panes view.
+        assert_eq!(
+            state.handle_key(key(KeyCode::Char('q'))),
+            BranchAction::Quit
+        );
+    }
+
+    #[test]
+    fn escape_abandons_the_search_and_gives_the_keyboard_back_to_the_list() {
+        let mut state = state();
+        search(&mut state, "chore");
+        // The match, plus the offer to create a branch called `chore`.
+        assert_eq!(names(&state), ["chore/deps", "chore"]);
+
+        assert_eq!(state.handle_key(key(KeyCode::Esc)), BranchAction::Consumed);
+        assert!(!state.is_filtering());
+        assert_eq!(state.query(), "", "the filter goes with it");
+        assert_eq!(names(&state).len(), 3);
+
+        // A second Esc is the one that leaves, now that the search box has let go.
+        assert_eq!(state.handle_key(key(KeyCode::Esc)), BranchAction::Quit);
+    }
+
+    #[test]
+    fn the_ctrl_forms_still_work_while_searching() {
+        // Which is what makes abandoning the search to reach an order unnecessary.
+        let mut state = state();
+        search(&mut state, "a");
+        assert_eq!(names(&state)[0], "feat/live");
+
+        ctrl(&mut state, 'o');
+        assert!(state.is_filtering(), "still typing");
+        assert_eq!(state.query(), "a", "and `o` did not join the query");
+        assert_eq!(names(&state)[0], "main");
+    }
+
+    #[test]
+    fn choosing_a_repository_hands_the_keyboard_to_the_branch_list() {
+        let mut state = two_repos("/src/app");
+        search(&mut state, "tools");
+        assert!(state.is_filtering());
+        state.handle_key(key(KeyCode::Enter));
+        assert_eq!(state.step(), Step::Branch);
+        assert!(
+            !state.is_filtering(),
+            "a step arrives at its list, not in its search box"
+        );
     }
 
     #[test]
@@ -994,7 +1167,7 @@ mod tests {
         // so the offer cannot be conditional on the list being empty. It goes last so it
         // never gets in the way of an existing branch.
         let mut state = state();
-        type_in(&mut state, "dep");
+        search(&mut state, "dep");
         let rows = state.rows();
         assert_eq!(
             rows[0].name, "chore/deps",
@@ -1007,7 +1180,7 @@ mod tests {
     #[test]
     fn a_name_that_matches_nothing_becomes_an_offer_to_create_it() {
         let mut state = state();
-        type_in(&mut state, "feat/brand-new");
+        search(&mut state, "feat/brand-new");
         assert_eq!(names(&state), ["feat/brand-new"]);
         assert_eq!(state.rows()[0].state, BranchState::New);
     }
@@ -1024,7 +1197,7 @@ mod tests {
             "@",
         ] {
             let mut state = state();
-            type_in(&mut state, bad);
+            search(&mut state, bad);
             assert!(
                 state.rows().iter().all(|e| e.state != BranchState::New),
                 "{bad} should not be offered"
@@ -1035,7 +1208,7 @@ mod tests {
     #[test]
     fn an_existing_branch_is_never_duplicated_by_the_create_offer() {
         let mut state = state();
-        type_in(&mut state, "main");
+        search(&mut state, "main");
         assert_eq!(names(&state), ["main"]);
         assert_ne!(state.rows()[0].state, BranchState::New);
     }
@@ -1043,7 +1216,7 @@ mod tests {
     #[test]
     fn picking_a_branch_that_is_already_running_jumps_instead_of_asking_where() {
         let mut state = state();
-        type_in(&mut state, "feat/live");
+        search(&mut state, "feat/live");
         assert_eq!(
             state.handle_key(key(KeyCode::Enter)),
             BranchAction::Jump {
@@ -1056,7 +1229,7 @@ mod tests {
     #[test]
     fn picking_any_other_branch_moves_to_the_destination_step() {
         let mut state = state();
-        type_in(&mut state, "chore");
+        search(&mut state, "chore");
         assert_eq!(
             state.handle_key(key(KeyCode::Enter)),
             BranchAction::Consumed
@@ -1068,7 +1241,7 @@ mod tests {
     #[test]
     fn enter_enter_takes_the_first_destination_which_is_split_here() {
         let mut state = state();
-        type_in(&mut state, "chore");
+        search(&mut state, "chore");
         state.handle_key(key(KeyCode::Enter));
         let action = state.handle_key(key(KeyCode::Enter));
         let BranchAction::Chosen(choice) = action else {
@@ -1081,7 +1254,7 @@ mod tests {
     #[test]
     fn escape_backs_out_of_the_destination_step_rather_than_quitting() {
         let mut state = state();
-        type_in(&mut state, "chore");
+        search(&mut state, "chore");
         state.handle_key(key(KeyCode::Enter));
         assert_eq!(state.handle_key(key(KeyCode::Esc)), BranchAction::Consumed);
         assert_eq!(state.step(), Step::Branch);
@@ -1094,7 +1267,7 @@ mod tests {
     fn the_remote_listing_folds_in_without_moving_the_cursor_off_what_was_selected() {
         let mut state = state();
         assert!(state.is_loading());
-        type_in(&mut state, "chore");
+        search(&mut state, "chore");
         let before = state.rows()[state.cursor()].name.clone();
 
         state.set_data(BranchData {
@@ -1146,7 +1319,7 @@ mod tests {
             }],
             ..app_branches()
         });
-        type_in(&mut state, "123");
+        search(&mut state, "123");
         assert_eq!(names(&state)[0], "chore/deps");
     }
 
@@ -1181,7 +1354,7 @@ mod tests {
             local_refs: vec![local("chore/deps", 5)],
             ..BranchData::default()
         });
-        type_in(&mut state, "chore");
+        search(&mut state, "chore");
         state.handle_key(key(KeyCode::Enter));
         assert_eq!(state.step(), Step::Destination);
 
@@ -1200,7 +1373,7 @@ mod tests {
     #[test]
     fn the_preview_follows_the_destination_cursor() {
         let mut state = state();
-        type_in(&mut state, "chore");
+        search(&mut state, "chore");
         state.handle_key(key(KeyCode::Enter));
         // The first destination splits w1:t1, which holds one pane.
         let Preview::Layout { panes, .. } = state.preview() else {
@@ -1213,7 +1386,7 @@ mod tests {
     #[test]
     fn the_destination_cursor_wraps() {
         let mut state = state();
-        type_in(&mut state, "chore");
+        search(&mut state, "chore");
         state.handle_key(key(KeyCode::Enter));
         for _ in 0..destinations().len() {
             state.handle_key(key(KeyCode::Down));
@@ -1297,21 +1470,21 @@ mod tests {
     #[test]
     fn typing_narrows_the_repository_list_by_name_or_by_path() {
         let mut state = two_repos("/src/app");
-        type_in(&mut state, "tools");
+        search(&mut state, "tools");
         assert_eq!(repo_names(&state), ["me/tools"]);
 
         ctrl(&mut state, 'u');
         assert_eq!(repo_names(&state).len(), 2);
 
         // Two checkouts of one fork are told apart by where they are, not by their name.
-        type_in(&mut state, "src/app");
+        search(&mut state, "src/app");
         assert_eq!(repo_names(&state), ["me/app"]);
     }
 
     #[test]
     fn a_query_that_matches_no_repository_refuses_rather_than_opening_the_wrong_one() {
         let mut state = two_repos("/src/app");
-        type_in(&mut state, "nothing-like-this");
+        search(&mut state, "nothing-like-this");
         assert!(state.repo_rows().is_empty());
         assert_eq!(
             state.handle_key(key(KeyCode::Enter)),
@@ -1369,7 +1542,7 @@ mod tests {
         // Sorting the filtered list by score would quietly override the order the user
         // picked, the moment they typed anything.
         let mut state = state();
-        type_in(&mut state, "a");
+        search(&mut state, "a");
         assert_eq!(names(&state)[0], "feat/live", "by state, it is running");
 
         ctrl(&mut state, 'o');
@@ -1396,7 +1569,7 @@ mod tests {
     /// The picker with a branch and a destination chosen, mid-fetch.
     fn fetching() -> BranchesState {
         let mut state = state();
-        type_in(&mut state, "chore");
+        search(&mut state, "chore");
         state.handle_key(key(KeyCode::Enter));
         state.start_working(Stage::Starting {
             branch: "chore/deps".into(),
@@ -1546,7 +1719,7 @@ mod tests {
         assert_eq!(ctrl(&mut on_the_repo_step, 'f'), BranchAction::Ignored);
 
         let mut state = state();
-        type_in(&mut state, "chore");
+        search(&mut state, "chore");
         state.handle_key(key(KeyCode::Enter));
         assert_eq!(state.step(), Step::Destination);
         assert_eq!(ctrl(&mut state, 'f'), BranchAction::Ignored);
@@ -1555,7 +1728,7 @@ mod tests {
     #[test]
     fn ctrl_u_empties_the_search_the_way_the_key_hint_says_it_does() {
         let mut state = state();
-        type_in(&mut state, "chore");
+        search(&mut state, "chore");
         assert_eq!(state.query(), "chore");
         assert_eq!(ctrl(&mut state, 'u'), BranchAction::Consumed);
         assert_eq!(state.query(), "");

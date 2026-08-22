@@ -136,6 +136,8 @@ through this against a real session.
       This is the case that catches a relative pane command.
 - [ ] A never-fetched remote branch is fetched and the worktree is based on
       `origin/<branch>`, not on `HEAD` — check `git log --oneline -1` in the new checkout.
+- [ ] The branches view starts in command mode: `j`/`k` move, `f`/`o`/`r`/`q` do what the
+      key hint says, and `/` is what puts letters into the search field.
 - [ ] `Ctrl-F` fetches: `fetching origin…` appears, a branch that only `ls-remote` knew
       gains a date and a subject, and one deleted on the remote leaves the list.
 - [ ] While that runs, the picker stays up, names the step it is on, and animates. `Ctrl-C`

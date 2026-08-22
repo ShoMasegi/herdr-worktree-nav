@@ -49,7 +49,7 @@
 │   nightowl/harken            1 worktree, 1 pane    ~/Workspace/nightowl/lett…│
 │                                                                              │
 │ ShoMasegi/herdr-gh-nav · ~/Workspace/herdr-gh-nav ────────────────────────────│
-│ type to filter  ↵ branches  ⇥ panes  ctrl+u clear  esc close                 │
+│ ↵ branches  j/k move  / search  ⇥ panes  q close                             │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -57,7 +57,7 @@
 
 ```
 ┌─ herdr-gh-nav ───────────────────────────────────────────────────────────────┐
-│ / search branches█                                  ⇅ state ↓    24 branches │
+│ / search branches                                   ⇅ state ↓    24 branches │
 │──────────────────────────────────────────────────────────────────────────────│
 │   ● feat/login    running      #123 Add the login screen (draft)             │
 │   ○ fix/crash     checked out  latest work on fix/crash                      │
@@ -65,11 +65,11 @@
 │   ↓ feat/search   remote                                                     │
 │                                                                              │
 │ me/app · feat/login · open in w2:p1 · ~/.herdr/worktrees/app/feat-login ──────│
-│ ↵ choose  ctrl+o order  ctrl+r reverse  ⇥ panes  ctrl+u clear  esc back      │
+│ ↵ choose  j/k move  / search  f fetch  o order  r reverse  esc back          │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-打てば絞り込まれます。まだ存在しない名前を打てば、それを作る候補が出ます。`Ctrl-O` で並び順（状態順・更新順・名前順）を巡回し、`Ctrl-R` で反転します。効いている並びは件数の隣に出ます。続いて pane の行き先を選びます。
+`/` で絞り込めます。まだ存在しない名前を打てば、それを作る候補が出ます。`o` で並び順（状態順・更新順・名前順）を巡回し、`r` で反転します。効いている並びは件数の隣に出ます。`f` でそのリポジトリを fetch します。続いて pane の行き先を選びます。
 
 ```
  here            split right     w1  app / agents

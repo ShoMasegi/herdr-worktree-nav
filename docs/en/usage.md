@@ -135,34 +135,51 @@ the same fork apart, and is searchable along with the name.
 
 | Key | Does |
 | --- | --- |
-| any letter | filter |
-| `↑` `↓`, `Ctrl-P` `Ctrl-N` | move |
+| `↑` `↓`, `k` `j`, `Ctrl-P` `Ctrl-N` | move |
 | `Enter` | list this repository's branches |
-| `Ctrl-U` | empty the search |
+| `/` | search |
 | `Tab` | back to panes |
-| `Esc`, `Ctrl-C` | close |
+| `q`, `Esc`, `Ctrl-C` | close |
 
 With only one repository open this step is skipped: a picker that asks you to choose between
 one thing is asking nothing. `Esc` then closes the branch list rather than going back to it.
 
 ### Choosing a branch
 
-The branch list is a search box. There is no mode to enter: typing filters, because typing a
-branch name is the common case.
-
 | Key | Does |
+| --- | --- |
+| `↑` `↓`, `k` `j`, `Ctrl-P` `Ctrl-N` | move |
+| `Enter` | choose this branch |
+| `/` | search |
+| `o` | next order |
+| `r` | reverse it |
+| `f` | fetch this repository |
+| `Tab` | back to panes |
+| `Esc` | back to the repositories |
+| `q`, `Ctrl-C` | close |
+
+### Searching either list
+
+Both lists work the way the panes view does: letters are commands until `/` gives the search
+field the keyboard. The `/` at the left is dim while the list has the keys and takes the
+accent, with a block cursor, while the search field does.
+
+| Key | While searching |
 | --- | --- |
 | any letter | filter |
 | `↑` `↓`, `Ctrl-P` `Ctrl-N` | move |
-| `Enter` | choose this branch |
+| `Enter` | choose what is under the cursor |
 | `Backspace` | delete a character |
 | `Ctrl-U` | empty the search |
-| `Ctrl-O` | next order |
-| `Ctrl-R` | reverse it |
-| `Ctrl-F` | fetch this repository |
-| `Tab` | back to panes |
-| `Esc` | back to the repositories |
-| `Ctrl-C` | close |
+| `Esc` | abandon the search |
+
+`Enter` picks rather than committing the filter, which is where this differs from the panes
+view: what you do with a narrowed branch list is open the one thing left in it, and asking
+for a second `Enter` to say so would be ceremony.
+
+`Esc` abandons what was typed, as it does in the panes view. Nothing is lost by that, because
+the `Ctrl-` forms of the commands — `Ctrl-O`, `Ctrl-R`, `Ctrl-F`, `Ctrl-U` — keep working
+while you type. Reordering a filtered list does not cost you the filter.
 
 Each repository is read once. Going back, picking another, and returning does not re-run git.
 

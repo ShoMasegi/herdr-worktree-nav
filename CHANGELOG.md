@@ -52,6 +52,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **The branches view has a command mode, reached the way the panes view's is.** Both its
+  lists — repositories and branches — used to be search boxes with no mode to enter. Now `/`
+  gives the search field the keyboard and letters are commands until it does: `j`/`k` move,
+  `f` fetches, `o` and `r` order and reverse, `q` closes. The `/` at the left is dim while
+  the list has the keys and takes the accent while the search field does. `Enter` while
+  searching picks rather than committing the filter — narrowing a branch list is how you
+  reach the branch you are about to open — and `Esc` abandons what was typed, which costs
+  nothing because the `Ctrl-` forms of every command keep working while you type.
 - **The panes view's cursor stops only where there is somewhere to go**: a pane, or a
   checkout with nothing running in it. Repository headings and checkouts that already have
   panes are stepped over — the panes listed directly under them are the answer — so reaching

@@ -2,7 +2,7 @@
 source: src/ui/render.rs
 expression: "branches_screen(&branches_picker(), 92, 12)"
 ---
-" / search repositories█                                                      2 repositories "
+" / search repositories                                                       2 repositories "
 "────────────────────────────────────────────────────────────────────────────────────────────"
 " ◆ me/app    2 worktrees, 1 pane    /src/app                                                "
 "   me/notes  1 worktree, 1 pane     ~/src/notes                                             "
@@ -13,4 +13,4 @@ expression: "branches_screen(&branches_picker(), 92, 12)"
 "                                                                                            "
 "                                                                                            "
 " me/app · /src/app ─────────────────────────────────────────────────────────────────────────"
-" type to filter  ↵ branches  ⇥ panes  ctrl+u clear  esc close                               "
+" ↵ branches  j/k move  / search  ⇥ panes  q close                                           "

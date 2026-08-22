@@ -62,7 +62,7 @@ already under the cursor:
 │   nightowl/harken            1 worktree, 1 pane    ~/Workspace/nightowl/lett…│
 │                                                                              │
 │ ShoMasegi/herdr-gh-nav · ~/Workspace/herdr-gh-nav ────────────────────────────│
-│ type to filter  ↵ branches  ⇥ panes  ctrl+u clear  esc close                 │
+│ ↵ branches  j/k move  / search  ⇥ panes  q close                             │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -70,7 +70,7 @@ Then every branch of it, whatever state it is in:
 
 ```
 ┌─ herdr-gh-nav ───────────────────────────────────────────────────────────────┐
-│ / search branches█                                  ⇅ state ↓    24 branches │
+│ / search branches                                   ⇅ state ↓    24 branches │
 │──────────────────────────────────────────────────────────────────────────────│
 │   ● feat/login    running      #123 Add the login screen (draft)             │
 │   ○ fix/crash     checked out  latest work on fix/crash                      │
@@ -78,13 +78,13 @@ Then every branch of it, whatever state it is in:
 │   ↓ feat/search   remote                                                     │
 │                                                                              │
 │ me/app · feat/login · open in w2:p1 · ~/.herdr/worktrees/app/feat-login ──────│
-│ ↵ choose  ctrl+o order  ctrl+r reverse  ⇥ panes  ctrl+u clear  esc back      │
+│ ↵ choose  j/k move  / search  f fetch  o order  r reverse  esc back          │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Type to filter. Type something that does not exist yet and it offers to create it. `Ctrl-O`
-walks the orders — by state, by date, by name — and `Ctrl-R` reverses the current one; what
-is in force sits beside the count. Then pick where the pane should go:
+`/` filters, and typing something that does not exist yet offers to create it. `o` walks the
+orders — by state, by date, by name — and `r` reverses the current one; what is in force sits
+beside the count. `f` fetches the repository. Then pick where the pane should go:
 
 ```
 here            split right     w1  app / agents
