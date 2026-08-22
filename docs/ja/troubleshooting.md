@@ -100,6 +100,7 @@ herdr 側は CI ではテストできません（サーバーが無いため）�
 - [ ] `herdr plugin link .` で 2 つのアクションと 2 つの pane エントリポイントが登録される（`herdr plugin list --json`）
 - [ ] ピッカーが herdr の枠付き（タイトル `herdr-gh-nav`）の中央寄せ popup として開き、周囲にセッションが見えたままで、**自分自身は一覧に出ない**
 - [ ] pane の無い worktree が `no pane` 付きで出て、`Enter` で開ける
+- [ ] `↑`/`↓` が pane と「何も動いていない checkout」にだけ止まる。リポジトリの見出しと、既に pane を持つ checkout は飛ばされ、表示自体は残る
 - [ ] 別の space の pane で `Enter` を押すとそこへ移動し、popup が閉じた後もそこに留まる
 - [ ] `n` でカーソル位置の checkout に pane が追加される
 - [ ] `Tab` で Branches ビューに行け、カーソル位置のリポジトリから始まる

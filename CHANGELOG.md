@@ -35,6 +35,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **The panes view's cursor stops only where there is somewhere to go**: a pane, or a
+  checkout with nothing running in it. Repository headings and checkouts that already have
+  panes are stepped over — the panes listed directly under them are the answer — so reaching
+  the one you want is fewer presses. Both still appear in the list.
+- **Folding a repository is gone**, with it. `Enter` on a repository was the only way to fold
+  one, and there is no cursor there to press it any more; the caret it used is gone from the
+  heading rather than left promising something that no longer happens.
 - `Esc` now goes back one step everywhere in the branches view — destination, branch,
   repository, out — rather than closing outright from the branch list.
 - `Tab` in the panes view no longer refuses when the cursor is not in a repository; the

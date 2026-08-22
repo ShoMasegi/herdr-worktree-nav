@@ -72,3 +72,14 @@ theme keeps working with an accent that is merely wrong rather than a picker tha
 - **Hiding a single middle row.** The navigator omits the tab row when a workspace has one
   tab. A worktree row carries the branch name, which is the information the picker exists
   for; a tab number is not.
+- **Stopping the cursor on every row.** The panes view stops only where there is somewhere
+  to go: a pane, and a checkout with nothing running in it. A repository heading and a
+  checkout that already has panes are stepped over — the panes listed directly under them
+  are the answer, and stopping on the header first only lengthens the walk. Both are still
+  drawn: they are what explains where a pane is.
+
+  Folding a repository went with it. `Enter` on a repository row was the only way to fold
+  one, and there is no cursor there to press it any more. Keeping the fold would have meant
+  either a second key for something the cursor rule had just made hard to reach, or a rule
+  where a folded heading is selectable and an expanded one is not. The caret is gone from
+  the heading too, rather than left promising a fold that no longer happens.

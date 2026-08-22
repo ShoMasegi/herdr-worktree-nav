@@ -42,7 +42,7 @@ goes are all pure functions over plain data.
 | Module | Question it answers |
 | --- | --- |
 | `domain::tree` | given a snapshot and some git answers, what is the repo → worktree → pane tree? |
-| `domain::rows` | which rows are visible, in what order, under this filter and these folds? |
+| `domain::rows` | which rows are visible, in what order, and which can the cursor land on? |
 | `domain::resolve` | what *is* this branch, and what does picking it require first? |
 | `domain::order` | in what order does the branch list read, and which way round? |
 | `domain::dest` | where can a pane go, and what herdr call does each choice mean? |

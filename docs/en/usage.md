@@ -23,9 +23,7 @@ branch list starts on.
 | --- | --- |
 | `↑` `↓`, `k` `j`, `Ctrl-P` `Ctrl-N` | move |
 | `Enter` on a pane | go to it |
-| `Enter` on a worktree with panes | go to the first pane in it |
-| `Enter` on a worktree with none | open that checkout |
-| `Enter` on a repository | fold or unfold it |
+| `Enter` on a checkout with nothing running | open it |
 | `n` | add a pane to the checkout under the cursor |
 | `Tab` | branches, starting on the repository under the cursor |
 | `/` | search |
@@ -34,6 +32,11 @@ branch list starts on.
 | `h` | show or hide panes that are not in a repository |
 | `r` | reload |
 | `q`, `Esc`, `Ctrl-C` | close |
+
+The cursor stops only where there is somewhere to go: a pane, and a checkout with nothing
+running in it. Repository headings and checkouts that already have panes are stepped over —
+the panes listed directly under them are the answer, and stopping on the header first would
+only make the walk longer. They stay on screen; the arrow keys just pass through them.
 
 `b`/`w`/`i`/`d` replace the search box with a state chip. Pressing the same one again clears
 it, so a filter is never a one-way door.
@@ -44,7 +47,7 @@ to the keys above, `Esc` abandons it, and `Ctrl-U` empties it without leaving se
 ### Reading a row
 
 ```
- ◆ ▾ ● ShoMasegi/herdr-gh-nav (2)
+ ◆ ● ShoMasegi/herdr-gh-nav (2)
    └── ● main                       ~/Workspace/herdr-gh-nav
  ◆    ├── ● claude                  w7:p2
       └── · shell                   w7:p3
@@ -56,13 +59,14 @@ Left to right: a gutter, the tree, a status glyph, the label, and a meta column.
 
 - **The gutter** carries `◆` on the pane the session is currently focused on, and on the
   repository holding it.
-- **The tree** uses `▾`/`▸` for a repository — `Enter` folds it — and connected `├──`/`└──`
-  glyphs for what is under it, so a deep worktree still reads as belonging somewhere.
+- **The tree** connects what is under a repository with `├──`/`└──`, so a deep worktree
+  still reads as belonging somewhere. The repository itself gets no glyph: it is a heading,
+  with nothing to expand.
 - **The label** is `owner/repo (n)` for a repository, where `n` counts its open panes; the
   branch for a worktree; and the agent's name, or `shell`, for a pane.
 - **The meta column** says where the thing is: the checkout path for a worktree and the pane
-  id for a pane. A repository shows its root only while it is folded — expanded, the main
-  checkout directly beneath already carries it. Paths under your home are shortened to `~`.
+  id for a pane. A repository shows nothing there — the main checkout directly beneath
+  carries the same path. Paths under your home are shortened to `~`.
 - The column starts four blanks past the longest label that has something to put there, not
   at the right edge, so a path stays beside its row on a wide pane rather than across the
   screen from it. It takes the rest of the line from there, so a path is usually shown in

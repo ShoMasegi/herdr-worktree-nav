@@ -16,12 +16,12 @@
 ┌─ herdr-gh-nav ───────────────────────────────────────────────────────────────┐
 │ / search panes                                                      13 panes │
 │──────────────────────────────────────────────────────────────────────────────│
-│ ◆ ▾ ● ShoMasegi/herdr-gh-nav (2)                                             │
+│ ◆ ● ShoMasegi/herdr-gh-nav (2)                                               │
 │   └── ● main                                  ~/Workspace/herdr-gh-nav       │
 │ ◆    ├── ● claude                             w7:p2                          │
 │      └── · shell                              w7:p3                          │
 │                                                                              │
-│   ▾ ○ ShoMasegi/harbour-backend (5)                                          │
+│   ○ ShoMasegi/harbour-backend (5)                                            │
 │   ├── ○ feat/hbr-51-grant-table-privileges    ~/Workspace/harbour-backend    │
 │   │  ├── ○ claude                             w1:p1                          │
 │   │  └── · shell                              w1:p2                          │

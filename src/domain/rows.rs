@@ -9,8 +9,6 @@
 //! Pure, so the shape of the list under every combination of folding, filtering, and hidden
 //! ungrouped panes is covered by ordinary tests rather than by squinting at a terminal.
 
-use std::collections::HashSet;
-
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
@@ -30,7 +28,7 @@ pub enum RowRef {
 
 impl RowRef {
     /// Whether this row heads a group — the navigator's "workspace" role, which is what
-    /// gets the expand caret and the blank line above it.
+    /// gets the blank line above it.
     pub fn is_group(self) -> bool {
         matches!(self, RowRef::Repo(_) | RowRef::UngroupedRepo)
     }
@@ -57,11 +55,25 @@ pub struct Row {
     pub is_idle: bool,
     /// The row the session is currently on, marked with a caret in the gutter.
     pub is_current: bool,
-    /// Only meaningful for a group row.
-    pub expanded: bool,
     /// Whether this row matched the active filter, as opposed to being kept as ancestor
     /// context or as part of a matching group's subtree. Always true with no filter.
     pub matched: bool,
+}
+
+impl Row {
+    /// Whether the cursor stops here.
+    ///
+    /// Only rows that stand for somewhere to go: a pane, and a checkout with nothing
+    /// running in it. A repository is a heading, and a checkout that already has panes is
+    /// answered by the panes listed directly under it — stopping on either would only make
+    /// the arrow keys longer to press.
+    pub fn is_selectable(&self) -> bool {
+        match self.reference {
+            RowRef::Pane(..) | RowRef::Ungrouped(_) => true,
+            RowRef::Worktree(..) => self.is_idle,
+            RowRef::Repo(_) | RowRef::UngroupedRepo => false,
+        }
+    }
 }
 
 /// One rendered line. Blank lines separate groups and cannot be selected — the same shape
@@ -125,8 +137,6 @@ const UNNAMED_PANE: &str = "shell";
 pub struct ViewOptions {
     /// Show panes that are not inside any git work tree.
     pub show_ungrouped: bool,
-    /// `repo_key`s the user has folded away.
-    pub collapsed: HashSet<String>,
     pub query: String,
     pub state_filter: Option<StateFilter>,
     /// The user's home directory, so paths can be shown as `~/...`. Passed in rather than
@@ -183,10 +193,9 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
         // state filter is a question about individual agents: a repository holding one
         // blocked agent must not present all its idle ones as blocked too.
         let cascade = repo_matches && options.state_filter.is_none();
-        let collapsed = !filtering && options.collapsed.contains(&repo.repo_key);
 
         let mut subtrees: Vec<(u32, Vec<Row>)> = Vec::new();
-        if !collapsed {
+        {
             for (worktree_index, worktree) in repo.worktrees.iter().enumerate() {
                 let worktree_haystack = format!("{} {}", repo.display_name, worktree.label());
                 let worktree_status =
@@ -235,7 +244,6 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                     status: worktree_status,
                     is_idle: worktree.panes.is_empty(),
                     is_current: false,
-                    expanded: true,
                     matched: worktree_matches,
                 }];
                 subtree.append(&mut pane_rows);
@@ -261,16 +269,11 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
             reference: RowRef::Repo(repo_index),
             depth: 0,
             label: format!("{} ({})", repo.display_name, panes.len()),
-            // Only while folded: expanded, the main checkout below carries the same path.
-            meta: if collapsed {
-                abbreviate(&repo.repo_root, options.home.as_deref())
-            } else {
-                String::new()
-            },
+            // The main checkout listed directly below carries the same path.
+            meta: String::new(),
             status: repo_status,
             is_idle: false,
             is_current: panes.iter().any(|pane| pane.focused),
-            expanded: !collapsed,
             matched: repo_matches,
         }];
         for (_, mut subtree) in subtrees {
@@ -307,7 +310,6 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                 status: aggregate(tree.ungrouped.iter().map(|pane| pane.agent_status)),
                 is_idle: false,
                 is_current: tree.ungrouped.iter().any(|pane| pane.focused),
-                expanded: true,
                 matched: true,
             });
             rows.append(&mut panes);
@@ -329,7 +331,6 @@ fn pane_row(reference: RowRef, depth: u8, pane: &PaneNode, matched: bool) -> Row
         status: pane.agent_status,
         is_idle: false,
         is_current: pane.focused,
-        expanded: false,
         matched,
     }
 }
@@ -380,25 +381,31 @@ pub fn status_label(status: AgentStatus) -> Option<&'static str> {
     }
 }
 
-/// Index of the first selectable line at or after `from`, wrapping to the start.
-pub fn next_row(lines: &[DisplayLine], from: usize) -> Option<usize> {
+/// Index of the first line the cursor may sit on, at or after `from`, wrapping to the
+/// start. `None` when nothing in the list is selectable at all.
+pub fn next_row(rows: &[Row], lines: &[DisplayLine], from: usize) -> Option<usize> {
     let len = lines.len();
-    (0..len).find_map(|offset| match lines[(from + offset) % len] {
-        DisplayLine::Row(_) => Some((from + offset) % len),
-        DisplayLine::Spacer => None,
+    (0..len).find_map(|offset| {
+        let index = (from + offset) % len;
+        selectable(rows, lines, index).then_some(index)
     })
 }
 
-/// Index of the first selectable line at or before `from`, wrapping to the end.
-pub fn previous_row(lines: &[DisplayLine], from: usize) -> Option<usize> {
+/// Index of the first line the cursor may sit on, at or before `from`, wrapping to the end.
+pub fn previous_row(rows: &[Row], lines: &[DisplayLine], from: usize) -> Option<usize> {
     let len = lines.len();
     (0..len).find_map(|offset| {
         let index = (from + len - offset) % len;
-        match lines[index] {
-            DisplayLine::Row(_) => Some(index),
-            DisplayLine::Spacer => None,
-        }
+        selectable(rows, lines, index).then_some(index)
     })
+}
+
+fn selectable(rows: &[Row], lines: &[DisplayLine], index: usize) -> bool {
+    match lines.get(index) {
+        Some(DisplayLine::Row(row)) => rows[*row].is_selectable(),
+        // A blank line separating two groups, or nothing there at all.
+        Some(DisplayLine::Spacer) | None => false,
+    }
 }
 
 /// The breadcrumb shown under the list for the row the cursor is on.
@@ -617,20 +624,11 @@ mod tests {
     }
 
     #[test]
-    fn an_expanded_repository_leaves_its_path_to_the_checkout_below_it() {
+    fn a_repository_leaves_its_path_to_the_checkout_below_it() {
         // The main checkout sits directly under it with the same path; printing both is
-        // noise. Folded, that row is not on screen, so the repository carries it.
+        // noise.
         let rows = flatten(&tree(), &ViewOptions::default());
         assert_eq!(find(&rows, "me/app (3)").meta, "");
-
-        let folded = ViewOptions {
-            collapsed: HashSet::from(["/src/app/.git".to_string()]),
-            ..Default::default()
-        };
-        assert_eq!(
-            find(&flatten(&tree(), &folded), "me/app (3)").meta,
-            "/src/app"
-        );
     }
 
     #[test]
@@ -769,31 +767,63 @@ mod tests {
     }
 
     #[test]
-    fn collapsing_a_repo_hides_its_children_and_flips_the_caret() {
-        let options = ViewOptions {
-            collapsed: HashSet::from(["/src/app/.git".to_string()]),
-            ..Default::default()
-        };
-        let rows = flatten(&tree(), &options);
-        assert_eq!(
-            labels(&rows),
-            ["me/app (3)", "me/site (1)", "  develop", "    claude"]
-        );
-        assert!(!find(&rows, "me/app (3)").expanded);
-        assert!(find(&rows, "me/site (1)").expanded);
+    fn the_cursor_stops_only_where_there_is_somewhere_to_go() {
+        let rows = flatten(&tree(), &ViewOptions::default());
+        for row in &rows {
+            let selectable = row.is_selectable();
+            match row.reference {
+                RowRef::Pane(..) | RowRef::Ungrouped(_) => {
+                    assert!(selectable, "a pane is somewhere to go: {}", row.label)
+                }
+                RowRef::Worktree(..) => assert_eq!(
+                    selectable, row.is_idle,
+                    "only a checkout with nothing running: {}",
+                    row.label
+                ),
+                RowRef::Repo(_) | RowRef::UngroupedRepo => {
+                    assert!(!selectable, "a heading: {}", row.label)
+                }
+            }
+        }
+        // The fixture has all four kinds, so the loop above is not vacuous.
+        assert!(rows.iter().any(|row| row.is_selectable()));
+        assert!(rows.iter().any(|row| !row.is_selectable()));
     }
 
     #[test]
-    fn filtering_overrides_a_fold_so_the_search_target_is_never_hidden() {
-        let options = ViewOptions {
-            collapsed: HashSet::from(["/src/app/.git".to_string()]),
-            query: "codex".into(),
-            ..Default::default()
-        };
-        assert_eq!(
-            labels(&flatten(&tree(), &options)),
-            ["me/app (3)", "  feat/login", "    codex"]
-        );
+    fn every_repository_on_screen_has_something_selectable_under_it() {
+        // Otherwise the arrow keys could reach a group and then have nowhere to go inside
+        // it. A checkout either has panes, which are selectable, or has none, which makes
+        // the checkout itself selectable.
+        for options in [
+            ViewOptions::default(),
+            ViewOptions {
+                query: "claude".into(),
+                ..Default::default()
+            },
+            ViewOptions {
+                state_filter: Some(StateFilter::Idle),
+                ..Default::default()
+            },
+        ] {
+            let rows = flatten(&tree(), &options);
+            if rows.is_empty() {
+                continue;
+            }
+            let mut group: Option<&str> = None;
+            let mut seen = false;
+            for row in &rows {
+                if row.reference.is_group() {
+                    if let Some(label) = group {
+                        assert!(seen, "{label} has nothing the cursor can land on");
+                    }
+                    group = Some(&row.label);
+                    seen = false;
+                }
+                seen |= row.is_selectable();
+            }
+            assert!(seen, "the last group has nothing the cursor can land on");
+        }
     }
 
     #[test]
@@ -826,7 +856,7 @@ mod tests {
     }
 
     #[test]
-    fn cursor_movement_steps_over_the_blank_lines_and_wraps() {
+    fn cursor_movement_steps_over_everything_it_cannot_land_on_and_wraps() {
         let rows = flatten(
             &tree(),
             &ViewOptions {
@@ -835,20 +865,43 @@ mod tests {
             },
         );
         let lines = display_lines(&rows);
+        let stops: Vec<usize> = (0..lines.len())
+            .filter(|index| selectable(&rows, &lines, *index))
+            .collect();
+
+        // The first line is a repository heading, so the cursor starts below it.
+        assert!(!selectable(&rows, &lines, 0));
+        assert_eq!(next_row(&rows, &lines, 0), Some(stops[0]));
+        assert_eq!(
+            previous_row(&rows, &lines, 0),
+            stops.last().copied(),
+            "and wraps to the last thing there is to go to"
+        );
+
+        // A blank line, the heading after it, and the checkout that already has panes are
+        // all stepped over in one go.
         let spacer = lines
             .iter()
             .position(|line| *line == DisplayLine::Spacer)
             .unwrap();
-        assert_eq!(next_row(&lines, spacer), Some(spacer + 1));
-        assert_eq!(previous_row(&lines, spacer), Some(spacer - 1));
-        assert_eq!(next_row(&lines, lines.len() - 1), Some(lines.len() - 1));
-        assert_eq!(previous_row(&lines, 0), Some(0));
+        assert_eq!(
+            next_row(&rows, &lines, spacer),
+            stops.iter().find(|stop| **stop > spacer).copied()
+        );
+        assert_eq!(
+            previous_row(&rows, &lines, spacer),
+            stops.iter().rev().find(|stop| **stop < spacer).copied()
+        );
+
+        // A line that is already a stop is where it stays.
+        assert_eq!(next_row(&rows, &lines, stops[1]), Some(stops[1]));
+        assert_eq!(previous_row(&rows, &lines, stops[1]), Some(stops[1]));
     }
 
     #[test]
     fn cursor_movement_on_an_empty_list_has_no_answer_rather_than_panicking() {
-        assert_eq!(next_row(&[], 0), None);
-        assert_eq!(previous_row(&[], 0), None);
+        assert_eq!(next_row(&[], &[], 0), None);
+        assert_eq!(previous_row(&[], &[], 0), None);
     }
 
     #[test]

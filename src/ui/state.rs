@@ -157,7 +157,7 @@ impl PanesState {
     fn rebuild(&mut self, anchor: Option<&str>) {
         self.rows = rows::flatten(&self.tree, &self.options);
         self.lines = rows::display_lines(&self.rows);
-        self.cursor = rows::next_row(&self.lines, 0).unwrap_or(0);
+        self.cursor = rows::next_row(&self.rows, &self.lines, 0).unwrap_or(0);
         if let Some(pane_id) = anchor {
             self.focus_pane(pane_id);
         }
@@ -204,41 +204,22 @@ impl PanesState {
         let len = self.lines.len();
         let start = (self.cursor as isize + delta).rem_euclid(len as isize) as usize;
         self.cursor = if delta >= 0 {
-            rows::next_row(&self.lines, start)
+            rows::next_row(&self.rows, &self.lines, start)
         } else {
-            rows::previous_row(&self.lines, start)
+            rows::previous_row(&self.rows, &self.lines, start)
         }
         .unwrap_or(self.cursor);
     }
 
-    fn toggle_collapse(&mut self, repo_index: usize) {
-        let key = self.tree.repos[repo_index].repo_key.clone();
-        if !self.options.collapsed.remove(&key) {
-            self.options.collapsed.insert(key);
-        }
-        self.rows = rows::flatten(&self.tree, &self.options);
-        self.lines = rows::display_lines(&self.rows);
-        // Keep the cursor on the repository the user just folded rather than jumping.
-        self.cursor = self
-            .lines
-            .iter()
-            .position(|line| match line {
-                DisplayLine::Row(index) => self.rows[*index].reference == RowRef::Repo(repo_index),
-                DisplayLine::Spacer => false,
-            })
-            .unwrap_or(0);
-    }
-
     /// What Enter means on the current row.
+    ///
+    /// Every row the cursor can reach stands for somewhere to go, so this is total in the
+    /// only two ways that matter: go to a pane, or open a checkout that has none.
     fn activate(&mut self) -> Action {
         let Some(row) = self.selected() else {
             return Action::Consumed;
         };
         match row.reference {
-            RowRef::Repo(repo_index) => {
-                self.toggle_collapse(repo_index);
-                Action::Consumed
-            }
             RowRef::Pane(r, w, p) => {
                 Action::Jump(self.tree.repos[r].worktrees[w].panes[p].pane_id.clone())
             }
@@ -248,7 +229,8 @@ impl PanesState {
                 let worktree = &repo.worktrees[w];
                 match worktree.panes.first() {
                     // A checkout that is already being worked in: go to the work rather
-                    // than opening a second copy of it.
+                    // than opening a second copy of it. Unreachable while the cursor stops
+                    // only on idle checkouts, but the panes are right there either way.
                     Some(pane) => Action::Jump(pane.pane_id.clone()),
                     None => Action::OpenWorktree {
                         repo_root: repo.repo_root.clone(),
@@ -256,7 +238,8 @@ impl PanesState {
                     },
                 }
             }
-            RowRef::UngroupedRepo => Action::Consumed,
+            // Headings. The cursor does not stop on them.
+            RowRef::Repo(_) | RowRef::UngroupedRepo => Action::Consumed,
         }
     }
 
@@ -490,6 +473,8 @@ mod tests {
 
     #[test]
     fn enter_on_a_worktree_that_is_already_open_goes_to_its_work() {
+        // The cursor does not stop here — the panes listed under it are what you pick —
+        // but the answer is still the work rather than a second copy of it.
         let mut state = state();
         select(&mut state, "main");
         assert_eq!(
@@ -512,16 +497,41 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_a_repository_folds_it_and_leaves_the_cursor_there() {
+    fn the_cursor_visits_only_panes_and_checkouts_with_nothing_running() {
+        // Headings and the checkouts that already have panes under them are stepped over:
+        // there is nowhere to go on either, and stopping would only lengthen the walk.
         let mut state = state();
-        select(&mut state, "me/app (2)");
-        assert_eq!(state.handle_key(key(KeyCode::Enter)), Action::Consumed);
-        assert_eq!(row_labels(&state), ["me/app (2)"]);
-        assert!(!state.rows()[0].expanded);
-        assert_eq!(state.cursor(), 0);
+        let first = state.selected().unwrap().label.clone();
+        let mut stops = vec![first.clone()];
+        for _ in 0..state.lines().len() {
+            state.handle_key(key(KeyCode::Down));
+            let label = state.selected().unwrap().label.clone();
+            if label == first {
+                break;
+            }
+            stops.push(label);
+        }
+        assert_eq!(stops, ["claude", "codex", "fix/crash"]);
 
-        assert_eq!(state.handle_key(key(KeyCode::Enter)), Action::Consumed);
-        assert!(state.rows()[0].expanded);
+        // And the rows it stepped over are still on screen.
+        assert_eq!(
+            row_labels(&state),
+            [
+                "me/app (2)",
+                "main",
+                "claude",
+                "feat/login",
+                "codex",
+                "fix/crash"
+            ]
+        );
+    }
+
+    #[test]
+    fn moving_up_from_the_top_wraps_to_the_last_thing_worth_going_to() {
+        let mut state = state();
+        state.handle_key(key(KeyCode::Up));
+        assert_eq!(state.selected().unwrap().label, "fix/crash");
     }
 
     #[test]

@@ -60,17 +60,16 @@ fn meta_column(rows: &[Row], width: u16) -> usize {
 /// How many columns a row's label region occupies: the gutter, the tree, the status glyph,
 /// the label itself, and the note on a checkout with nothing running in it.
 fn label_end(row: &Row) -> usize {
-    let tree = if row.reference.is_group() {
-        1
-    } else if row.depth == 0 {
-        2
+    // Mirrors `tree_prefix`, whose glyphs carry their own trailing space.
+    let tree = if row.reference.is_group() || row.depth == 0 {
+        0
     } else {
-        3 * row.depth as usize
+        3 * row.depth as usize + 1
     };
-    // +3 for the status glyph and the space on either side of it.
+    // +2 for the status glyph and the space after it.
     GUTTER_WIDTH
         + tree
-        + 3
+        + 2
         + row.label.chars().count()
         + if row.is_idle { IDLE_NOTE.len() } else { 0 }
 }
@@ -325,7 +324,7 @@ fn render_row(
     let tree_style = if selected { base } else { theme.tree() };
     let quiet = if selected { base } else { theme.dim() };
 
-    let used = gutter.chars().count() + prefix.chars().count() + glyph.chars().count() + 2;
+    let used = gutter.chars().count() + prefix.chars().count() + glyph.chars().count() + 1;
     let note = if row.is_idle { IDLE_NOTE.len() } else { 0 };
     // A row with nothing in the meta column may use the whole line for its label; one with
     // something has to stop short of the column so the two do not collide.
@@ -338,7 +337,6 @@ fn render_row(
     let mut spans = vec![
         Span::styled(gutter, gutter_style),
         Span::styled(prefix, tree_style),
-        Span::styled(" ", base),
         Span::styled(glyph, glyph_style),
         Span::raw(" "),
         Span::styled(truncate(&row.label, label_budget), label_style),
@@ -364,16 +362,16 @@ fn render_row(
     frame.render_widget(Paragraph::new(Line::from(spans)).style(base), rect);
 }
 
-/// Tree prefix for a row: an expand caret for a group, connected branch glyphs for its
-/// children (`├──`, `└──` for the last sibling, with `│` continuations under ancestors that
-/// still have siblings below).
+/// Tree prefix for a row, trailing space included: connected branch glyphs (`├──`, `└──`
+/// for the last sibling, with `│` continuations under ancestors that still have siblings
+/// below).
+///
+/// A group gets nothing at all. It is a heading with nothing to expand, and a caret there
+/// would promise a fold this picker does not have.
 fn tree_prefix(rows: &[Row], index: usize) -> String {
     let row = &rows[index];
-    if row.reference.is_group() {
-        return if row.expanded { "\u{25be}" } else { "\u{25b8}" }.to_string();
-    }
-    if row.depth == 0 {
-        return "  ".to_string();
+    if row.reference.is_group() || row.depth == 0 {
+        return String::new();
     }
     let mut prefix = String::new();
     for level in 1..row.depth {
@@ -384,9 +382,9 @@ fn tree_prefix(rows: &[Row], index: usize) -> String {
         });
     }
     prefix.push_str(if has_following_sibling(rows, index, row.depth) {
-        "\u{251c}\u{2500}\u{2500}"
+        "\u{251c}\u{2500}\u{2500} "
     } else {
-        "\u{2514}\u{2500}\u{2500}"
+        "\u{2514}\u{2500}\u{2500} "
     });
     prefix
 }
@@ -1229,13 +1227,6 @@ mod tests {
     }
 
     #[test]
-    fn draws_a_folded_repository_with_the_caret_turned() {
-        let mut state = PanesState::new(tree(), None);
-        press(&mut state, KeyCode::Enter);
-        insta::assert_snapshot!(screen(&state, 92, 14));
-    }
-
-    #[test]
     fn draws_a_search_with_its_non_matching_context_still_present() {
         let mut state = PanesState::new(tree(), None);
         press(&mut state, KeyCode::Char('/'));
@@ -1361,12 +1352,13 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
 
-        // me/app is under the cursor and repainted with the selection, so check the other.
+        // No heading is ever under the cursor now, so both keep the accent foreground.
         assert_eq!(style_of_row(&buffer, "me/site").fg, Some(accent));
+        assert_eq!(style_of_row(&buffer, "me/app").fg, Some(accent));
         assert_eq!(
-            style_of_row(&buffer, "me/app").bg,
+            style_of_row(&buffer, "claude").bg,
             Some(accent),
-            "the selected row is filled with it"
+            "the selected row — the first pane — is filled with it"
         );
         // A pane row is not a group, so it keeps the terminal's own foreground.
         assert_eq!(style_of_row(&buffer, "codex").fg, Some(Color::Reset));

@@ -118,6 +118,8 @@ through this against a real session.
 - [ ] The picker opens as a centred popup framed by herdr, titled `herdr-gh-nav`, with the
       session still visible around it — and it does **not** list itself.
 - [ ] A worktree with no pane appears with `no pane`, and `Enter` opens it.
+- [ ] `↑`/`↓` stop only on panes and on checkouts with nothing running: repository headings
+      and checkouts that already have panes are stepped over, and still drawn.
 - [ ] `Enter` on a pane in another space lands there — and stays there after the popup
       closes.
 - [ ] `n` adds a pane to the checkout under the cursor.

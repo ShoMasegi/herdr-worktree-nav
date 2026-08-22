@@ -36,7 +36,7 @@ src/
 | モジュール | 答える問い |
 | --- | --- |
 | `domain::tree` | snapshot と git の回答から、repo → worktree → pane のツリーはどうなるか |
-| `domain::rows` | この絞り込みとこの折りたたみ状態で、どの行がどの順で見えるか |
+| `domain::rows` | この絞り込みで、どの行がどの順で見え、どれにカーソルが止まるか |
 | `domain::resolve` | このブランチは *何* であり、選んだとき最初に何が必要か |
 | `domain::order` | ブランチ一覧はどの順で、どちら向きに読むか |
 | `domain::dest` | pane はどこに置けて、各選択はどの herdr 呼び出しになるか |
