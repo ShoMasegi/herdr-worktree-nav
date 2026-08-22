@@ -101,6 +101,12 @@ impl Frame {
     }
 }
 
+/// How much smaller than the available space the diagram is drawn.
+const SHRINK: usize = 2;
+
+/// The smallest diagram worth drawing: below this it is a smudge rather than a layout.
+const MIN_DIAGRAM: usize = 6;
+
 /// Fit a rectangle from the tab's coordinate space into the canvas, keeping the proportions
 /// so the diagram is shaped like the tab it stands for.
 pub struct Fit {
@@ -119,21 +125,24 @@ impl Fit {
         // Both dimensions are already in cells, so one scale keeps the shape on screen.
         let by_width = canvas_width * 1000 / area.width as usize;
         let by_height = canvas_height * 1000 / area.height as usize;
-        let scale = by_width.min(by_height);
-        let width = (area.width as usize * scale / 1000)
-            .max(2)
-            .min(canvas_width);
-        let height = (area.height as usize * scale / 1000)
-            .max(2)
-            .min(canvas_height);
+        // Half of what would fit: the diagram is there to be recognised at a glance, and at
+        // full size it dominates the step rather than illustrating it.
+        let scale = by_width.min(by_height) / SHRINK;
+        let width = (area.width as usize * scale / 1000).min(canvas_width);
+        let height = (area.height as usize * scale / 1000).min(canvas_height);
+        // Halving means a panel that could once have shown a tiny diagram now shows none,
+        // which is better than a box too small to hold a label.
+        if width < MIN_DIAGRAM || height < 3 {
+            return None;
+        }
         Some(Self {
             area,
             width,
             height,
-            // Left-aligned so the diagram lines up with the caption above it; centred
-            // vertically so it is not pinned to the top of a tall panel.
+            // Pinned to the top left, under the caption. Centring it in a tall panel would
+            // leave the caption and the thing it names twenty rows apart.
             offset_x: 0,
-            offset_y: (canvas_height - height) / 2,
+            offset_y: 0,
         })
     }
 
@@ -247,6 +256,22 @@ mod tests {
             (drawn_ratio - tab_ratio).abs() < 0.35,
             "{drawn_ratio} should be close to {tab_ratio}"
         );
+    }
+
+    #[test]
+    fn the_diagram_takes_about_half_of_what_it_could() {
+        // Width-limited here: 160 columns would hold a 250-column tab whole, so half of it
+        // is 80 wide, and the height follows to keep the shape.
+        let (width, height) = Fit::new(rect(0, 0, 250, 79), 160, 60).unwrap().size();
+        assert_eq!((width, height), (80, 25));
+    }
+
+    #[test]
+    fn a_canvas_that_would_only_yield_a_smudge_produces_no_fit() {
+        // Halving means a panel that could have shown a tiny diagram now shows none, which
+        // is better than a box too small to hold a label.
+        assert!(Fit::new(rect(0, 0, 250, 79), 10, 6).is_none());
+        assert!(Fit::new(rect(0, 0, 250, 79), 60, 20).is_some());
     }
 
     #[test]
