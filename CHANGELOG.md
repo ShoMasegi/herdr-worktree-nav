@@ -52,6 +52,16 @@ All notable changes to this project are documented here. The format follows
   `herdr plugin log list`. Before, the popup simply disappeared, which looked the same as
   success.
 
+- **`Shift-D` deletes a checkout that has nothing running in it**, from the panes view, after
+  asking: the prompt line becomes the question and `y` is the only key that answers it. It
+  runs `git worktree remove` and nothing else — the branch stays, and there is no `--force`,
+  so git's refusal to throw away uncommitted work stands and is what you read. It is refused
+  before the question on a pane, on a busy checkout, and on the repository's own checkout.
+  The picker stays open and reloads, since tidying up comes in batches. This is the first
+  thing the plugin does that cannot be undone by doing it again the other way; see
+  [ADR 0008](docs/adr/0008-removing-a-worktree.md), which also records why herdr could not be
+  asked to do it.
+
 ### Changed
 
 - **The branches view has a command mode, reached the way the panes view's is.** Both its

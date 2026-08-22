@@ -34,6 +34,13 @@ pub enum Action {
     ShowBranches {
         repo_root: Option<String>,
     },
+    /// Delete a checkout that has nothing running in it. The only thing this plugin does
+    /// that cannot be undone by doing it again the other way.
+    RemoveWorktree {
+        repo_root: String,
+        checkout_path: String,
+        label: String,
+    },
     Reload,
 }
 
@@ -47,7 +54,18 @@ pub struct PanesState {
     cursor: usize,
     /// `/` filter mode: typing edits the query instead of running commands.
     filtering: bool,
+    /// A removal waiting on a yes. Nothing on disk has been touched yet.
+    pending_removal: Option<Removal>,
     message: Option<String>,
+}
+
+/// A checkout the user has asked to delete, held until they say yes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Removal {
+    pub repo_root: String,
+    pub checkout_path: String,
+    /// The branch name, for the question and for saying what went.
+    pub label: String,
 }
 
 impl PanesState {
@@ -63,6 +81,7 @@ impl PanesState {
             lines: Vec::new(),
             cursor: 0,
             filtering: false,
+            pending_removal: None,
             message: None,
         };
         state.rebuild(None);
@@ -120,6 +139,17 @@ impl PanesState {
 
     pub fn is_filtering(&self) -> bool {
         self.filtering
+    }
+
+    /// The removal being asked about, which the search line turns into a question.
+    pub fn pending_removal(&self) -> Option<&Removal> {
+        self.pending_removal.as_ref()
+    }
+
+    /// Say something in the search line until the next key. git says its piece over several
+    /// lines and this is one, so the whitespace is collapsed on the way in.
+    pub fn set_message(&mut self, message: String) {
+        self.message = Some(message.split_whitespace().collect::<Vec<_>>().join(" "));
     }
 
     pub fn message(&self) -> Option<&str> {
@@ -246,6 +276,36 @@ impl PanesState {
         }
     }
 
+    /// What `Shift-D` means: offer to delete the checkout under the cursor.
+    ///
+    /// Only a checkout with nothing running in it, which is also the only kind the cursor
+    /// stops on besides a pane. The refusals happen here rather than after the question,
+    /// because asking "are you sure?" about something that cannot happen is worse than
+    /// saying so.
+    fn ask_to_remove(&mut self) -> Action {
+        let Some((r, w)) = self.selected_worktree() else {
+            self.message = Some("select a checkout with nothing running in it".into());
+            return Action::Consumed;
+        };
+        let repo = &self.tree.repos[r];
+        let worktree = &repo.worktrees[w];
+        if !worktree.is_idle() {
+            self.message = Some("something is running in that checkout".into());
+            return Action::Consumed;
+        }
+        if worktree.is_primary {
+            // git cannot remove the main working tree, and it is not a worktree anyway.
+            self.message = Some("that is the repository itself, not a worktree".into());
+            return Action::Consumed;
+        }
+        self.pending_removal = Some(Removal {
+            repo_root: repo.repo_root.clone(),
+            checkout_path: worktree.checkout_path.clone(),
+            label: worktree.label().to_string(),
+        });
+        Action::Consumed
+    }
+
     /// What `n` means on the current row: add a pane to this checkout.
     fn new_pane(&mut self) -> Action {
         let Some((r, w)) = self.selected_worktree() else {
@@ -285,6 +345,20 @@ impl PanesState {
             return Action::Ignored;
         }
         self.message = None;
+
+        // A question is on screen and it is the only thing the keyboard is for.
+        if let Some(removal) = self.pending_removal.take() {
+            return match key.code {
+                KeyCode::Char('y') => Action::RemoveWorktree {
+                    repo_root: removal.repo_root,
+                    checkout_path: removal.checkout_path,
+                    label: removal.label,
+                },
+                // Anything else is a no. Taking the removal above is what makes that true
+                // of keys nobody thought of as well as of the ones they did.
+                _ => Action::Consumed,
+            };
+        }
 
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             return match key.code {
@@ -341,6 +415,7 @@ impl PanesState {
                 self.filtering = true;
                 Action::Consumed
             }
+            KeyCode::Char('D') => self.ask_to_remove(),
             // A repository under the cursor is a preselection, not a requirement: the
             // branches picker starts by asking which repository anyway.
             KeyCode::Tab => Action::ShowBranches {
@@ -617,6 +692,104 @@ mod tests {
             state.handle_key(key(KeyCode::Char('n'))),
             Action::OpenWorktree { .. }
         ));
+    }
+
+    #[test]
+    fn shift_d_asks_before_it_deletes_anything() {
+        let mut state = state();
+        select(&mut state, "fix/crash");
+        assert_eq!(state.handle_key(key(KeyCode::Char('D'))), Action::Consumed);
+
+        let asked = state.pending_removal().expect("a question should be up");
+        assert_eq!(asked.label, "fix/crash");
+        assert_eq!(asked.checkout_path, "/wt/app/fix-crash");
+        assert_eq!(asked.repo_root, "/src/app");
+
+        assert_eq!(
+            state.handle_key(key(KeyCode::Char('y'))),
+            Action::RemoveWorktree {
+                repo_root: "/src/app".into(),
+                checkout_path: "/wt/app/fix-crash".into(),
+                label: "fix/crash".into(),
+            }
+        );
+        assert!(
+            state.pending_removal().is_none(),
+            "the question is answered"
+        );
+    }
+
+    #[test]
+    fn anything_that_is_not_y_is_a_no() {
+        // Including keys nobody thought of: the question is taken off the screen first and
+        // only `y` puts a removal in its place.
+        for code in [
+            KeyCode::Char('n'),
+            KeyCode::Esc,
+            KeyCode::Enter,
+            KeyCode::Char('D'),
+            KeyCode::Down,
+            KeyCode::Char('Y'),
+        ] {
+            let mut state = state();
+            select(&mut state, "fix/crash");
+            state.handle_key(key(KeyCode::Char('D')));
+            assert_eq!(state.handle_key(key(code)), Action::Consumed, "{code:?}");
+            assert!(state.pending_removal().is_none(), "{code:?}");
+        }
+    }
+
+    #[test]
+    fn there_is_nothing_to_delete_on_a_pane_or_on_the_repository_itself() {
+        let mut on_a_pane = state();
+        select(&mut on_a_pane, "claude");
+        assert_eq!(
+            on_a_pane.handle_key(key(KeyCode::Char('D'))),
+            Action::Consumed
+        );
+        assert!(on_a_pane.pending_removal().is_none());
+        assert!(on_a_pane.message().is_some(), "and it says why");
+
+        // The repository's own checkout, with nothing running in it, so the cursor can
+        // reach it: git cannot remove a main working tree, and it is not a worktree.
+        let mut on_the_repo = PanesState::new(
+            Tree {
+                repos: vec![RepoNode {
+                    repo_key: "/src/app/.git".into(),
+                    repo_root: "/src/app".into(),
+                    display_name: "me/app".into(),
+                    worktrees: vec![
+                        WorktreeNode {
+                            branch: Some("main".into()),
+                            checkout_path: "/src/app".into(),
+                            is_primary: true,
+                            open_workspace_id: None,
+                            panes: vec![],
+                        },
+                        WorktreeNode {
+                            branch: Some("feat/login".into()),
+                            checkout_path: "/wt/app/feat-login".into(),
+                            is_primary: false,
+                            open_workspace_id: Some("w2".into()),
+                            panes: vec![pane("w2:p1", "codex", AgentStatus::Blocked)],
+                        },
+                    ],
+                }],
+                ungrouped: vec![],
+            },
+            None,
+        );
+        select(&mut on_the_repo, "main");
+        on_the_repo.handle_key(key(KeyCode::Char('D')));
+        assert!(on_the_repo.pending_removal().is_none());
+        assert!(
+            on_the_repo
+                .message()
+                .unwrap_or_default()
+                .contains("the repository itself"),
+            "got {:?}",
+            on_the_repo.message()
+        );
     }
 
     #[test]

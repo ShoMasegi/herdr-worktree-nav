@@ -125,6 +125,9 @@ through this against a real session.
 - [ ] `Enter` on a pane in another space lands there — and stays there after the popup
       closes.
 - [ ] `n` adds a pane to the checkout under the cursor.
+- [ ] `Shift-D` on a `no pane` row asks, `y` removes the checkout and leaves the branch, and
+      any other key cancels. It refuses on a pane, on a busy checkout, and on the
+      repository's own checkout; a checkout with uncommitted work refuses with git's reason.
 - [ ] `Tab` reaches the branches view, on the repository under the cursor.
 - [ ] The branches view lists every repository herdr has open, marks the one it was summoned
       from, and starts with the cursor on it.

@@ -81,7 +81,8 @@ const IDLE_NOTE: &str = "  no pane";
 /// Widest first; the picker draws the first that fits. Each rung drops the least useful
 /// thing left, so a narrow pane loses `r reload` before it loses how to move.
 const HELP_PANES: &[&str] = &[
-    "\u{21b5} jump  n new pane  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  r reload  esc close",
+    "\u{21b5} jump  n new pane  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  shift+d remove  r reload  esc close",
+    "\u{21b5} jump  n new  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  shift+d remove  esc close",
     "\u{21b5} jump  n new  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  esc close",
     "\u{21b5} jump  n new  \u{2190}\u{2192} repo  \u{21e5} branches  / search  esc close",
     // Narrow enough that something has to go: the other view outranks a way of moving
@@ -89,6 +90,8 @@ const HELP_PANES: &[&str] = &[
     "\u{21b5} jump  \u{21e5} branches  / search  esc close",
     "\u{21b5} jump  esc close",
 ];
+/// While a deletion is waiting on a yes.
+const HELP_PANES_REMOVE: &[&str] = &["y remove  any other key cancels", "y remove"];
 const HELP_PANES_SEARCH: &[&str] = &[
     "\u{21b5} keep search  ctrl+u clear  esc cancel  \u{2191}\u{2193} move  \u{2190}\u{2192} repo",
     "\u{21b5} keep  esc cancel",
@@ -132,16 +135,31 @@ pub fn draw(frame: &mut Frame, state: &PanesState, theme: &Theme, _mode: Mode) {
     render_rows(frame, state, theme, panel.body);
     render_detail(frame, &state.detail(), theme, panel.detail);
 
-    let variants = if state.is_filtering() {
-        HELP_PANES_SEARCH
-    } else {
-        HELP_PANES
+    let variants = match (state.pending_removal().is_some(), state.is_filtering()) {
+        (true, _) => HELP_PANES_REMOVE,
+        (false, true) => HELP_PANES_SEARCH,
+        (false, false) => HELP_PANES,
     };
     frame.render_widget(footer(variants, theme, panel.footer.width), panel.footer);
 }
 
 /// `/ query` with the total on the right, or a state chip when one is active.
 fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'static> {
+    // A question about deleting something takes the line outright. Nothing else on it
+    // matters while it is up, and the count would read as an invitation to carry on.
+    if let Some(removal) = state.pending_removal() {
+        return Paragraph::new(Line::from(vec![
+            Span::styled(
+                " \u{d7} ",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("delete the checkout for {}?", removal.label),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  y/n", theme.dim()),
+        ]));
+    }
     let focus = if state.is_filtering() {
         Style::default()
             .fg(theme.accent)
@@ -1319,6 +1337,17 @@ mod tests {
         for c in "codex".chars() {
             press(&mut state, KeyCode::Char(c));
         }
+        insta::assert_snapshot!(screen(&state, 92, 12));
+    }
+
+    #[test]
+    fn draws_the_question_a_deletion_asks_before_it_happens() {
+        let mut state = PanesState::new(tree(), None);
+        // Down to `fix/crash`, the checkout with nothing running in it.
+        for _ in 0..3 {
+            press(&mut state, KeyCode::Char('j'));
+        }
+        press(&mut state, KeyCode::Char('D'));
         insta::assert_snapshot!(screen(&state, 92, 12));
     }
 

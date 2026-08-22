@@ -23,15 +23,21 @@ Specifically, herdr-gh-nav:
   — every workspace, tab, pane, and working directory — and it can create worktrees, move
   panes, and change focus.
 - **Runs `git`** in your repositories: `rev-parse`, `for-each-ref`, `remote get-url`,
-  `ls-remote`, and `fetch`. `fetch` writes only under `refs/remotes/origin/`, and with
-  `--prune` — which is what `Ctrl-F` runs — it also deletes the refs under there whose branch
-  is gone from the remote. Those are a cache of the remote and the next fetch rebuilds them.
-  Nothing here rewrites history, touches your working tree, deletes a local branch, or
-  pushes.
+  `ls-remote`, `fetch`, and `worktree remove`. `fetch` writes only under
+  `refs/remotes/origin/`, and with `--prune` — which is what `Ctrl-F` runs — it also deletes
+  the refs under there whose branch is gone from the remote. Those are a cache of the remote
+  and the next fetch rebuilds them.
+- **Deletes a checkout, and only when you say so.** `Shift-D` in the panes view asks before
+  it runs `git worktree remove` on the checkout under the cursor, and only offers it for one
+  with nothing running in it. There is no `--force`: git refuses a checkout holding
+  uncommitted changes or untracked files, and this plugin does not override that. The branch
+  is left alone.
 - **Runs `gh pr list`** if `gh` is on your `PATH`, to annotate branches. Read-only.
 
-It writes nothing to disk — not even a preference. It does not read your credentials, send
-anything anywhere, or run any command a repository supplies. Network access is
+Nothing here rewrites history, deletes a branch, changes a file in a working tree, or pushes.
+
+It stores nothing of its own on disk — not even a preference. It does not read your
+credentials, send anything anywhere, or run any command a repository supplies. Network access is
 `git ls-remote` / `git fetch` against your remote, and `gh` against GitHub — both using
 credentials you have already configured.
 

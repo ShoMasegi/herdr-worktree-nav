@@ -1,0 +1,16 @@
+---
+source: src/ui/render.rs
+expression: "screen(&state, 92, 12)"
+---
+" × delete the checkout for fix/crash?  y/n                                                  "
+"────────────────────────────────────────────────────────────────────────────────────────────"
+" ◆ │  ├── ● claude             w1:p1                                                       │"
+"   │  └── · shell              w1:p2                                                       █"
+"   ├── ○ feat/login            /wt/feat-login                                              █"
+"   │  └── ○ codex              w2:p1                                                       █"
+"   └── · fix/crash  no pane    /wt/fix-crash                                               █"
+"                                                                                           │"
+"   ● me/site (1)                                                                           │"
+"   └── ● develop               /wt/develop                                                 │"
+" me/app · fix/crash · /wt/fix-crash ────────────────────────────────────────────────────────"
+" y remove  any other key cancels                                                            "

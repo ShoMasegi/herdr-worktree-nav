@@ -277,6 +277,78 @@ fn a_fetch_that_cannot_reach_the_remote_says_so_rather_than_blaming_the_reposito
 }
 
 #[test]
+fn removing_a_worktree_takes_the_checkout_and_leaves_the_branch() {
+    let repo = repository();
+    let root = path_str(repo.path());
+    // In a temp dir of its own, so a failed run leaves nothing behind in the shared one.
+    let elsewhere = tempfile::tempdir().unwrap();
+    let checkout = elsewhere.path().join("gone-worktree");
+    git(
+        repo.path(),
+        &["worktree", "add", checkout.to_str().unwrap(), "feat/login"],
+    );
+    assert!(checkout.join("README.md").exists());
+
+    GitCli
+        .remove_worktree(&root, checkout.to_str().unwrap())
+        .unwrap();
+
+    assert!(!checkout.exists(), "the checkout is gone from disk");
+    let listed = Command::new("git")
+        .arg("-C")
+        .arg(repo.path())
+        .args(["worktree", "list"])
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&listed.stdout).contains("gone-worktree"),
+        "and gone from git's record of them"
+    );
+    assert!(
+        GitCli
+            .local_refs(&root)
+            .unwrap()
+            .iter()
+            .any(|r| r.name == "feat/login"),
+        "the branch it was on is not the picker's to delete"
+    );
+}
+
+#[test]
+fn removing_a_worktree_with_uncommitted_work_refuses_and_says_why() {
+    let repo = repository();
+    let root = path_str(repo.path());
+    let elsewhere = tempfile::tempdir().unwrap();
+    let checkout = elsewhere.path().join("dirty-worktree");
+    git(
+        repo.path(),
+        &["worktree", "add", checkout.to_str().unwrap(), "feat/login"],
+    );
+    std::fs::write(checkout.join("README.md"), "edited but not committed\n").unwrap();
+
+    let error = GitCli
+        .remove_worktree(&root, checkout.to_str().unwrap())
+        .expect_err("git should refuse to throw work away");
+    let error = format!("{error:#}");
+    assert!(
+        error.contains("contains modified or untracked files"),
+        "git's own reason should reach the user: {error}"
+    );
+    assert!(
+        checkout.join("README.md").exists(),
+        "and nothing should have been deleted"
+    );
+}
+
+#[test]
+fn the_main_checkout_is_not_a_worktree_that_can_be_removed() {
+    // The picker refuses before asking, but the adapter must not pretend otherwise either.
+    let repo = repository();
+    let root = path_str(repo.path());
+    assert!(GitCli.remove_worktree(&root, &root).is_err());
+}
+
+#[test]
 fn recognises_a_github_origin_and_ignores_anything_else() {
     let repo = repository();
     let root = path_str(repo.path());

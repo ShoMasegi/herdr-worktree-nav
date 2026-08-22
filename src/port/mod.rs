@@ -174,6 +174,11 @@ pub trait GitPort: Sync {
     /// from the remote. What a person means by "fetch the repository".
     fn fetch_all(&self, repo_root: &str) -> Result<()>;
 
+    /// Delete a linked worktree: its checkout and git's record of it. The branch it was on
+    /// is left alone, and git refuses when the checkout has uncommitted work — neither of
+    /// which this plugin overrides.
+    fn remove_worktree(&self, repo_root: &str, checkout_path: &str) -> Result<()>;
+
     /// Current `HEAD` of `repo_root`, used as the base for a brand new branch.
     fn head_ref(&self, repo_root: &str) -> Result<String>;
 }

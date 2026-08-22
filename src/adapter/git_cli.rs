@@ -187,6 +187,14 @@ impl GitPort for GitCli {
         Ok(())
     }
 
+    fn remove_worktree(&self, repo_root: &str, checkout_path: &str) -> Result<()> {
+        // No `--force`. git refuses a checkout with uncommitted work or untracked files,
+        // and that refusal is the point: the picker has no business deciding that work
+        // nobody has committed is disposable.
+        GitCli::run_in_repo(repo_root, &["worktree", "remove", checkout_path])?;
+        Ok(())
+    }
+
     fn head_ref(&self, repo_root: &str) -> Result<String> {
         let head = GitCli::run_in_repo(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
         let head = head.trim();

@@ -26,6 +26,7 @@ branch list starts on.
 | `Enter` on a pane | go to it |
 | `Enter` on a checkout with nothing running | open it |
 | `n` | add a pane to the checkout under the cursor |
+| `Shift-D` | delete the checkout under the cursor, after asking |
 | `Tab` | branches, starting on the repository under the cursor |
 | `/` | search |
 | `b` `w` `i` `d` | narrow to blocked, working, idle, or done |
@@ -49,6 +50,28 @@ The cursor stops only where there is somewhere to go: a pane, and a checkout wit
 running in it. Repository headings and checkouts that already have panes are stepped over —
 the panes listed directly under them are the answer, and stopping on the header first would
 only make the walk longer. They stay on screen; the arrow keys just pass through them.
+
+### Deleting a checkout
+
+`Shift-D` on a `no pane` row offers to remove that worktree. The prompt line becomes the
+question and `y` is the only key that answers it; anything else is a no.
+
+```
+ × delete the checkout for fix/crash?  y/n
+ …
+ y remove  any other key cancels
+```
+
+It runs `git worktree remove <path>` and nothing else. The branch stays — a checkout is
+rebuilt by making it again, and a branch that was never pushed is not. There is no `--force`,
+so git refuses a checkout with uncommitted changes or untracked files in it and says so on
+that line; that refusal is the feature rather than an obstacle.
+
+Two things are refused before the question is even asked: a pane, or a checkout with panes in
+it, because nothing there is safe to delete; and the repository's own checkout, because git
+cannot remove a main working tree and it is not a worktree anyway.
+
+The picker stays open and the list reloads, since tidying up comes in batches.
 
 `b`/`w`/`i`/`d` replace the search box with a state chip. Pressing the same one again clears
 it, so a filter is never a one-way door.

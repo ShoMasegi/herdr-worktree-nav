@@ -50,6 +50,23 @@ pub fn run(
                     state.replace_tree(tree);
                 }
             }
+            // Deleting is housekeeping, and housekeeping comes in batches: the picker stays
+            // open on the list the deletion just changed rather than closing over it.
+            Action::RemoveWorktree {
+                repo_root,
+                checkout_path,
+                label,
+            } => match git.remove_worktree(&repo_root, &checkout_path) {
+                Ok(()) => {
+                    state.set_message(format!("removed the checkout for {label}"));
+                    if let Ok((_, tree)) = collect::collect_tree(herdr, git) {
+                        state.replace_tree(tree);
+                    }
+                }
+                // git refuses a checkout with work in it, which is the answer rather than
+                // an obstacle: it says what would have been lost.
+                Err(error) => state.set_message(format!("{error:#}")),
+            },
             action => break action,
         }
     };
@@ -92,6 +109,9 @@ fn perform(herdr: &dyn HerdrPort, action: Action) -> Result<Exit> {
             Ok(Exit::Closed)
         }
         Action::ShowBranches { repo_root } => Ok(Exit::ShowBranches { repo_root }),
-        Action::Consumed | Action::Ignored | Action::Reload => Ok(Exit::Closed),
+        // Handled inside the loop, which is why the picker is still up after one.
+        Action::Consumed | Action::Ignored | Action::Reload | Action::RemoveWorktree { .. } => {
+            Ok(Exit::Closed)
+        }
     }
 }
