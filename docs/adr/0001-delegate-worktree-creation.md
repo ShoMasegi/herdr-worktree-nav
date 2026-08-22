@@ -53,3 +53,7 @@ on disk is untouched. Nothing needs to call `workspace.close`.
   `focus: false`, so it does not steal focus while that happens.
 - If a future herdr stops closing the emptied workspace, the fix is a `workspace.close` call,
   not a redesign.
+- `pane.move` is not always a move. Into a zoomed tab it answers with success, `changed:
+  false`, and `reason: zoomed_tab`, leaving the pane where it was. The socket adapter turns
+  an unchanged move into an error, and the destination step refuses a zoomed tab before
+  asking, so the worktree is never created for a move that cannot happen.

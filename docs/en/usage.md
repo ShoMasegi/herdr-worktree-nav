@@ -161,6 +161,15 @@ new space       on its own
 - **new space** leaves it in the workspace herdr made for it, which is what herdr's own
   `new worktree` binding does.
 
+Beside the list is what the tab will look like once the pane lands in it, for whichever row
+the cursor is on: the tab's real layout, with the arriving pane drawn in where it will
+actually go. The prediction is exact rather than a sketch — a destination that names no pane
+splits whichever pane that tab has focused, and the split is even, which is what herdr does.
+
+A tab that is **zoomed** shows a warning instead of a diagram. herdr answers a request to
+move a pane into a zoomed tab with success and then does not move it, so the picker stops
+before asking rather than appearing to work. Unzoom the tab and it becomes available.
+
 `split right` starts selected, so `Enter` `Enter` puts the branch beside what you were doing.
 
 ## Diagnostics

@@ -70,12 +70,14 @@ Type to filter. Type something that does not exist yet and it offers to create i
 where the pane should go:
 
 ```
-here            split right
-                split down
-existing tab    w1  app / logs
-                w5  harken / android
-existing space  w1  app → new tab
-new space       on its own
+here            split right     w1  app / agents
+                split down      ┌──────────────┬──────────────┐
+existing tab    w1  app / logs  │ ● claude     │ + feat/login │
+                w5  harken/…    │ w1:p1        │              │
+existing space  w1  app         ├──────────────┴──────────────┤
+new space       on its own      │ · shell                     │
+                                │ w1:p9                       │
+                                └─────────────────────────────┘
 ```
 
 `Enter` `Enter` is the fast path: split right, beside the pane you came from.

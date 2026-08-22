@@ -67,7 +67,7 @@ pub fn run(
 
     let local_refs = git.local_refs(repo_root)?;
     let destinations = dest::destinations(&snapshot, from_pane_id);
-    let mut state = BranchesState::new(repo, local_refs, destinations);
+    let mut state = BranchesState::new(repo, local_refs, destinations, snapshot);
 
     let (sender, receiver) = mpsc::channel();
     let outcome = std::thread::scope(|scope| -> Result<BranchAction> {

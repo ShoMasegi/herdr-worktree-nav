@@ -10,8 +10,9 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::domain::dest::Destination;
 use crate::domain::model::RepoNode;
+use crate::domain::preview::{self, Preview};
 use crate::domain::resolve::{self, BranchEntry, BranchState};
-use crate::port::{GitRef, PullRequest};
+use crate::port::{GitRef, PullRequest, Snapshot};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BranchAction {
@@ -45,6 +46,8 @@ pub enum Step {
 
 pub struct BranchesState {
     repo: RepoNode,
+    /// Kept so the destination step can show what each choice will do to the tab.
+    snapshot: Snapshot,
     local_refs: Vec<GitRef>,
     remote_heads: Vec<String>,
     pull_requests: Vec<PullRequest>,
@@ -66,9 +69,15 @@ pub struct BranchesState {
 }
 
 impl BranchesState {
-    pub fn new(repo: RepoNode, local_refs: Vec<GitRef>, destinations: Vec<Destination>) -> Self {
+    pub fn new(
+        repo: RepoNode,
+        local_refs: Vec<GitRef>,
+        destinations: Vec<Destination>,
+        snapshot: Snapshot,
+    ) -> Self {
         let mut state = Self {
             repo,
+            snapshot,
             local_refs,
             remote_heads: Vec::new(),
             pull_requests: Vec::new(),
@@ -185,6 +194,25 @@ impl BranchesState {
             ));
         }
         parts.join(" \u{b7} ")
+    }
+
+    /// What the tab under the cursor will look like once the branch's pane lands in it.
+    pub fn preview(&self) -> Preview {
+        let (Some(destination), Some(entry)) = (
+            self.destinations.get(self.destination_cursor),
+            self.chosen.as_ref(),
+        ) else {
+            return Preview::Unavailable;
+        };
+        preview::predict(&self.snapshot, destination, &entry.name)
+    }
+
+    /// Whether the destination under the cursor can actually take the pane.
+    fn destination_is_blocked(&self) -> Option<String> {
+        match self.preview() {
+            Preview::Blocked { reason, .. } => Some(reason),
+            _ => None,
+        }
     }
 
     /// The breadcrumb for the destination step: what the highlighted choice will do.
@@ -374,6 +402,11 @@ impl BranchesState {
                 BranchAction::Consumed
             }
             KeyCode::Enter => {
+                // Acting would look like it worked and quietly do nothing, so say why not.
+                if let Some(reason) = self.destination_is_blocked() {
+                    self.message = Some(reason);
+                    return BranchAction::Consumed;
+                }
                 let (Some(entry), Some(destination)) = (
                     self.chosen.clone(),
                     self.destinations.get(self.destination_cursor).cloned(),
@@ -466,6 +499,39 @@ mod tests {
         ]
     }
 
+    /// `w1:t1` holds one pane; `w3:t1` is zoomed, which herdr refuses to move a pane into.
+    fn snapshot() -> Snapshot {
+        serde_json::from_value(serde_json::json!({
+            "version": "0.7.4",
+            "protocol": 16,
+            "workspaces": [],
+            "tabs": [
+                {"tab_id": "w1:t1", "workspace_id": "w1", "label": "agents", "number": 1,
+                 "focused": true, "pane_count": 1, "agent_status": "idle"},
+                {"tab_id": "w3:t1", "workspace_id": "w3", "label": "zoomed", "number": 1,
+                 "focused": false, "pane_count": 1, "agent_status": "idle"}
+            ],
+            "panes": [
+                {"pane_id": "w1:p1", "tab_id": "w1:t1", "workspace_id": "w1",
+                 "terminal_id": "t1", "focused": true, "agent": "claude",
+                 "agent_status": "idle"}
+            ],
+            "layouts": [
+                {"tab_id": "w1:t1", "workspace_id": "w1", "zoomed": false,
+                 "area": {"x": 0, "y": 0, "width": 100, "height": 40},
+                 "focused_pane_id": "w1:p1",
+                 "panes": [{"pane_id": "w1:p1", "focused": true,
+                            "rect": {"x": 0, "y": 0, "width": 100, "height": 40}}]},
+                {"tab_id": "w3:t1", "workspace_id": "w3", "zoomed": true,
+                 "area": {"x": 0, "y": 0, "width": 100, "height": 40},
+                 "focused_pane_id": "w3:p1",
+                 "panes": [{"pane_id": "w3:p1", "focused": true,
+                            "rect": {"x": 0, "y": 0, "width": 100, "height": 40}}]}
+            ]
+        }))
+        .expect("snapshot fixture should deserialize")
+    }
+
     fn state() -> BranchesState {
         BranchesState::new(
             repo(),
@@ -475,6 +541,7 @@ mod tests {
                 local("chore/deps", 5),
             ],
             destinations(),
+            snapshot(),
         )
     }
 
@@ -648,6 +715,48 @@ mod tests {
             state().handle_key(key(KeyCode::Tab)),
             BranchAction::ShowPanes
         );
+    }
+
+    #[test]
+    fn a_zoomed_destination_says_why_instead_of_quietly_doing_nothing() {
+        // herdr answers a move into a zoomed tab with success and then does not move it, so
+        // the picker has to stop before asking.
+        let mut state = BranchesState::new(
+            repo(),
+            vec![local("chore/deps", 5)],
+            vec![Destination::ExistingTab {
+                tab_id: "w3:t1".into(),
+                label: "w3  zoomed".into(),
+            }],
+            snapshot(),
+        );
+        type_in(&mut state, "chore");
+        state.handle_key(key(KeyCode::Enter));
+        assert_eq!(state.step(), Step::Destination);
+
+        assert_eq!(
+            state.handle_key(key(KeyCode::Enter)),
+            BranchAction::Consumed
+        );
+        assert!(
+            state.message().unwrap_or_default().contains("zoomed"),
+            "got {:?}",
+            state.message()
+        );
+        assert_eq!(state.step(), Step::Destination, "still asking");
+    }
+
+    #[test]
+    fn the_preview_follows_the_destination_cursor() {
+        let mut state = state();
+        type_in(&mut state, "chore");
+        state.handle_key(key(KeyCode::Enter));
+        // The first destination splits w1:t1, which holds one pane.
+        let Preview::Layout { panes, .. } = state.preview() else {
+            panic!("expected a layout, got {:?}", state.preview());
+        };
+        assert_eq!(panes.len(), 2);
+        assert!(panes.iter().any(|p| p.is_new && p.label == "chore/deps"));
     }
 
     #[test]

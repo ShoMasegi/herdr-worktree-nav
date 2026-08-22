@@ -1,0 +1,18 @@
+---
+source: src/ui/render.rs
+expression: "branches_screen(&state, 110, 14)"
+---
+" where should chore/deps go?                                                                                  "
+"──────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+" here            split right                    w3 / zoomed                                                   "
+"                 split down                                                                                   "
+" existing tab    w1  app / logs                 ⚠ this tab is zoomed, and herdr will not move a pane into a   "
+" existing space  w3  notes → new tab            zoomed tab. Unzoom it first, or pick somewhere else.          "
+" new space       on its own                                                                                   "
+" existing tab    w3  notes / zoomed                                                                           "
+"                                                                                                              "
+"                                                                                                              "
+"                                                                                                              "
+"                                                                                                              "
+" chore/deps opens as a new pane in w3  notes / zoomed ────────────────────────────────────────────────────────"
+" ↵ open here  ↑↓ move  esc back                                                                               "

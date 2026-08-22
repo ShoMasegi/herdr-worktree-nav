@@ -57,13 +57,17 @@
 打てば絞り込まれます。まだ存在しない名前を打てば、それを作る候補が出ます。続いて pane の行き先を選びます。
 
 ```
- here            split right
-                 split down
- existing tab    w1  app / logs
-                 w5  harken / android
- existing space  w1  app → new tab
- new space       on its own
+ here            split right     w1  app / agents
+                 split down      ┌──────────────┬──────────────┐
+ existing tab    w1  app / logs  │ ● claude     │ + feat/login │
+                 w5  harken/…    │ w1:p1        │              │
+ existing space  w1  app         ├──────────────┴──────────────┤
+ new space       on its own      │ · shell                     │
+                                 │ w1:p9                       │
+                                 └─────────────────────────────┘
 ```
+
+一覧の右には、カーソルがある行を選んだ場合にその tab がどうなるかが出ます。tab の実際のレイアウトに新しい pane を描き込んだものなので、行き先を想像せずに目で確かめられます。
 
 `Enter` `Enter` が最速で、呼び出した pane の右に split されます。
 

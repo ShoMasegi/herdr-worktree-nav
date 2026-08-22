@@ -12,12 +12,15 @@
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
+use crate::domain::preview::{Preview, PreviewPane};
 use crate::domain::resolve::{BranchEntry, BranchState};
 use crate::domain::rows::{DisplayLine, Row};
+use crate::port::LayoutRect;
 use crate::ui::branches::{BranchesState, Step};
+use crate::ui::diagram::{Fit, Frame as DiagramFrame};
 use crate::ui::state::PanesState;
 use crate::ui::theme::Theme;
 
@@ -501,7 +504,11 @@ pub fn draw_branches(frame: &mut Frame, state: &BranchesState, theme: &Theme) {
         Step::Destination => {
             frame.render_widget(destination_prompt(state, theme), panel.search);
             render_rule(frame, panel.rule, theme);
-            render_destination_rows(frame, state, theme, panel.body);
+            let (list, preview) = destination_areas(panel.body);
+            render_destination_rows(frame, state, theme, list);
+            if let Some(preview) = preview {
+                render_preview(frame, &state.preview(), theme, preview);
+            }
             render_detail(frame, &state.destination_detail(), theme, panel.detail);
             frame.render_widget(
                 footer(HELP_DESTINATION, theme, panel.footer.width),
@@ -708,6 +715,168 @@ fn render_destination_rows(frame: &mut Frame, state: &BranchesState, theme: &The
         theme,
         area,
     );
+}
+
+/// Widest the destination list is allowed to get; past this the preview is the better use
+/// of the space.
+const DESTINATION_LIST_WIDTH: u16 = 46;
+/// Below this there is no room for a diagram worth looking at, so the list takes it all.
+const MIN_PREVIEW_WIDTH: u16 = 28;
+
+/// Split the body into the destination list and the preview beside it.
+fn destination_areas(body: Rect) -> (Rect, Option<Rect>) {
+    let list_width = DESTINATION_LIST_WIDTH.min(body.width * 45 / 100);
+    if body.width.saturating_sub(list_width) < MIN_PREVIEW_WIDTH {
+        return (body, None);
+    }
+    let list = Rect::new(body.x, body.y, list_width, body.height);
+    // Two columns of gutter, so the diagram is not touching the labels.
+    let preview = Rect::new(
+        body.x + list_width + 2,
+        body.y,
+        body.width - list_width - 2,
+        body.height,
+    );
+    (list, Some(preview))
+}
+
+/// Draw what the chosen tab will look like once the branch's pane is in it.
+fn render_preview(frame: &mut Frame, preview: &Preview, theme: &Theme, area: Rect) {
+    match preview {
+        Preview::Unavailable => {}
+        Preview::Blocked { caption, reason } => {
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(Span::styled(caption.clone(), theme.dim())),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!("\u{26a0} {reason}"),
+                        Style::default().fg(Color::Yellow),
+                    )),
+                ])
+                .wrap(Wrap { trim: true }),
+                area,
+            );
+        }
+        Preview::Layout {
+            caption,
+            area: tab,
+            panes,
+        } => {
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(caption.clone(), theme.dim()))),
+                Rect::new(area.x, area.y, area.width, 1),
+            );
+            if area.height < 4 {
+                return;
+            }
+            let canvas = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
+            render_diagram(frame, *tab, panes, theme, canvas);
+        }
+    }
+}
+
+fn render_diagram(
+    frame: &mut Frame,
+    tab: LayoutRect,
+    panes: &[PreviewPane],
+    theme: &Theme,
+    canvas: Rect,
+) {
+    let Some(fit) = Fit::new(tab, canvas.width as usize, canvas.height as usize) else {
+        return;
+    };
+    let (width, height) = fit.size();
+    let (offset_x, offset_y) = fit.offset();
+
+    let mut grid = DiagramFrame::new(width, height);
+    let mapped: Vec<(LayoutRect, &PreviewPane)> = panes
+        .iter()
+        .map(|pane| (fit.map(pane.rect), pane))
+        .collect();
+    for (rect, _) in &mapped {
+        grid.add(*rect);
+    }
+
+    // The borders first, as one divided rectangle rather than a row of separate boxes.
+    for y in 0..height {
+        let line: String = (0..width).map(|x| grid.glyph_at(x, y)).collect();
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(line, theme.tree()))),
+            Rect::new(
+                canvas.x + offset_x as u16,
+                canvas.y + (offset_y + y) as u16,
+                width as u16,
+                1,
+            ),
+        );
+    }
+
+    // Then what is in each of them.
+    for (rect, pane) in &mapped {
+        // One column in from the border, so text is not touching it.
+        let inner = Rect::new(
+            canvas.x + offset_x as u16 + rect.x + 2,
+            canvas.y + offset_y as u16 + rect.y + 1,
+            rect.width.saturating_sub(3),
+            rect.height.saturating_sub(2),
+        );
+        if inner.width == 0 || inner.height == 0 {
+            continue;
+        }
+        let (glyph, glyph_style) = theme.status_glyph(pane.status);
+        let name_style = if pane.is_new {
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let head = if pane.is_new {
+            vec![
+                Span::styled("+ ", name_style),
+                Span::styled(
+                    truncate(&pane.label, inner.width.saturating_sub(2) as usize),
+                    name_style,
+                ),
+            ]
+        } else {
+            vec![
+                Span::styled(glyph, glyph_style),
+                Span::raw(" "),
+                Span::styled(
+                    truncate(&pane.label, inner.width.saturating_sub(2) as usize),
+                    name_style,
+                ),
+            ]
+        };
+
+        if inner.height >= 2 && !pane.id.is_empty() {
+            // Room for both: the name on top, the id under it.
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(head),
+                    Line::from(Span::styled(
+                        truncate(&pane.id, inner.width as usize),
+                        theme.dim(),
+                    )),
+                ]),
+                inner,
+            );
+        } else {
+            // One line only, so they share it.
+            let mut spans = head;
+            if !pane.id.is_empty() {
+                let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+                let room = (inner.width as usize).saturating_sub(used + 2);
+                if room > 0 {
+                    spans.push(Span::raw("  "));
+                    spans.push(Span::styled(truncate(&pane.id, room), theme.dim()));
+                }
+            }
+            frame.render_widget(Paragraph::new(Line::from(spans)), inner);
+        }
+    }
 }
 
 /// A glyph and colour for what a branch currently is, in the same visual language as the
@@ -1045,6 +1214,44 @@ mod tests {
             committed_at: Some(at),
             subject: Some(format!("latest work on {name}")),
         };
+        let snapshot: crate::port::Snapshot = serde_json::from_value(serde_json::json!({
+            "version": "0.7.4",
+            "protocol": 16,
+            "workspaces": [
+                {"workspace_id": "w1", "label": "app", "number": 1, "focused": true,
+                 "active_tab_id": "w1:t1", "agent_status": "idle"},
+            ],
+            "tabs": [
+                {"tab_id": "w1:t1", "workspace_id": "w1", "label": "agents", "number": 1,
+                 "focused": true, "pane_count": 2, "agent_status": "idle"},
+                {"tab_id": "w3:t1", "workspace_id": "w3", "label": "zoomed", "number": 1,
+                 "focused": false, "pane_count": 1, "agent_status": "idle"},
+            ],
+            "panes": [
+                {"pane_id": "w1:p1", "tab_id": "w1:t1", "workspace_id": "w1",
+                 "terminal_id": "t1", "focused": true, "agent": "claude",
+                 "agent_status": "working"},
+                {"pane_id": "w1:p9", "tab_id": "w1:t1", "workspace_id": "w1",
+                 "terminal_id": "t9", "focused": false, "agent_status": "unknown"},
+            ],
+            "layouts": [
+                {"tab_id": "w1:t1", "workspace_id": "w1", "zoomed": false,
+                 "area": {"x": 0, "y": 0, "width": 250, "height": 79},
+                 "focused_pane_id": "w1:p1",
+                 "panes": [
+                     {"pane_id": "w1:p1", "focused": true,
+                      "rect": {"x": 0, "y": 0, "width": 250, "height": 40}},
+                     {"pane_id": "w1:p9", "focused": false,
+                      "rect": {"x": 0, "y": 40, "width": 250, "height": 39}}
+                 ]},
+                {"tab_id": "w3:t1", "workspace_id": "w3", "zoomed": true,
+                 "area": {"x": 0, "y": 0, "width": 250, "height": 79},
+                 "focused_pane_id": "w3:p1",
+                 "panes": [{"pane_id": "w3:p1", "focused": true,
+                            "rect": {"x": 0, "y": 0, "width": 250, "height": 79}}]},
+            ],
+        }))
+        .expect("snapshot fixture should deserialize");
         let mut state = BranchesState::new(
             repo,
             vec![
@@ -1073,7 +1280,12 @@ mod tests {
                     label: "w3  notes \u{2192} new tab".into(),
                 },
                 Destination::NewSpace,
+                Destination::ExistingTab {
+                    tab_id: "w3:t1".into(),
+                    label: "w3  notes / zoomed".into(),
+                },
             ],
+            snapshot,
         );
         state.set_remote_heads(vec!["feat/search".into(), "main".into()]);
         state.set_pull_requests(vec![PullRequest {
@@ -1105,6 +1317,28 @@ mod tests {
             state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
         }
         insta::assert_snapshot!(branches_screen(&state, 92, 10));
+    }
+
+    #[test]
+    fn draws_a_warning_instead_of_a_diagram_for_a_zoomed_tab() {
+        let mut state = branches_state();
+        for c in "chore".chars() {
+            state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        // Move to the zoomed tab, which is the last destination in this fixture.
+        state.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        insta::assert_snapshot!(branches_screen(&state, 110, 14));
+    }
+
+    #[test]
+    fn draws_the_destination_preview_at_a_realistic_size() {
+        let mut state = branches_state();
+        for c in "chore".chars() {
+            state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        insta::assert_snapshot!(branches_screen(&state, 110, 22));
     }
 
     #[test]

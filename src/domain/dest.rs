@@ -103,9 +103,20 @@ pub fn destinations(snapshot: &Snapshot, from_pane_id: Option<&str>) -> Vec<Dest
         if Some(tab.tab_id.as_str()) == current_tab {
             continue;
         }
+        // Marked here rather than filtered out: the tab is on screen, and "it is not in the
+        // list" is a worse answer than "it is, and here is why you cannot use it".
+        let zoomed = snapshot
+            .layouts
+            .iter()
+            .any(|layout| layout.tab_id == tab.tab_id && layout.zoomed);
+        let label = tab_label(snapshot, tab);
         destinations.push(Destination::ExistingTab {
             tab_id: tab.tab_id.clone(),
-            label: tab_label(snapshot, tab),
+            label: if zoomed {
+                format!("{label}  (zoomed)")
+            } else {
+                label
+            },
         });
     }
 
@@ -128,7 +139,7 @@ fn workspace_label(workspace: &Workspace) -> String {
     }
 }
 
-fn tab_label(snapshot: &Snapshot, tab: &Tab) -> String {
+pub(crate) fn tab_label(snapshot: &Snapshot, tab: &Tab) -> String {
     let space = snapshot
         .workspaces
         .iter()
@@ -208,6 +219,22 @@ mod tests {
                 "w2 \u{2192} new tab",
                 "on its own",
             ]
+        );
+    }
+
+    #[test]
+    fn a_zoomed_tab_is_listed_but_marked() {
+        let mut snapshot = snapshot();
+        snapshot.layouts = serde_json::from_value(json!([
+            {"tab_id": "w2:t1", "workspace_id": "w2", "zoomed": true,
+             "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+             "focused_pane_id": "w2:p1", "panes": []}
+        ]))
+        .unwrap();
+        let labels = labels(&destinations(&snapshot, Some("w1:p1")));
+        assert!(
+            labels.contains(&"w2 / logs  (zoomed)".to_string()),
+            "got {labels:?}"
         );
     }
 

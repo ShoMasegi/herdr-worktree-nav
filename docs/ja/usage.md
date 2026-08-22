@@ -120,6 +120,10 @@ new space       on its own
 - **existing space** はその space に tab を追加します。
 - **new space** は herdr が作った workspace のまま残します。herdr 本体の `new worktree` と同じ挙動です。
 
+一覧の右には、カーソルがある行を選んだ場合にその tab がどうなるかが出ます。tab の実際のレイアウトに、新しい pane が実際に入る位置を描き込んだものです。概略図ではなく正確な予測です — pane を指定しない行き先は「その tab がフォーカスしている pane」を分割し、分割比は等分になります。これは herdr の実挙動と同じです。
+
+**zoomed** な tab では図の代わりに警告が出ます。herdr は zoomed な tab への pane 移動要求に成功を返しながら移動しないため、動いたように見せるのではなく手前で止めます。zoom を解除すれば選べるようになります。
+
 `split right` が最初から選択されているので、`Enter` `Enter` で作業中の隣にブランチが並びます。
 
 ## 診断

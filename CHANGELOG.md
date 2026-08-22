@@ -20,7 +20,10 @@ First release. Two overlay pickers for herdr, backed by one Rust binary.
   filters and offers to create a name that does not exist. Choosing a branch that is already
   open jumps to it instead of checking it out twice.
 - **Destinations.** A worktree pane can go beside the pane you came from, into an existing
-  tab, into an existing space, or into a new space. `Enter` `Enter` takes the first.
+  tab, into an existing space, or into a new space. `Enter` `Enter` takes the first. Beside
+  the list is a preview of the chosen tab with the arriving pane drawn into it, predicted
+  exactly rather than sketched. A zoomed tab shows a warning instead: herdr answers a move
+  into one with success and then does not move the pane, so the picker refuses up front.
 - **Pull request annotations** when `gh` is installed and authenticated. Entirely optional;
   branches are read from git so the picker works offline and against non-GitHub remotes.
 - `herdr-gh-nav dump`, a diagnostic that prints the resolved tree as plain text.

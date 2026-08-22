@@ -192,10 +192,25 @@ impl HerdrPort for SocketHerdr {
                 "workspace_id": workspace_id,
             }),
         };
-        self.call(
+        let result = self.call(
             "pane.move",
             json!({ "pane_id": pane_id, "destination": destination, "focus": focus }),
         )?;
+
+        // herdr answers some refusals with success and a `changed: false` — moving into a
+        // zoomed tab is one. Left unchecked that reads as "done" while the pane never went
+        // anywhere, so it is turned into the failure it is.
+        let moved = result
+            .pointer("/move_result/changed")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        if !moved {
+            let reason = result
+                .pointer("/move_result/reason")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            bail!("herdr did not move the pane into that tab ({reason})");
+        }
         Ok(())
     }
 

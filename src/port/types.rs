@@ -44,6 +44,49 @@ pub struct Snapshot {
     pub tabs: Vec<Tab>,
     #[serde(default)]
     pub panes: Vec<Pane>,
+    /// One entry per tab, giving where every pane in it sits. This is what lets the
+    /// branches picker show what a tab will look like once a pane is added to it.
+    #[serde(default)]
+    pub layouts: Vec<Layout>,
+}
+
+/// A rectangle in the terminal, as herdr measures it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+pub struct LayoutRect {
+    #[serde(default)]
+    pub x: u16,
+    #[serde(default)]
+    pub y: u16,
+    #[serde(default)]
+    pub width: u16,
+    #[serde(default)]
+    pub height: u16,
+}
+
+/// How one tab's panes are arranged.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Layout {
+    pub tab_id: String,
+    #[serde(default)]
+    pub workspace_id: String,
+    #[serde(default)]
+    pub area: LayoutRect,
+    #[serde(default)]
+    pub focused_pane_id: Option<String>,
+    #[serde(default)]
+    pub panes: Vec<LayoutPane>,
+    /// A zoomed tab shows one pane full-size. herdr refuses to move a pane into one.
+    #[serde(default)]
+    pub zoomed: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LayoutPane {
+    pub pane_id: String,
+    #[serde(default)]
+    pub rect: LayoutRect,
+    #[serde(default)]
+    pub focused: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
