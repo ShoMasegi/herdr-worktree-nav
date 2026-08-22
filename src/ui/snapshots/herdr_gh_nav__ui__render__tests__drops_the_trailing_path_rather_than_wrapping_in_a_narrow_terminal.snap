@@ -1,0 +1,16 @@
+---
+source: src/ui/render.rs
+expression: terminal.backend().to_string()
+---
+" Panes   Branches           "
+"▾ me/app                    "
+"  ● main            /src/app"
+"    ● claude           w1:p1"
+"    · shell            w1:p2"
+"  ○ feat/login              "
+"    ○ codex            w2:p1"
+"  ○ fix/crash  no pane      "
+"▾ me/site                   "
+"  ● develop        /src/site"
+"press / to filter           "
+"↵ jump  ⇥ branches  / filter"

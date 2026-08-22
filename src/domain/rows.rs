@@ -63,26 +63,32 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
 
     let mut matcher = Matcher::new(Config::DEFAULT);
     let mut buf = Vec::new();
-    let mut matches = |haystack: &str| match &pattern {
-        None => true,
-        Some(pattern) => pattern
-            .score(Utf32Str::new(haystack, &mut buf), &mut matcher)
-            .is_some(),
+    // `None` means "did not match"; with no query everything matches with score 0, which
+    // leaves the tree in its natural order.
+    let mut score = |haystack: &str| match &pattern {
+        None => Some(0),
+        Some(pattern) => pattern.score(Utf32Str::new(haystack, &mut buf), &mut matcher),
     };
 
-    let mut rows = Vec::new();
+    // Built per repository first so that, while filtering, repositories and worktrees can
+    // be ordered by how well they matched. Fuzzy matching is permissive enough that an
+    // unrelated repository often matches weakly, and it must not sit above the real answer.
+    let mut groups: Vec<(u32, Vec<Row>)> = Vec::new();
 
     for (repo_index, repo) in tree.repos.iter().enumerate() {
-        let repo_matches = matches(&repo.display_name);
+        let repo_score = score(&repo.display_name);
+        let repo_matches = repo_score.is_some();
         // Filtering overrides collapsing: a fold set earlier should not hide what the user
         // is searching for now.
         let collapsed = !filtering && options.collapsed.contains(&repo.repo_key);
 
-        let mut children = Vec::new();
+        let mut subtrees: Vec<(u32, Vec<Row>)> = Vec::new();
         if !collapsed {
             for (worktree_index, worktree) in repo.worktrees.iter().enumerate() {
                 let worktree_haystack = format!("{} {}", repo.display_name, worktree.label());
-                let worktree_matches = repo_matches || matches(&worktree_haystack);
+                let own_score = score(&worktree_haystack);
+                let worktree_matches = repo_matches || own_score.is_some();
+                let mut best = own_score.unwrap_or(0).max(repo_score.unwrap_or(0));
 
                 let mut panes = Vec::new();
                 for (pane_index, pane) in worktree.panes.iter().enumerate() {
@@ -92,9 +98,11 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                         pane.display_name.as_deref().unwrap_or_default(),
                         pane.pane_id
                     );
-                    if !worktree_matches && !matches(&haystack) {
+                    let pane_score = score(&haystack);
+                    if !worktree_matches && pane_score.is_none() {
                         continue;
                     }
+                    best = best.max(pane_score.unwrap_or(0));
                     panes.push(Row {
                         reference: RowRef::Pane(repo_index, worktree_index, pane_index),
                         indent: 2,
@@ -111,7 +119,8 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                 if !worktree_matches && panes.is_empty() {
                     continue;
                 }
-                children.push(Row {
+                let mut subtree = Vec::new();
+                subtree.push(Row {
                     reference: RowRef::Worktree(repo_index, worktree_index),
                     indent: 1,
                     primary: worktree.label().to_string(),
@@ -119,23 +128,43 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                     status: None,
                     selectable: true,
                 });
-                children.append(&mut panes);
+                subtree.append(&mut panes);
+                subtrees.push((best, subtree));
             }
         }
 
-        if filtering && !repo_matches && children.is_empty() {
+        if filtering && !repo_matches && subtrees.is_empty() {
             continue;
         }
-        rows.push(Row {
+        if filtering {
+            // Stable, so equally-scoring worktrees keep primary-first order.
+            subtrees.sort_by(|a, b| b.0.cmp(&a.0));
+        }
+        let best = subtrees
+            .iter()
+            .map(|(score, _)| *score)
+            .max()
+            .unwrap_or(0)
+            .max(repo_score.unwrap_or(0));
+
+        let mut group = vec![Row {
             reference: RowRef::Repo(repo_index),
             indent: 0,
             primary: repo.display_name.clone(),
             secondary: repo.repo_root.clone(),
             status: None,
             selectable: true,
-        });
-        rows.append(&mut children);
+        }];
+        for (_, mut subtree) in subtrees {
+            group.append(&mut subtree);
+        }
+        groups.push((best, group));
     }
+
+    if filtering {
+        groups.sort_by(|a, b| b.0.cmp(&a.0));
+    }
+    let mut rows: Vec<Row> = groups.into_iter().flat_map(|(_, group)| group).collect();
 
     if options.show_ungrouped {
         let mut panes = Vec::new();
@@ -145,7 +174,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                 pane.display_name.as_deref().unwrap_or_default(),
                 pane.pane_id
             );
-            if !matches(&haystack) {
+            if score(&haystack).is_none() {
                 continue;
             }
             panes.push(Row {
@@ -356,6 +385,35 @@ mod tests {
             labels(&flatten(&tree(), &options)),
             ["me/app", "  feat/login", "    codex"]
         );
+    }
+
+    #[test]
+    fn puts_the_best_match_first_because_fuzzy_matching_is_permissive() {
+        // "harken" is a subsequence of plenty of unrelated text, so an exact-ish match has
+        // to outrank the incidental ones rather than sitting below them in tree order.
+        let tree = Tree {
+            repos: vec![
+                RepoNode {
+                    repo_key: "/src/hbr/.git".into(),
+                    repo_root: "/src/lin".into(),
+                    display_name: "me/harbour-backend".into(),
+                    worktrees: vec![worktree("feat/hbr-51-grant-table", vec![])],
+                },
+                RepoNode {
+                    repo_key: "/src/harken/.git".into(),
+                    repo_root: "/src/harken".into(),
+                    display_name: "me/harken".into(),
+                    worktrees: vec![worktree("main", vec![])],
+                },
+            ],
+            ungrouped: vec![],
+        };
+        let options = ViewOptions {
+            query: "harken".into(),
+            ..Default::default()
+        };
+        let rows = flatten(&tree, &options);
+        assert_eq!(rows[0].primary, "me/harken");
     }
 
     #[test]

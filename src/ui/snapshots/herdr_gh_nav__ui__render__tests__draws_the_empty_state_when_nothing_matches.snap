@@ -1,0 +1,20 @@
+---
+source: src/ui/render.rs
+expression: screen(&state)
+---
+" Panes   Branches                                                       "
+"nothing matches                                                         "
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"/zzzz█                                                                  "
+"↵ keep filter  esc clear  ↑↓ move                                       "

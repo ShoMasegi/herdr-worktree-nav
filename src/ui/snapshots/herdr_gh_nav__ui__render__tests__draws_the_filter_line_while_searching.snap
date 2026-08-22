@@ -1,0 +1,20 @@
+---
+source: src/ui/render.rs
+expression: screen(&state)
+---
+" Panes   Branches                                                       "
+"▾ me/app                                                                "
+"  ○ feat/login                                        /wt/app/feat-login"
+"    ○ codex                                                        w2:p1"
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"                                                                        "
+"/codex█                                                                 "
+"↵ keep filter  esc clear  ↑↓ move                                       "

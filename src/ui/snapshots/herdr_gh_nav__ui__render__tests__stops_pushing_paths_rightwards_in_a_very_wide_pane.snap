@@ -1,0 +1,18 @@
+---
+source: src/ui/render.rs
+expression: terminal.backend().to_string()
+---
+" Panes   Branches                                                                                                                                               "
+"▾ me/app                                                                                                                                                        "
+"  ● main                                                                                /src/app                                                                "
+"    ● claude                                                                               w1:p1                                                                "
+"    · shell                                                                                w1:p2                                                                "
+"  ○ feat/login                                                                /wt/app/feat-login                                                                "
+"    ○ codex                                                                                w2:p1                                                                "
+"  ○ fix/crash  no pane                                                         /wt/app/fix-crash                                                                "
+"▾ me/site                                                                                                                                                       "
+"  ● develop                                                                            /src/site                                                                "
+"    ◆ claude                                                                               w3:p1                                                                "
+"                                                                                                                                                                "
+"press / to filter                                                                                                                                               "
+"↵ jump  n new pane  ⇥ branches  / filter  h other  r reload  q quit                                                                                             "
