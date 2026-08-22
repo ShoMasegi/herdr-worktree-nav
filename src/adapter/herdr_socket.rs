@@ -10,10 +10,10 @@
 //! every call gets its own connection. Connecting to a Unix socket is cheap enough that
 //! this costs less than spawning the CLI would.
 
-use std::cell::Cell;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -28,7 +28,9 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct SocketHerdr {
     socket_path: PathBuf,
-    next_id: Cell<u64>,
+    /// Atomic rather than a `Cell` so the picker can call herdr from its worker thread
+    /// while the main thread keeps drawing.
+    next_id: AtomicU64,
 }
 
 impl SocketHerdr {
@@ -43,14 +45,13 @@ impl SocketHerdr {
         })?;
         Ok(Self {
             socket_path: PathBuf::from(path),
-            next_id: Cell::new(0),
+            next_id: AtomicU64::new(0),
         })
     }
 
     /// Send one request and return its `result` object.
     fn call(&self, method: &str, params: Value) -> Result<Value> {
-        let id = self.next_id.get();
-        self.next_id.set(id + 1);
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let request = json!({
             "id": format!("herdr-gh-nav:{id}"),
             "method": method,

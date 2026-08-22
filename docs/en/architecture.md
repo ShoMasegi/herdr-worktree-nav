@@ -47,6 +47,7 @@ goes are all pure functions over plain data.
 | `domain::order` | in what order does the branch list read, and which way round? |
 | `domain::dest` | where can a pane go, and what herdr call does each choice mean? |
 | `domain::preview` | what will the destination tab look like once the pane lands in it? |
+| `domain::progress` | what step is opening a branch on, and can it still be abandoned? |
 | `domain::chrome` | what accent and status glyphs is herdr configured for? |
 
 ## Talking to herdr
@@ -105,6 +106,11 @@ Open       ─▶ worktree.open  ─┐                  ├─ Some ─▶ pane
 Create     ─▶ worktree.create ┼─▶ root_pane ─────┤
 FetchThen… ─▶ fetch, create  ─┘                  └─ None ─▶ pane.focus
 ```
+
+All of this runs on a worker thread while the picker stays on screen and says which step it
+is on: a fetch and a checkout are seconds of work, and a picker that goes blank for them
+looks like one that has hung. See
+[ADR 0007](../adr/0007-stay-up-while-working.md), which is also why `HerdrPort` is `Sync`.
 
 `worktree.create` always materialises a whole workspace — there is no way to ask for a pane
 in an existing tab — so every destination except "a new space" is reached by creating and

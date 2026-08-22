@@ -199,6 +199,37 @@ fn lists_remote_heads_and_fetches_one_into_a_usable_base() {
 }
 
 #[test]
+fn a_fetch_that_cannot_reach_the_remote_says_so_rather_than_blaming_the_repository() {
+    // git exits 128 for every fatal error, so treating that code alone as "not a git
+    // repository" turns an unreachable remote into a diagnosis about the wrong thing —
+    // and the picker puts that message in front of the user.
+    let repo = repository();
+    let root = path_str(repo.path());
+    let remote = tempfile::tempdir().unwrap();
+    git(remote.path(), &["init", "--bare", "--initial-branch=main"]);
+    git(
+        repo.path(),
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
+    git(repo.path(), &["push", "-q", "origin", "feat/login"]);
+    drop(remote);
+
+    let error = GitCli
+        .fetch_branch(&root, "feat/login")
+        .expect_err("the remote is gone");
+    let error = format!("{error:#}");
+    assert!(
+        error.contains("Could not read from remote repository")
+            || error.contains("does not appear to be a git repository"),
+        "the failure should be git's own account of it, got: {error}"
+    );
+    assert!(
+        !error.contains("is not a git repository, but was expected to be"),
+        "the repository is fine; the remote is not: {error}"
+    );
+}
+
+#[test]
 fn recognises_a_github_origin_and_ignores_anything_else() {
     let repo = repository();
     let root = path_str(repo.path());

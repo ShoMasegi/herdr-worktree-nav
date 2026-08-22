@@ -82,7 +82,11 @@ pub enum OpenRefusal {
 }
 
 /// Everything this plugin asks of herdr.
-pub trait HerdrPort {
+///
+/// `Sync` because opening a branch runs on a background thread while the picker keeps
+/// drawing: a fetch and a checkout are seconds of work, and a picker that freezes for them
+/// looks broken.
+pub trait HerdrPort: Sync {
     /// The whole session in one call: workspaces, tabs, panes.
     fn snapshot(&self) -> Result<Snapshot>;
 

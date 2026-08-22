@@ -98,6 +98,11 @@ new space       on its own      │ · shell                     │
 
 `Enter` `Enter` is the fast path: split right, beside the pane you came from.
 
+The picker then stays where it is and says which step it is on — `fetching origin/feat/login`,
+`creating the worktree for feat/login`, moving the pane — because a fetch and a checkout are
+seconds of work and an empty box for those seconds looks like a crash. If something fails, it
+holds the screen and shows what git or herdr actually said.
+
 What happens next depends on what the branch already is, which is the point:
 
 | The branch is… | What happens |

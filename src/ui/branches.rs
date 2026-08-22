@@ -15,6 +15,7 @@ use crate::domain::dest::Destination;
 use crate::domain::model::{normalize_path, RepoNode};
 use crate::domain::order::Order;
 use crate::domain::preview::{self, Preview};
+use crate::domain::progress::Stage;
 use crate::domain::resolve::{self, BranchEntry, BranchState};
 use crate::port::{GitRef, PullRequest, Snapshot};
 
@@ -66,6 +67,24 @@ pub struct BranchData {
     pub loading: bool,
 }
 
+/// What the picker is doing, once the choosing is over.
+///
+/// The list stays on screen throughout: the highlighted destination is the one being acted
+/// on, and the preview beside it is the tab being built. Only the prompt line and the key
+/// hint change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Activity {
+    /// Still a picker.
+    Choosing,
+    /// A step is in flight. `tick` advances the spinner; it is driven by the caller's draw
+    /// loop rather than a clock, so nothing here has to know the time.
+    Working { stage: Stage, tick: usize },
+    /// It failed, and the screen is being held so the reason can be read. Without this the
+    /// popup would vanish the instant the process ended, which is indistinguishable from
+    /// having worked.
+    Failed { stage: Stage, error: String },
+}
+
 /// One row of the repository step.
 pub struct RepoRow<'a> {
     pub repo: &'a RepoNode,
@@ -107,6 +126,7 @@ pub struct BranchesState {
     destinations: Vec<Destination>,
     destination_cursor: usize,
     chosen: Option<BranchEntry>,
+    activity: Activity,
     message: Option<String>,
 }
 
@@ -159,6 +179,7 @@ impl BranchesState {
             destinations,
             destination_cursor: 0,
             chosen: None,
+            activity: Activity::Choosing,
             message: None,
         };
         state.repo_cursor = state
@@ -195,6 +216,55 @@ impl BranchesState {
 
     pub fn step(&self) -> Step {
         self.step
+    }
+
+    pub fn activity(&self) -> &Activity {
+        &self.activity
+    }
+
+    pub fn is_working(&self) -> bool {
+        matches!(self.activity, Activity::Working { .. })
+    }
+
+    /// The user has chosen; the picker is now a progress display.
+    pub fn start_working(&mut self, stage: Stage) {
+        self.message = None;
+        self.activity = Activity::Working { stage, tick: 0 };
+    }
+
+    /// Move on to the next step, keeping the spinner where it was so it does not jump.
+    pub fn set_stage(&mut self, stage: Stage) {
+        let tick = match &self.activity {
+            Activity::Working { tick, .. } => *tick,
+            _ => 0,
+        };
+        self.activity = Activity::Working { stage, tick };
+    }
+
+    /// Advance the spinner one frame. Called once per draw by the loop that owns the clock.
+    pub fn tick(&mut self) {
+        if let Activity::Working { tick, .. } = &mut self.activity {
+            *tick = tick.wrapping_add(1);
+        }
+    }
+
+    /// Hold the screen on the step that failed.
+    ///
+    /// git says its piece over several lines; the prompt is one. Collapsing the whitespace
+    /// keeps the newlines out of a widget that would draw them as nothing useful.
+    pub fn fail(&mut self, error: String) {
+        let error = error.split_whitespace().collect::<Vec<_>>().join(" ");
+        let stage = match &self.activity {
+            Activity::Working { stage, .. } | Activity::Failed { stage, .. } => stage.clone(),
+            Activity::Choosing => Stage::Starting {
+                branch: self
+                    .chosen
+                    .as_ref()
+                    .map(|entry| entry.name.clone())
+                    .unwrap_or_default(),
+            },
+        };
+        self.activity = Activity::Failed { stage, error };
     }
 
     /// Whether Esc has a step to go back to rather than closing the picker.
@@ -469,6 +539,11 @@ impl BranchesState {
         if key.kind == KeyEventKind::Release {
             return BranchAction::Ignored;
         }
+        match &self.activity {
+            Activity::Choosing => {}
+            Activity::Working { stage, .. } => return self.handle_working_key(key, stage.clone()),
+            Activity::Failed { .. } => return self.handle_failed_key(key),
+        }
         self.message = None;
 
         if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -514,6 +589,27 @@ impl BranchesState {
             Step::Repo => self.handle_repo_key(key),
             Step::Branch => self.handle_branch_key(key),
             Step::Destination => self.handle_destination_key(key),
+        }
+    }
+
+    /// While a step is in flight the list is frozen. The only key that means anything is
+    /// `Ctrl-C`, and only while stopping is free — see [`Stage::interruptible`].
+    fn handle_working_key(&mut self, key: KeyEvent, stage: Stage) -> BranchAction {
+        let interrupt =
+            key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c'));
+        if interrupt && stage.interruptible() {
+            return BranchAction::Quit;
+        }
+        BranchAction::Ignored
+    }
+
+    /// The failure is on screen; any way of saying "I have read it" closes the picker.
+    fn handle_failed_key(&mut self, key: KeyEvent) -> BranchAction {
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') | KeyCode::Char('c') => {
+                BranchAction::Quit
+            }
+            _ => BranchAction::Ignored,
         }
     }
 
@@ -699,6 +795,7 @@ mod tests {
     use super::*;
     use crate::domain::model::{PaneNode, WorktreeNode};
     use crate::domain::order::SortKey;
+    use crate::domain::progress::Stage;
     use crate::port::{AgentStatus, RefKind, SplitDirection};
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -1268,6 +1365,107 @@ mod tests {
         state.handle_key(key(KeyCode::Down));
         state.handle_key(key(KeyCode::Enter));
         assert_eq!(state.order(), order);
+    }
+
+    // --- working and failing ---------------------------------------------------------
+
+    /// The picker with a branch and a destination chosen, mid-fetch.
+    fn fetching() -> BranchesState {
+        let mut state = state();
+        type_in(&mut state, "chore");
+        state.handle_key(key(KeyCode::Enter));
+        state.start_working(Stage::Starting {
+            branch: "chore/deps".into(),
+        });
+        state.set_stage(Stage::Fetching {
+            remote: "origin".into(),
+            branch: "chore/deps".into(),
+        });
+        state
+    }
+
+    #[test]
+    fn the_list_is_frozen_while_a_step_is_in_flight() {
+        let mut state = fetching();
+        let before = state.destination_cursor();
+        for code in [KeyCode::Down, KeyCode::Up, KeyCode::Enter, KeyCode::Esc] {
+            assert_eq!(
+                state.handle_key(key(code)),
+                BranchAction::Ignored,
+                "{code:?}"
+            );
+        }
+        assert_eq!(state.destination_cursor(), before);
+        assert!(state.is_working(), "and it is still working");
+    }
+
+    #[test]
+    fn ctrl_c_stops_a_fetch_but_not_a_worktree_being_made() {
+        let mut state = fetching();
+        assert_eq!(ctrl(&mut state, 'c'), BranchAction::Quit);
+
+        // Once herdr has been asked for a worktree, leaving would strand the workspace it
+        // made for it. There is no key for that.
+        let mut state = fetching();
+        state.set_stage(Stage::Creating {
+            branch: "chore/deps".into(),
+        });
+        assert_eq!(ctrl(&mut state, 'c'), BranchAction::Ignored);
+    }
+
+    #[test]
+    fn moving_to_the_next_step_does_not_restart_the_spinner() {
+        let mut state = fetching();
+        state.tick();
+        state.tick();
+        let Activity::Working { tick, .. } = state.activity() else {
+            panic!("expected to be working");
+        };
+        let before = *tick;
+        state.set_stage(Stage::Creating {
+            branch: "chore/deps".into(),
+        });
+        let Activity::Working { tick, stage } = state.activity() else {
+            panic!("expected to be working");
+        };
+        assert_eq!(*tick, before, "the spinner carries on from where it was");
+        assert!(matches!(stage, Stage::Creating { .. }));
+    }
+
+    #[test]
+    fn a_failure_holds_the_screen_until_it_has_been_read() {
+        let mut state = fetching();
+        state.fail("could not read from remote repository".into());
+
+        let Activity::Failed { stage, error } = state.activity() else {
+            panic!("expected a failure, got {:?}", state.activity());
+        };
+        assert!(
+            stage.label().contains("fetching"),
+            "it says which step failed: {}",
+            stage.label()
+        );
+        assert!(error.contains("remote repository"));
+
+        // Anything that means "I have read it" closes; nothing else does.
+        assert_eq!(state.handle_key(key(KeyCode::Down)), BranchAction::Ignored);
+        assert_eq!(state.handle_key(key(KeyCode::Enter)), BranchAction::Quit);
+        assert_eq!(state.handle_key(key(KeyCode::Esc)), BranchAction::Quit);
+    }
+
+    #[test]
+    fn a_multi_line_failure_is_flattened_into_the_one_line_it_has_to_fit_on() {
+        // git says its piece over several lines. A newline in a one-line widget draws as
+        // nothing useful.
+        let mut state = fetching();
+        state.fail("fatal: could not read from remote\nfatal: could not fetch".into());
+        let Activity::Failed { error, .. } = state.activity() else {
+            panic!("expected a failure");
+        };
+        assert_eq!(
+            error,
+            "fatal: could not read from remote fatal: could not fetch"
+        );
     }
 
     #[test]

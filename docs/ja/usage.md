@@ -178,6 +178,34 @@ new space       on its own
 
 `split right` が最初から選択されているので、`Enter` `Enter` で作業中の隣にブランチが並びます。
 
+### 作成中の表示
+
+ブランチを開く操作は、ネットワーク越しの fetch と作業ツリー全体の checkout を伴うことがあります。ピッカーはその場に留まり、今どの段階かを表示します。
+
+```
+ ⠸ fetching origin/feat/login…
+ ─────────────────────────────────────────────────────────────────────
+ here            split right       w1  app / agents
+                 split down        ┌──────────┬──────────┐
+ existing tab    w1  app / logs    │ ● claude │ + feat/l…│
+ …
+ ctrl+c stop
+```
+
+一覧とプレビューはそのまま残ります。ハイライトされている行が実際に処理中の行き先で、隣の図はこれから作られる tab です。段階は `fetching origin/<branch>`、`creating the worktree for <branch>` または `opening the checkout for <branch>`、そして pane を指定の場所へ移動、の順です。
+
+`Ctrl-C` で中断できますが、キーヒントが `ctrl+c stop` と出ている間だけです。つまり fetch までです。fetch は `refs/remotes` にしか書かないので、途中でやめても何も残りません。herdr に worktree を頼んだ後は、抜けると herdr が作った workspace が宙に浮くため、中断するキーはありません。ヒントも `working…` に変わります。
+
+失敗した場合、ピッカーは画面を保持し、git または herdr の言い分を、失敗した段階と一緒に表示します。
+
+```
+ × fetching origin/feat/login: `git fetch …` failed: fatal: Could not read from remote…
+ …
+ ↵ close  esc close
+```
+
+中途半端な状態は残りません。止まったのは失敗した段階であり、それ以前の段階は何にも触れていない（fetch）か、完了しているかのどちらかです。同じメッセージは `herdr plugin log list` にも全文が残ります。
+
 ## 診断
 
 ```sh

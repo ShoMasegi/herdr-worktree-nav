@@ -1,0 +1,18 @@
+---
+source: src/ui/render.rs
+expression: "branches_screen(&state, 110, 14)"
+---
+" ⠋ fetching origin/chore/deps…                                                                                "
+"──────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+" here            split right                    w1  app / agents                                              "
+"                 split down                     ┌─────┬──────┐                                                "
+" existing tab    w1  app / logs                 ├─────┴──────┤                                                "
+" existing space  w3  notes → new tab            │ · shell  w…│                                                "
+" new space       on its own                     └────────────┘                                                "
+" existing tab    w3  notes / zoomed                                                                           "
+"                                                                                                              "
+"                                                                                                              "
+"                                                                                                              "
+"                                                                                                              "
+" chore/deps opens beside the pane you came from, split right ─────────────────────────────────────────────────"
+" ctrl+c stop                                                                                                  "

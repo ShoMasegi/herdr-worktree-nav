@@ -6,9 +6,14 @@ use anyhow::{bail, Context, Result};
 
 use crate::port::{GitPort, GitRef, RefKind, RepoIdentity};
 
-/// git exits 128 when a path is not inside a work tree. That is an ordinary answer here,
-/// not a failure, so it is matched rather than reported.
-const NOT_A_REPOSITORY: i32 = 128;
+/// git's catch-all exit code for a fatal error. It says almost nothing on its own: a path
+/// that is not a repository and a fetch that could not reach the remote both exit 128, so
+/// the message has to be read to tell them apart.
+const GIT_FATAL: i32 = 128;
+
+/// What git says when the path itself is the problem. That is an ordinary answer here — a
+/// pane simply is not in a repository — rather than a failure worth reporting.
+const NOT_A_REPOSITORY: [&str; 2] = ["not a git repository", "cannot change to"];
 
 pub struct GitCli;
 
@@ -27,10 +32,15 @@ impl GitCli {
         if output.status.success() {
             return Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()));
         }
-        if output.status.code() == Some(NOT_A_REPOSITORY) {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Matching the exit code alone would turn every fatal error into "not a git
+        // repository" — a diagnosis that sends the reader looking in entirely the wrong
+        // place when what actually happened was that a fetch could not reach the remote.
+        if output.status.code() == Some(GIT_FATAL)
+            && NOT_A_REPOSITORY.iter().any(|said| stderr.contains(said))
+        {
             return Ok(None);
         }
-        let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("`git {}` failed: {}", args.join(" "), stderr.trim());
     }
 

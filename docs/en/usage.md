@@ -239,6 +239,44 @@ before asking rather than appearing to work. Unzoom the tab and it becomes avail
 
 `split right` starts selected, so `Enter` `Enter` puts the branch beside what you were doing.
 
+### While it works
+
+Opening a branch can mean a fetch across the network and a checkout of a whole working tree.
+The picker stays where it is and says which step it is on:
+
+```
+ ⠸ fetching origin/feat/login…
+ ─────────────────────────────────────────────────────────────────────
+ here            split right       w1  app / agents
+                 split down        ┌──────────┬──────────┐
+ existing tab    w1  app / logs    │ ● claude │ + feat/l…│
+ …
+ ctrl+c stop
+```
+
+The list and the preview stay put — the highlighted row is the destination being acted on,
+and the diagram beside it is the tab being built. The steps are `fetching origin/<branch>`,
+`creating the worktree for <branch>` or `opening the checkout for <branch>`, and then moving
+the pane where you asked.
+
+`Ctrl-C` stops it, but only while the key hint says `ctrl+c stop` — that is, up to and
+including the fetch. A fetch writes nothing but `refs/remotes` and can be walked away from.
+Once herdr has been asked for a worktree, leaving would strand the workspace it made, so
+there is no key for it and the hint changes to `working…`.
+
+If a step fails, the picker holds the screen and shows what git or herdr said, on the step
+that said it:
+
+```
+ × fetching origin/feat/login: `git fetch …` failed: fatal: Could not read from remote…
+ …
+ ↵ close  esc close
+```
+
+Nothing is left half-done: the failing step is the one that stopped, and the steps before it
+either did not touch anything (the fetch) or completed. The same message also goes to
+`herdr plugin log list`, in full.
+
 ## Diagnostics
 
 ```sh

@@ -86,6 +86,8 @@
 
 `Enter` `Enter` が最速で、呼び出した pane の右に split されます。
 
+その後ピッカーはその場に残り、今どの段階かを表示します（`fetching origin/feat/login`、`creating the worktree for feat/login`、pane の移動）。fetch と checkout は数秒かかる処理で、その数秒だけ空の箱が出ているとクラッシュしたようにしか見えないためです。失敗した場合は画面を保持し、git または herdr の言い分をそのまま表示します。
+
 その次に何が起きるかはブランチの状態で変わります。ここがこのプラグインの要点です。
 
 | ブランチの状態 | 起きること |

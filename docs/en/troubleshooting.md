@@ -132,6 +132,11 @@ through this against a real session.
       This is the case that catches a relative pane command.
 - [ ] A never-fetched remote branch is fetched and the worktree is based on
       `origin/<branch>`, not on `HEAD` — check `git log --oneline -1` in the new checkout.
+- [ ] While that runs, the picker stays up, names the step it is on, and animates. `Ctrl-C`
+      stops it during the fetch and does nothing once `working…` is shown.
+- [ ] A step that fails holds the screen with git's or herdr's own words on it, closes on
+      `Enter` or `Esc`, and the same message is in `herdr plugin log list`. A remote that
+      cannot be reached must not be reported as "not a git repository".
 - [ ] A branch already open in a pane jumps rather than checking out a second copy.
 - [ ] Each destination works: split here, an existing tab, an existing space, a new space.
 - [ ] After a create-and-move, `herdr workspace list` shows no leftover workspace and the

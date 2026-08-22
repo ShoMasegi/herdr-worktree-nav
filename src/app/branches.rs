@@ -18,6 +18,7 @@ use crate::app::collect;
 use crate::app::home_dir;
 use crate::domain::dest;
 use crate::domain::model::{normalize_path, RepoNode};
+use crate::domain::progress::Stage;
 use crate::domain::resolve::{self, BranchPlan};
 use crate::port::{GhPort, GitPort, HerdrPort, Pane, PullRequest, WorktreeCreate, WorktreeOpen};
 use crate::ui::branches::{self, BranchAction, BranchData, BranchesState, Choice};
@@ -50,14 +51,22 @@ enum Update {
         repo_root: String,
         pull_requests: Vec<PullRequest>,
     },
+    /// The chosen branch is being opened, and this is the step it has reached.
+    Working(Stage),
+    /// Opening finished. An error stays on screen rather than being printed after the
+    /// popup has already closed over it.
+    Done(Result<()>),
 }
 
 impl Update {
-    fn repo_root(&self) -> &str {
+    /// The repository a listing answer is about. `None` for the worker's own traffic, which
+    /// is always about the branch the user just chose.
+    fn repo_root(&self) -> Option<&str> {
         match self {
             Update::RemoteHeads { repo_root, .. }
             | Update::RemoteUnavailable { repo_root }
-            | Update::PullRequests { repo_root, .. } => repo_root,
+            | Update::PullRequests { repo_root, .. } => Some(repo_root),
+            Update::Working(_) | Update::Done(_) => None,
         }
     }
 }
@@ -97,99 +106,148 @@ pub fn run(
     let mut state = BranchesState::new(repos, from.as_deref(), destinations, snapshot, home_dir());
 
     let (sender, receiver) = mpsc::channel();
-    let (outcome, repo_root) = std::thread::scope(|scope| -> Result<(BranchAction, String)> {
-        let mut cache: HashMap<String, BranchData> = HashMap::new();
+    let (outcome, failure) =
+        std::thread::scope(|scope| -> Result<(BranchAction, Option<anyhow::Error>)> {
+            let mut cache: HashMap<String, BranchData> = HashMap::new();
+            // Shown in the picker and then raised again on the way out, so that what the
+            // user read is also what `herdr plugin log list` has.
+            let mut failure: Option<anyhow::Error> = None;
 
-        // Reading one repository: the local refs synchronously because they are a few
-        // milliseconds, the remote and the pull requests on a thread because they are a
-        // network round trip.
-        let load = |repo_root: &str, cache: &mut HashMap<String, BranchData>| -> BranchData {
-            if let Some(data) = cache.get(repo_root) {
-                return data.clone();
-            }
-            let data = BranchData {
-                local_refs: git.local_refs(repo_root).unwrap_or_default(),
-                loading: true,
-                ..BranchData::default()
+            // Reading one repository: the local refs synchronously because they are a few
+            // milliseconds, the remote and the pull requests on a thread because they are a
+            // network round trip.
+            let load = |repo_root: &str, cache: &mut HashMap<String, BranchData>| -> BranchData {
+                if let Some(data) = cache.get(repo_root) {
+                    return data.clone();
+                }
+                let data = BranchData {
+                    local_refs: git.local_refs(repo_root).unwrap_or_default(),
+                    loading: true,
+                    ..BranchData::default()
+                };
+                cache.insert(repo_root.to_string(), data.clone());
+
+                let sender = sender.clone();
+                let root = repo_root.to_string();
+                scope.spawn(move || {
+                    let _ = sender.send(match git.remote_heads(&root) {
+                        Ok(heads) => Update::RemoteHeads {
+                            repo_root: root.clone(),
+                            heads,
+                        },
+                        Err(_) => Update::RemoteUnavailable {
+                            repo_root: root.clone(),
+                        },
+                    });
+                    let pull_requests = gh.pull_requests(&root);
+                    let _ = sender.send(Update::PullRequests {
+                        repo_root: root,
+                        pull_requests,
+                    });
+                });
+                data
             };
-            cache.insert(repo_root.to_string(), data.clone());
 
-            let sender = sender.clone();
-            let root = repo_root.to_string();
-            scope.spawn(move || {
-                let _ = sender.send(match git.remote_heads(&root) {
-                    Ok(heads) => Update::RemoteHeads {
-                        repo_root: root.clone(),
-                        heads,
-                    },
-                    Err(_) => Update::RemoteUnavailable {
-                        repo_root: root.clone(),
-                    },
-                });
-                let pull_requests = gh.pull_requests(&root);
-                let _ = sender.send(Update::PullRequests {
-                    repo_root: root,
-                    pull_requests,
-                });
-            });
-            data
-        };
+            // The repository the cursor starts on is read before the first frame, so opening it
+            // is instant whether or not there is a repository step in front of it.
+            let first = state.repo().repo_root.clone();
+            let data = load(&first, &mut cache);
+            state.set_data(data);
 
-        // The repository the cursor starts on is read before the first frame, so opening it
-        // is instant whether or not there is a repository step in front of it.
-        let first = state.repo().repo_root.clone();
-        let data = load(&first, &mut cache);
-        state.set_data(data);
+            let mut terminal = ratatui::try_init()?;
+            let action = loop {
+                // One frame of the spinner per draw, which is also how the picker avoids
+                // needing a clock: the loop wakes every TICK on its own.
+                state.tick();
+                terminal.draw(|frame| render::draw_branches(frame, &state, theme))?;
 
-        let mut terminal = ratatui::try_init()?;
-        let action = loop {
-            terminal.draw(|frame| render::draw_branches(frame, &state, theme))?;
-
-            match receiver.try_recv() {
-                Ok(update) => {
-                    let repo_root = update.repo_root().to_string();
-                    let entry = cache.entry(repo_root.clone()).or_default();
-                    match update {
-                        Update::RemoteHeads { heads, .. } => {
-                            entry.remote_heads = heads;
-                            entry.loading = false;
-                        }
-                        Update::RemoteUnavailable { .. } => entry.loading = false,
-                        Update::PullRequests { pull_requests, .. } => {
-                            entry.pull_requests = pull_requests
-                        }
+                match receiver.try_recv() {
+                    Ok(Update::Working(stage)) => {
+                        state.set_stage(stage);
+                        continue;
                     }
-                    // An answer for a repository the user has already left updates the cache
-                    // and nothing else; it is there for them when they come back.
-                    if state.repo().repo_root == repo_root {
-                        state.set_data(entry.clone());
+                    // Everything asked for has happened; the pane is where the user wanted it.
+                    Ok(Update::Done(Ok(()))) => break BranchAction::Quit,
+                    Ok(Update::Done(Err(error))) => {
+                        state.fail(format!("{error:#}"));
+                        failure = Some(error);
+                        continue;
                     }
+                    Ok(update) => {
+                        let repo_root = update.repo_root().unwrap_or_default().to_string();
+                        let entry = cache.entry(repo_root.clone()).or_default();
+                        match update {
+                            Update::RemoteHeads { heads, .. } => {
+                                entry.remote_heads = heads;
+                                entry.loading = false;
+                            }
+                            Update::RemoteUnavailable { .. } => entry.loading = false,
+                            Update::PullRequests { pull_requests, .. } => {
+                                entry.pull_requests = pull_requests
+                            }
+                            Update::Working(_) | Update::Done(_) => unreachable!("handled above"),
+                        }
+                        // An answer for a repository the user has already left updates the cache
+                        // and nothing else; it is there for them when they come back.
+                        if state.repo().repo_root == repo_root {
+                            state.set_data(entry.clone());
+                        }
+                        continue;
+                    }
+                    // The sender above is still held here, so the channel cannot run dry.
+                    Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
+                }
+
+                if !event::poll(TICK)? {
                     continue;
                 }
-                // The sender above is still held here, so the channel cannot run dry.
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
-            }
-
-            if !event::poll(TICK)? {
-                continue;
-            }
-            let Event::Key(key) = event::read()? else {
-                continue;
-            };
-            match state.handle_key(key) {
-                BranchAction::Consumed | BranchAction::Ignored => {}
-                BranchAction::LoadRepo { repo_root } => {
-                    let data = load(&repo_root, &mut cache);
-                    state.set_data(data);
+                let Event::Key(key) = event::read()? else {
+                    continue;
+                };
+                match state.handle_key(key) {
+                    BranchAction::Consumed | BranchAction::Ignored => {}
+                    BranchAction::LoadRepo { repo_root } => {
+                        let data = load(&repo_root, &mut cache);
+                        state.set_data(data);
+                    }
+                    // The picker stays up and becomes a progress display. Breaking out here
+                    // instead would restore the terminal and leave herdr's popup framing an
+                    // empty box for as long as the fetch and the checkout take.
+                    BranchAction::Chosen(choice) => {
+                        state.start_working(Stage::Starting {
+                            branch: choice.entry.name.clone(),
+                        });
+                        let sender = sender.clone();
+                        let repo_root = state.repo().repo_root.clone();
+                        scope.spawn(move || {
+                            let report = |stage: Stage| {
+                                let _ = sender.send(Update::Working(stage));
+                            };
+                            let result = open(herdr, git, &repo_root, *choice, &report);
+                            let _ = sender.send(Update::Done(result));
+                        });
+                    }
+                    // Ctrl-C during a step that can still be abandoned. `thread::scope` joins
+                    // the worker before this function can return, which is precisely the wait
+                    // the user asked to stop, so leave the process instead. Nothing herdr knows
+                    // about exists yet — that is what `Stage::interruptible` guarantees — so
+                    // there is nothing left half-done. The `git fetch` finishes or dies on its
+                    // own; either way it only ever writes `refs/remotes`.
+                    BranchAction::Quit if state.is_working() => {
+                        ratatui::try_restore()?;
+                        std::process::exit(0);
+                    }
+                    action => break action,
                 }
-                action => break action,
-            }
-        };
-        ratatui::try_restore()?;
-        Ok((action, state.repo().repo_root.clone()))
-    })?;
+            };
+            ratatui::try_restore()?;
+            Ok((action, failure))
+        })?;
 
-    perform(herdr, git, &repo_root, outcome)
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    perform(herdr, outcome)
 }
 
 /// A repository herdr has no worktree record for. Its branches are still listable.
@@ -208,12 +266,7 @@ fn bare(repo_root: &str) -> RepoNode {
     }
 }
 
-fn perform(
-    herdr: &dyn HerdrPort,
-    git: &dyn GitPort,
-    repo_root: &str,
-    action: BranchAction,
-) -> Result<Exit> {
+fn perform(herdr: &dyn HerdrPort, action: BranchAction) -> Result<Exit> {
     match action {
         BranchAction::Quit => Ok(Exit::Closed),
         BranchAction::ShowPanes => Ok(Exit::ShowPanes),
@@ -221,19 +274,27 @@ fn perform(
             herdr.pane_focus(&pane_id)?;
             Ok(Exit::Closed)
         }
-        BranchAction::Chosen(choice) => {
-            open(herdr, git, repo_root, *choice)?;
-            Ok(Exit::Closed)
-        }
-        // Handled inside the loop; the picker never leaves with one of these.
-        BranchAction::Consumed | BranchAction::Ignored | BranchAction::LoadRepo { .. } => {
-            Ok(Exit::Closed)
-        }
+        // Opening happens on the worker thread while the picker is still up, so the
+        // picker never leaves with one of these.
+        BranchAction::Chosen(_)
+        | BranchAction::Consumed
+        | BranchAction::Ignored
+        | BranchAction::LoadRepo { .. } => Ok(Exit::Closed),
     }
 }
 
 /// Make the checkout exist, then put its pane where the user asked.
-fn open(herdr: &dyn HerdrPort, git: &dyn GitPort, repo_root: &str, choice: Choice) -> Result<()> {
+///
+/// Runs on a worker thread and announces each step through `report`, because the two slow
+/// ones — a fetch across the network and a checkout of a whole working tree — are long
+/// enough that silence reads as a crash.
+fn open(
+    herdr: &dyn HerdrPort,
+    git: &dyn GitPort,
+    repo_root: &str,
+    choice: Choice,
+    report: &dyn Fn(Stage),
+) -> Result<()> {
     let head = git.head_ref(repo_root)?;
     let root_pane = match resolve::plan(&choice.entry, &head, REMOTE) {
         BranchPlan::Focus { pane_id } => {
@@ -241,14 +302,34 @@ fn open(herdr: &dyn HerdrPort, git: &dyn GitPort, repo_root: &str, choice: Choic
             herdr.pane_focus(&pane_id)?;
             return Ok(());
         }
-        BranchPlan::Open { checkout_path } => open_existing(herdr, repo_root, &checkout_path)?,
-        BranchPlan::Create { branch, base } => create(herdr, repo_root, &branch, base)?,
+        BranchPlan::Open { checkout_path } => {
+            report(Stage::Opening {
+                branch: choice.entry.name.clone(),
+            });
+            open_existing(herdr, repo_root, &checkout_path)?
+        }
+        BranchPlan::Create { branch, base } => {
+            report(Stage::Creating {
+                branch: branch.clone(),
+            });
+            create(herdr, repo_root, &branch, base)?
+        }
         BranchPlan::FetchThenCreate { branch, base } => {
+            report(Stage::Fetching {
+                remote: REMOTE.to_string(),
+                branch: branch.clone(),
+            });
             git.fetch_branch(repo_root, &branch)?;
+            report(Stage::Creating {
+                branch: branch.clone(),
+            });
             create(herdr, repo_root, &branch, Some(base))?
         }
     };
 
+    report(Stage::Landing {
+        destination: choice.destination.clone(),
+    });
     // `None` means the destination is the workspace herdr just made, so there is nothing to
     // move — only to focus.
     match dest::placement_for(&choice.destination) {

@@ -21,7 +21,7 @@ use crate::domain::preview::{Preview, PreviewPane};
 use crate::domain::resolve::{BranchEntry, BranchState};
 use crate::domain::rows::{abbreviate, DisplayLine, Row};
 use crate::port::LayoutRect;
-use crate::ui::branches::{BranchesState, Step};
+use crate::ui::branches::{Activity, BranchesState, Step};
 use crate::ui::diagram::{Fit, Frame as DiagramFrame};
 use crate::ui::state::PanesState;
 use crate::ui::theme::Theme;
@@ -494,6 +494,18 @@ const HELP_DESTINATION: &[&str] = &[
     "\u{21b5} open here  \u{2191}\u{2193} move  esc back",
     "\u{21b5} open  esc back",
 ];
+/// While a step that can still be abandoned is running.
+const HELP_WORKING_STOPPABLE: &[&str] = &["ctrl+c stop", "ctrl+c"];
+/// While one that cannot: stopping now would leave a workspace nobody moved.
+const HELP_WORKING: &[&str] = &["working\u{2026}"];
+const HELP_FAILED: &[&str] = &["\u{21b5} close  esc close", "\u{21b5} close"];
+
+/// One frame per draw. Braille rather than a bar because the steps have no length to
+/// measure: a fetch is as long as somebody else's network.
+const SPINNER: [&str; 10] = [
+    "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}", "\u{2827}",
+    "\u{2807}", "\u{280f}",
+];
 
 /// Widest branch name to give a column to. One very long name must not squeeze out the
 /// state and the pull request beside it.
@@ -538,7 +550,10 @@ pub fn draw_branches(frame: &mut Frame, state: &BranchesState, theme: &Theme) {
             frame.render_widget(footer(variants, theme, panel.footer.width), panel.footer);
         }
         Step::Destination => {
-            frame.render_widget(destination_prompt(state, theme), panel.search);
+            frame.render_widget(
+                destination_prompt(state, theme, panel.search.width),
+                panel.search,
+            );
             render_rule(frame, panel.rule, theme);
             let (list, preview) = destination_areas(panel.body);
             render_destination_rows(frame, state, theme, list);
@@ -546,10 +561,13 @@ pub fn draw_branches(frame: &mut Frame, state: &BranchesState, theme: &Theme) {
                 render_preview(frame, &state.preview(), theme, preview);
             }
             render_detail(frame, &state.destination_detail(), theme, panel.detail);
-            frame.render_widget(
-                footer(HELP_DESTINATION, theme, panel.footer.width),
-                panel.footer,
-            );
+            let variants = match state.activity() {
+                Activity::Choosing => HELP_DESTINATION,
+                Activity::Working { stage, .. } if stage.interruptible() => HELP_WORKING_STOPPABLE,
+                Activity::Working { .. } => HELP_WORKING,
+                Activity::Failed { .. } => HELP_FAILED,
+            };
+            frame.render_widget(footer(variants, theme, panel.footer.width), panel.footer);
         }
     }
 }
@@ -714,7 +732,43 @@ fn count_of(n: usize, singular: &str, plural: &str) -> String {
     format!("{n} {}", if n == 1 { singular } else { plural })
 }
 
-fn destination_prompt(state: &BranchesState, theme: &Theme) -> Paragraph<'static> {
+fn destination_prompt(state: &BranchesState, theme: &Theme, width: u16) -> Paragraph<'static> {
+    match state.activity() {
+        Activity::Choosing => {}
+        // The step replaces the question, because the question has been answered.
+        Activity::Working { stage, tick } => {
+            return Paragraph::new(Line::from(vec![
+                Span::raw(" "),
+                Span::styled(
+                    SPINNER[tick % SPINNER.len()],
+                    Style::default().fg(theme.accent),
+                ),
+                Span::raw(" "),
+                Span::styled(stage.label(), Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled("\u{2026}", theme.dim()),
+            ]));
+        }
+        Activity::Failed { stage, error } => {
+            let head = format!(" \u{d7} {}: ", stage.label());
+            // Cut out of the middle rather than the end: git puts the command it ran first
+            // and its actual complaint last, and the complaint is the point.
+            let error = middle_elide(
+                error,
+                (width as usize).saturating_sub(head.chars().count() + 1),
+            );
+            return Paragraph::new(Line::from(vec![
+                Span::styled(
+                    " \u{d7} ",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{}: ", stage.label()),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(error, Style::default().fg(Color::Red)),
+            ]));
+        }
+    }
     if let Some(message) = state.message() {
         return Paragraph::new(Line::from(Span::styled(
             format!(" {message}"),
@@ -1088,6 +1142,7 @@ mod tests {
     use crate::domain::chrome::Chrome;
     use crate::domain::dest::Destination;
     use crate::domain::model::{PaneNode, RepoNode, Tree, WorktreeNode};
+    use crate::domain::progress::Stage;
     use crate::port::{AgentStatus, GitRef, PullRequest, RefKind, SplitDirection};
     use crate::ui::branches::BranchData;
 
@@ -1520,6 +1575,35 @@ mod tests {
             state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
         }
         insta::assert_snapshot!(branches_screen(&state, 92, 10));
+    }
+
+    #[test]
+    fn draws_the_step_it_is_on_instead_of_the_question_it_already_asked() {
+        let mut state = branches_state();
+        for c in "chore".chars() {
+            state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        state.start_working(Stage::Fetching {
+            remote: "origin".into(),
+            branch: "chore/deps".into(),
+        });
+        insta::assert_snapshot!(branches_screen(&state, 110, 14));
+    }
+
+    #[test]
+    fn draws_a_failure_where_the_step_was() {
+        let mut state = branches_state();
+        for c in "chore".chars() {
+            state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        state.start_working(Stage::Fetching {
+            remote: "origin".into(),
+            branch: "chore/deps".into(),
+        });
+        state.fail("could not read from remote repository".into());
+        insta::assert_snapshot!(branches_screen(&state, 110, 14));
     }
 
     #[test]

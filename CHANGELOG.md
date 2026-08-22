@@ -20,6 +20,18 @@ All notable changes to this project are documented here. The format follows
   holds while a filter is typed — the fuzzy score decides what is in the list, not where it
   sits — and across a change of repository. Branches with no date stay at the bottom in both
   directions. See [ADR 0006](docs/adr/0006-repository-step-and-branch-order.md).
+- **A picker that says what it is doing.** Opening a branch — a fetch across the network,
+  a checkout of a whole working tree, then the move — used to happen after the picker had
+  closed its screen, so herdr's popup framed an empty box for the seconds it took and looked
+  exactly like a plugin that had hung. The picker now stays where it is, keeps the
+  destination list and its preview on screen, and names the step it is on with a spinner
+  beside it. `Ctrl-C` stops it during the fetch, and says so; once herdr has been asked for
+  a worktree it does not, because leaving then would strand the workspace herdr made. See
+  [ADR 0007](docs/adr/0007-stay-up-while-working.md).
+- **Failures are shown instead of vanishing.** A step that fails holds the screen with git's
+  or herdr's own words on it until you close it, and still reaches
+  `herdr plugin log list`. Before, the popup simply disappeared, which looked the same as
+  success.
 
 ### Changed
 
@@ -30,6 +42,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **A remote that cannot be reached is no longer reported as "not a git repository".** The
+  git adapter treated exit code 128 as "not a repository"; 128 is git's catch-all for every
+  fatal error, so a failed fetch was given a diagnosis about entirely the wrong thing. It now
+  requires git to have actually said so. Reachable since 0.1.0, but only visible now that
+  failures are put in front of the user.
 - `Ctrl-U` empties the branch search, which the key hint and the documentation had claimed
   since 0.1.0 without it being implemented.
 - A list of one no longer says "1 branches".

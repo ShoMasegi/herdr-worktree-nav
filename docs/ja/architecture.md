@@ -41,6 +41,7 @@ src/
 | `domain::order` | ブランチ一覧はどの順で、どちら向きに読むか |
 | `domain::dest` | pane はどこに置けて、各選択はどの herdr 呼び出しになるか |
 | `domain::preview` | pane が着地した後、行き先の tab はどう見えるか |
+| `domain::progress` | ブランチを開く処理は今どの段階で、まだ中断できるか |
 | `domain::chrome` | herdr はどの accent と状態グリフに設定されているか |
 
 ## herdr との通信
@@ -85,6 +86,8 @@ Open       ─▶ worktree.open  ─┐                   ├─ Some ─▶ pan
 Create     ─▶ worktree.create ┼─▶ root_pane ──────┤
 FetchThen… ─▶ fetch, create  ─┘                   └─ None ─▶ pane.focus
 ```
+
+これらはすべてワーカースレッドで実行され、その間ピッカーは画面に残って今どの段階かを表示します。fetch と checkout は数秒かかる処理で、その間だけ真っ白になるピッカーはハングしたものと区別がつかないためです（[ADR 0007](../adr/0007-stay-up-while-working.md)）。`HerdrPort` が `Sync` なのも同じ理由です。
 
 `worktree.create` は必ず workspace を丸ごと作ります。既存 tab に pane を作らせる方法はありません。そのため「新しい space」以外の行き先はすべて、作成してから移動することで実現しています。空になった tab と workspace は herdr 自身が閉じ、checkout はそのまま残ります。これが後始末を不要にしています（[ADR 0001](../adr/0001-delegate-worktree-creation.md)）。
 
