@@ -121,7 +121,13 @@ through this against a real session.
 - [ ] `Enter` on a pane in another space lands there — and stays there after the popup
       closes.
 - [ ] `n` adds a pane to the checkout under the cursor.
-- [ ] `Tab` reaches the branches view for the repository under the cursor.
+- [ ] `Tab` reaches the branches view, on the repository under the cursor.
+- [ ] The branches view lists every repository herdr has open, marks the one it was summoned
+      from, and starts with the cursor on it.
+- [ ] Choosing another repository lists its branches; `Esc` goes back to the list, and going
+      back into a repository already read does not run git again.
+- [ ] `Ctrl-O` walks state, updated, and name; `Ctrl-R` reverses the current one; both hold
+      while a filter is typed and across a change of repository.
 - [ ] The branches view opens from **inside a worktree**, not just from the plugin directory.
       This is the case that catches a relative pane command.
 - [ ] A never-fetched remote branch is fetched and the worktree is based on

@@ -336,7 +336,7 @@ fn pane_row(reference: RowRef, depth: u8, pane: &PaneNode, matched: bool) -> Row
 
 /// Show a path under the user's home as `~/...`. Popups are narrower than a full pane, and
 /// sixteen characters of `/Users/someone` are the least useful part of a checkout path.
-fn abbreviate(path: &str, home: Option<&str>) -> String {
+pub(crate) fn abbreviate(path: &str, home: Option<&str>) -> String {
     let Some(home) = home.filter(|home| !home.is_empty()) else {
         return path.to_string();
     };

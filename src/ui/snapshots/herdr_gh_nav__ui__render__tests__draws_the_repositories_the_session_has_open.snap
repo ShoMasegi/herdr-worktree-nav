@@ -1,14 +1,16 @@
 ---
 source: src/ui/render.rs
-expression: "branches_screen(&state, 92, 10)"
+expression: "branches_screen(&branches_picker(), 92, 12)"
 ---
-" / feat/brand-new█                                                     ⇅ state ↓   1 branch "
+" / search repositories█                                                      2 repositories "
 "────────────────────────────────────────────────────────────────────────────────────────────"
-"   + feat/brand-new  create                                                                 "
+" ◆ me/app    2 worktrees, 1 pane    /src/app                                                "
+"   me/notes  1 worktree, 1 pane     ~/src/notes                                             "
 "                                                                                            "
 "                                                                                            "
 "                                                                                            "
 "                                                                                            "
 "                                                                                            "
-" me/app · feat/brand-new · does not exist yet ──────────────────────────────────────────────"
-" type to filter  ↵ choose  ctrl+o order  ctrl+r reverse  ⇥ panes  ctrl+u clear  esc back    "
+"                                                                                            "
+" me/app · /src/app ─────────────────────────────────────────────────────────────────────────"
+" type to filter  ↵ branches  ⇥ panes  ctrl+u clear  esc close                               "

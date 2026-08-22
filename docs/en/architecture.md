@@ -44,7 +44,9 @@ goes are all pure functions over plain data.
 | `domain::tree` | given a snapshot and some git answers, what is the repo → worktree → pane tree? |
 | `domain::rows` | which rows are visible, in what order, under this filter and these folds? |
 | `domain::resolve` | what *is* this branch, and what does picking it require first? |
+| `domain::order` | in what order does the branch list read, and which way round? |
 | `domain::dest` | where can a pane go, and what herdr call does each choice mean? |
+| `domain::preview` | what will the destination tab look like once the pane lands in it? |
 | `domain::chrome` | what accent and status glyphs is herdr configured for? |
 
 ## Talking to herdr
@@ -88,6 +90,12 @@ whose pane has been moved elsewhere reports `open_workspace_id: None` while a pa
 demonstrably working in it.
 
 ## Opening a branch
+
+Which repository comes first: the branches view lists every repository in the tree above,
+marks the one the picker was summoned from, and reads that one's branches before the first
+frame. The rest are read when chosen and cached for as long as the picker is open, so walking
+between repositories does not re-run git. `domain::order` decides what order the branches read
+in; see [ADR 0006](../adr/0006-repository-step-and-branch-order.md).
 
 ```
 BranchPlan            then, whatever the plan was:

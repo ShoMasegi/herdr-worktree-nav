@@ -14,8 +14,8 @@ While a picker is up, herdr routes every key into it, so its own keybindings are
 until you close it. `Esc`, `q` and `Ctrl-C` all close it.
 
 Where the picker opens *from* matters. It takes the repository and the pane you were on when
-you pressed the key, which is how "split here" knows where "here" is and how the branch list
-knows which repository you meant.
+you pressed the key, which is how "split here" knows where "here" is and which repository the
+branch list starts on.
 
 ## Panes
 
@@ -27,7 +27,7 @@ knows which repository you meant.
 | `Enter` on a worktree with none | open that checkout |
 | `Enter` on a repository | fold or unfold it |
 | `n` | add a pane to the checkout under the cursor |
-| `Tab` | branches, for the repository under the cursor |
+| `Tab` | branches, starting on the repository under the cursor |
 | `/` | search |
 | `b` `w` `i` `d` | narrow to blocked, working, idle, or done |
 | `a` | clear the state filter |
@@ -40,7 +40,6 @@ it, so a filter is never a one-way door.
 
 While searching, letters are text rather than commands. `Enter` keeps the filter and returns
 to the keys above, `Esc` abandons it, and `Ctrl-U` empties it without leaving search.
-to the keys above; `Esc` clears it.
 
 ### Reading a row
 
@@ -98,6 +97,40 @@ something you already know, and these are not.)
 
 ## Branches
 
+Three steps: which repository, which branch, and where its pane goes.
+
+### Choosing a repository
+
+Every repository herdr has open, which is the same set the panes view groups by. The one you
+summoned the picker from is marked ◆ and starts under the cursor, so carrying on where you
+were costs one more `Enter` — and any other repository is one ↓ away, without going through the
+panes view first.
+
+```
+ / search repositories                                        4 repositories
+ ◆ ShoMasegi/herdr-gh-nav     1 worktree, 2 panes    ~/Workspace/herdr-gh-nav
+   ShoMasegi/harbour-backend  3 worktrees, 5 panes   ~/Workspace/harbour/harbour-backend
+   nightowl/harken            1 worktree, 1 pane     ~/Workspace/nightowl/harken
+   nightowl/harken_android    1 worktree, 3 panes    ~/Workspace/nightowl/harken_android
+```
+
+The counts say how much of each repository is already open. The path tells two checkouts of
+the same fork apart, and is searchable along with the name.
+
+| Key | Does |
+| --- | --- |
+| any letter | filter |
+| `↑` `↓`, `Ctrl-P` `Ctrl-N` | move |
+| `Enter` | list this repository's branches |
+| `Ctrl-U` | empty the search |
+| `Tab` | back to panes |
+| `Esc`, `Ctrl-C` | close |
+
+With only one repository open this step is skipped: a picker that asks you to choose between
+one thing is asking nothing. `Esc` then closes the branch list rather than going back to it.
+
+### Choosing a branch
+
 The branch list is a search box. There is no mode to enter: typing filters, because typing a
 branch name is the common case.
 
@@ -108,13 +141,47 @@ branch name is the common case.
 | `Enter` | choose this branch |
 | `Backspace` | delete a character |
 | `Ctrl-U` | empty the search |
+| `Ctrl-O` | next order |
+| `Ctrl-R` | reverse it |
 | `Tab` | back to panes |
-| `Esc`, `Ctrl-C` | close |
+| `Esc` | back to the repositories |
+| `Ctrl-C` | close |
+
+Each repository is read once. Going back, picking another, and returning does not re-run git.
 
 The remote is read in the background. The local answer is on screen immediately and
 `reading the remote…` sits beside the prompt until `git ls-remote` returns; branches that
 have never been fetched appear when it does. Offline, that line simply goes away and the
 local list stands.
+
+### Ordering
+
+`Ctrl-O` walks the three orders and `Ctrl-R` turns the current one around. Which one is in
+force sits beside the count, and takes the accent colour once it is no longer the default,
+because a list in an unusual order should say so.
+
+| Order | Reads |
+| --- | --- |
+| `state ↓` | running, then checked out, then local, then remote-only — newest first within each. The default |
+| `updated ↓` | most recently committed first |
+| `name ↑` | a to z |
+
+The arrow describes the values rather than the rows: ↓ is descending, so it means newest,
+busiest, or z first. `Ctrl-O` puts the arrow back to the new order's own direction, since
+"oldest first" is not what asking for a date order meant; `Ctrl-R` is how you say you meant
+it.
+
+Two things stay put whichever order is chosen. A branch with no date — one seen only through
+`ls-remote` and never fetched — sinks to the bottom in both directions, because reversing an
+order should not fill the top of the screen with the rows that have the least to say. And the
+offer to create a branch stays last: it is an offer, not one of the repository's branches.
+
+The order also survives typing. The fuzzy search decides what is in the list; the order
+decides where it sits. Sorting the filtered list by match score instead would quietly
+override an order you had just chosen, the moment you typed anything.
+
+It is kept while the picker is open, across repositories, and forgotten when it closes: this
+plugin writes nothing to disk.
 
 ### What the states mean
 

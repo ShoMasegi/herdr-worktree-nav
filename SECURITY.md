@@ -26,12 +26,11 @@ Specifically, herdr-gh-nav:
   `ls-remote`, and `fetch`. `fetch` writes only to `refs/remotes/origin/<branch>`; nothing
   here rewrites history, touches your working tree, or pushes.
 - **Runs `gh pr list`** if `gh` is on your `PATH`, to annotate branches. Read-only.
-- **Writes one file**, under `HERDR_PLUGIN_STATE_DIR`, holding the id of the picker pane it
-  last opened.
 
-It does not read your credentials, send anything anywhere, or run any command a repository
-supplies. Network access is `git ls-remote` / `git fetch` against your remote, and `gh`
-against GitHub — both using credentials you have already configured.
+It writes nothing to disk — not even a preference. It does not read your credentials, send
+anything anywhere, or run any command a repository supplies. Network access is
+`git ls-remote` / `git fetch` against your remote, and `gh` against GitHub — both using
+credentials you have already configured.
 
 ## Verifying what you install
 

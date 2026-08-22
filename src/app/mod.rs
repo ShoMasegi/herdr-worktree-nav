@@ -20,6 +20,11 @@ pub enum Entrypoint {
     Branches,
 }
 
+/// The user's home directory, for shortening checkout paths in the lists.
+pub(crate) fn home_dir() -> Option<String> {
+    dirs::home_dir().and_then(|home| home.to_str().map(str::to_string))
+}
+
 /// Run the picker until the user leaves it, switching views as they ask.
 pub fn run_picker(
     herdr: &dyn HerdrPort,
@@ -53,13 +58,16 @@ pub fn run_picker(
     loop {
         match view {
             Entrypoint::Branches => {
-                let Some(root) = repo_root.clone() else {
-                    // Nothing to list branches for, so start where a repository can be
-                    // picked instead of failing.
-                    view = Entrypoint::Panes;
-                    continue;
-                };
-                match branches::run(herdr, git, gh, &root, from_pane.as_deref(), &theme)? {
+                // No repository in hand is not a failure: the picker opens on its list of
+                // them. It falls back to the panes view only when there are none at all.
+                match branches::run(
+                    herdr,
+                    git,
+                    gh,
+                    repo_root.as_deref(),
+                    from_pane.as_deref(),
+                    &theme,
+                )? {
                     branches::Exit::Closed => return Ok(()),
                     branches::Exit::ShowPanes => view = Entrypoint::Panes,
                 }
@@ -67,7 +75,9 @@ pub fn run_picker(
             Entrypoint::Panes => match panes::run(herdr, git, from_pane.as_deref(), &theme)? {
                 panes::Exit::Closed => return Ok(()),
                 panes::Exit::ShowBranches { repo_root: root } => {
-                    repo_root = Some(root);
+                    // `None` when the cursor was not in a repository; the branches picker
+                    // then simply starts with nothing preselected.
+                    repo_root = root;
                     view = Entrypoint::Branches;
                 }
             },

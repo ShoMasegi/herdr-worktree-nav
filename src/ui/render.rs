@@ -15,9 +15,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
+use crate::domain::model::RepoNode;
+use crate::domain::order::Order;
 use crate::domain::preview::{Preview, PreviewPane};
 use crate::domain::resolve::{BranchEntry, BranchState};
-use crate::domain::rows::{DisplayLine, Row};
+use crate::domain::rows::{abbreviate, DisplayLine, Row};
 use crate::port::LayoutRect;
 use crate::ui::branches::{BranchesState, Step};
 use crate::ui::diagram::{Fit, Frame as DiagramFrame};
@@ -469,9 +471,23 @@ pub(crate) fn truncate(text: &str, width: usize) -> String {
 // Branches view
 // ---------------------------------------------------------------------------------------
 
+const HELP_REPO: &[&str] = &[
+    "type to filter  \u{21b5} branches  \u{21e5} panes  ctrl+u clear  esc close",
+    "\u{21b5} branches  \u{21e5} panes  esc close",
+    "\u{21b5} branches  esc",
+];
+/// The branch step, when Esc has a repository list to go back to.
+const HELP_BRANCH_BACK: &[&str] = &[
+    "type to filter  \u{21b5} choose  ctrl+o order  ctrl+r reverse  \u{21e5} panes  ctrl+u clear  esc back",
+    "\u{21b5} choose  ctrl+o order  ctrl+r reverse  \u{21e5} panes  esc back",
+    "\u{21b5} choose  ctrl+o order  esc back",
+    "\u{21b5} choose  esc back",
+];
+/// The same, with only one repository open: Esc has nowhere to go but out.
 const HELP_BRANCH: &[&str] = &[
-    "type to filter  \u{21b5} choose  \u{21e5} panes  ctrl+u clear  esc close",
-    "\u{21b5} choose  \u{21e5} panes  esc close",
+    "type to filter  \u{21b5} choose  ctrl+o order  ctrl+r reverse  \u{21e5} panes  ctrl+u clear  esc close",
+    "\u{21b5} choose  ctrl+o order  ctrl+r reverse  \u{21e5} panes  esc close",
+    "\u{21b5} choose  ctrl+o order  esc close",
     "\u{21b5} choose  esc",
 ];
 const HELP_DESTINATION: &[&str] = &[
@@ -485,12 +501,27 @@ const MAX_BRANCH_COLUMN: usize = 40;
 /// Fits "checked out", the longest state word.
 const STATE_COLUMN: usize = 12;
 
+/// Widest repository name to give a column to, for the same reason as the branch column.
+const MAX_REPO_COLUMN: usize = 40;
+/// Fits "12 worktrees, 34 panes".
+const COUNT_COLUMN: usize = 22;
+
 pub fn draw_branches(frame: &mut Frame, state: &BranchesState, theme: &Theme) {
     let Some(panel) = layout(frame) else {
         return;
     };
 
     match state.step() {
+        Step::Repo => {
+            frame.render_widget(
+                repo_search_line(state, theme, panel.search.width),
+                panel.search,
+            );
+            render_rule(frame, panel.rule, theme);
+            render_repo_rows(frame, state, theme, panel.body);
+            render_detail(frame, &state.repo_detail(), theme, panel.detail);
+            frame.render_widget(footer(HELP_REPO, theme, panel.footer.width), panel.footer);
+        }
         Step::Branch => {
             frame.render_widget(
                 branch_search_line(state, theme, panel.search.width),
@@ -499,7 +530,12 @@ pub fn draw_branches(frame: &mut Frame, state: &BranchesState, theme: &Theme) {
             render_rule(frame, panel.rule, theme);
             render_branch_rows(frame, state, theme, panel.body);
             render_detail(frame, &state.detail(), theme, panel.detail);
-            frame.render_widget(footer(HELP_BRANCH, theme, panel.footer.width), panel.footer);
+            let variants = if state.has_repo_step() {
+                HELP_BRANCH_BACK
+            } else {
+                HELP_BRANCH
+            };
+            frame.render_widget(footer(variants, theme, panel.footer.width), panel.footer);
         }
         Step::Destination => {
             frame.render_widget(destination_prompt(state, theme), panel.search);
@@ -542,12 +578,140 @@ fn branch_search_line(state: &BranchesState, theme: &Theme, width: u16) -> Parag
         spans.push(Span::styled("  reading the remote\u{2026}", theme.dim()));
     }
 
-    let count = format!("{} branches", state.rows().len());
+    // The order sits beside the count, so a list that is not in its usual order says so
+    // where the eye already goes to read how long it is. It takes the accent once it is no
+    // longer the default, because that is the only way to tell without counting rows.
+    let order = format!("\u{21c5} {}", state.order().label());
+    let count = count_of(state.rows().len(), "branch", "branches");
+    let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+    let right = order.chars().count() + ORDER_GAP + count.chars().count();
+    let pad = (width as usize).saturating_sub(used + right + 1);
+    spans.push(Span::raw(" ".repeat(pad)));
+    spans.push(Span::styled(
+        order,
+        if state.order() == Order::default() {
+            theme.dim()
+        } else {
+            Style::default().fg(theme.accent)
+        },
+    ));
+    spans.push(Span::raw(" ".repeat(ORDER_GAP)));
+    spans.push(Span::styled(count, theme.dim()));
+    Paragraph::new(Line::from(spans))
+}
+
+/// Between the order and the count on the search line.
+const ORDER_GAP: usize = 3;
+
+fn repo_search_line(state: &BranchesState, theme: &Theme, width: u16) -> Paragraph<'static> {
+    let mut spans = vec![Span::styled(
+        " / ",
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    )];
+    if let Some(message) = state.message() {
+        spans.push(Span::styled(
+            message.to_string(),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+    } else if state.repo_query().is_empty() {
+        spans.push(Span::styled("search repositories", theme.dim()));
+    } else {
+        spans.push(Span::raw(state.repo_query().to_string()));
+    }
+    spans.push(Span::styled("\u{2588}", theme.dim()));
+
+    let count = count_of(state.repo_rows().len(), "repository", "repositories");
     let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
     let pad = (width as usize).saturating_sub(used + count.chars().count() + 1);
     spans.push(Span::raw(" ".repeat(pad)));
     spans.push(Span::styled(count, theme.dim()));
     Paragraph::new(Line::from(spans))
+}
+
+fn render_repo_rows(frame: &mut Frame, state: &BranchesState, theme: &Theme, area: Rect) {
+    let rows = state.repo_rows();
+    if rows.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(" no repositories", theme.dim()))),
+            area,
+        );
+        return;
+    }
+
+    let width = area.width as usize;
+    let name_column = rows
+        .iter()
+        .map(|row| row.repo.display_name.chars().count())
+        .max()
+        .unwrap_or(0)
+        .min(MAX_REPO_COLUMN);
+
+    let viewport = area.height as usize;
+    let scroll = scroll_offset(state.repo_cursor(), rows.len(), viewport);
+    let end = rows.len().min(scroll + viewport);
+
+    for (offset, row) in rows[scroll..end].iter().enumerate() {
+        let selected = scroll + offset == state.repo_cursor();
+        let base = if selected {
+            theme.selected()
+        } else {
+            Style::default()
+        };
+        // The same mark the panes view puts on the row the session is focused on.
+        let gutter = if row.is_origin { " \u{25c6} " } else { "   " };
+        let gutter_style = if selected {
+            base
+        } else if row.is_origin {
+            Style::default().fg(theme.accent)
+        } else {
+            theme.dim()
+        };
+        let quiet = if selected { base } else { theme.dim() };
+
+        let mut spans = vec![
+            Span::styled(gutter, gutter_style),
+            Span::styled(
+                pad(&truncate(&row.repo.display_name, name_column), name_column),
+                if selected {
+                    base.add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                },
+            ),
+            Span::raw("  "),
+            Span::styled(pad(&counts(row.repo), COUNT_COLUMN), quiet),
+        ];
+
+        let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+        let path = middle_elide(
+            &abbreviate(&row.repo.repo_root, state.home()),
+            width.saturating_sub(used + 2),
+        );
+        if !path.is_empty() {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(path, quiet));
+        }
+
+        let rect = Rect::new(area.x, area.y + offset as u16, area.width, 1);
+        frame.render_widget(Paragraph::new(Line::from(spans)).style(base), rect);
+    }
+    render_scrollbar(frame, scroll, rows.len(), viewport, theme, area);
+}
+
+/// How much of a repository is open: what a name alone cannot tell you.
+fn counts(repo: &RepoNode) -> String {
+    let worktrees = count_of(repo.worktrees.len(), "worktree", "worktrees");
+    let panes: usize = repo.worktrees.iter().map(|w| w.panes.len()).sum();
+    format!("{worktrees}, {}", count_of(panes, "pane", "panes"))
+}
+
+/// `1 branch`, `5 branches`. A list that says "1 branches" reads like it is guessing.
+fn count_of(n: usize, singular: &str, plural: &str) -> String {
+    format!("{n} {}", if n == 1 { singular } else { plural })
 }
 
 fn destination_prompt(state: &BranchesState, theme: &Theme) -> Paragraph<'static> {
@@ -925,6 +1089,7 @@ mod tests {
     use crate::domain::dest::Destination;
     use crate::domain::model::{PaneNode, RepoNode, Tree, WorktreeNode};
     use crate::port::{AgentStatus, GitRef, PullRequest, RefKind, SplitDirection};
+    use crate::ui::branches::BranchData;
 
     fn theme() -> Theme {
         Theme::new(Chrome::default())
@@ -1194,7 +1359,18 @@ mod tests {
 
     // ---- branches view ----
 
-    fn branches_state() -> BranchesState {
+    fn git_ref(name: &str, at: i64) -> GitRef {
+        GitRef {
+            name: name.into(),
+            kind: RefKind::Local,
+            committed_at: Some(at),
+            subject: Some(format!("latest work on {name}")),
+        }
+    }
+
+    /// The picker as it opens with two repositories in the session: on its repository
+    /// step, with `me/app` — where it was summoned from — under the cursor.
+    fn branches_picker() -> BranchesState {
         let repo = RepoNode {
             repo_key: "/src/app/.git".into(),
             repo_root: "/src/app".into(),
@@ -1208,11 +1384,15 @@ mod tests {
                 worktree("fix/crash", false, vec![]),
             ],
         };
-        let git_ref = |name: &str, at: i64| GitRef {
-            name: name.into(),
-            kind: RefKind::Local,
-            committed_at: Some(at),
-            subject: Some(format!("latest work on {name}")),
+        let other = RepoNode {
+            repo_key: "/home/me/src/notes/.git".into(),
+            repo_root: "/home/me/src/notes".into(),
+            display_name: "me/notes".into(),
+            worktrees: vec![worktree(
+                "main",
+                true,
+                vec![pane("w3:p1", None, AgentStatus::Unknown, false)],
+            )],
         };
         let snapshot: crate::port::Snapshot = serde_json::from_value(serde_json::json!({
             "version": "0.7.4",
@@ -1252,14 +1432,9 @@ mod tests {
             ],
         }))
         .expect("snapshot fixture should deserialize");
-        let mut state = BranchesState::new(
-            repo,
-            vec![
-                git_ref("feat/login", 30),
-                git_ref("fix/crash", 20),
-                git_ref("main", 40),
-                git_ref("chore/deps", 10),
-            ],
+        BranchesState::new(
+            vec![repo, other],
+            Some("/src/app"),
             vec![
                 Destination::SplitHere {
                     tab_id: "w1:t1".into(),
@@ -1286,14 +1461,30 @@ mod tests {
                 },
             ],
             snapshot,
-        );
-        state.set_remote_heads(vec!["feat/search".into(), "main".into()]);
-        state.set_pull_requests(vec![PullRequest {
-            number: 123,
-            title: "Add the login screen".into(),
-            head_ref: "feat/login".into(),
-            is_draft: true,
-        }]);
+            Some("/home/me".into()),
+        )
+    }
+
+    /// The same picker, moved on into `me/app`'s branches.
+    fn branches_state() -> BranchesState {
+        let mut state = branches_picker();
+        state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        state.set_data(BranchData {
+            local_refs: vec![
+                git_ref("feat/login", 30),
+                git_ref("fix/crash", 20),
+                git_ref("main", 40),
+                git_ref("chore/deps", 10),
+            ],
+            remote_heads: vec!["feat/search".into(), "main".into()],
+            pull_requests: vec![PullRequest {
+                number: 123,
+                title: "Add the login screen".into(),
+                head_ref: "feat/login".into(),
+                is_draft: true,
+            }],
+            loading: false,
+        });
         state
     }
 
@@ -1306,8 +1497,20 @@ mod tests {
     }
 
     #[test]
+    fn draws_the_repositories_the_session_has_open() {
+        insta::assert_snapshot!(branches_screen(&branches_picker(), 92, 12));
+    }
+
+    #[test]
     fn draws_branches_in_the_same_chrome_as_the_panes_view() {
         insta::assert_snapshot!(branches_screen(&branches_state(), 92, 12));
+    }
+
+    #[test]
+    fn draws_the_order_beside_the_count_and_reorders_the_list_to_match() {
+        let mut state = branches_state();
+        state.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+        insta::assert_snapshot!(branches_screen(&state, 92, 12));
     }
 
     #[test]

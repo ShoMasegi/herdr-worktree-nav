@@ -102,7 +102,10 @@ herdr 側は CI ではテストできません（サーバーが無いため）�
 - [ ] pane の無い worktree が `no pane` 付きで出て、`Enter` で開ける
 - [ ] 別の space の pane で `Enter` を押すとそこへ移動し、popup が閉じた後もそこに留まる
 - [ ] `n` でカーソル位置の checkout に pane が追加される
-- [ ] `Tab` でカーソル位置のリポジトリの Branches ビューに行ける
+- [ ] `Tab` で Branches ビューに行け、カーソル位置のリポジトリから始まる
+- [ ] Branches ビューに herdr が開いているリポジトリがすべて出て、呼び出し元に印が付き、そこにカーソルがある
+- [ ] 別のリポジトリを選ぶとそのブランチが出る。`Esc` で一覧に戻り、一度読んだリポジトリに戻っても git が再実行されない
+- [ ] `Ctrl-O` が state / updated / name を巡回し、`Ctrl-R` が現在の並びを反転する。どちらも絞り込み入力中とリポジトリ切り替えをまたいで保たれる
 - [ ] Branches ビューが、プラグインディレクトリからだけでなく **worktree の中から** も開ける（相対パスの pane コマンドを検出できるケース）
 - [ ] 未 fetch のリモートブランチが fetch され、worktree が `HEAD` ではなく `origin/<branch>` を基点に作られる（新しい checkout で `git log --oneline -1` を確認）
 - [ ] すでに pane で開いているブランチは、二重にチェックアウトせずジャンプする

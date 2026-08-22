@@ -29,9 +29,10 @@ pub enum Action {
         checkout_path: String,
         beside_pane_id: String,
     },
-    /// Show the branches of this repository.
+    /// Show the branches picker. `None` when the cursor is not in a repository — the
+    /// picker opens on its list of them either way.
     ShowBranches {
-        repo_root: String,
+        repo_root: Option<String>,
     },
     Reload,
 }
@@ -352,14 +353,12 @@ impl PanesState {
                 self.filtering = true;
                 Action::Consumed
             }
-            KeyCode::Tab => match self.selected_repo_index() {
-                Some(index) => Action::ShowBranches {
-                    repo_root: self.tree.repos[index].repo_root.clone(),
-                },
-                None => {
-                    self.message = Some("select a repository first".into());
-                    Action::Consumed
-                }
+            // A repository under the cursor is a preselection, not a requirement: the
+            // branches picker starts by asking which repository anyway.
+            KeyCode::Tab => Action::ShowBranches {
+                repo_root: self
+                    .selected_repo_index()
+                    .map(|index| self.tree.repos[index].repo_root.clone()),
             },
             _ => Action::Ignored,
         }
@@ -555,7 +554,7 @@ mod tests {
         assert_eq!(
             state.handle_key(key(KeyCode::Tab)),
             Action::ShowBranches {
-                repo_root: "/src/app".into()
+                repo_root: Some("/src/app".into())
             }
         );
     }

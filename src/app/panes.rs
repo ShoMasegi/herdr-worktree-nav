@@ -4,6 +4,7 @@ use anyhow::Result;
 use ratatui::crossterm::event::{self, Event};
 
 use crate::app::collect;
+use crate::app::home_dir;
 use crate::port::{GitPort, HerdrPort, PaneSplit, SplitDirection, WorktreeOpen};
 use crate::ui::render::{self, Mode};
 use crate::ui::state::{Action, PanesState};
@@ -13,7 +14,11 @@ use crate::ui::theme::Theme;
 /// switching views or exiting.
 pub enum Exit {
     Closed,
-    ShowBranches { repo_root: String },
+    /// `None` when the cursor was not in a repository: the branches picker opens on its
+    /// repository list either way.
+    ShowBranches {
+        repo_root: Option<String>,
+    },
 }
 
 /// Run the picker to completion. The terminal is restored before any herdr call, so a
@@ -51,11 +56,6 @@ pub fn run(
     ratatui::try_restore()?;
 
     perform(herdr, outcome)
-}
-
-/// The user's home directory, for shortening checkout paths in the list.
-fn home_dir() -> Option<String> {
-    dirs::home_dir().and_then(|home| home.to_str().map(str::to_string))
 }
 
 fn perform(herdr: &dyn HerdrPort, action: Action) -> Result<Exit> {

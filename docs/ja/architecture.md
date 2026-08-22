@@ -38,7 +38,9 @@ src/
 | `domain::tree` | snapshot と git の回答から、repo → worktree → pane のツリーはどうなるか |
 | `domain::rows` | この絞り込みとこの折りたたみ状態で、どの行がどの順で見えるか |
 | `domain::resolve` | このブランチは *何* であり、選んだとき最初に何が必要か |
+| `domain::order` | ブランチ一覧はどの順で、どちら向きに読むか |
 | `domain::dest` | pane はどこに置けて、各選択はどの herdr 呼び出しになるか |
+| `domain::preview` | pane が着地した後、行き先の tab はどう見えるか |
 | `domain::chrome` | herdr はどの accent と状態グリフに設定されているか |
 
 ## herdr との通信
@@ -72,6 +74,8 @@ herdr api snapshot ─┬─▶ workspaces（一部は .worktree を持つ: repo
 pane と worktree の対応付けは checkout パスで行い、`open_workspace_id` では行いません。pane を別の場所へ移した worktree は、実際に pane が動いていても `open_workspace_id: None` を返すためです。
 
 ## ブランチを開く
+
+まずリポジトリを選びます。Branches ビューは上のツリーにあるリポジトリをすべて並べ、ピッカーを呼び出した元に印を付け、そのリポジトリのブランチだけは最初のフレームの前に読みます。残りは選ばれた時点で読み、ピッカーを開いている間はキャッシュします。リポジトリ間を行き来しても git は再実行されません。ブランチをどの順で読むかは `domain::order` が決めます（[ADR 0006](../adr/0006-repository-step-and-branch-order.md)）。
 
 ```
 BranchPlan             その後、どの plan でも共通:

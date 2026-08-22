@@ -1,15 +1,19 @@
-//! The branches picker: choose a branch, then choose where its pane goes.
+//! The branches picker: choose a repository, then a branch, then where its pane goes.
 //!
-//! Two steps rather than a key per destination, so the destinations can grow without the
+//! Three steps rather than a key per destination, so the destinations can grow without the
 //! keymap growing with them. The first destination is "split here" and it starts selected,
-//! which makes Enter Enter the fast path.
+//! which makes Enter Enter the fast path once a branch is chosen.
+//!
+//! The repository step is skipped when herdr has only one repository open: a picker that
+//! asks you to choose between one thing is asking nothing.
 
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::domain::dest::Destination;
-use crate::domain::model::RepoNode;
+use crate::domain::model::{normalize_path, RepoNode};
+use crate::domain::order::Order;
 use crate::domain::preview::{self, Preview};
 use crate::domain::resolve::{self, BranchEntry, BranchState};
 use crate::port::{GitRef, PullRequest, Snapshot};
@@ -21,6 +25,11 @@ pub enum BranchAction {
     Quit,
     /// `Tab` — back to the panes view.
     ShowPanes,
+    /// A repository was chosen and its branches are not on screen yet. The caller reads
+    /// them — from its cache or from git — and hands them back before the next frame.
+    LoadRepo {
+        repo_root: String,
+    },
     /// The branch is already being worked on; go there instead of checking it out again.
     Jump {
         pane_id: String,
@@ -37,20 +46,53 @@ pub struct Choice {
     pub destination: Destination,
 }
 
-/// Which of the two steps is on screen.
+/// Which of the three steps is on screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
+    Repo,
     Branch,
     Destination,
 }
 
+/// Everything known about one repository's branches. The picker holds one of these for the
+/// repository on screen; the caller caches one per repository so going back and forth does
+/// not re-run git.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BranchData {
+    pub local_refs: Vec<GitRef>,
+    pub remote_heads: Vec<String>,
+    pub pull_requests: Vec<PullRequest>,
+    /// The remote listing is still in flight, so the list may still grow.
+    pub loading: bool,
+}
+
+/// One row of the repository step.
+pub struct RepoRow<'a> {
+    pub repo: &'a RepoNode,
+    /// The repository the picker was summoned from.
+    pub is_origin: bool,
+}
+
 pub struct BranchesState {
-    repo: RepoNode,
+    /// Every repository herdr has open, in name order.
+    repos: Vec<RepoNode>,
+    /// The one the picker was summoned from, marked in the list.
+    origin: Option<usize>,
+    /// The one whose branches are on screen.
+    current: usize,
+    /// Indices into `repos`, in display order.
+    repo_visible: Vec<usize>,
+    repo_cursor: usize,
+    repo_query: String,
+    /// With one repository there is nothing to choose, so there is no step to go back to.
+    has_repo_step: bool,
+    /// Shortens checkout paths to `~`; `None` leaves them absolute.
+    home: Option<String>,
+
     /// Kept so the destination step can show what each choice will do to the tab.
     snapshot: Snapshot,
-    local_refs: Vec<GitRef>,
-    remote_heads: Vec<String>,
-    pull_requests: Vec<PullRequest>,
+    /// The current repository's branches, as far as they have been read.
+    data: BranchData,
     /// Every branch, before filtering.
     entries: Vec<BranchEntry>,
     /// Indices into `entries`, in display order.
@@ -59,76 +101,125 @@ pub struct BranchesState {
     proposed: Option<BranchEntry>,
     cursor: usize,
     query: String,
+    order: Order,
+
     step: Step,
     destinations: Vec<Destination>,
     destination_cursor: usize,
     chosen: Option<BranchEntry>,
-    /// The remote listing is still in flight, so the list may still grow.
-    loading: bool,
     message: Option<String>,
 }
 
 impl BranchesState {
+    /// `from` is the repository root or checkout the picker was summoned from, which decides
+    /// where the cursor starts. The branches themselves are not read here: the caller loads
+    /// the current repository's and hands them to [`BranchesState::set_data`].
     pub fn new(
-        repo: RepoNode,
-        local_refs: Vec<GitRef>,
+        mut repos: Vec<RepoNode>,
+        from: Option<&str>,
         destinations: Vec<Destination>,
         snapshot: Snapshot,
+        home: Option<String>,
     ) -> Self {
+        // Name order, fixed. A repository list that reshuffled between invocations would
+        // make muscle memory worthless, and there is no recency to sort by.
+        repos.sort_by(|a, b| {
+            a.display_name
+                .cmp(&b.display_name)
+                .then_with(|| a.repo_root.cmp(&b.repo_root))
+        });
+        let origin = locate(&repos, from);
+        let has_repo_step = repos.len() > 1;
+
         let mut state = Self {
-            repo,
+            current: origin.unwrap_or(0),
+            origin,
+            repo_visible: (0..repos.len()).collect(),
+            repos,
+            repo_cursor: 0,
+            repo_query: String::new(),
+            has_repo_step,
+            home,
             snapshot,
-            local_refs,
-            remote_heads: Vec::new(),
-            pull_requests: Vec::new(),
+            data: BranchData {
+                loading: true,
+                ..BranchData::default()
+            },
             entries: Vec::new(),
             visible: Vec::new(),
             proposed: None,
             cursor: 0,
             query: String::new(),
-            step: Step::Branch,
+            order: Order::default(),
+            step: if has_repo_step {
+                Step::Repo
+            } else {
+                Step::Branch
+            },
             destinations,
             destination_cursor: 0,
             chosen: None,
-            loading: true,
             message: None,
         };
+        state.repo_cursor = state
+            .repo_visible
+            .iter()
+            .position(|index| *index == state.current)
+            .unwrap_or(0);
         state.reresolve();
         state
     }
 
-    /// Fold in the remote listing once it arrives. The cursor stays where it was, because
-    /// the user may already be typing.
-    pub fn set_remote_heads(&mut self, heads: Vec<String>) {
-        self.remote_heads = heads;
-        self.loading = false;
+    /// Hand the current repository everything read for it so far. The cursor stays on the
+    /// branch it was on, because the remote listing may land while the user is already
+    /// typing.
+    pub fn set_data(&mut self, data: BranchData) {
+        self.data = data;
         self.reresolve();
-    }
-
-    pub fn set_pull_requests(&mut self, pull_requests: Vec<PullRequest>) {
-        self.pull_requests = pull_requests;
-        self.reresolve();
-    }
-
-    /// The remote listing finished without producing anything — offline, or no remote.
-    pub fn finish_loading(&mut self) {
-        self.loading = false;
     }
 
     pub fn repo(&self) -> &RepoNode {
-        &self.repo
+        &self.repos[self.current]
+    }
+
+    /// The repositories on screen, in order.
+    pub fn repo_rows(&self) -> Vec<RepoRow<'_>> {
+        self.repo_visible
+            .iter()
+            .map(|index| RepoRow {
+                repo: &self.repos[*index],
+                is_origin: Some(*index) == self.origin,
+            })
+            .collect()
     }
 
     pub fn step(&self) -> Step {
         self.step
     }
 
+    /// Whether Esc has a step to go back to rather than closing the picker.
+    pub fn has_repo_step(&self) -> bool {
+        self.has_repo_step
+    }
+
     pub fn query(&self) -> &str {
         &self.query
     }
 
+    pub fn repo_query(&self) -> &str {
+        &self.repo_query
+    }
+
+    pub fn order(&self) -> Order {
+        self.order
+    }
+
+    pub fn home(&self) -> Option<&str> {
+        self.home.as_deref()
+    }
+
     pub fn is_loading(&self) -> bool {
-        self.loading
+        self.data.loading
     }
 
     pub fn message(&self) -> Option<&str> {
@@ -137,6 +228,10 @@ impl BranchesState {
 
     pub fn cursor(&self) -> usize {
         self.cursor
+    }
+
+    pub fn repo_cursor(&self) -> usize {
+        self.repo_cursor
     }
 
     pub fn destination_cursor(&self) -> usize {
@@ -156,9 +251,20 @@ impl BranchesState {
     pub fn rows(&self) -> Vec<&BranchEntry> {
         let mut rows: Vec<&BranchEntry> = self.visible.iter().map(|i| &self.entries[*i]).collect();
         if let Some(proposed) = &self.proposed {
+            // Last whatever the order is: it is an offer, not one of the repository's
+            // branches, and it must never push a real one out of the way.
             rows.push(proposed);
         }
         rows
+    }
+
+    /// The breadcrumb under the repository list: the full path of the row under the cursor.
+    pub fn repo_detail(&self) -> String {
+        let Some(row) = self.repo_visible.get(self.repo_cursor) else {
+            return String::new();
+        };
+        let repo = &self.repos[*row];
+        format!("{} \u{b7} {}", repo.display_name, repo.repo_root)
     }
 
     /// The breadcrumb under the list: where this branch is, and what picking it will do.
@@ -166,7 +272,7 @@ impl BranchesState {
         let Some(entry) = self.selected() else {
             return String::new();
         };
-        let mut parts = vec![self.repo.display_name.clone(), entry.name.clone()];
+        let mut parts = vec![self.repo().display_name.clone(), entry.name.clone()];
         match &entry.state {
             BranchState::LivePane {
                 pane_id,
@@ -249,45 +355,55 @@ impl BranchesState {
     fn reresolve(&mut self) {
         let anchor = self.selected().map(|entry| entry.name.clone());
         self.entries = resolve::resolve(
-            &self.repo,
-            &self.local_refs,
-            &self.remote_heads,
-            &self.pull_requests,
+            self.repo(),
+            &self.data.local_refs,
+            &self.data.remote_heads,
+            &self.data.pull_requests,
         );
         self.refilter();
-        if let Some(name) = anchor {
-            if let Some(index) = self.rows().iter().position(|entry| entry.name == name) {
-                self.cursor = index;
-            }
+        self.restore_cursor(anchor);
+    }
+
+    /// Put the cursor back on a named branch after the list has been rebuilt.
+    fn restore_cursor(&mut self, anchor: Option<String>) {
+        let Some(name) = anchor else {
+            return;
+        };
+        if let Some(index) = self.rows().iter().position(|entry| entry.name == name) {
+            self.cursor = index;
         }
     }
 
     fn refilter(&mut self) {
         let query = self.query.trim();
-        self.visible = if query.is_empty() {
+        let mut matched: Vec<usize> = if query.is_empty() {
             (0..self.entries.len()).collect()
         } else {
             let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
             let mut matcher = Matcher::new(Config::DEFAULT);
             let mut buf = Vec::new();
-            let mut scored: Vec<(u32, usize)> = self
-                .entries
+            self.entries
                 .iter()
                 .enumerate()
-                .filter_map(|(index, entry)| {
+                .filter(|(_, entry)| {
                     let haystack = match &entry.pull_request {
                         Some(pr) => format!("{} #{} {}", entry.name, pr.number, pr.title),
                         None => entry.name.clone(),
                     };
                     pattern
                         .score(Utf32Str::new(&haystack, &mut buf), &mut matcher)
-                        .map(|score| (score, index))
+                        .is_some()
                 })
-                .collect();
-            // Best match first; ties keep the resolve order, which is work-in-progress first.
-            scored.sort_by(|a, b| b.0.cmp(&a.0));
-            scored.into_iter().map(|(_, index)| index).collect()
+                .map(|(index, _)| index)
+                .collect()
         };
+
+        // The fuzzy score decides what is in the list; the chosen order decides where it
+        // sits. Sorting by score instead would silently override an order the user picked,
+        // the moment they typed anything.
+        let (order, entries) = (self.order, &self.entries);
+        matched.sort_by(|a, b| order.compare(&entries[*a], &entries[*b]));
+        self.visible = matched;
 
         // A name that matches nothing is an offer to create it, not an empty list. Only
         // when it is a plausible branch name, and never when it already exists.
@@ -299,8 +415,42 @@ impl BranchesState {
         self.cursor = 0;
     }
 
+    fn refilter_repos(&mut self) {
+        let query = self.repo_query.trim();
+        self.repo_visible = if query.is_empty() {
+            (0..self.repos.len()).collect()
+        } else {
+            let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
+            let mut matcher = Matcher::new(Config::DEFAULT);
+            let mut buf = Vec::new();
+            self.repos
+                .iter()
+                .enumerate()
+                .filter(|(_, repo)| {
+                    // The path is searchable too: two checkouts of the same fork are told
+                    // apart by where they are, not by what they are called.
+                    let haystack = format!("{} {}", repo.display_name, repo.repo_root);
+                    pattern
+                        .score(Utf32Str::new(&haystack, &mut buf), &mut matcher)
+                        .is_some()
+                })
+                .map(|(index, _)| index)
+                .collect()
+        };
+        self.repo_cursor = 0;
+    }
+
+    /// Reorder without losing the branch the cursor is on.
+    fn reorder(&mut self, order: Order) {
+        self.order = order;
+        let anchor = self.selected().map(|entry| entry.name.clone());
+        self.refilter();
+        self.restore_cursor(anchor);
+    }
+
     fn move_cursor(&mut self, delta: isize) {
         let len = match self.step {
+            Step::Repo => self.repo_visible.len(),
             Step::Branch => self.rows().len(),
             Step::Destination => self.destinations.len(),
         };
@@ -308,6 +458,7 @@ impl BranchesState {
             return;
         }
         let cursor = match self.step {
+            Step::Repo => &mut self.repo_cursor,
             Step::Branch => &mut self.cursor,
             Step::Destination => &mut self.destination_cursor,
         };
@@ -331,19 +482,102 @@ impl BranchesState {
                     self.move_cursor(-1);
                     BranchAction::Consumed
                 }
+                KeyCode::Char('u') => {
+                    match self.step {
+                        Step::Repo => {
+                            self.repo_query.clear();
+                            self.refilter_repos();
+                        }
+                        Step::Branch => {
+                            self.query.clear();
+                            self.refilter();
+                        }
+                        Step::Destination => return BranchAction::Ignored,
+                    }
+                    BranchAction::Consumed
+                }
+                // The list is a search box, so the order cannot be a letter: `o` and `r`
+                // are branch names being typed.
+                KeyCode::Char('o') if self.step == Step::Branch => {
+                    self.reorder(self.order.cycle());
+                    BranchAction::Consumed
+                }
+                KeyCode::Char('r') if self.step == Step::Branch => {
+                    self.reorder(self.order.reverse());
+                    BranchAction::Consumed
+                }
                 _ => BranchAction::Ignored,
             };
         }
 
         match self.step {
+            Step::Repo => self.handle_repo_key(key),
             Step::Branch => self.handle_branch_key(key),
             Step::Destination => self.handle_destination_key(key),
         }
     }
 
-    fn handle_branch_key(&mut self, key: KeyEvent) -> BranchAction {
+    fn handle_repo_key(&mut self, key: KeyEvent) -> BranchAction {
         match key.code {
             KeyCode::Esc => BranchAction::Quit,
+            KeyCode::Tab => BranchAction::ShowPanes,
+            KeyCode::Down => {
+                self.move_cursor(1);
+                BranchAction::Consumed
+            }
+            KeyCode::Up => {
+                self.move_cursor(-1);
+                BranchAction::Consumed
+            }
+            KeyCode::Backspace => {
+                self.repo_query.pop();
+                self.refilter_repos();
+                BranchAction::Consumed
+            }
+            KeyCode::Enter => {
+                let Some(index) = self.repo_visible.get(self.repo_cursor).copied() else {
+                    self.message = Some("no repository selected".into());
+                    return BranchAction::Consumed;
+                };
+                self.open_repo(index)
+            }
+            // Same bargain as the branch list: letters are text, not commands.
+            KeyCode::Char(c) => {
+                self.repo_query.push(c);
+                self.refilter_repos();
+                BranchAction::Consumed
+            }
+            _ => BranchAction::Ignored,
+        }
+    }
+
+    /// Move to a repository's branches. Whatever was on screen belonged to the repository
+    /// being left, so it goes with it; the caller fills the gap before the next frame.
+    fn open_repo(&mut self, index: usize) -> BranchAction {
+        self.current = index;
+        self.data = BranchData {
+            loading: true,
+            ..BranchData::default()
+        };
+        self.query.clear();
+        self.step = Step::Branch;
+        self.reresolve();
+        self.cursor = 0;
+        BranchAction::LoadRepo {
+            repo_root: self.repos[index].repo_root.clone(),
+        }
+    }
+
+    fn handle_branch_key(&mut self, key: KeyEvent) -> BranchAction {
+        match key.code {
+            KeyCode::Esc => {
+                if self.has_repo_step {
+                    self.step = Step::Repo;
+                    BranchAction::Consumed
+                } else {
+                    BranchAction::Quit
+                }
+            }
             KeyCode::Tab => BranchAction::ShowPanes,
             KeyCode::Down => {
                 self.move_cursor(1);
@@ -421,6 +655,29 @@ impl BranchesState {
     }
 }
 
+/// Which repository a path belongs to.
+///
+/// The path the picker is handed is whatever herdr knew about where the user was: a
+/// repository root when the workspace is one herdr made for a worktree, and otherwise the
+/// checkout the pane's working directory is in — which for a linked worktree is not the
+/// repository root at all. Both have to land on the same row.
+pub(crate) fn locate(repos: &[RepoNode], path: Option<&str>) -> Option<usize> {
+    let path = normalize_path(path?);
+    if path.is_empty() {
+        return None;
+    }
+    repos
+        .iter()
+        .position(|repo| normalize_path(&repo.repo_root) == path)
+        .or_else(|| {
+            repos.iter().position(|repo| {
+                repo.worktrees
+                    .iter()
+                    .any(|worktree| normalize_path(&worktree.checkout_path) == path)
+            })
+        })
+}
+
 /// Whether a typed string could be a branch name, so that a stray query does not turn into
 /// an offer to create something git would refuse anyway.
 fn is_branch_name(query: &str) -> bool {
@@ -441,10 +698,15 @@ fn is_branch_name(query: &str) -> bool {
 mod tests {
     use super::*;
     use crate::domain::model::{PaneNode, WorktreeNode};
+    use crate::domain::order::SortKey;
     use crate::port::{AgentStatus, RefKind, SplitDirection};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl(state: &mut BranchesState, c: char) -> BranchAction {
+        state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL))
     }
 
     fn type_in(state: &mut BranchesState, text: &str) {
@@ -480,6 +742,21 @@ mod tests {
                     agent_status: AgentStatus::Idle,
                     focused: false,
                 }],
+            }],
+        }
+    }
+
+    fn other_repo() -> RepoNode {
+        RepoNode {
+            repo_key: "/src/tools/.git".into(),
+            repo_root: "/src/tools".into(),
+            display_name: "me/tools".into(),
+            worktrees: vec![WorktreeNode {
+                branch: Some("main".into()),
+                checkout_path: "/src/tools".into(),
+                is_primary: true,
+                open_workspace_id: Some("w5".into()),
+                panes: vec![],
             }],
         }
     }
@@ -532,21 +809,54 @@ mod tests {
         .expect("snapshot fixture should deserialize")
     }
 
-    fn state() -> BranchesState {
-        BranchesState::new(
-            repo(),
-            vec![
+    /// What git found for `me/app`, with the remote listing still in flight.
+    fn app_branches() -> BranchData {
+        BranchData {
+            local_refs: vec![
                 local("feat/live", 10),
                 local("main", 20),
                 local("chore/deps", 5),
             ],
+            loading: true,
+            ..BranchData::default()
+        }
+    }
+
+    /// One repository open, so the picker starts on its branches.
+    fn state() -> BranchesState {
+        let mut state = BranchesState::new(
+            vec![repo()],
+            Some("/src/app"),
             destinations(),
             snapshot(),
+            None,
+        );
+        state.set_data(app_branches());
+        state
+    }
+
+    /// Two repositories open, so the picker starts on the repository step. Passed in
+    /// reverse to prove the list is sorted rather than taken as given.
+    fn two_repos(from: &str) -> BranchesState {
+        BranchesState::new(
+            vec![other_repo(), repo()],
+            Some(from),
+            destinations(),
+            snapshot(),
+            None,
         )
     }
 
     fn names(state: &BranchesState) -> Vec<String> {
         state.rows().iter().map(|e| e.name.clone()).collect()
+    }
+
+    fn repo_names(state: &BranchesState) -> Vec<String> {
+        state
+            .repo_rows()
+            .iter()
+            .map(|row| row.repo.display_name.clone())
+            .collect()
     }
 
     #[test]
@@ -655,7 +965,7 @@ mod tests {
         assert_eq!(state.handle_key(key(KeyCode::Esc)), BranchAction::Consumed);
         assert_eq!(state.step(), Step::Branch);
         assert!(state.chosen().is_none());
-        // A second Esc, now at the top level, does quit.
+        // A second Esc, with only one repository, is at the top level and does quit.
         assert_eq!(state.handle_key(key(KeyCode::Esc)), BranchAction::Quit);
     }
 
@@ -666,7 +976,11 @@ mod tests {
         type_in(&mut state, "chore");
         let before = state.rows()[state.cursor()].name.clone();
 
-        state.set_remote_heads(vec!["chore/deps".into(), "feat/from-the-remote".into()]);
+        state.set_data(BranchData {
+            remote_heads: vec!["chore/deps".into(), "feat/from-the-remote".into()],
+            loading: false,
+            ..app_branches()
+        });
         assert!(!state.is_loading());
         assert_eq!(state.rows()[state.cursor()].name, before);
 
@@ -681,12 +995,15 @@ mod tests {
     fn pull_requests_arrive_late_and_only_annotate() {
         let mut state = state();
         let before = names(&state);
-        state.set_pull_requests(vec![PullRequest {
-            number: 7,
-            title: "Bump deps".into(),
-            head_ref: "chore/deps".into(),
-            is_draft: false,
-        }]);
+        state.set_data(BranchData {
+            pull_requests: vec![PullRequest {
+                number: 7,
+                title: "Bump deps".into(),
+                head_ref: "chore/deps".into(),
+                is_draft: false,
+            }],
+            ..app_branches()
+        });
         assert_eq!(names(&state), before, "no rows are added or removed");
         let entry = state
             .rows()
@@ -699,12 +1016,15 @@ mod tests {
     #[test]
     fn a_pull_request_can_be_searched_for_by_number_or_title() {
         let mut state = state();
-        state.set_pull_requests(vec![PullRequest {
-            number: 123,
-            title: "Bump dependencies".into(),
-            head_ref: "chore/deps".into(),
-            is_draft: false,
-        }]);
+        state.set_data(BranchData {
+            pull_requests: vec![PullRequest {
+                number: 123,
+                title: "Bump dependencies".into(),
+                head_ref: "chore/deps".into(),
+                is_draft: false,
+            }],
+            ..app_branches()
+        });
         type_in(&mut state, "123");
         assert_eq!(names(&state)[0], "chore/deps");
     }
@@ -715,6 +1035,11 @@ mod tests {
             state().handle_key(key(KeyCode::Tab)),
             BranchAction::ShowPanes
         );
+        assert_eq!(
+            two_repos("/src/app").handle_key(key(KeyCode::Tab)),
+            BranchAction::ShowPanes,
+            "including from the repository step"
+        );
     }
 
     #[test]
@@ -722,14 +1047,19 @@ mod tests {
         // herdr answers a move into a zoomed tab with success and then does not move it, so
         // the picker has to stop before asking.
         let mut state = BranchesState::new(
-            repo(),
-            vec![local("chore/deps", 5)],
+            vec![repo()],
+            Some("/src/app"),
             vec![Destination::ExistingTab {
                 tab_id: "w3:t1".into(),
                 label: "w3  zoomed".into(),
             }],
             snapshot(),
+            None,
         );
+        state.set_data(BranchData {
+            local_refs: vec![local("chore/deps", 5)],
+            ..BranchData::default()
+        });
         type_in(&mut state, "chore");
         state.handle_key(key(KeyCode::Enter));
         assert_eq!(state.step(), Step::Destination);
@@ -770,5 +1100,183 @@ mod tests {
         assert_eq!(state.destination_cursor(), 0);
         state.handle_key(key(KeyCode::Up));
         assert_eq!(state.destination_cursor(), destinations().len() - 1);
+    }
+
+    // --- the repository step ---------------------------------------------------------
+
+    #[test]
+    fn one_repository_is_nothing_to_choose_between() {
+        let state = state();
+        assert_eq!(state.step(), Step::Branch);
+        assert!(!state.has_repo_step());
+    }
+
+    #[test]
+    fn the_repository_step_starts_on_the_one_the_picker_was_summoned_from() {
+        let state = two_repos("/src/tools");
+        assert_eq!(state.step(), Step::Repo);
+        assert!(state.has_repo_step());
+        assert_eq!(repo_names(&state), ["me/app", "me/tools"], "name order");
+        assert_eq!(state.repo_cursor(), 1);
+        assert_eq!(state.repo().display_name, "me/tools");
+        assert!(state.repo_rows()[1].is_origin);
+        assert!(!state.repo_rows()[0].is_origin);
+    }
+
+    #[test]
+    fn a_worktree_checkout_still_finds_the_repository_it_belongs_to() {
+        // The picker is handed wherever the user was, which for a pane in a linked worktree
+        // is the checkout, not the repository root. Matching only the root would drop the
+        // cursor on whatever happens to be first.
+        let state = two_repos("/wt/feat-live");
+        assert_eq!(state.repo().display_name, "me/app");
+        assert_eq!(state.repo_cursor(), 0);
+    }
+
+    #[test]
+    fn an_unknown_origin_simply_starts_at_the_top() {
+        let state = two_repos("/somewhere/else");
+        assert_eq!(state.repo_cursor(), 0);
+        assert!(state.repo_rows().iter().all(|row| !row.is_origin));
+    }
+
+    #[test]
+    fn choosing_a_repository_asks_for_its_branches_and_lets_go_of_the_last_ones() {
+        let mut state = two_repos("/src/app");
+        state.set_data(app_branches());
+        assert_eq!(names(&state), ["feat/live", "main", "chore/deps"]);
+
+        state.handle_key(key(KeyCode::Down));
+        assert_eq!(
+            state.handle_key(key(KeyCode::Enter)),
+            BranchAction::LoadRepo {
+                repo_root: "/src/tools".into()
+            }
+        );
+        assert_eq!(state.step(), Step::Branch);
+        assert_eq!(state.repo().display_name, "me/tools");
+        assert_eq!(
+            names(&state),
+            ["main"],
+            "only what the new repository itself says: its open checkout, and nothing of the one just left"
+        );
+        assert!(state.is_loading());
+    }
+
+    #[test]
+    fn escape_goes_back_to_the_repository_list_when_there_is_one_to_go_back_to() {
+        let mut state = two_repos("/src/app");
+        state.handle_key(key(KeyCode::Enter));
+        assert_eq!(state.step(), Step::Branch);
+        assert_eq!(state.handle_key(key(KeyCode::Esc)), BranchAction::Consumed);
+        assert_eq!(state.step(), Step::Repo);
+        assert_eq!(state.handle_key(key(KeyCode::Esc)), BranchAction::Quit);
+    }
+
+    #[test]
+    fn typing_narrows_the_repository_list_by_name_or_by_path() {
+        let mut state = two_repos("/src/app");
+        type_in(&mut state, "tools");
+        assert_eq!(repo_names(&state), ["me/tools"]);
+
+        ctrl(&mut state, 'u');
+        assert_eq!(repo_names(&state).len(), 2);
+
+        // Two checkouts of one fork are told apart by where they are, not by their name.
+        type_in(&mut state, "src/app");
+        assert_eq!(repo_names(&state), ["me/app"]);
+    }
+
+    #[test]
+    fn a_query_that_matches_no_repository_refuses_rather_than_opening_the_wrong_one() {
+        let mut state = two_repos("/src/app");
+        type_in(&mut state, "nothing-like-this");
+        assert!(state.repo_rows().is_empty());
+        assert_eq!(
+            state.handle_key(key(KeyCode::Enter)),
+            BranchAction::Consumed
+        );
+        assert_eq!(state.step(), Step::Repo);
+        assert!(state.message().is_some());
+    }
+
+    // --- ordering --------------------------------------------------------------------
+
+    #[test]
+    fn ctrl_o_walks_the_orders_and_ctrl_r_turns_the_list_around() {
+        let mut state = state();
+        assert_eq!(
+            names(&state),
+            ["feat/live", "main", "chore/deps"],
+            "by state: what is running, then the most recent"
+        );
+
+        ctrl(&mut state, 'o');
+        assert_eq!(state.order().key, SortKey::Updated);
+        assert_eq!(names(&state), ["main", "feat/live", "chore/deps"]);
+
+        ctrl(&mut state, 'r');
+        assert!(state.order().reversed);
+        assert_eq!(names(&state), ["chore/deps", "feat/live", "main"]);
+
+        ctrl(&mut state, 'o');
+        assert_eq!(state.order().key, SortKey::Name);
+        assert!(
+            !state.order().reversed,
+            "a new key comes back at its own natural direction"
+        );
+        assert_eq!(names(&state), ["chore/deps", "feat/live", "main"]);
+
+        ctrl(&mut state, 'o');
+        assert_eq!(state.order().key, SortKey::State, "and back round");
+    }
+
+    #[test]
+    fn reordering_keeps_the_cursor_on_the_branch_it_was_on() {
+        let mut state = state();
+        state.handle_key(key(KeyCode::Down));
+        let before = state.rows()[state.cursor()].name.clone();
+        assert_eq!(before, "main");
+
+        ctrl(&mut state, 'o');
+        assert_eq!(state.rows()[state.cursor()].name, before);
+        assert_eq!(state.cursor(), 0, "which has moved to the top");
+    }
+
+    #[test]
+    fn the_chosen_order_outranks_the_fuzzy_score() {
+        // Sorting the filtered list by score would quietly override the order the user
+        // picked, the moment they typed anything.
+        let mut state = state();
+        type_in(&mut state, "a");
+        assert_eq!(names(&state)[0], "feat/live", "by state, it is running");
+
+        ctrl(&mut state, 'o');
+        assert_eq!(names(&state)[0], "main", "by date, it is the newer");
+    }
+
+    #[test]
+    fn the_order_survives_switching_repository() {
+        let mut state = two_repos("/src/app");
+        state.handle_key(key(KeyCode::Enter));
+        state.set_data(app_branches());
+        ctrl(&mut state, 'o');
+        ctrl(&mut state, 'r');
+        let order = state.order();
+
+        state.handle_key(key(KeyCode::Esc));
+        state.handle_key(key(KeyCode::Down));
+        state.handle_key(key(KeyCode::Enter));
+        assert_eq!(state.order(), order);
+    }
+
+    #[test]
+    fn ctrl_u_empties_the_search_the_way_the_key_hint_says_it_does() {
+        let mut state = state();
+        type_in(&mut state, "chore");
+        assert_eq!(state.query(), "chore");
+        assert_eq!(ctrl(&mut state, 'u'), BranchAction::Consumed);
+        assert_eq!(state.query(), "");
+        assert_eq!(names(&state).len(), 3);
     }
 }

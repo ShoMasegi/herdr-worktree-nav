@@ -46,15 +46,30 @@ the fuller context for the row you are on, including the checkout path.
 `Enter` goes there — across spaces, across tabs, straight to the pane. A worktree with no
 pane in it is listed too, and `Enter` opens it. `b`/`w`/`i`/`d` narrow to one agent state and
 `a` clears that, exactly as they do in the navigator.
-pane in it is listed too, and `Enter` opens it.
 
 ## Branches — get me onto that branch
 
-Every branch of the repository you summoned it from, whatever state it is in.
+Which repository first — every one herdr has open, with the one you came from marked and
+already under the cursor:
 
 ```
 ┌─ herdr-gh-nav ───────────────────────────────────────────────────────────────┐
-│ / search branches█                                                24 branches│
+│ / search repositories█                                          4 repositories│
+│──────────────────────────────────────────────────────────────────────────────│
+│ ◆ ShoMasegi/herdr-gh-nav     1 worktree, 2 panes   ~/Workspace/herdr-gh-nav  │
+│   ShoMasegi/harbour-backend  3 worktrees, 5 panes  ~/Workspace/harbour-backe…│
+│   nightowl/harken            1 worktree, 1 pane    ~/Workspace/nightowl/lett…│
+│                                                                              │
+│ ShoMasegi/herdr-gh-nav · ~/Workspace/herdr-gh-nav ────────────────────────────│
+│ type to filter  ↵ branches  ⇥ panes  ctrl+u clear  esc close                 │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+Then every branch of it, whatever state it is in:
+
+```
+┌─ herdr-gh-nav ───────────────────────────────────────────────────────────────┐
+│ / search branches█                                  ⇅ state ↓    24 branches │
 │──────────────────────────────────────────────────────────────────────────────│
 │   ● feat/login    running      #123 Add the login screen (draft)             │
 │   ○ fix/crash     checked out  latest work on fix/crash                      │
@@ -62,12 +77,13 @@ Every branch of the repository you summoned it from, whatever state it is in.
 │   ↓ feat/search   remote                                                     │
 │                                                                              │
 │ me/app · feat/login · open in w2:p1 · ~/.herdr/worktrees/app/feat-login ──────│
-│ type to filter  ↵ choose  ⇥ panes  ctrl+u clear  esc close                   │
+│ ↵ choose  ctrl+o order  ctrl+r reverse  ⇥ panes  ctrl+u clear  esc back      │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Type to filter. Type something that does not exist yet and it offers to create it. Then pick
-where the pane should go:
+Type to filter. Type something that does not exist yet and it offers to create it. `Ctrl-O`
+walks the orders — by state, by date, by name — and `Ctrl-R` reverses the current one; what
+is in force sits beside the count. Then pick where the pane should go:
 
 ```
 here            split right     w1  app / agents

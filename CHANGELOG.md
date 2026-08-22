@@ -6,6 +6,34 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **A repository step in the branches view.** It now opens on every repository herdr has
+  open — the same set the panes view groups by — with the one you summoned it from marked and
+  under the cursor, so another repository's branches are one `↓` and one `Enter` away instead
+  of a trip through the panes view. Rows carry how much of each repository is open and where
+  it is on disk, and the path is searchable along with the name. With one repository open the
+  step is skipped. Each repository is read once and cached while the picker is up.
+- **An order for the branch list.** `Ctrl-O` walks `state` (the previous fixed order, still
+  the default), `updated`, and `name`; `Ctrl-R` reverses the current one. What is in force
+  sits beside the count and takes the accent once it is no longer the default. The order
+  holds while a filter is typed — the fuzzy score decides what is in the list, not where it
+  sits — and across a change of repository. Branches with no date stay at the bottom in both
+  directions. See [ADR 0006](docs/adr/0006-repository-step-and-branch-order.md).
+
+### Changed
+
+- `Esc` now goes back one step everywhere in the branches view — destination, branch,
+  repository, out — rather than closing outright from the branch list.
+- `Tab` in the panes view no longer refuses when the cursor is not in a repository; the
+  branches view opens on its repository list either way.
+
+### Fixed
+
+- `Ctrl-U` empties the branch search, which the key hint and the documentation had claimed
+  since 0.1.0 without it being implemented.
+- A list of one no longer says "1 branches".
+
 ## [0.1.0]
 
 First release. Two overlay pickers for herdr, backed by one Rust binary.

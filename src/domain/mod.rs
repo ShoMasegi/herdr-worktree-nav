@@ -3,6 +3,7 @@
 pub mod chrome;
 pub mod dest;
 pub mod model;
+pub mod order;
 pub mod preview;
 pub mod resolve;
 pub mod rows;

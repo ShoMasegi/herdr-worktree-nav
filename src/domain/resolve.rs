@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 
 use crate::domain::model::RepoNode;
+use crate::domain::order::Order;
 use crate::port::{GitRef, PullRequest, RefKind};
 
 /// What a branch resolved to, in the order the picker prefers to show them.
@@ -28,19 +29,6 @@ pub enum BranchState {
     RemoteOnly,
     /// A name that exists nowhere: the user typed it to create it.
     New,
-}
-
-impl BranchState {
-    /// Sort key. Work in progress first, then checkouts, then refs, then the remote.
-    fn rank(&self) -> u8 {
-        match self {
-            BranchState::New => 0,
-            BranchState::LivePane { .. } => 1,
-            BranchState::IdleWorktree { .. } => 2,
-            BranchState::LocalRef => 3,
-            BranchState::RemoteOnly => 4,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,14 +132,9 @@ pub fn resolve(
     }
 
     let mut list: Vec<BranchEntry> = entries.into_values().collect();
-    list.sort_by(|a, b| {
-        a.state
-            .rank()
-            .cmp(&b.state.rank())
-            // Most recent first; a branch with no date sorts after ones that have it.
-            .then_with(|| b.committed_at.cmp(&a.committed_at))
-            .then_with(|| a.name.cmp(&b.name))
-    });
+    // The picker reorders this as the user asks; sorting here only decides what an
+    // untouched list looks like.
+    Order::default().sort(&mut list);
     list
 }
 
