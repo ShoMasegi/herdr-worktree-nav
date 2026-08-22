@@ -158,18 +158,28 @@ fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'stat
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         ));
-    } else if let Some(filter) = state.state_filter() {
-        let (glyph, style) = theme.status_glyph(filter.status());
-        spans.push(Span::styled(glyph, style.add_modifier(Modifier::BOLD)));
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(
-            filter.label(),
-            style.add_modifier(Modifier::BOLD),
-        ));
-    } else if state.query().is_empty() {
-        spans.push(Span::styled("search panes", theme.dim()));
     } else {
-        spans.push(Span::raw(state.query().to_string()));
+        // A state filter and a query can both be on at once — `b` then `/` — so the chip
+        // sits beside what is being typed rather than in place of it.
+        if let Some(filter) = state.state_filter() {
+            let (glyph, style) = theme.status_glyph(filter.status());
+            spans.push(Span::styled(glyph, style.add_modifier(Modifier::BOLD)));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                filter.label(),
+                style.add_modifier(Modifier::BOLD),
+            ));
+        }
+        if !state.query().is_empty() {
+            if state.state_filter().is_some() {
+                spans.push(Span::raw("  "));
+            }
+            spans.push(Span::raw(state.query().to_string()));
+        } else if !state.is_filtering() && state.state_filter().is_none() {
+            // The placeholder is what to do when the field is not focused; once it is, the
+            // cursor says everything and the hint is in the way of what is being typed.
+            spans.push(Span::styled("search panes", theme.dim()));
+        }
     }
     if state.is_filtering() {
         spans.push(Span::styled("\u{2588}", theme.dim()));
@@ -488,17 +498,17 @@ const HELP_REPO_SEARCH: &[&str] = &[
 /// The branch step, when Esc has a repository list to go back to. Widest first, each rung
 /// dropping the least useful thing left.
 const HELP_BRANCH_BACK: &[&str] = &[
-    "\u{21b5} choose  j/k move  / search  f fetch  o order  r reverse  \u{21e5} panes  esc back  q close",
-    "\u{21b5} choose  j/k move  / search  f fetch  o order  r reverse  esc back",
-    "\u{21b5} choose  / search  f fetch  o order  esc back",
+    "\u{21b5} choose  j/k move  / search  f fetch  i order  shift+i reverse  \u{21e5} panes  esc back  q close",
+    "\u{21b5} choose  j/k move  / search  f fetch  i order  shift+i reverse  esc back",
+    "\u{21b5} choose  / search  f fetch  i order  esc back",
     "\u{21b5} choose  / search  esc back",
     "\u{21b5} choose  esc",
 ];
 /// The same, with only one repository open: Esc has nowhere to go but out.
 const HELP_BRANCH: &[&str] = &[
-    "\u{21b5} choose  j/k move  / search  f fetch  o order  r reverse  \u{21e5} panes  q close",
-    "\u{21b5} choose  j/k move  / search  f fetch  o order  r reverse  q close",
-    "\u{21b5} choose  / search  f fetch  o order  q close",
+    "\u{21b5} choose  j/k move  / search  f fetch  i order  shift+i reverse  \u{21e5} panes  q close",
+    "\u{21b5} choose  j/k move  / search  f fetch  i order  shift+i reverse  q close",
+    "\u{21b5} choose  / search  f fetch  i order  q close",
     "\u{21b5} choose  / search  esc close",
     "\u{21b5} choose  esc",
 ];
@@ -623,7 +633,9 @@ fn branch_search_line(state: &BranchesState, theme: &Theme, width: u16) -> Parag
                 .add_modifier(Modifier::BOLD),
         ));
     } else if state.query().is_empty() {
-        spans.push(Span::styled("search branches", theme.dim()));
+        if !state.is_filtering() {
+            spans.push(Span::styled("search branches", theme.dim()));
+        }
     } else {
         spans.push(Span::raw(state.query().to_string()));
     }
@@ -681,7 +693,11 @@ fn repo_search_line(state: &BranchesState, theme: &Theme, width: u16) -> Paragra
                 .add_modifier(Modifier::BOLD),
         ));
     } else if state.repo_query().is_empty() {
-        spans.push(Span::styled("search repositories", theme.dim()));
+        // The placeholder is what to do when the field is not focused; once it is, the
+        // cursor says everything and the hint is in the way of what is being typed.
+        if !state.is_filtering() {
+            spans.push(Span::styled("search repositories", theme.dim()));
+        }
     } else {
         spans.push(Span::raw(state.repo_query().to_string()));
     }
@@ -1275,6 +1291,28 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_search_field_with_the_keyboard_shows_only_its_cursor() {
+        // The placeholder is advice about a field you are not in. Leaving it under the
+        // cursor would read as text that will not go away.
+        let mut state = PanesState::new(tree(), None);
+        press(&mut state, KeyCode::Char('/'));
+        insta::assert_snapshot!(screen(&state, 92, 6));
+    }
+
+    #[test]
+    fn a_state_chip_and_a_typed_query_sit_beside_each_other() {
+        // Both can be on at once, and the chip used to be drawn in place of the query —
+        // so the letters went in and nothing appeared.
+        let mut state = PanesState::new(tree(), None);
+        press(&mut state, KeyCode::Char('b'));
+        press(&mut state, KeyCode::Char('/'));
+        for c in "cla".chars() {
+            press(&mut state, KeyCode::Char(c));
+        }
+        insta::assert_snapshot!(screen(&state, 92, 6));
+    }
+
+    #[test]
     fn draws_a_search_with_its_non_matching_context_still_present() {
         let mut state = PanesState::new(tree(), None);
         press(&mut state, KeyCode::Char('/'));
@@ -1626,6 +1664,13 @@ mod tests {
             ..branch_data()
         });
         insta::assert_snapshot!(branches_screen(&state, 110, 8));
+    }
+
+    #[test]
+    fn the_branch_search_field_hides_its_placeholder_too() {
+        let mut state = branches_state();
+        state.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        insta::assert_snapshot!(branches_screen(&state, 92, 6));
     }
 
     #[test]

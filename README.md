@@ -78,13 +78,13 @@ Then every branch of it, whatever state it is in:
 │   ↓ feat/search   remote                                                     │
 │                                                                              │
 │ me/app · feat/login · open in w2:p1 · ~/.herdr/worktrees/app/feat-login ──────│
-│ ↵ choose  j/k move  / search  f fetch  o order  r reverse  esc back          │
+│ ↵ choose  j/k move  / search  f fetch  i order  shift+i reverse  esc back    │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-`/` filters, and typing something that does not exist yet offers to create it. `o` walks the
-orders — by state, by date, by name — and `r` reverses the current one; what is in force sits
-beside the count. `f` fetches the repository. Then pick where the pane should go:
+`/` filters, and typing something that does not exist yet offers to create it. `i` walks the
+orders — by state, by date, by name — and `Shift-I` reverses the current one; what is in force
+sits beside the count. `f` fetches the repository. Then pick where the pane should go:
 
 ```
 here            split right     w1  app / agents

@@ -601,8 +601,8 @@ impl BranchesState {
                     }
                     BranchAction::Consumed
                 }
-                // The list is a search box, so the order cannot be a letter: `o` and `r`
-                // are branch names being typed.
+                // The chords stay `o` and `r` rather than following the letters: in a
+                // terminal `Ctrl-I` is Tab, which this view already spends on the panes.
                 KeyCode::Char('o') if self.step == Step::Branch => {
                     self.reorder(self.order.cycle());
                     BranchAction::Consumed
@@ -746,11 +746,13 @@ impl BranchesState {
                 self.filtering = true;
                 BranchAction::Consumed
             }
-            KeyCode::Char('o') => {
+            KeyCode::Char('i') => {
                 self.reorder(self.order.cycle());
                 BranchAction::Consumed
             }
-            KeyCode::Char('r') => {
+            // Shift arrives as the capital itself, whether or not the terminal also sets
+            // the modifier, so the letter is what this matches on.
+            KeyCode::Char('I') => {
                 self.reorder(self.order.reverse());
                 BranchAction::Consumed
             }
@@ -1099,10 +1101,10 @@ mod tests {
         assert_eq!(state.cursor(), 0);
         assert_eq!(state.query(), "");
 
-        // The `Ctrl-` shortcuts lose their `Ctrl-`.
-        state.handle_key(key(KeyCode::Char('o')));
+        // The order keys, which are letters rather than chords out here.
+        state.handle_key(key(KeyCode::Char('i')));
         assert_eq!(state.order().key, SortKey::Updated);
-        state.handle_key(key(KeyCode::Char('r')));
+        state.handle_key(KeyEvent::new(KeyCode::Char('I'), KeyModifiers::SHIFT));
         assert!(state.order().reversed);
         assert_eq!(
             state.handle_key(key(KeyCode::Char('f'))),

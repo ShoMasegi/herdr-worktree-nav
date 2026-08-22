@@ -1,0 +1,10 @@
+---
+source: src/ui/render.rs
+expression: "screen(&state, 92, 6)"
+---
+" / ● blocked  cla█                                                                  5 panes "
+"────────────────────────────────────────────────────────────────────────────────────────────"
+"   └── ● develop      /wt/develop                                                          │"
+"      └── ● claude    w3:p1                                                                █"
+" me/site · develop · w3:p1 · blocked · /wt/develop ─────────────────────────────────────────"
+" ↵ keep search  ctrl+u clear  esc cancel  ↑↓ move  ←→ repo                                  "

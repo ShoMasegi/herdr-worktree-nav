@@ -151,8 +151,8 @@ one thing is asking nothing. `Esc` then closes the branch list rather than going
 | `↑` `↓`, `k` `j`, `Ctrl-P` `Ctrl-N` | move |
 | `Enter` | choose this branch |
 | `/` | search |
-| `o` | next order |
-| `r` | reverse it |
+| `i` | next order |
+| `Shift-I` | reverse it |
 | `f` | fetch this repository |
 | `Tab` | back to panes |
 | `Esc` | back to the repositories |
@@ -162,7 +162,8 @@ one thing is asking nothing. `Esc` then closes the branch list rather than going
 
 Both lists work the way the panes view does: letters are commands until `/` gives the search
 field the keyboard. The `/` at the left is dim while the list has the keys and takes the
-accent, with a block cursor, while the search field does.
+accent, with a block cursor, while the search field does. The `search …` hint goes with it:
+it is advice about a field you are not in.
 
 | Key | While searching |
 | --- | --- |
@@ -171,6 +172,8 @@ accent, with a block cursor, while the search field does.
 | `Enter` | choose what is under the cursor |
 | `Backspace` | delete a character |
 | `Ctrl-U` | empty the search |
+| `Ctrl-O` `Ctrl-R` | order and reverse |
+| `Ctrl-F` | fetch |
 | `Esc` | abandon the search |
 
 `Enter` picks rather than committing the filter, which is where this differs from the panes
@@ -178,8 +181,8 @@ view: what you do with a narrowed branch list is open the one thing left in it, 
 for a second `Enter` to say so would be ceremony.
 
 `Esc` abandons what was typed, as it does in the panes view. Nothing is lost by that, because
-the `Ctrl-` forms of the commands — `Ctrl-O`, `Ctrl-R`, `Ctrl-F`, `Ctrl-U` — keep working
-while you type. Reordering a filtered list does not cost you the filter.
+the `Ctrl-` forms of the commands — `Ctrl-O` and `Ctrl-R` for the order,
+`Ctrl-F` to fetch — keep working while you type. Reordering a filtered list does not cost you the filter.
 
 Each repository is read once. Going back, picking another, and returning does not re-run git.
 
@@ -203,7 +206,9 @@ is busy should never look like one that is stuck.
 
 ### Ordering
 
-`Ctrl-O` walks the three orders and `Ctrl-R` turns the current one around. Which one is in
+`i` walks the three orders and `Shift-I` turns the current one around — `Ctrl-O` and
+`Ctrl-R` do the same while the search field has the keyboard, since `Ctrl-I` is Tab in a
+terminal and this view spends Tab on the panes. Which one is in
 force sits beside the count, and takes the accent colour once it is no longer the default,
 because a list in an unusual order should say so.
 
@@ -214,9 +219,9 @@ because a list in an unusual order should say so.
 | `name ↑` | a to z |
 
 The arrow describes the values rather than the rows: ↓ is descending, so it means newest,
-busiest, or z first. `Ctrl-O` puts the arrow back to the new order's own direction, since
-"oldest first" is not what asking for a date order meant; `Ctrl-R` is how you say you meant
-it.
+busiest, or z first. Changing the order puts the arrow back to that
+order's own direction, since "oldest first" is not what asking for a date order meant;
+`Shift-I` is how you say you meant it.
 
 Two things stay put whichever order is chosen. A branch with no date — one seen only through
 `ls-remote` and never fetched — sinks to the bottom in both directions, because reversing an

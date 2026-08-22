@@ -37,8 +37,10 @@ record to consult.
 **`Esc` goes back one step** everywhere, rather than closing from the branch list. The
 destination step already behaved this way; three steps under one rule beats two rules.
 
-**Three orders, chosen with `Ctrl-O` and reversed with `Ctrl-R`.** The old fixed order becomes
-`state`, which stays the default, so an untouched picker looks exactly as it did.
+**Three orders, with a key to walk them and a key to reverse.** The old fixed order becomes
+`state`, which stays the default, so an untouched picker looks exactly as it did. (The keys
+were `Ctrl-O` and `Ctrl-R`; they are `i` and `Shift-I` now, with the chords kept for use
+while the search field has the keyboard.)
 
 ## Consequences
 

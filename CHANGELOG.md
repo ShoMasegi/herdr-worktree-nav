@@ -14,8 +14,9 @@ All notable changes to this project are documented here. The format follows
   of a trip through the panes view. Rows carry how much of each repository is open and where
   it is on disk, and the path is searchable along with the name. With one repository open the
   step is skipped. Each repository is read once and cached while the picker is up.
-- **An order for the branch list.** `Ctrl-O` walks `state` (the previous fixed order, still
-  the default), `updated`, and `name`; `Ctrl-R` reverses the current one. What is in force
+- **An order for the branch list.** `i` walks `state` (the previous fixed order, still the
+  default), `updated`, and `name`; `Shift-I` reverses the current one, and `Ctrl-O`/`Ctrl-R`
+  do the same while the search field has the keyboard. What is in force
   sits beside the count and takes the accent once it is no longer the default. The order
   holds while a filter is typed — the fuzzy score decides what is in the list, not where it
   sits — and across a change of repository. Branches with no date stay at the bottom in both
@@ -55,7 +56,7 @@ All notable changes to this project are documented here. The format follows
 - **The branches view has a command mode, reached the way the panes view's is.** Both its
   lists — repositories and branches — used to be search boxes with no mode to enter. Now `/`
   gives the search field the keyboard and letters are commands until it does: `j`/`k` move,
-  `f` fetches, `o` and `r` order and reverse, `q` closes. The `/` at the left is dim while
+  `f` fetches, `i` and `Shift-I` order and reverse, `q` closes. The `/` at the left is dim while
   the list has the keys and takes the accent while the search field does. `Enter` while
   searching picks rather than committing the filter — narrowing a branch list is how you
   reach the branch you are about to open — and `Esc` abandons what was typed, which costs
@@ -77,6 +78,12 @@ All notable changes to this project are documented here. The format follows
   repositories.
 
 ### Fixed
+
+- **The search field drops its `search …` hint once it has the keyboard**, in both views. It
+  is advice about a field you are not in, and under the cursor it read as text that would not
+  go away.
+- **A state filter and a typed query no longer hide each other** in the panes view. The chip
+  was drawn in place of the query, so with `b` on, letters went in and nothing appeared.
 
 - **A remote that cannot be reached is no longer reported as "not a git repository".** The
   git adapter treated exit code 128 as "not a repository"; 128 is git's catch-all for every

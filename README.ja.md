@@ -65,11 +65,11 @@
 │   ↓ feat/search   remote                                                     │
 │                                                                              │
 │ me/app · feat/login · open in w2:p1 · ~/.herdr/worktrees/app/feat-login ──────│
-│ ↵ choose  j/k move  / search  f fetch  o order  r reverse  esc back          │
+│ ↵ choose  j/k move  / search  f fetch  i order  shift+i reverse  esc back    │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-`/` で絞り込めます。まだ存在しない名前を打てば、それを作る候補が出ます。`o` で並び順（状態順・更新順・名前順）を巡回し、`r` で反転します。効いている並びは件数の隣に出ます。`f` でそのリポジトリを fetch します。続いて pane の行き先を選びます。
+`/` で絞り込めます。まだ存在しない名前を打てば、それを作る候補が出ます。`i` で並び順（状態順・更新順・名前順）を巡回し、`Shift-I` で反転します。効いている並びは件数の隣に出ます。`f` でそのリポジトリを fetch します。続いて pane の行き先を選びます。
 
 ```
  here            split right     w1  app / agents
