@@ -98,9 +98,9 @@ checkout は `<directory>/<repo>/<branch-slug>` に置かれます。変更す�
 herdr 側は CI ではテストできません（サーバーが無いため）。リリース前に実セッションで一通り確認してください。
 
 - [ ] `herdr plugin link .` で 2 つのアクションと 2 つの pane エントリポイントが登録される（`herdr plugin list --json`）
-- [ ] Panes ビューに開いている全リポジトリが worktree ごとに並び、**自身のオーバーレイは出ない**
+- [ ] ピッカーが herdr の枠付き（タイトル `herdr-gh-nav`）の中央寄せ popup として開き、周囲にセッションが見えたままで、**自分自身は一覧に出ない**
 - [ ] pane の無い worktree が `no pane` 付きで出て、`Enter` で開ける
-- [ ] 別の space の pane で `Enter` を押すとそこへ移動し、オーバーレイが閉じた後もそこに留まる
+- [ ] 別の space の pane で `Enter` を押すとそこへ移動し、popup が閉じた後もそこに留まる
 - [ ] `n` でカーソル位置の checkout に pane が追加される
 - [ ] `Tab` でカーソル位置のリポジトリの Branches ビューに行ける
 - [ ] Branches ビューが、プラグインディレクトリからだけでなく **worktree の中から** も開ける（相対パスの pane コマンドを検出できるケース）
@@ -109,3 +109,6 @@ herdr 側は CI ではテストできません（サーバーが無いため）�
 - [ ] 4 つの行き先すべてが動く: ここに split / 既存 tab / 既存 space / 新規 space
 - [ ] 作成して移動した後、`herdr workspace list` に余分な workspace が残っておらず、checkout はディスク上に残っている
 - [ ] herdr サーバーを停止した状態でバイナリを実行すると、panic せず説明を出して終了する
+- [ ] `Tab` を押しても枠のタイトルは変わらず（ビュー名ではなくプラグイン名のため）、検索行とキーヒントだけがビューに追従する
+
+popup はアドレス指定できないため、`herdr pane read` や `herdr pane send-keys` でピッカーを操作できません。同じコードをキー入力付きで確認するには、通常の pane で `./bin/herdr-gh-nav pane panes` を実行してください。枠だけは目視で確認する必要があります。

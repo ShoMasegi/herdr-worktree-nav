@@ -28,6 +28,18 @@ command = ["/bin/sh", "scripts/fetch-or-build.sh"]
 
 # Pane entrypoints.
 #
+# `popup` rather than `overlay`: herdr draws a centred modal over the live session, with an
+# accent-coloured border and this title, which is exactly the frame its own session navigator
+# has. The picker draws only the inside, so there is no second border.
+#
+# The size mirrors the navigator's own margins (`width/16` each side, `height/10` top and
+# bottom), which come out at roughly 87% by 80%.
+#
+# The title is deliberately the plugin's name rather than the view's: `Tab` switches between
+# panes and branches inside one process, and a popup has no pane id, so nothing can rename
+# the border afterwards. A neutral title cannot go stale. Which view you are in is in the
+# search line and the key hint.
+#
 # These launch the binary by ABSOLUTE path via $HERDR_PLUGIN_ROOT, not by the relative
 # "./bin/herdr-gh-nav" the actions use. The pane's cwd is the directory the user was in, not
 # the plugin root — the `action` subcommand sets it so the picker knows which repository it
@@ -36,14 +48,18 @@ command = ["/bin/sh", "scripts/fetch-or-build.sh"]
 # "Unable to spawn <worktree>/./bin/herdr-gh-nav because it does not exist".
 [[panes]]
 id = "panes"
-title = "Panes"
-placement = "overlay"
+title = "herdr-gh-nav"
+placement = "popup"
+width = "87%"
+height = "80%"
 command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/herdr-gh-nav\" pane panes"]
 
 [[panes]]
 id = "branches"
-title = "Branches"
-placement = "overlay"
+title = "herdr-gh-nav"
+placement = "popup"
+width = "87%"
+height = "80%"
 command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/herdr-gh-nav\" pane branches"]
 
 # Actions are what keybindings invoke (`type = "plugin_action"`). Each one reads

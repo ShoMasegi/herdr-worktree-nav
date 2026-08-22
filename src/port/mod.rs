@@ -67,12 +67,18 @@ pub struct PaneSplit {
 pub struct PluginPaneOpen {
     pub plugin_id: String,
     pub entrypoint: String,
-    pub placement: &'static str,
     pub cwd: Option<String>,
     /// Extra environment for the pane process. Used to tell the picker which pane summoned
     /// it, which its own environment cannot say.
     pub env: Vec<(String, String)>,
     pub focus: bool,
+}
+
+/// Why a `plugin.pane.open` did not open anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenRefusal {
+    /// herdr allows one popup at a time and one is already up.
+    PopupAlreadyOpen,
 }
 
 /// Everything this plugin asks of herdr.
@@ -104,8 +110,12 @@ pub trait HerdrPort {
     fn workspace_focus(&self, workspace_id: &str) -> Result<()>;
     fn tab_focus(&self, tab_id: &str) -> Result<()>;
 
-    fn plugin_pane_open(&self, req: &PluginPaneOpen) -> Result<Pane>;
-    fn plugin_pane_focus(&self, pane_id: &str) -> Result<()>;
+    /// Open one of the manifest's pane entrypoints. Nothing is returned: these open as
+    /// popups, and a popup is a singleton session resource with no pane id.
+    ///
+    /// `Ok(Some(refusal))` is herdr declining for a reason the caller can act on, as opposed
+    /// to an error.
+    fn plugin_pane_open(&self, req: &PluginPaneOpen) -> Result<Option<OpenRefusal>>;
 }
 
 /// A branch reference as git reports it.

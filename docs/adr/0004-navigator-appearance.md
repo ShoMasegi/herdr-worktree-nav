@@ -1,6 +1,7 @@
 # 4. Look like herdr's session navigator, without its palette
 
-Status: accepted
+Status: accepted; the placement decision below is superseded by
+[ADR 0005](./0005-popup-placement.md)
 
 ## Context
 
@@ -52,12 +53,9 @@ theme keeps working with an accent that is merely wrong rather than a picker tha
   score. Fuzzy matching is permissive enough that unrelated repositories match weakly, and
   the navigator's rows are ordered by something the user already knows — a workspace list
   they built — while a repository list assembled from panes is not.
-- **The floating proportions.** The navigator insets its modal and the live session shows
-  through. A plugin pane with `placement = "overlay"` is a zoom: the space around an inset
-  box would be blank rather than the session, so the panel fills the pane instead.
-  `placement = "popup"` would float correctly, but a popup has no pane id — measured against
-  0.7.4, `plugin.pane.open` returns `{"type":"ok"}` and the pane never appears in a snapshot
-  — which costs the "press again to focus the picker" behaviour.
+- ~~**The floating proportions.**~~ Superseded by [ADR 0005](./0005-popup-placement.md): the
+  pickers are popups, herdr frames them, and the session shows through as it does under the
+  navigator. The measurement that argued against this was faulty; the record explains how.
 - **Hiding a single middle row.** The navigator omits the tab row when a workspace has one
   tab. A worktree row carries the branch name, which is the information the picker exists
   for; a tab number is not.

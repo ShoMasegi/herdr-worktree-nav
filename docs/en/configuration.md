@@ -33,8 +33,9 @@ herdr plugin action invoke herdr-gh-nav.open-panes
 herdr plugin action invoke herdr-gh-nav.open-branches
 ```
 
-Pressing the key again while a picker is open focuses it rather than stacking a second
-overlay on top of the first.
+A picker opens as a popup, and herdr routes every key into an open popup before its own
+bindings are considered — so while one is up the keybinding cannot fire again. Close it with
+`Esc` first.
 
 ## Where worktrees are created
 
@@ -110,8 +111,6 @@ herdr sets these; you do not.
 | `HERDR_SOCKET_PATH` | the API socket. Without it the binary exits with an explanation. |
 | `HERDR_PLUGIN_CONTEXT_JSON` | which pane and repository the action was invoked from |
 | `HERDR_PLUGIN_ROOT` | locating the binary from the pane entrypoints |
-| `HERDR_PLUGIN_STATE_DIR` | remembering which picker pane is open, so a second press focuses it |
-| `HERDR_PANE_ID` | in a pane process, that pane's own id — used to keep the picker out of its own list |
 | `HERDR_PLUGIN_CONFIG_DIR` | locating herdr's own `config.toml`, to read the two settings above |
 
 The action passes two of its own to the pane it opens, because a pane process cannot work

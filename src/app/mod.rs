@@ -32,10 +32,6 @@ pub fn run_picker(
     let from_pane = std::env::var(FROM_PANE)
         .ok()
         .filter(|value| !value.is_empty());
-    let own_pane = std::env::var("HERDR_PANE_ID")
-        .ok()
-        .filter(|value| !value.is_empty());
-
     let mut repo_root = std::env::var(REPO_ROOT).ok().filter(|v| !v.is_empty());
     if repo_root.is_none() {
         // Fall back to the directory herdr started this pane in, which the action set to
@@ -63,34 +59,18 @@ pub fn run_picker(
                     view = Entrypoint::Panes;
                     continue;
                 };
-                match branches::run(
-                    herdr,
-                    git,
-                    gh,
-                    &root,
-                    from_pane.as_deref(),
-                    own_pane.as_deref(),
-                    &theme,
-                )? {
+                match branches::run(herdr, git, gh, &root, from_pane.as_deref(), &theme)? {
                     branches::Exit::Closed => return Ok(()),
                     branches::Exit::ShowPanes => view = Entrypoint::Panes,
                 }
             }
-            Entrypoint::Panes => {
-                match panes::run(
-                    herdr,
-                    git,
-                    from_pane.as_deref(),
-                    own_pane.as_deref(),
-                    &theme,
-                )? {
-                    panes::Exit::Closed => return Ok(()),
-                    panes::Exit::ShowBranches { repo_root: root } => {
-                        repo_root = Some(root);
-                        view = Entrypoint::Branches;
-                    }
+            Entrypoint::Panes => match panes::run(herdr, git, from_pane.as_deref(), &theme)? {
+                panes::Exit::Closed => return Ok(()),
+                panes::Exit::ShowBranches { repo_root: root } => {
+                    repo_root = Some(root);
+                    view = Entrypoint::Branches;
                 }
-            }
+            },
         }
     }
 }

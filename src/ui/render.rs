@@ -12,7 +12,7 @@
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::domain::resolve::{BranchEntry, BranchState};
@@ -53,8 +53,12 @@ const HELP_PANES_SEARCH: &[&str] = &[
     "\u{21b5} keep  esc cancel",
 ];
 
-/// The panel, and the four rects inside it. Mirrors herdr's navigator geometry: search on
-/// the first line, a rule under it, the body, then the breadcrumb and the key hint.
+/// The four rows the picker lays out in. Mirrors herdr's navigator geometry: search on the
+/// first line, a rule under it, the body, then the breadcrumb and the key hint.
+///
+/// There is no panel to draw. The pickers open as popups, and herdr already frames a popup
+/// with an accent-coloured border and a title — the same frame its navigator draws for
+/// itself — so this fills what is inside it.
 struct Panel {
     search: Rect,
     rule: Rect,
@@ -63,29 +67,22 @@ struct Panel {
     footer: Rect,
 }
 
-fn render_shell(frame: &mut Frame, theme: &Theme) -> Option<Panel> {
+fn layout(frame: &Frame) -> Option<Panel> {
     let area = frame.area();
-    if area.width < 4 || area.height < 6 {
+    if area.width < 4 || area.height < 4 {
         return None;
     }
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent));
-    let inner = block.inner(area);
-    frame.render_widget(Clear, area);
-    frame.render_widget(block, area);
-
     Some(Panel {
-        search: Rect::new(inner.x, inner.y, inner.width, 1),
-        rule: Rect::new(inner.x, inner.y + 1, inner.width, 1),
-        body: Rect::new(inner.x, inner.y + 2, inner.width, inner.height - 4),
-        detail: Rect::new(inner.x, inner.y + inner.height - 2, inner.width, 1),
-        footer: Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1),
+        search: Rect::new(area.x, area.y, area.width, 1),
+        rule: Rect::new(area.x, area.y + 1, area.width, 1),
+        body: Rect::new(area.x, area.y + 2, area.width, area.height - 4),
+        detail: Rect::new(area.x, area.y + area.height - 2, area.width, 1),
+        footer: Rect::new(area.x, area.y + area.height - 1, area.width, 1),
     })
 }
 
 pub fn draw(frame: &mut Frame, state: &PanesState, theme: &Theme, _mode: Mode) {
-    let Some(panel) = render_shell(frame, theme) else {
+    let Some(panel) = layout(frame) else {
         return;
     };
 
@@ -432,7 +429,7 @@ const MAX_BRANCH_COLUMN: usize = 40;
 const STATE_COLUMN: usize = 12;
 
 pub fn draw_branches(frame: &mut Frame, state: &BranchesState, theme: &Theme) {
-    let Some(panel) = render_shell(frame, theme) else {
+    let Some(panel) = layout(frame) else {
         return;
     };
 
@@ -784,7 +781,7 @@ mod tests {
     }
 
     #[test]
-    fn draws_the_navigator_panel_with_the_tree_the_gutter_and_the_meta_column() {
+    fn draws_the_tree_the_gutter_and_the_meta_column() {
         insta::assert_snapshot!(screen(&PanesState::new(tree()), 92, 16));
     }
 
@@ -834,7 +831,7 @@ mod tests {
     }
 
     #[test]
-    fn draws_nothing_matching_without_losing_the_panel() {
+    fn draws_nothing_matching_without_losing_the_chrome() {
         let mut state = PanesState::new(tree());
         press(&mut state, KeyCode::Char('/'));
         for c in "zzzz".chars() {
@@ -906,7 +903,9 @@ mod tests {
     }
 
     #[test]
-    fn the_border_and_the_group_rows_carry_herdrs_accent() {
+    fn the_group_rows_and_the_selection_carry_herdrs_accent() {
+        // The border is herdr's — a popup is framed by the host, in this same accent — so
+        // what is checked here is everything the picker itself paints with it.
         let accent = Color::Rgb(137, 180, 250);
         let theme = Theme::new(Chrome {
             accent: crate::domain::chrome::Accent::Rgb(137, 180, 250),
@@ -919,9 +918,13 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
 
-        assert_eq!(buffer[(0, 0)].style().fg, Some(accent), "top-left corner");
         // me/app is under the cursor and repainted with the selection, so check the other.
         assert_eq!(style_of_row(&buffer, "me/site").fg, Some(accent));
+        assert_eq!(
+            style_of_row(&buffer, "me/app").bg,
+            Some(accent),
+            "the selected row is filled with it"
+        );
         // A pane row is not a group, so it keeps the terminal's own foreground.
         assert_eq!(style_of_row(&buffer, "codex").fg, Some(Color::Reset));
     }
@@ -997,7 +1000,7 @@ mod tests {
     }
 
     #[test]
-    fn draws_branches_in_the_same_panel_as_the_panes_view() {
+    fn draws_branches_in_the_same_chrome_as_the_panes_view() {
         insta::assert_snapshot!(branches_screen(&branches_state(), 92, 12));
     }
 

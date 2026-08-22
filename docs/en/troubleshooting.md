@@ -115,10 +115,10 @@ through this against a real session.
 
 - [ ] `herdr plugin link .` registers both actions and both pane entrypoints
       (`herdr plugin list --json`).
-- [ ] The panes view lists every open repository, grouped by worktree, and does **not** list
-      its own overlay.
+- [ ] The picker opens as a centred popup framed by herdr, titled `herdr-gh-nav`, with the
+      session still visible around it — and it does **not** list itself.
 - [ ] A worktree with no pane appears with `no pane`, and `Enter` opens it.
-- [ ] `Enter` on a pane in another space lands there — and stays there after the overlay
+- [ ] `Enter` on a pane in another space lands there — and stays there after the popup
       closes.
 - [ ] `n` adds a pane to the checkout under the cursor.
 - [ ] `Tab` reaches the branches view for the repository under the cursor.
@@ -131,3 +131,9 @@ through this against a real session.
 - [ ] After a create-and-move, `herdr workspace list` shows no leftover workspace and the
       checkout still exists on disk.
 - [ ] With the herdr server stopped, the binary exits with an explanation rather than a panic.
+- [ ] `Tab` leaves the border title alone (it is the plugin's name, not the view's) while the
+      search line and key hint follow the view.
+
+A popup is not addressable, so `herdr pane read` and `herdr pane send-keys` cannot drive the
+picker. Run `./bin/herdr-gh-nav pane panes` in an ordinary pane to exercise the same code with
+keys you can send; only the framing has to be looked at.

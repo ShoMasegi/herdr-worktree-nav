@@ -44,10 +44,9 @@ pub fn run(
     gh: &dyn GhPort,
     repo_root: &str,
     from_pane_id: Option<&str>,
-    own_pane_id: Option<&str>,
     theme: &Theme,
 ) -> Result<Exit> {
-    let (snapshot, tree) = collect::collect_tree(herdr, git, own_pane_id)?;
+    let (snapshot, tree) = collect::collect_tree(herdr, git)?;
     let repo = tree
         .repos
         .iter()
@@ -67,7 +66,7 @@ pub fn run(
         });
 
     let local_refs = git.local_refs(repo_root)?;
-    let destinations = dest::destinations(&snapshot, from_pane_id, own_pane_id);
+    let destinations = dest::destinations(&snapshot, from_pane_id);
     let mut state = BranchesState::new(repo, local_refs, destinations);
 
     let (sender, receiver) = mpsc::channel();

@@ -13,17 +13,11 @@ use crate::domain::tree::{self, PanePlacement, RepoInput};
 use crate::port::{GitPort, HerdrPort, Snapshot};
 
 /// Fetch everything and build the tree.
-///
-/// `exclude_pane` is the picker's own pane, which should not appear in its own list.
-pub fn collect_tree(
-    herdr: &dyn HerdrPort,
-    git: &dyn GitPort,
-    exclude_pane: Option<&str>,
-) -> Result<(Snapshot, Tree)> {
+pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapshot, Tree)> {
     let snapshot = herdr.snapshot()?;
     let placements = resolve_placements(&snapshot, git);
     let repos = collect_repos(herdr, git, &placements);
-    let tree = tree::build(&snapshot, &repos, &placements, exclude_pane);
+    let tree = tree::build(&snapshot, &repos, &placements);
     Ok((snapshot, tree))
 }
 

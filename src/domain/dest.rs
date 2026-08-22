@@ -81,18 +81,11 @@ pub fn placement_for(destination: &Destination) -> Option<PaneDestination> {
 
 /// Build the destination list for a picker summoned from `from_pane_id`.
 ///
-/// `exclude_pane_id` is the picker's own pane: splitting the overlay the user is looking at
-/// is never what they meant.
-pub fn destinations(
-    snapshot: &Snapshot,
-    from_pane_id: Option<&str>,
-    exclude_pane_id: Option<&str>,
-) -> Vec<Destination> {
+/// The picker itself is never a candidate: it runs as a popup, which is not a pane.
+pub fn destinations(snapshot: &Snapshot, from_pane_id: Option<&str>) -> Vec<Destination> {
     let mut destinations = Vec::new();
 
-    let origin = from_pane_id
-        .filter(|id| Some(*id) != exclude_pane_id)
-        .and_then(|id| snapshot.panes.iter().find(|pane| pane.pane_id == id));
+    let origin = from_pane_id.and_then(|id| snapshot.panes.iter().find(|pane| pane.pane_id == id));
 
     if let Some(pane) = origin {
         for direction in [SplitDirection::Right, SplitDirection::Down] {
@@ -189,7 +182,7 @@ mod tests {
 
     #[test]
     fn offers_splitting_here_first_so_enter_enter_is_the_fast_path() {
-        let destinations = destinations(&snapshot(), Some("w1:p1"), Some("w1:p9"));
+        let destinations = destinations(&snapshot(), Some("w1:p1"));
         assert_eq!(
             destinations[0],
             Destination::SplitHere {
@@ -204,7 +197,7 @@ mod tests {
     #[test]
     fn lists_every_other_tab_and_every_space_and_ends_with_a_new_one() {
         assert_eq!(
-            labels(&destinations(&snapshot(), Some("w1:p1"), None)),
+            labels(&destinations(&snapshot(), Some("w1:p1"))),
             [
                 "split right",
                 "split down",
@@ -221,7 +214,7 @@ mod tests {
     #[test]
     fn falls_back_to_tabs_and_spaces_when_there_is_no_pane_to_split() {
         // Summoned from somewhere herdr could not attribute to a pane.
-        let destinations = destinations(&snapshot(), None, None);
+        let destinations = destinations(&snapshot(), None);
         assert!(!destinations
             .iter()
             .any(|d| matches!(d, Destination::SplitHere { .. })));
@@ -230,14 +223,6 @@ mod tests {
             "w1  app / agents",
             "with no current tab, every tab is offered"
         );
-    }
-
-    #[test]
-    fn never_offers_to_split_the_pickers_own_overlay() {
-        let destinations = destinations(&snapshot(), Some("w1:p1"), Some("w1:p1"));
-        assert!(!destinations
-            .iter()
-            .any(|d| matches!(d, Destination::SplitHere { .. })));
     }
 
     #[test]

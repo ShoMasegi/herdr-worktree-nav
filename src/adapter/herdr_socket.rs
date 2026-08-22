@@ -209,13 +209,14 @@ impl HerdrPort for SocketHerdr {
         Ok(())
     }
 
-    fn plugin_pane_open(&self, req: &PluginPaneOpen) -> Result<Pane> {
-        let mut result = self.call(
+    fn plugin_pane_open(&self, req: &PluginPaneOpen) -> Result<Option<OpenRefusal>> {
+        // No placement or size: the manifest carries them, and herdr honours it when the
+        // request leaves them null.
+        let result = self.call(
             "plugin.pane.open",
             json!({
                 "plugin_id": req.plugin_id,
                 "entrypoint": req.entrypoint,
-                "placement": req.placement,
                 "cwd": req.cwd,
                 "env": req
                     .env
@@ -224,16 +225,15 @@ impl HerdrPort for SocketHerdr {
                     .collect::<serde_json::Map<String, Value>>(),
                 "focus": req.focus,
             }),
-        )?;
-        let pane = result
-            .pointer_mut("/plugin_pane/pane")
-            .map(Value::take)
-            .ok_or_else(|| anyhow!("herdr's plugin.pane.open response had no pane"))?;
-        Ok(serde_json::from_value(pane)?)
-    }
-
-    fn plugin_pane_focus(&self, pane_id: &str) -> Result<()> {
-        self.call("plugin.pane.focus", json!({ "pane_id": pane_id }))?;
-        Ok(())
+        );
+        match result {
+            Ok(_) => Ok(None),
+            // herdr allows one popup at a time. Reported as a failed open, but from here it
+            // is simply "the picker is already up", which is what the caller asked for.
+            Err(error) if error.to_string().contains("popup already open") => {
+                Ok(Some(OpenRefusal::PopupAlreadyOpen))
+            }
+            Err(error) => Err(error),
+        }
     }
 }

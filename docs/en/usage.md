@@ -2,12 +2,16 @@
 
 [日本語](../ja/usage.md)
 
-Two pickers, opened by two actions, toggled with `Tab`. Both are overlays: they cover the
-session while they are up and get out of the way the moment they close.
+Two pickers, opened by two actions, toggled with `Tab`. Each opens as a popup: a centred box
+over the live session, framed by herdr in your accent colour and titled `herdr-gh-nav`, at
+the same proportions the session navigator uses.
 
-They are drawn the way herdr's own session navigator is — the same panel, search line,
-breadcrumb and key hint, the same connected tree glyphs, the same status glyphs, and the
-accent colour from your herdr theme. The keys the navigator defines mean the same thing here.
+Inside that frame they are drawn the way the navigator is — the same search line, breadcrumb
+and key hint, the same connected tree glyphs, the same status glyphs. The keys the navigator
+defines mean the same thing here.
+
+While a picker is up, herdr routes every key into it, so its own keybindings are out of reach
+until you close it. `Esc`, `q` and `Ctrl-C` all close it.
 
 Where the picker opens *from* matters. It takes the repository and the pane you were on when
 you pressed the key, which is how "split here" knows where "here" is and how the branch list

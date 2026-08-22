@@ -10,16 +10,17 @@ Run a few agents across a few repositories and a few worktrees, and the question
 other direction too: take a branch that exists on GitHub and turn it into a working pane
 without leaving the keyboard.
 
-Two overlay pickers, one keystroke each, `Tab` between them. They are drawn the way herdr's
-own session navigator is, down to the tree glyphs and the accent from your herdr theme, so
-they read as part of herdr rather than as a different program.
+Two pickers, one keystroke each, `Tab` between them. Each opens as a popup over the live
+session and is drawn the way herdr's own session navigator is — herdr's frame, the tree
+glyphs, and the accent from your herdr theme — so they read as part of herdr rather than as a
+different program.
 
 ## Panes — where is everything?
 
 Every open pane, grouped by repository and by the worktree it is checked out in.
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
+┌─ herdr-gh-nav ───────────────────────────────────────────────────────────────┐
 │ / search panes                                                      13 panes │
 │──────────────────────────────────────────────────────────────────────────────│
 │ ◆ ▾ ● ShoMasegi/herdr-gh-nav (2)                          1 working          │
@@ -52,7 +53,7 @@ pane in it is listed too, and `Enter` opens it.
 Every branch of the repository you summoned it from, whatever state it is in.
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
+┌─ herdr-gh-nav ───────────────────────────────────────────────────────────────┐
 │ / search branches█                                                24 branches│
 │──────────────────────────────────────────────────────────────────────────────│
 │   ● feat/login    running      #123 Add the login screen (draft)             │

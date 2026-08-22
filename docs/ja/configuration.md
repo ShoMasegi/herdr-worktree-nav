@@ -31,7 +31,7 @@ herdr plugin action invoke herdr-gh-nav.open-panes
 herdr plugin action invoke herdr-gh-nav.open-branches
 ```
 
-ピッカーが開いている状態でもう一度キーを押すと、オーバーレイを重ねるのではなく既存のピッカーにフォーカスします。
+ピッカーは popup として開きます。herdr は開いている popup に対して、自身のキーバインドを解釈する前にすべてのキーを送るため、ピッカーが出ている間は同じキーを押しても発火しません。まず `Esc` で閉じてください。
 
 ## worktree の作成場所
 
@@ -93,8 +93,6 @@ gh pr list --json number,title,headRefName,isDraft
 | `HERDR_SOCKET_PATH` | API ソケット。無い場合は説明を出して終了します。 |
 | `HERDR_PLUGIN_CONTEXT_JSON` | アクションがどの pane・どのリポジトリから呼ばれたか |
 | `HERDR_PLUGIN_ROOT` | pane エントリポイントからバイナリを特定するため |
-| `HERDR_PLUGIN_STATE_DIR` | どのピッカー pane が開いているかを記録し、2 度目の押下でフォーカスするため |
-| `HERDR_PANE_ID` | pane プロセスにおける自身の pane ID。ピッカーが自分自身を一覧に出さないために使います |
 | `HERDR_PLUGIN_CONFIG_DIR` | herdr 本体の `config.toml` の場所を特定し、上記 2 設定を読むために使います |
 
 アクションは、pane プロセスが自力では知り得ない次の 2 つを、開く pane に渡します。

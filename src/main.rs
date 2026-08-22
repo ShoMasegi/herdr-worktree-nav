@@ -59,7 +59,7 @@ fn pane(start: Entrypoint) -> Result<()> {
 /// it separates "herdr or git told us something odd" from "the UI drew it wrong".
 fn dump() -> Result<()> {
     let herdr = SocketHerdr::from_env()?;
-    let (snapshot, tree) = collect::collect_tree(&herdr, &GitCli, None)?;
+    let (snapshot, tree) = collect::collect_tree(&herdr, &GitCli)?;
 
     let chrome = herdr_config::load();
     println!(

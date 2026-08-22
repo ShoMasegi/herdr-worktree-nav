@@ -1,14 +1,14 @@
 ---
 source: src/ui/render.rs
-expression: "branches_screen(&state, 92, 10)"
+expression: "screen(&state, 92, 10)"
 ---
-" / feat/brand-new█                                                               1 branches "
+" / zzzz█                                                                            5 panes "
 "────────────────────────────────────────────────────────────────────────────────────────────"
-"   + feat/brand-new  create                                                                 "
+"nothing matches                                                                             "
 "                                                                                            "
 "                                                                                            "
 "                                                                                            "
 "                                                                                            "
 "                                                                                            "
-" me/app · feat/brand-new · does not exist yet ──────────────────────────────────────────────"
-" type to filter  ↵ choose  ⇥ panes  ctrl+u clear  esc close                                 "
+"────────────────────────────────────────────────────────────────────────────────────────────"
+" ↵ keep search  ctrl+u clear  esc cancel  ↑↓ move                                           "

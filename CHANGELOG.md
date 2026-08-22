@@ -24,9 +24,11 @@ First release. Two overlay pickers for herdr, backed by one Rust binary.
 - **Pull request annotations** when `gh` is installed and authenticated. Entirely optional;
   branches are read from git so the picker works offline and against non-GitHub remotes.
 - `herdr-gh-nav dump`, a diagnostic that prints the resolved tree as plain text.
-- **The look of herdr's session navigator.** Both pickers use its panel, search line, tree
-  glyphs, current-row gutter, meta column, breadcrumb and key hint, and take the accent
-  colour and status glyph set from your herdr configuration. `b`/`w`/`i`/`d`/`a` narrow the
+- **The look of herdr's session navigator.** Both pickers open as popups over the live
+  session — framed by herdr in your accent colour, at the navigator's own proportions — and
+  inside that frame use its search line, tree glyphs, current-row gutter, meta column,
+  breadcrumb and key hint, taking the accent colour and status glyph set from your herdr
+  configuration. `b`/`w`/`i`/`d`/`a` narrow the
   panes view to one agent state, as they do in the navigator, and rows kept only for context
   stay in the list dimmed rather than disappearing.
 

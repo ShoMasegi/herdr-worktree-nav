@@ -22,10 +22,9 @@ pub fn run(
     herdr: &dyn HerdrPort,
     git: &dyn GitPort,
     initial_pane: Option<&str>,
-    own_pane_id: Option<&str>,
     theme: &Theme,
 ) -> Result<Exit> {
-    let (_, tree) = collect::collect_tree(herdr, git, own_pane_id)?;
+    let (_, tree) = collect::collect_tree(herdr, git)?;
     let mut state = PanesState::new(tree);
     if let Some(pane_id) = initial_pane {
         state.focus_pane(pane_id);
@@ -42,7 +41,7 @@ pub fn run(
             Action::Consumed | Action::Ignored => {}
             Action::Reload => {
                 // Errors here are not fatal: the picker keeps showing what it had.
-                if let Ok((_, tree)) = collect::collect_tree(herdr, git, own_pane_id) {
+                if let Ok((_, tree)) = collect::collect_tree(herdr, git) {
                     state.replace_tree(tree);
                 }
             }
