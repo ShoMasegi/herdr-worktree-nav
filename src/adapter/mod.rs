@@ -5,6 +5,7 @@
 
 pub mod gh_cli;
 pub mod git_cli;
+pub mod herdr_config;
 pub mod herdr_socket;
 
 pub use gh_cli::GhCli;

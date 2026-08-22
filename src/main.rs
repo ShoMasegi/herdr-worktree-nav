@@ -8,7 +8,7 @@
 use std::process::ExitCode;
 
 use anyhow::{bail, Result};
-use herdr_gh_nav::adapter::{GhCli, GitCli, SocketHerdr};
+use herdr_gh_nav::adapter::{herdr_config, GhCli, GitCli, SocketHerdr};
 use herdr_gh_nav::app::{action, collect, run_picker, Entrypoint};
 
 fn main() -> ExitCode {
@@ -61,9 +61,14 @@ fn dump() -> Result<()> {
     let herdr = SocketHerdr::from_env()?;
     let (snapshot, tree) = collect::collect_tree(&herdr, &GitCli, None)?;
 
+    let chrome = herdr_config::load();
     println!(
         "herdr {} (protocol {})",
         snapshot.version, snapshot.protocol
+    );
+    println!(
+        "chrome: accent {:?}, indicators {:?}",
+        chrome.accent, chrome.indicators
     );
     println!(
         "{} panes in {} repos",
