@@ -82,9 +82,8 @@ pub struct BranchData {
 pub enum Activity {
     /// Still a picker.
     Choosing,
-    /// A step is in flight. `tick` advances the spinner; it is driven by the caller's draw
-    /// loop rather than a clock, so nothing here has to know the time.
-    Working { stage: Stage, tick: usize },
+    /// A step is in flight.
+    Working { stage: Stage },
     /// It failed, and the screen is being held so the reason can be read. Without this the
     /// popup would vanish the instant the process ended, which is indistinguishable from
     /// having worked.
@@ -127,6 +126,11 @@ pub struct BranchesState {
     cursor: usize,
     query: String,
     order: Order,
+
+    /// Frame of the spinner shown beside anything the picker is waiting for. Advanced by
+    /// the caller's draw loop rather than read from a clock, so nothing here has to know
+    /// the time.
+    tick: usize,
 
     step: Step,
     destinations: Vec<Destination>,
@@ -177,6 +181,7 @@ impl BranchesState {
             cursor: 0,
             query: String::new(),
             order: Order::default(),
+            tick: 0,
             step: if has_repo_step {
                 Step::Repo
             } else {
@@ -235,23 +240,23 @@ impl BranchesState {
     /// The user has chosen; the picker is now a progress display.
     pub fn start_working(&mut self, stage: Stage) {
         self.message = None;
-        self.activity = Activity::Working { stage, tick: 0 };
+        self.activity = Activity::Working { stage };
     }
 
-    /// Move on to the next step, keeping the spinner where it was so it does not jump.
     pub fn set_stage(&mut self, stage: Stage) {
-        let tick = match &self.activity {
-            Activity::Working { tick, .. } => *tick,
-            _ => 0,
-        };
-        self.activity = Activity::Working { stage, tick };
+        self.activity = Activity::Working { stage };
     }
 
-    /// Advance the spinner one frame. Called once per draw by the loop that owns the clock.
+    /// Advance the spinner one frame. Called by the loop that owns the clock, on a timer
+    /// rather than per redraw, so it neither speeds up while the user types nor stalls
+    /// while they hold a key down.
     pub fn tick(&mut self) {
-        if let Activity::Working { tick, .. } = &mut self.activity {
-            *tick = tick.wrapping_add(1);
-        }
+        self.tick = self.tick.wrapping_add(1);
+    }
+
+    /// Which frame of the spinner anything currently being waited for should show.
+    pub fn frame(&self) -> usize {
+        self.tick
     }
 
     /// Hold the screen on the step that failed.
@@ -1433,22 +1438,47 @@ mod tests {
     }
 
     #[test]
-    fn moving_to_the_next_step_does_not_restart_the_spinner() {
+    fn the_spinner_runs_on_its_own_rather_than_per_wait() {
+        // One counter for every wait there is, so it never restarts: not when the step
+        // changes, and not when a fetch starts while something else is already turning.
         let mut state = fetching();
         state.tick();
         state.tick();
-        let Activity::Working { tick, .. } = state.activity() else {
-            panic!("expected to be working");
-        };
-        let before = *tick;
+        let before = state.frame();
+        assert!(before > 0);
+
         state.set_stage(Stage::Creating {
             branch: "chore/deps".into(),
         });
-        let Activity::Working { tick, stage } = state.activity() else {
-            panic!("expected to be working");
-        };
-        assert_eq!(*tick, before, "the spinner carries on from where it was");
-        assert!(matches!(stage, Stage::Creating { .. }));
+        assert_eq!(
+            state.frame(),
+            before,
+            "the spinner carries on from where it was"
+        );
+        assert!(matches!(
+            state.activity(),
+            Activity::Working {
+                stage: Stage::Creating { .. }
+            }
+        ));
+
+        state.tick();
+        assert_eq!(state.frame(), before + 1);
+    }
+
+    #[test]
+    fn a_fetch_says_it_is_running_where_the_listing_says_the_same() {
+        let mut state = state();
+        assert!(state.is_loading(), "the remote listing is still out");
+        assert!(!state.is_fetching());
+
+        state.set_data(BranchData {
+            loading: false,
+            fetching: true,
+            ..app_branches()
+        });
+        assert!(state.is_fetching());
+        assert!(!state.is_loading());
     }
 
     #[test]

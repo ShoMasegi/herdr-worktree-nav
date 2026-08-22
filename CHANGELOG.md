@@ -28,9 +28,12 @@ All notable changes to this project are documented here. The format follows
 - **`Ctrl-F` fetches the repository** whose branches are on screen: `git fetch origin
   --prune`, then a re-read. It is what fills in the date and the commit subject for branches
   never fetched — `git ls-remote` knows only their names — and what removes the ones deleted
-  on the remote, which the list otherwise kept for ever. `fetching origin…` sits beside the
+  on the remote, which the list otherwise kept for ever. `⠙ fetching origin…` sits beside the
   prompt while it runs and the list stays usable; a fetch that cannot reach the remote says
   so and changes nothing.
+- **A spinner beside anything the picker is waiting for**, `reading the remote…` as well as
+  `fetching origin…`, turning on a clock rather than on redraws so it neither speeds up
+  while you type nor stalls while you hold a key down.
 - **A picker that says what it is doing.** Opening a branch — a fetch across the network,
   a checkout of a whole working tree, then the move — used to happen after the picker had
   closed its screen, so herdr's popup framed an empty box for the seconds it took and looked

@@ -509,8 +509,8 @@ const HELP_WORKING_STOPPABLE: &[&str] = &["ctrl+c stop", "ctrl+c"];
 const HELP_WORKING: &[&str] = &["working\u{2026}"];
 const HELP_FAILED: &[&str] = &["\u{21b5} close  esc close", "\u{21b5} close"];
 
-/// One frame per draw. Braille rather than a bar because the steps have no length to
-/// measure: a fetch is as long as somebody else's network.
+/// Braille rather than a bar because none of the waits have a length to measure: a fetch is
+/// as long as somebody else's network.
 const SPINNER: [&str; 10] = [
     "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}", "\u{2827}",
     "\u{2807}", "\u{280f}",
@@ -526,6 +526,10 @@ const STATE_COLUMN: usize = 12;
 const MAX_REPO_COLUMN: usize = 40;
 /// Fits "12 worktrees, 34 panes".
 const COUNT_COLUMN: usize = 22;
+
+fn spinner(frame: usize) -> &'static str {
+    SPINNER[frame % SPINNER.len()]
+}
 
 pub fn draw_branches(frame: &mut Frame, state: &BranchesState, theme: &Theme) {
     let Some(panel) = layout(frame) else {
@@ -601,14 +605,20 @@ fn branch_search_line(state: &BranchesState, theme: &Theme, width: u16) -> Parag
         spans.push(Span::raw(state.query().to_string()));
     }
     spans.push(Span::styled("\u{2588}", theme.dim()));
-    // A fetch was asked for, so it says so louder than the listing that happens on its own.
-    if state.is_fetching() {
-        spans.push(Span::styled(
-            "  fetching origin\u{2026}",
-            Style::default().fg(theme.accent),
-        ));
+    // Anything being waited for carries the spinner, so a picker that is busy never looks
+    // like one that is stuck. A fetch says so louder than the listing that happens on its
+    // own, because it was asked for.
+    let (waiting, style) = if state.is_fetching() {
+        ("fetching origin", Style::default().fg(theme.accent))
     } else if state.is_loading() {
-        spans.push(Span::styled("  reading the remote\u{2026}", theme.dim()));
+        ("reading the remote", theme.dim())
+    } else {
+        ("", theme.dim())
+    };
+    if !waiting.is_empty() {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(spinner(state.frame()), style));
+        spans.push(Span::styled(format!(" {waiting}\u{2026}"), style));
     }
 
     // The order sits beside the count, so a list that is not in its usual order says so
@@ -751,13 +761,10 @@ fn destination_prompt(state: &BranchesState, theme: &Theme, width: u16) -> Parag
     match state.activity() {
         Activity::Choosing => {}
         // The step replaces the question, because the question has been answered.
-        Activity::Working { stage, tick } => {
+        Activity::Working { stage } => {
             return Paragraph::new(Line::from(vec![
                 Span::raw(" "),
-                Span::styled(
-                    SPINNER[tick % SPINNER.len()],
-                    Style::default().fg(theme.accent),
-                ),
+                Span::styled(spinner(state.frame()), Style::default().fg(theme.accent)),
                 Span::raw(" "),
                 Span::styled(stage.label(), Style::default().add_modifier(Modifier::BOLD)),
                 Span::styled("\u{2026}", theme.dim()),
@@ -1525,10 +1532,8 @@ mod tests {
     }
 
     /// The same picker, moved on into `me/app`'s branches.
-    fn branches_state() -> BranchesState {
-        let mut state = branches_picker();
-        state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        state.set_data(BranchData {
+    fn branch_data() -> BranchData {
+        BranchData {
             local_refs: vec![
                 git_ref("feat/login", 30),
                 git_ref("fix/crash", 20),
@@ -1544,7 +1549,13 @@ mod tests {
             }],
             loading: false,
             fetching: false,
-        });
+        }
+    }
+
+    fn branches_state() -> BranchesState {
+        let mut state = branches_picker();
+        state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        state.set_data(branch_data());
         state
     }
 
@@ -1564,6 +1575,27 @@ mod tests {
     #[test]
     fn draws_branches_in_the_same_chrome_as_the_panes_view() {
         insta::assert_snapshot!(branches_screen(&branches_state(), 92, 12));
+    }
+
+    #[test]
+    fn draws_a_spinner_beside_whatever_it_is_waiting_for() {
+        let mut state = branches_state();
+        state.set_data(BranchData {
+            fetching: true,
+            ..branch_data()
+        });
+        state.tick();
+        insta::assert_snapshot!(branches_screen(&state, 110, 8));
+    }
+
+    #[test]
+    fn draws_the_listing_it_starts_with_as_a_quieter_wait_of_the_same_shape() {
+        let mut state = branches_state();
+        state.set_data(BranchData {
+            loading: true,
+            ..branch_data()
+        });
+        insta::assert_snapshot!(branches_screen(&state, 110, 8));
     }
 
     #[test]

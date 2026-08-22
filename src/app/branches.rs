@@ -164,10 +164,14 @@ pub fn run(
             state.set_data(data);
 
             let mut terminal = ratatui::try_init()?;
+            // The spinner turns on a clock rather than on redraws, so that it neither
+            // speeds up while the user types nor stalls while they hold a key down.
+            let mut last_tick = std::time::Instant::now();
             let action = loop {
-                // One frame of the spinner per draw, which is also how the picker avoids
-                // needing a clock: the loop wakes every TICK on its own.
-                state.tick();
+                if last_tick.elapsed() >= TICK {
+                    state.tick();
+                    last_tick = std::time::Instant::now();
+                }
                 terminal.draw(|frame| render::draw_branches(frame, &state, theme))?;
 
                 match receiver.try_recv() {

@@ -172,14 +172,17 @@ fills in the date and the commit subject for branches you have never fetched —
 the remote. It deletes nothing but remote-tracking refs, which are a cache of the remote:
 no local branch and no working tree is touched.
 
-`fetching origin…` sits beside the prompt in the accent colour while it runs, and the list
+`⠙ fetching origin…` sits beside the prompt in the accent colour while it runs, and the list
 stays usable throughout. A fetch that cannot reach the remote says so on that line and
 changes nothing.
 
 The remote is read in the background. The local answer is on screen immediately and
-`reading the remote…` sits beside the prompt until `git ls-remote` returns; branches that
+`⠙ reading the remote…` sits beside the prompt until `git ls-remote` returns; branches that
 have never been fetched appear when it does. Offline, that line simply goes away and the
 local list stands.
+
+Both waits carry the same spinner, turning on a clock rather than on redraws: a picker that
+is busy should never look like one that is stuck.
 
 ### Ordering
 
