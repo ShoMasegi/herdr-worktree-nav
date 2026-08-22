@@ -17,15 +17,15 @@
 │ / search panes                                                      13 panes │
 │──────────────────────────────────────────────────────────────────────────────│
 │ ◆ ▾ ● ShoMasegi/herdr-gh-nav (2)                                             │
-│   └── ● main                                       ~/Workspace/herdr-gh-nav  │
-│ ◆    ├── ● claude                                  w7:p2                     │
-│      └── · shell                                   w7:p3                     │
+│   └── ● main                                  ~/Workspace/herdr-gh-nav       │
+│ ◆    ├── ● claude                             w7:p2                          │
+│      └── · shell                              w7:p3                          │
 │                                                                              │
 │   ▾ ○ ShoMasegi/harbour-backend (5)                                          │
-│   ├── ○ feat/hbr-51-grant-table-privileges         ~/Workspace/…nnks-backend │
-│   │  ├── ○ claude                                  w1:p1                     │
-│   │  └── · shell                                   w1:p2                     │
-│   └── · loop-review-fix-request  no pane           ~/.herdr/…w-fix-request   │
+│   ├── ○ feat/hbr-51-grant-table-privileges    ~/Workspace/harbour-backend    │
+│   │  ├── ○ claude                             w1:p1                          │
+│   │  └── · shell                              w1:p2                          │
+│   └── · loop-review-fix-request  no pane      ~/.herdr/worktrees/harbour/…   │
 │                                                                              │
 │ ShoMasegi/herdr-gh-nav · 1 worktree · 2 panes · ~/Workspace/herdr-gh-nav ─────│
 │ ↵ jump  n new pane  ⇥ branches  / search  b/w/i/d/a states  h other  esc close│

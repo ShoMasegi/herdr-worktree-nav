@@ -28,19 +28,51 @@ pub enum Mode {
     Branches,
 }
 
-/// Width of the right-hand meta column, from herdr's `metadata_width`. Below 52 columns
-/// there is no room for it at all.
-fn metadata_width(width: u16) -> u16 {
-    if width >= 90 {
-        28
-    } else if width >= 68 {
-        20
-    } else if width >= 52 {
-        14
-    } else {
-        0
-    }
+/// Blank columns between the longest label and the meta column, so the two read as
+/// neighbours rather than as one run of text.
+const META_GAP: usize = 4;
+
+/// The meta column never starts so far right that nothing useful fits after it.
+const MIN_META_WIDTH: usize = 20;
+
+/// Where the meta column starts: just past the longest label that has something to say,
+/// so paths sit beside their rows instead of against the far edge of a wide pane.
+///
+/// Computed over every row rather than the visible ones, so the column does not shift as the
+/// list scrolls. Rows with no meta are ignored: a long repository name has nothing to line up
+/// with and should not push everyone else right.
+fn meta_column(rows: &[Row], width: u16) -> usize {
+    let longest = rows
+        .iter()
+        .filter(|row| !row.meta.is_empty())
+        .map(label_end)
+        .max()
+        .unwrap_or(0);
+    let ceiling = (width as usize).saturating_sub(MIN_META_WIDTH);
+    (longest + META_GAP).min(ceiling)
 }
+
+/// How many columns a row's label region occupies: the gutter, the tree, the status glyph,
+/// the label itself, and the note on a checkout with nothing running in it.
+fn label_end(row: &Row) -> usize {
+    let tree = if row.reference.is_group() {
+        1
+    } else if row.depth == 0 {
+        2
+    } else {
+        3 * row.depth as usize
+    };
+    // +3 for the status glyph and the space on either side of it.
+    GUTTER_WIDTH
+        + tree
+        + 3
+        + row.label.chars().count()
+        + if row.is_idle { IDLE_NOTE.len() } else { 0 }
+}
+
+/// `" ◆ "` or three spaces.
+const GUTTER_WIDTH: usize = 3;
+const IDLE_NOTE: &str = "  no pane";
 
 const HELP_PANES: &[&str] = &[
     "\u{21b5} jump  n new pane  \u{21e5} branches  / search  b/w/i/d/a states  h other  r reload  esc close",
@@ -193,6 +225,7 @@ fn render_rows(frame: &mut Frame, state: &PanesState, theme: &Theme, area: Rect)
     let scroll = scroll_offset(state.cursor(), lines.len(), viewport);
     let end = lines.len().min(scroll + viewport);
     let filtering = !state.query().trim().is_empty() || state.state_filter().is_some();
+    let column = meta_column(state.rows(), area.width);
 
     for (offset, line) in lines[scroll..end].iter().enumerate() {
         let DisplayLine::Row(index) = *line else {
@@ -209,6 +242,7 @@ fn render_rows(frame: &mut Frame, state: &PanesState, theme: &Theme, area: Rect)
             rect,
             selected,
             filtering,
+            column,
         );
     }
     render_scrollbar(frame, scroll, lines.len(), viewport, theme, area);
@@ -234,6 +268,7 @@ fn render_row(
     rect: Rect,
     selected: bool,
     filtering: bool,
+    meta_column: usize,
 ) {
     let base = if selected {
         theme.selected()
@@ -283,13 +318,17 @@ fn render_row(
     let prefix = tree_prefix(rows, index);
     // Branch glyphs sit a shade behind the labels so the structure stays in the background.
     let tree_style = if selected { base } else { theme.tree() };
+    let quiet = if selected { base } else { theme.dim() };
 
-    let meta_width = metadata_width(rect.width);
     let used = gutter.chars().count() + prefix.chars().count() + glyph.chars().count() + 2;
-    let label_budget = (rect.width as usize)
-        .saturating_sub(meta_width as usize)
-        .saturating_sub(used)
-        .saturating_sub(1);
+    let note = if row.is_idle { IDLE_NOTE.len() } else { 0 };
+    // A row with nothing in the meta column may use the whole line for its label; one with
+    // something has to stop short of the column so the two do not collide.
+    let label_budget = if row.meta.is_empty() {
+        (rect.width as usize).saturating_sub(used + note)
+    } else {
+        meta_column.saturating_sub(META_GAP + used + note)
+    };
 
     let mut spans = vec![
         Span::styled(gutter, gutter_style),
@@ -302,32 +341,22 @@ fn render_row(
     // The meta column is taken by the checkout path, so a checkout with nothing running in
     // it says so beside its name instead.
     if row.is_idle {
-        spans.push(Span::styled(
-            "  no pane",
-            if selected { base } else { theme.dim() },
-        ));
+        spans.push(Span::styled(IDLE_NOTE, quiet));
     }
-    frame.render_widget(Paragraph::new(Line::from(spans)).style(base), rect);
 
-    if meta_width == 0 || row.meta.is_empty() {
-        return;
+    if !row.meta.is_empty() {
+        let drawn: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+        // Never less than the gap, so a label that overran still gets separated from it.
+        spans.push(Span::raw(
+            " ".repeat(meta_column.saturating_sub(drawn).max(META_GAP)),
+        ));
+        let drawn: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+        // One column short of the edge: the scrollbar lives there.
+        let budget = (rect.width as usize).saturating_sub(drawn + 1);
+        spans.push(Span::styled(middle_elide(&row.meta, budget), quiet));
     }
-    let meta_rect = Rect::new(
-        rect.x + rect.width.saturating_sub(meta_width),
-        rect.y,
-        meta_width,
-        1,
-    );
-    // Paths and pane ids are locations, not states: they stay quiet whatever the row is.
-    let meta_style = if selected { base } else { theme.dim() };
-    frame.render_widget(
-        Paragraph::new(format!(
-            " {}",
-            middle_elide(&row.meta, meta_width.saturating_sub(2) as usize)
-        ))
-        .style(meta_style),
-        meta_rect,
-    );
+
+    frame.render_widget(Paragraph::new(Line::from(spans)).style(base), rect);
 }
 
 /// Tree prefix for a row: an expand caret for a group, connected branch glyphs for its
@@ -842,7 +871,7 @@ mod tests {
     }
 
     #[test]
-    fn drops_the_meta_column_rather_than_wrapping_in_a_narrow_pane() {
+    fn keeps_the_meta_column_readable_by_shortening_labels_in_a_narrow_pane() {
         insta::assert_snapshot!(screen(&PanesState::new(tree(), None), 46, 14));
     }
 
@@ -966,6 +995,32 @@ mod tests {
         assert_eq!(middle_elide("~/short", 7), "~/short");
         assert_eq!(middle_elide("abcdef", 1), "\u{2026}");
         assert_eq!(middle_elide("abcdef", 0), "\u{2026}");
+    }
+
+    #[test]
+    fn the_meta_column_sits_just_past_the_longest_label_that_has_one() {
+        let state = PanesState::new(tree(), None);
+        // `fix/crash` plus its "no pane" note is the longest row that has a path, at 27.
+        assert_eq!(meta_column(state.rows(), 92), 27 + META_GAP);
+    }
+
+    #[test]
+    fn a_repository_with_nothing_beside_it_does_not_push_the_column_right() {
+        // Expanded, a repository row has no meta, so a long name has nothing to line up
+        // with and must not move everyone else right.
+        let before = meta_column(PanesState::new(tree(), None).rows(), 92);
+        let mut wide = tree();
+        wide.repos[0].display_name = "a-very-long-organisation/and-repository-name".into();
+        let after = meta_column(PanesState::new(wide, None).rows(), 92);
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn the_column_stops_short_of_the_edge_so_something_always_fits_after_it() {
+        let mut tree = tree();
+        tree.repos[0].worktrees[0].branch = Some("a".repeat(80));
+        let state = PanesState::new(tree, None);
+        assert_eq!(meta_column(state.rows(), 60), 60 - MIN_META_WIDTH);
     }
 
     // ---- branches view ----

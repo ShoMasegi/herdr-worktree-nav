@@ -46,10 +46,11 @@ to the keys above; `Esc` clears it.
 
 ```
  ◆ ▾ ● ShoMasegi/herdr-gh-nav (2)
-   └── ● main                          ~/Workspace/herdr-gh-nav
- ◆    ├── ● claude                      w7:p2
-      └── · shell                       w7:p3
-   └── · fix/crash  no pane             ~/.herdr/…gh-nav/fix-crash
+   └── ● main                       ~/Workspace/herdr-gh-nav
+ ◆    ├── ● claude                  w7:p2
+      └── · shell                   w7:p3
+   └── · fix/crash  no pane         ~/.herdr/worktrees/herdr-gh-nav/fix-crash
+                                    ↑ four columns past the longest label
 ```
 
 Left to right: a gutter, the tree, a status glyph, the label, and a meta column.
@@ -62,8 +63,11 @@ Left to right: a gutter, the tree, a status glyph, the label, and a meta column.
   branch for a worktree; and the agent's name, or `shell`, for a pane.
 - **The meta column** says where the thing is: the checkout path for a worktree and the pane
   id for a pane. A repository shows its root only while it is folded — expanded, the main
-  checkout directly beneath already carries it. Paths under your home are shortened to `~`,
-  and one too long for the column loses its middle rather than either end, since the head
+  checkout directly beneath already carries it. Paths under your home are shortened to `~`.
+- The column starts four blanks past the longest label that has something to put there, not
+  at the right edge, so a path stays beside its row on a wide pane rather than across the
+  screen from it. It takes the rest of the line from there, so a path is usually shown in
+  full; one that still will not fit loses its middle rather than either end, since the head
   says which tree the checkout is in and the tail says which checkout.
 - A checkout with nothing running in it is marked `no pane` beside its name, because its
   meta column is taken by the path.

@@ -32,8 +32,15 @@ The navigator's rows are workspaces and tabs, which the user named and can alrea
 these rows are checkouts, and where one is on disk is the thing you cannot infer. So the
 column carries the checkout path and the pane id, as it did before, shortened to `~` and
 middle-elided when it will not fit. The breadcrumb keeps the whole path, which is where an
-elision can be read in full. Everything else about the column — its fixed 28/20/14 width, its
-position, its quiet styling — is the navigator's.
+elision can be read in full.
+
+Its position is not the navigator's either, for the same reason. The navigator anchors meta
+to the right edge, which works when the value is a short word like `working`. A path is not
+short, and on a 200-column pane the anchor left a hundred and seventy blank columns between
+`claude` and where its pane id sat. The column now starts four blanks past the longest label
+that has something to put there, and takes the rest of the line — so a path stays beside its
+row and is usually shown in full. What remains the navigator's is the styling: quiet, one
+column, never competing with the label.
 
 Filtering also follows it. A row that did not match but is kept for context — the repository
 above a result, the panes under a matching branch — stays in the list, dimmed. Hiding it
