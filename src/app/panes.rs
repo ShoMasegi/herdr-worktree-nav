@@ -17,8 +17,13 @@ pub enum Exit {
 
 /// Run the picker to completion. The terminal is restored before any herdr call, so a
 /// failure surfaces as text rather than as a corrupted screen.
-pub fn run(herdr: &dyn HerdrPort, git: &dyn GitPort, initial_pane: Option<&str>) -> Result<Exit> {
-    let (_, tree) = collect::collect_tree(herdr, git)?;
+pub fn run(
+    herdr: &dyn HerdrPort,
+    git: &dyn GitPort,
+    initial_pane: Option<&str>,
+    own_pane_id: Option<&str>,
+) -> Result<Exit> {
+    let (_, tree) = collect::collect_tree(herdr, git, own_pane_id)?;
     let mut state = PanesState::new(tree);
     if let Some(pane_id) = initial_pane {
         state.focus_pane(pane_id);
@@ -35,7 +40,7 @@ pub fn run(herdr: &dyn HerdrPort, git: &dyn GitPort, initial_pane: Option<&str>)
             Action::Consumed | Action::Ignored => {}
             Action::Reload => {
                 // Errors here are not fatal: the picker keeps showing what it had.
-                if let Ok((_, tree)) = collect::collect_tree(herdr, git) {
+                if let Ok((_, tree)) = collect::collect_tree(herdr, git, own_pane_id) {
                     state.replace_tree(tree);
                 }
             }

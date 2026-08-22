@@ -1,0 +1,16 @@
+---
+source: src/ui/render.rs
+expression: branches_screen(&state)
+---
+" Panes   Branches                                                             "
+"here            split right                                                   "
+"                split down                                                    "
+"existing tab    w1  app / logs                                                "
+"existing space  w3  notes → new tab                                           "
+"new space       on its own                                                    "
+"                                                                              "
+"                                                                              "
+"                                                                              "
+"                                                                              "
+"where should chore/deps go?                                                   "
+"↵ open here  ↑↓ move  esc back                                                "

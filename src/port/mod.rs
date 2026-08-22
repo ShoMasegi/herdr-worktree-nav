@@ -69,6 +69,9 @@ pub struct PluginPaneOpen {
     pub entrypoint: String,
     pub placement: &'static str,
     pub cwd: Option<String>,
+    /// Extra environment for the pane process. Used to tell the picker which pane summoned
+    /// it, which its own environment cannot say.
+    pub env: Vec<(String, String)>,
     pub focus: bool,
 }
 
@@ -166,7 +169,9 @@ pub struct PullRequest {
     pub is_draft: bool,
 }
 
-pub trait GhPort {
+/// `Sync` because the pull request lookup runs on a background thread while the picker
+/// is already on screen.
+pub trait GhPort: Sync {
     /// Open pull requests for the repository, or an empty list when `gh` is missing or
     /// unauthenticated. This layer is decoration: it must never fail the picker.
     fn pull_requests(&self, repo_root: &str) -> Vec<PullRequest>;

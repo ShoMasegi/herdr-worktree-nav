@@ -49,6 +49,28 @@ pub fn header_inactive() -> Style {
     Style::default().add_modifier(Modifier::DIM)
 }
 
+/// A glyph, a short label, and a colour for what a branch currently is.
+pub fn branch_glyph(
+    state: &crate::domain::resolve::BranchState,
+) -> (&'static str, &'static str, Style) {
+    use crate::domain::resolve::BranchState;
+    match state {
+        BranchState::LivePane { .. } => ("\u{25cf}", "running", Style::default().fg(Color::Yellow)),
+        BranchState::IdleWorktree { .. } => {
+            ("\u{25cb}", "checked out", Style::default().fg(Color::Green))
+        }
+        BranchState::LocalRef => ("\u{00b7}", "local", dim()),
+        BranchState::RemoteOnly => ("\u{2193}", "remote", Style::default().fg(Color::Blue)),
+        BranchState::New => (
+            "+",
+            "create",
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ),
+    }
+}
+
 /// A glyph and colour for an agent's state. Unknown means herdr is not tracking an agent in
 /// that pane at all, which is the normal state of a plain shell, so it is drawn quietly.
 pub fn agent_glyph(status: AgentStatus) -> (&'static str, Style) {

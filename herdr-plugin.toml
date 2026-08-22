@@ -26,20 +26,25 @@ platforms = ["macos", "linux"]
 [[build]]
 command = ["/bin/sh", "scripts/fetch-or-build.sh"]
 
-# Pane entrypoints. herdr launches these with the plugin root as cwd unless the opener
-# passes --cwd, which the `action` subcommand always does (it forwards the invoking pane's
-# cwd so the picker knows which repo it was summoned from).
+# Pane entrypoints.
+#
+# These launch the binary by ABSOLUTE path via $HERDR_PLUGIN_ROOT, not by the relative
+# "./bin/herdr-gh-nav" the actions use. The pane's cwd is the directory the user was in, not
+# the plugin root — the `action` subcommand sets it so the picker knows which repository it
+# was summoned from — and herdr resolves a relative pane command against that cwd. Verified
+# against 0.7.4: opening the picker from a worktree fails with
+# "Unable to spawn <worktree>/./bin/herdr-gh-nav because it does not exist".
 [[panes]]
 id = "panes"
 title = "Panes"
 placement = "overlay"
-command = ["./bin/herdr-gh-nav", "pane", "panes"]
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/herdr-gh-nav\" pane panes"]
 
 [[panes]]
 id = "branches"
 title = "Branches"
 placement = "overlay"
-command = ["./bin/herdr-gh-nav", "pane", "branches"]
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/herdr-gh-nav\" pane branches"]
 
 # Actions are what keybindings invoke (`type = "plugin_action"`). Each one reads
 # HERDR_PLUGIN_CONTEXT_JSON, then opens the matching pane entrypoint with the right cwd.

@@ -1,6 +1,6 @@
 //! herdr launches this binary two ways:
 //!
-//! - `action <id>` — a keybinding fired a plugin action. Opens the matching pane.
+//! - `action <id>` — a keybinding fired a plugin action. Opens the picker where the user is.
 //! - `pane <entrypoint>` — herdr is starting the plugin pane itself. Runs the picker.
 //!
 //! `dump` is a third, diagnostic mode for troubleshooting what the plugin sees.
@@ -8,8 +8,8 @@
 use std::process::ExitCode;
 
 use anyhow::{bail, Result};
-use herdr_gh_nav::adapter::{GitCli, SocketHerdr};
-use herdr_gh_nav::app::{collect, panes};
+use herdr_gh_nav::adapter::{GhCli, GitCli, SocketHerdr};
+use herdr_gh_nav::app::{action, collect, run_picker, Entrypoint};
 
 fn main() -> ExitCode {
     match run() {
@@ -25,12 +25,20 @@ fn main() -> ExitCode {
 fn run() -> Result<()> {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
+        Some("action") => match args.next().as_deref() {
+            Some(id) => action::run(&SocketHerdr::from_env()?, id),
+            None => bail!("`action` needs an action id"),
+        },
+        Some("pane") => match args.next().as_deref() {
+            Some("panes") => pane(Entrypoint::Panes),
+            Some("branches") => pane(Entrypoint::Branches),
+            Some(other) => bail!("unknown pane entrypoint `{other}`"),
+            None => bail!("`pane` needs an entrypoint: `panes` or `branches`"),
+        },
         Some("dump") => dump(),
-        Some("pane") => pane(args.next().as_deref()),
-        Some("action") => bail!("not implemented yet"),
         Some(other) => bail!("unknown command `{other}`. Expected `action`, `pane`, or `dump`."),
         None => {
-            eprintln!("{}", USAGE);
+            eprintln!("{USAGE}");
             bail!("no command given")
         }
     }
@@ -43,29 +51,15 @@ herdr-gh-nav — navigate herdr panes by repo and worktree
   herdr-gh-nav pane <entrypoint>    run the picker itself (herdr calls this)
   herdr-gh-nav dump                 print what the plugin currently sees, for troubleshooting";
 
-/// herdr is starting one of the manifest's pane entrypoints.
-fn pane(entrypoint: Option<&str>) -> Result<()> {
-    let herdr = SocketHerdr::from_env()?;
-    match entrypoint {
-        Some("panes") => {
-            panes::run(
-                &herdr,
-                &GitCli,
-                std::env::var("HERDR_PANE_ID").ok().as_deref(),
-            )?;
-            Ok(())
-        }
-        Some("branches") => bail!("the branches view is not implemented yet"),
-        Some(other) => bail!("unknown pane entrypoint `{other}`"),
-        None => bail!("`pane` needs an entrypoint: `panes` or `branches`"),
-    }
+fn pane(start: Entrypoint) -> Result<()> {
+    run_picker(&SocketHerdr::from_env()?, &GitCli, &GhCli, start)
 }
 
 /// Print the resolved tree as plain text. Useful when the picker shows something surprising:
-/// it separates "herdr/git told us something odd" from "the UI drew it wrong".
+/// it separates "herdr or git told us something odd" from "the UI drew it wrong".
 fn dump() -> Result<()> {
     let herdr = SocketHerdr::from_env()?;
-    let (snapshot, tree) = collect::collect_tree(&herdr, &GitCli)?;
+    let (snapshot, tree) = collect::collect_tree(&herdr, &GitCli, None)?;
 
     println!(
         "herdr {} (protocol {})",

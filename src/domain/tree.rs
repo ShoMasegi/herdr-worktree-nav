@@ -26,10 +26,14 @@ pub struct PanePlacement {
 }
 
 /// Build the tree. Panes with no placement are collected into `ungrouped`.
+///
+/// `exclude_pane` is the picker's own pane. It is a real pane in a real workspace, so it
+/// would otherwise appear in its own list as an unnamed row the user cannot usefully jump to.
 pub fn build(
     snapshot: &Snapshot,
     repos: &[RepoInput],
     placements: &HashMap<String, PanePlacement>,
+    exclude_pane: Option<&str>,
 ) -> Tree {
     let mut nodes: Vec<RepoNode> = repos
         .iter()
@@ -67,6 +71,9 @@ pub fn build(
     // Snapshot order is preserved within each worktree: herdr already lists panes in an
     // order that matches the layout, and re-sorting by id would put p10 before p9.
     for pane in &snapshot.panes {
+        if Some(pane.pane_id.as_str()) == exclude_pane {
+            continue;
+        }
         let node = PaneNode {
             pane_id: pane.pane_id.clone(),
             workspace_id: pane.workspace_id.clone(),
@@ -180,6 +187,15 @@ mod tests {
         }
     }
 
+    /// The picker's own pane is a runtime concern; these tests are about grouping.
+    fn build_for_test(
+        snapshot: &Snapshot,
+        repos: &[RepoInput],
+        placements: &HashMap<String, PanePlacement>,
+    ) -> Tree {
+        build(snapshot, repos, placements, None)
+    }
+
     fn placements(pairs: &[(&str, &str, &str)]) -> HashMap<String, PanePlacement> {
         pairs
             .iter()
@@ -197,7 +213,7 @@ mod tests {
 
     #[test]
     fn groups_panes_under_the_worktree_they_sit_in() {
-        let tree = build(
+        let tree = build_for_test(
             &snapshot(json!([pane("w1:p1", Some("claude")), pane("w2:p1", None)])),
             &[repo(
                 "me/app",
@@ -230,7 +246,7 @@ mod tests {
 
     #[test]
     fn keeps_worktrees_that_have_no_pane_as_openable_rows() {
-        let tree = build(
+        let tree = build_for_test(
             &snapshot(json!([pane("w1:p1", Some("claude"))])),
             &[repo(
                 "me/app",
@@ -253,7 +269,7 @@ mod tests {
 
     #[test]
     fn puts_panes_outside_any_repository_into_ungrouped() {
-        let tree = build(
+        let tree = build_for_test(
             &snapshot(json!([pane("w1:p1", None), pane("w9:p1", None)])),
             &[repo(
                 "me/app",
@@ -269,7 +285,7 @@ mod tests {
 
     #[test]
     fn matches_a_pane_to_its_worktree_despite_herdrs_trailing_slashes() {
-        let tree = build(
+        let tree = build_for_test(
             &snapshot(json!([pane("w1:p1", None)])),
             &[repo(
                 "me/app",
@@ -286,7 +302,7 @@ mod tests {
 
     #[test]
     fn synthesizes_a_row_for_a_checkout_herdr_did_not_list() {
-        let tree = build(
+        let tree = build_for_test(
             &snapshot(json!([pane("w4:p1", Some("codex"))])),
             &[repo(
                 "me/app",
@@ -308,7 +324,7 @@ mod tests {
 
     #[test]
     fn orders_repositories_alphabetically_and_the_main_checkout_first() {
-        let tree = build(
+        let tree = build_for_test(
             &snapshot(json!([])),
             &[
                 repo(
@@ -338,7 +354,7 @@ mod tests {
     #[test]
     fn preserves_the_snapshot_order_of_panes_within_a_worktree() {
         // Sorting by pane id would put p10 before p9; herdr's order is the layout order.
-        let tree = build(
+        let tree = build_for_test(
             &snapshot(json!([
                 pane("w1:p9", None),
                 pane("w1:p10", None),
@@ -368,7 +384,7 @@ mod tests {
     fn skips_bare_repositories_which_can_never_hold_a_pane() {
         let mut bare = worktree("main", "/src/app.git", false);
         bare.is_bare = true;
-        let tree = build(
+        let tree = build_for_test(
             &snapshot(json!([])),
             &[repo("me/app", "/src/app", vec![bare])],
             &placements(&[]),
@@ -377,8 +393,34 @@ mod tests {
     }
 
     #[test]
-    fn finds_which_repository_and_checkout_a_pane_belongs_to() {
+    fn leaves_the_pickers_own_pane_out_of_the_list_it_draws() {
+        // The overlay is a real pane in a real workspace, so without this it appears in its
+        // own list as a row the user cannot usefully jump to.
         let tree = build(
+            &snapshot(json!([pane("w1:p1", Some("claude")), pane("w1:p5", None)])),
+            &[repo(
+                "me/app",
+                "/src/app",
+                vec![worktree("main", "/src/app", false)],
+            )],
+            &placements(&[
+                ("w1:p1", "/src/app/.git", "/src/app"),
+                ("w1:p5", "/src/app/.git", "/src/app"),
+            ]),
+            Some("w1:p5"),
+        );
+        let ids: Vec<_> = tree.repos[0].worktrees[0]
+            .panes
+            .iter()
+            .map(|p| p.pane_id.as_str())
+            .collect();
+        assert_eq!(ids, ["w1:p1"]);
+        assert!(tree.ungrouped.is_empty());
+    }
+
+    #[test]
+    fn finds_which_repository_and_checkout_a_pane_belongs_to() {
+        let tree = build_for_test(
             &snapshot(json!([pane("w2:p1", Some("claude"))])),
             &[repo(
                 "me/app",

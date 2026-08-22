@@ -10,6 +10,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 use crate::domain::rows::{Row, RowRef};
+use crate::ui::branches::{BranchesState, Step};
 use crate::ui::state::PanesState;
 use crate::ui::theme;
 
@@ -205,6 +206,204 @@ fn row_line<'a>(row: &'a Row, state: &'a PanesState, width: usize) -> Line<'a> {
     Line::from(spans)
 }
 
+// ---------------------------------------------------------------------------------------
+// Branches view
+// ---------------------------------------------------------------------------------------
+
+/// Help for the branch step. Typing filters, so there is no mode to explain.
+const HELP_BRANCH: &[&str] = &[
+    "type to filter  \u{21b5} choose  \u{21e5} panes  esc quit",
+    "\u{21b5} choose  \u{21e5} panes  esc quit",
+];
+const HELP_DESTINATION: &[&str] = &[
+    "\u{21b5} open here  \u{2191}\u{2193} move  esc back",
+    "\u{21b5} open  esc back",
+];
+
+pub fn draw_branches(frame: &mut Frame, state: &BranchesState) {
+    let [header, body, prompt, help] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(frame.area());
+
+    frame.render_widget(header_line(Mode::Branches), header);
+
+    let (prompt_line, help_variants) = match state.step() {
+        Step::Branch => {
+            draw_branch_rows(frame, state, body);
+            (branch_prompt(state), HELP_BRANCH)
+        }
+        Step::Destination => {
+            draw_destination_rows(frame, state, body);
+            (destination_prompt(state), HELP_DESTINATION)
+        }
+    };
+    frame.render_widget(prompt_line, prompt);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            fit(help_variants, help.width as usize),
+            theme::dim(),
+        ))),
+        help,
+    );
+}
+
+fn branch_prompt(state: &BranchesState) -> Paragraph<'static> {
+    if let Some(message) = state.message() {
+        return Paragraph::new(Line::from(Span::styled(
+            message.to_string(),
+            theme::header_active(),
+        )));
+    }
+    let mut spans = vec![
+        Span::styled("\u{276f} ", theme::repo_style()),
+        Span::raw(state.query().to_string()),
+        Span::styled("\u{2588}", theme::dim()),
+    ];
+    if state.is_loading() {
+        spans.push(Span::styled("  reading the remote\u{2026}", theme::dim()));
+    }
+    Paragraph::new(Line::from(spans))
+}
+
+fn destination_prompt(state: &BranchesState) -> Paragraph<'static> {
+    if let Some(message) = state.message() {
+        return Paragraph::new(Line::from(Span::styled(
+            message.to_string(),
+            theme::header_active(),
+        )));
+    }
+    let name = state.chosen().map(|e| e.name.clone()).unwrap_or_default();
+    Paragraph::new(Line::from(vec![
+        Span::styled("where should ", theme::dim()),
+        Span::styled(name, theme::repo_style()),
+        Span::styled(" go?", theme::dim()),
+    ]))
+}
+
+fn draw_branch_rows(frame: &mut Frame, state: &BranchesState, area: Rect) {
+    let rows = state.rows();
+    if rows.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled("no branches", theme::dim()))),
+            area,
+        );
+        return;
+    }
+
+    let width = area.width as usize;
+    // Align into columns so the eye can scan one at a time. The name column follows the
+    // longest name on screen, capped so one very long branch cannot squeeze out the detail.
+    const MAX_NAME_COLUMN: usize = 44;
+    const STATE_COLUMN: usize = 12;
+    let name_column = rows
+        .iter()
+        .map(|entry| entry.name.chars().count())
+        .max()
+        .unwrap_or(0)
+        .min(MAX_NAME_COLUMN);
+
+    let items: Vec<ListItem> = rows
+        .iter()
+        .map(|entry| {
+            let (glyph, label, style) = theme::branch_glyph(&entry.state);
+            let name = truncate(&entry.name, name_column);
+            let mut spans = vec![
+                Span::styled(glyph, style),
+                Span::raw(" "),
+                Span::raw(pad(&name, name_column)),
+                Span::raw("  "),
+                Span::styled(pad(label, STATE_COLUMN), theme::dim()),
+            ];
+
+            // A pull request is the most useful thing to know about a branch, so it wins
+            // the right-hand column over the commit subject.
+            let detail = match (&entry.pull_request, &entry.subject) {
+                (Some(pr), _) => Some(format!(
+                    "#{} {}{}",
+                    pr.number,
+                    pr.title,
+                    if pr.is_draft { " (draft)" } else { "" }
+                )),
+                (None, Some(subject)) => Some(subject.clone()),
+                (None, None) => None,
+            };
+            if let Some(detail) = detail {
+                let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+                let detail = truncate(&detail, width.saturating_sub(used + 1));
+                if !detail.is_empty() {
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(detail, theme::dim()));
+                }
+            }
+            ListItem::new(Line::from(spans))
+        })
+        .collect();
+
+    let mut list_state = ListState::default().with_selected(Some(state.cursor()));
+    frame.render_stateful_widget(
+        List::new(items).highlight_style(theme::selected()),
+        area,
+        &mut list_state,
+    );
+}
+
+fn draw_destination_rows(frame: &mut Frame, state: &BranchesState, area: Rect) {
+    // The group name is a left column rather than a heading row, so the cursor index stays
+    // a plain index into the destination list and every row lines up.
+    let group_column = state
+        .destinations()
+        .iter()
+        .map(|destination| destination.group().chars().count())
+        .max()
+        .unwrap_or(0);
+
+    let mut items = Vec::new();
+    let mut last_group = "";
+    for destination in state.destinations() {
+        let group = destination.group();
+        // Only the first row of a run carries its group name.
+        let shown = if group == last_group { "" } else { group };
+        last_group = group;
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled(pad(shown, group_column), theme::dim()),
+            Span::raw("  "),
+            Span::raw(destination.label()),
+        ])));
+    }
+
+    let mut list_state = ListState::default().with_selected(Some(state.destination_cursor()));
+    frame.render_stateful_widget(
+        List::new(items).highlight_style(theme::selected()),
+        area,
+        &mut list_state,
+    );
+}
+
+/// Right-pad to `width` characters so a column lines up.
+fn pad(text: &str, width: usize) -> String {
+    let len = text.chars().count();
+    let mut out = text.to_string();
+    out.extend(std::iter::repeat_n(' ', width.saturating_sub(len)));
+    out
+}
+
+/// Cut to `width` characters, with an ellipsis when something was dropped.
+fn truncate(text: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    if text.chars().count() <= width {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(width.saturating_sub(1)).collect();
+    out.push('\u{2026}');
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,6 +525,110 @@ mod tests {
         let mut state = PanesState::new(tree());
         press(&mut state, KeyCode::Char('h'));
         insta::assert_snapshot!(screen(&state));
+    }
+
+    // ---- branches view ----
+
+    fn branches_state() -> BranchesState {
+        use crate::domain::dest::Destination;
+        use crate::domain::model::WorktreeNode;
+        use crate::port::{GitRef, PullRequest, RefKind, SplitDirection};
+
+        let repo = RepoNode {
+            repo_key: "/src/app/.git".into(),
+            repo_root: "/src/app".into(),
+            display_name: "me/app".into(),
+            worktrees: vec![
+                WorktreeNode {
+                    branch: Some("feat/login".into()),
+                    checkout_path: "/wt/feat-login".into(),
+                    is_primary: false,
+                    open_workspace_id: Some("w2".into()),
+                    panes: vec![pane("w2:p1", "claude", AgentStatus::Working)],
+                },
+                WorktreeNode {
+                    branch: Some("fix/crash".into()),
+                    checkout_path: "/wt/fix-crash".into(),
+                    is_primary: false,
+                    open_workspace_id: None,
+                    panes: vec![],
+                },
+            ],
+        };
+        let git_ref = |name: &str, at: i64| GitRef {
+            name: name.into(),
+            kind: RefKind::Local,
+            committed_at: Some(at),
+            subject: Some(format!("latest work on {name}")),
+        };
+        let mut state = BranchesState::new(
+            repo,
+            vec![
+                git_ref("feat/login", 30),
+                git_ref("fix/crash", 20),
+                git_ref("main", 40),
+                git_ref("chore/deps", 10),
+            ],
+            vec![
+                Destination::SplitHere {
+                    tab_id: "w1:t1".into(),
+                    target_pane_id: "w1:p1".into(),
+                    direction: SplitDirection::Right,
+                },
+                Destination::SplitHere {
+                    tab_id: "w1:t1".into(),
+                    target_pane_id: "w1:p1".into(),
+                    direction: SplitDirection::Down,
+                },
+                Destination::ExistingTab {
+                    tab_id: "w1:t2".into(),
+                    label: "w1  app / logs".into(),
+                },
+                Destination::ExistingSpace {
+                    workspace_id: "w3".into(),
+                    label: "w3  notes \u{2192} new tab".into(),
+                },
+                Destination::NewSpace,
+            ],
+        );
+        state.set_remote_heads(vec!["feat/search".into(), "main".into()]);
+        state.set_pull_requests(vec![PullRequest {
+            number: 123,
+            title: "Add the login screen".into(),
+            head_ref: "feat/login".into(),
+            is_draft: true,
+        }]);
+        state
+    }
+
+    fn branches_screen(state: &BranchesState) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(78, 12)).unwrap();
+        terminal.draw(|frame| draw_branches(frame, state)).unwrap();
+        terminal.backend().to_string()
+    }
+
+    #[test]
+    fn draws_branches_with_their_state_and_pull_request() {
+        insta::assert_snapshot!(branches_screen(&branches_state()));
+    }
+
+    #[test]
+    fn draws_the_offer_to_create_a_branch_that_does_not_exist() {
+        let mut state = branches_state();
+        for c in "feat/brand-new".chars() {
+            state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        insta::assert_snapshot!(branches_screen(&state));
+    }
+
+    #[test]
+    fn draws_the_destination_step_with_split_here_selected() {
+        let mut state = branches_state();
+        for c in "chore".chars() {
+            state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        insta::assert_snapshot!(branches_screen(&state));
     }
 
     #[test]

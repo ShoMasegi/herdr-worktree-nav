@@ -37,7 +37,8 @@ impl Destination {
             }
             Destination::ExistingTab { label, .. } => label.clone(),
             Destination::ExistingSpace { label, .. } => label.clone(),
-            Destination::NewSpace => "open as a new space".to_string(),
+            // The group column already says "new space"; this says what happens to it.
+            Destination::NewSpace => "on its own".to_string(),
         }
     }
 
@@ -47,7 +48,8 @@ impl Destination {
             Destination::SplitHere { .. } => "here",
             Destination::ExistingTab { .. } => "existing tab",
             Destination::ExistingSpace { .. } => "existing space",
-            Destination::NewSpace => "",
+            // Its own group, so it does not read as one more "existing space".
+            Destination::NewSpace => "new space",
         }
     }
 }
@@ -211,7 +213,7 @@ mod tests {
                 "w2 / logs",
                 "w1  app \u{2192} new tab",
                 "w2 \u{2192} new tab",
-                "open as a new space",
+                "on its own",
             ]
         );
     }

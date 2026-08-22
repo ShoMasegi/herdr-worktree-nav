@@ -217,6 +217,11 @@ impl HerdrPort for SocketHerdr {
                 "entrypoint": req.entrypoint,
                 "placement": req.placement,
                 "cwd": req.cwd,
+                "env": req
+                    .env
+                    .iter()
+                    .map(|(key, value)| (key.clone(), Value::from(value.clone())))
+                    .collect::<serde_json::Map<String, Value>>(),
                 "focus": req.focus,
             }),
         )?;

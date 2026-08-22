@@ -1,0 +1,16 @@
+---
+source: src/ui/render.rs
+expression: branches_screen(&state)
+---
+" Panes   Branches                                                             "
+"+ feat/brand-new  create                                                      "
+"                                                                              "
+"                                                                              "
+"                                                                              "
+"                                                                              "
+"                                                                              "
+"                                                                              "
+"                                                                              "
+"                                                                              "
+"❯ feat/brand-new█                                                             "
+"type to filter  ↵ choose  ⇥ panes  esc quit                                   "
