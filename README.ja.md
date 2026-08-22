@@ -6,59 +6,63 @@
 
 複数のリポジトリ・複数の worktree にまたがってエージェントを走らせていると、問いは「このエージェントは何をしているか」から「あれは *どこ* にあるか」に変わります。herdr-gh-nav はそれに答えます。逆方向も同じで、GitHub 上にあるブランチを、キーボードから手を離さずに作業中の pane に変えられます。
 
-オーバーレイのピッカーが 2 つ、それぞれキー 1 つで開き、`Tab` で行き来します。
+オーバーレイのピッカーが 2 つ、それぞれキー 1 つで開き、`Tab` で行き来します。描画は herdr 本体の session navigator と同じ方式で、tree グリフから herdr のテーマの accent 色まで揃えてあるため、別のプログラムではなく herdr の一部として読めます。
 
 ## Panes — 何がどこにあるか
 
 開いている pane を、リポジトリと、チェックアウトされている worktree でグループ化して並べます。
 
 ```
- Panes   Branches
-▾ ShoMasegi/herdr-gh-nav
-  ● main                                          ~/Workspace/herdr-gh-nav
-    ● claude                                                         w7:p2
-    · shell                                                          w7:p3
-▾ ShoMasegi/harbour-backend
-  ● feat/hbr-51-grant-table-privileges     ~/Workspace/harbour-backend
-    ○ claude                                                         w1:p1
-    ○ claude                                                         w1:p9
-  ○ loop-review-fix-request  no pane   ~/.herdr/worktrees/harbour-backend/…
-▾ nightowl/harken_android
-  ● feature/use-presigned-url             ~/Workspace/harken_android
-    ◆ claude                                                         w5:p1
-
-press / to filter
-↵ jump  n new pane  ⇥ branches  / filter  h other  r reload  q quit
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ / search panes                                                      13 panes │
+│──────────────────────────────────────────────────────────────────────────────│
+│ ◆ ▾ ● ShoMasegi/herdr-gh-nav (2)                          1 working          │
+│   └── ● main                                              2 panes · 1 working│
+│ ◆    ├── ● claude                                         claude · working   │
+│      └── · shell                                          shell              │
+│                                                                              │
+│   ▾ ○ ShoMasegi/harbour-backend (5)                       3 idle             │
+│   ├── ○ feat/hbr-51-grant-table-privileges                5 panes · 3 idle   │
+│   │  ├── ○ claude                                         claude · idle      │
+│   │  └── · shell                                          shell              │
+│   └── · loop-review-fix-request                           no pane            │
+│                                                                              │
+│ ShoMasegi/herdr-gh-nav · 1 worktree · 2 panes · ~/Workspace/herdr-gh-nav ─────│
+│ ↵ jump  n new pane  ⇥ branches  / search  b/w/i/d/a states  h other  esc close│
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-`●` 実行中 `○` 待機中 `◆` ブロック中 `·` エージェントなし。
+`●` 実行中 `○` 待機中 `◆` ブロック中 `·` エージェントなし。グリフの種類は herdr の設定に従います。gutter の `◆` は、いまセッションがどこにいるかを示します。一覧の下の行には、カーソル位置の行の詳しい文脈（checkout パスを含む）が出ます。
 
-`Enter` でそこへ移動します。space をまたいでも tab をまたいでも、目的の pane に直接飛びます。pane が 1 つも無い worktree も一覧に出て、その行で `Enter` を押すと開きます。
+`Enter` でそこへ移動します。space をまたいでも tab をまたいでも、目的の pane に直接飛びます。pane が 1 つも無い worktree も一覧に出て、その行で `Enter` を押すと開きます。`b`/`w`/`i`/`d` でエージェントの状態を 1 つに絞り込み、`a` で解除できます（navigator と同じキーです）。
 
 ## Branches — そのブランチで作業を始める
 
 呼び出したリポジトリのブランチを、状態を問わず一覧します。
 
 ```
- Panes   Branches
-● feat/login   running      #123 Add the login screen (draft)
-○ fix/crash    checked out  latest work on fix/crash
-· main         local        latest work on main
-↓ feat/search  remote
-
-❯ █
-type to filter  ↵ choose  ⇥ panes  esc quit
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ / search branches█                                                24 branches│
+│──────────────────────────────────────────────────────────────────────────────│
+│   ● feat/login    running      #123 Add the login screen (draft)             │
+│   ○ fix/crash     checked out  latest work on fix/crash                      │
+│   · main          local        latest work on main                           │
+│   ↓ feat/search   remote                                                     │
+│                                                                              │
+│ me/app · feat/login · open in w2:p1 · ~/.herdr/worktrees/app/feat-login ──────│
+│ type to filter  ↵ choose  ⇥ panes  ctrl+u clear  esc close                   │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 打てば絞り込まれます。まだ存在しない名前を打てば、それを作る候補が出ます。続いて pane の行き先を選びます。
 
 ```
-here            split right
-                split down
-existing tab    w1  app / logs
-                w5  harken / android
-existing space  w1  app → new tab
-new space       on its own
+ here            split right
+                 split down
+ existing tab    w1  app / logs
+                 w5  harken / android
+ existing space  w1  app → new tab
+ new space       on its own
 ```
 
 `Enter` `Enter` が最速で、呼び出した pane の右に split されます。

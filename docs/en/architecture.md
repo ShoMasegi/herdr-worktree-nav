@@ -45,6 +45,7 @@ goes are all pure functions over plain data.
 | `domain::rows` | which rows are visible, in what order, under this filter and these folds? |
 | `domain::resolve` | what *is* this branch, and what does picking it require first? |
 | `domain::dest` | where can a pane go, and what herdr call does each choice mean? |
+| `domain::chrome` | what accent and status glyphs is herdr configured for? |
 
 ## Talking to herdr
 
@@ -102,6 +103,14 @@ in an existing tab — so every destination except "a new space" is reached by c
 then moving. herdr closes the emptied tab and workspace itself and leaves the checkout alone,
 which is what makes this leave no residue. See
 [ADR 0001](../adr/0001-delegate-worktree-creation.md).
+
+## Looking like herdr
+
+The pickers are drawn the way herdr's own session navigator is, reproduced from
+`src/ui/navigator.rs`: the panel, the search line, the tree glyphs, the gutter, the meta
+column, the breadcrumb, and the key hint. `ui::theme` holds the mapping, and the accent and
+glyph set are read from herdr's configuration because its API exposes no palette. See
+[ADR 0004](../adr/0004-navigator-appearance.md) for what is copied and what is not.
 
 ## Testing
 

@@ -1,0 +1,18 @@
+---
+source: src/ui/render.rs
+expression: "screen(&PanesState::new(tree()), 46, 14)"
+---
+"┌────────────────────────────────────────────┐"
+"│ / search panes                     5 panes │"
+"│────────────────────────────────────────────│"
+"│ ◆ ▾ ● me/app (3)                          █│"
+"│   ├── ● main                              █│"
+"│ ◆ │  ├── ● claude                         █│"
+"│   │  └── · shell                          █│"
+"│   ├── ○ feat/login                        █│"
+"│   │  └── ○ codex                          ││"
+"│   └── · fix/crash                         ││"
+"│                                           ││"
+"│ me/app · 3 worktrees · 3 panes · /src/app ─│"
+"│ ↵ jump  ⇥ branches  / search  esc close    │"
+"└────────────────────────────────────────────┘"

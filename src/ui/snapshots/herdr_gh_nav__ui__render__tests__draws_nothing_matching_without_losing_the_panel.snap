@@ -1,16 +1,14 @@
 ---
 source: src/ui/render.rs
-expression: "branches_screen(&state, 92, 12)"
+expression: "screen(&state, 92, 10)"
 ---
 "┌──────────────────────────────────────────────────────────────────────────────────────────┐"
-"│ where should chore/deps go?                                                              │"
+"│ / zzzz█                                                                          5 panes │"
 "│──────────────────────────────────────────────────────────────────────────────────────────│"
-"│ here            split right                                                              │"
-"│                 split down                                                               │"
-"│ existing tab    w1  app / logs                                                           │"
-"│ existing space  w3  notes → new tab                                                      │"
-"│ new space       on its own                                                               │"
+"│nothing matches                                                                           │"
 "│                                                                                          │"
-"│ chore/deps opens beside the pane you came from, split right ─────────────────────────────│"
-"│ ↵ open here  ↑↓ move  esc back                                                           │"
+"│                                                                                          │"
+"│                                                                                          │"
+"│──────────────────────────────────────────────────────────────────────────────────────────│"
+"│ ↵ keep search  ctrl+u clear  esc cancel  ↑↓ move                                         │"
 "└──────────────────────────────────────────────────────────────────────────────────────────┘"

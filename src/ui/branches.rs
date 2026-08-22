@@ -152,6 +152,68 @@ impl BranchesState {
         rows
     }
 
+    /// The breadcrumb under the list: where this branch is, and what picking it will do.
+    pub fn detail(&self) -> String {
+        let Some(entry) = self.selected() else {
+            return String::new();
+        };
+        let mut parts = vec![self.repo.display_name.clone(), entry.name.clone()];
+        match &entry.state {
+            BranchState::LivePane {
+                pane_id,
+                checkout_path,
+            } => {
+                parts.push(format!("open in {pane_id}"));
+                parts.push(checkout_path.clone());
+            }
+            BranchState::IdleWorktree { checkout_path } => {
+                parts.push("checked out, nothing running".to_string());
+                parts.push(checkout_path.clone());
+            }
+            BranchState::LocalRef => parts.push("local branch, no worktree yet".to_string()),
+            BranchState::RemoteOnly => {
+                parts.push("on the remote, never fetched".to_string());
+            }
+            BranchState::New => parts.push("does not exist yet".to_string()),
+        }
+        if let Some(pr) = &entry.pull_request {
+            parts.push(format!(
+                "#{} {}{}",
+                pr.number,
+                pr.title,
+                if pr.is_draft { " (draft)" } else { "" }
+            ));
+        }
+        parts.join(" \u{b7} ")
+    }
+
+    /// The breadcrumb for the destination step: what the highlighted choice will do.
+    pub fn destination_detail(&self) -> String {
+        let Some(destination) = self.destinations.get(self.destination_cursor) else {
+            return String::new();
+        };
+        let branch = self
+            .chosen
+            .as_ref()
+            .map(|entry| entry.name.as_str())
+            .unwrap_or("the branch");
+        match destination {
+            Destination::SplitHere { direction, .. } => format!(
+                "{branch} opens beside the pane you came from, split {}",
+                direction.as_str()
+            ),
+            Destination::ExistingTab { label, .. } => {
+                format!("{branch} opens as a new pane in {label}")
+            }
+            Destination::ExistingSpace { workspace_id, .. } => {
+                format!("{branch} opens as a new tab in {workspace_id}")
+            }
+            Destination::NewSpace => {
+                format!("{branch} opens in a space of its own, as herdr would")
+            }
+        }
+    }
+
     fn selected(&self) -> Option<&BranchEntry> {
         self.rows().get(self.cursor).copied()
     }

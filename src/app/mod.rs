@@ -8,8 +8,10 @@ pub mod panes;
 
 use anyhow::Result;
 
+use crate::adapter::herdr_config;
 use crate::app::context::{Context, FROM_PANE, REPO_ROOT};
 use crate::port::{GhPort, GitPort, HerdrPort};
+use crate::ui::theme::Theme;
 
 /// Which picker to start on. They toggle with `Tab`, so this is only the entry point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +49,10 @@ pub fn run_picker(
             .map(|identity| identity.checkout_path);
     }
 
+    // Borrowed from herdr's own configuration so the pickers look like its navigator
+    // rather than like a different program.
+    let theme = Theme::new(herdr_config::load());
+
     let mut view = start;
     loop {
         match view {
@@ -64,13 +70,20 @@ pub fn run_picker(
                     &root,
                     from_pane.as_deref(),
                     own_pane.as_deref(),
+                    &theme,
                 )? {
                     branches::Exit::Closed => return Ok(()),
                     branches::Exit::ShowPanes => view = Entrypoint::Panes,
                 }
             }
             Entrypoint::Panes => {
-                match panes::run(herdr, git, from_pane.as_deref(), own_pane.as_deref())? {
+                match panes::run(
+                    herdr,
+                    git,
+                    from_pane.as_deref(),
+                    own_pane.as_deref(),
+                    &theme,
+                )? {
                     panes::Exit::Closed => return Ok(()),
                     panes::Exit::ShowBranches { repo_root: root } => {
                         repo_root = Some(root);

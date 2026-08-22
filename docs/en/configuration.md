@@ -56,6 +56,31 @@ For sibling-style checkouts, point the directory somewhere next to your projects
 directory = "~/Workspace/worktrees"
 ```
 
+## Appearance
+
+The pickers are drawn like herdr's session navigator, and two of herdr's own settings change
+how they look. Neither is a setting of this plugin's: it reads yours.
+
+```toml
+[theme]
+name = "catppuccin"        # the accent for the border, the selection, and repository rows
+
+[ui]
+status_indicators = "dots" # or "symbols": ● ● ● ○ ·  vs  × ◐ ✓ ○ ·
+```
+
+The accent is resolved the way herdr resolves it: an explicit `[theme.custom] accent` wins,
+then a `[ui] accent` you have changed from its `cyan` default, then the theme's own accent.
+A theme this plugin has not heard of falls back to cyan rather than guessing, so a herdr that
+ships a new theme still works.
+
+Everything else uses the terminal's own sixteen colours, so the pickers follow your terminal
+theme instead of fighting it. herdr's palette is not reachable from a plugin — its socket API
+exposes no theme at all — so matching it exactly is not on offer; see
+[ADR 0004](../adr/0004-navigator-appearance.md).
+
+`herdr-gh-nav dump` prints what it resolved, which is the quickest way to check.
+
 ## The remote
 
 `origin` is the remote branches are read from and never-fetched branches are fetched from.
@@ -87,6 +112,7 @@ herdr sets these; you do not.
 | `HERDR_PLUGIN_ROOT` | locating the binary from the pane entrypoints |
 | `HERDR_PLUGIN_STATE_DIR` | remembering which picker pane is open, so a second press focuses it |
 | `HERDR_PANE_ID` | in a pane process, that pane's own id — used to keep the picker out of its own list |
+| `HERDR_PLUGIN_CONFIG_DIR` | locating herdr's own `config.toml`, to read the two settings above |
 
 The action passes two of its own to the pane it opens, because a pane process cannot work
 them out for itself:

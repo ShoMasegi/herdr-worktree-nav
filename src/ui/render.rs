@@ -1,398 +1,405 @@
-//! Drawing the picker.
+//! Drawing the pickers.
+//!
+//! The layout is herdr's session navigator: an accent-coloured panel holding a search line,
+//! a rule, the rows, a breadcrumb for the row under the cursor, and a key hint. Rows carry
+//! a gutter marking where the session currently is, connected tree glyphs, an agent status
+//! glyph, a label, and a right-hand meta column. Reproduced from `src/ui/navigator.rs` in
+//! herdr 0.7.4.
 //!
 //! Rendering is a function of state, so the whole screen is covered by snapshot tests over
 //! a `TestBackend` buffer rather than by looking at a terminal.
 
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Style;
+use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
-use crate::domain::rows::{Row, RowRef};
+use crate::domain::resolve::{BranchEntry, BranchState};
+use crate::domain::rows::{DisplayLine, Row};
 use crate::ui::branches::{BranchesState, Step};
 use crate::ui::state::PanesState;
-use crate::ui::theme;
+use crate::ui::theme::Theme;
 
-/// Which picker is on screen. Both share the header, filter line, and help line.
+/// Which picker is on screen. They share the panel, the search line, and the footer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Panes,
     Branches,
 }
 
-/// Help for the panes view, longest first. The first one that fits the width is used, so a
-/// narrow pane shows fewer keys rather than a line cut off mid-word.
-const HELP_PANES: &[&str] = &[
-    "\u{21b5} jump  n new pane  \u{21e5} branches  / filter  h other  r reload  q quit",
-    "\u{21b5} jump  n new  \u{21e5} branches  / filter  r reload",
-    "\u{21b5} jump  \u{21e5} branches  / filter",
-    "\u{21b5} jump",
-];
-const HELP_FILTER: &[&str] = &[
-    "\u{21b5} keep filter  esc clear  \u{2191}\u{2193} move",
-    "\u{21b5} keep  esc clear",
-];
-
-pub fn draw(frame: &mut Frame, state: &PanesState, mode: Mode) {
-    let [header, body, filter, help] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .areas(frame.area());
-
-    frame.render_widget(header_line(mode), header);
-    draw_rows(frame, state, body);
-    frame.render_widget(filter_line(state), filter);
-
-    let variants = if state.is_filtering() {
-        HELP_FILTER
+/// Width of the right-hand meta column, from herdr's `metadata_width`. Below 52 columns
+/// there is no room for it at all.
+fn metadata_width(width: u16) -> u16 {
+    if width >= 90 {
+        28
+    } else if width >= 68 {
+        20
+    } else if width >= 52 {
+        14
     } else {
-        HELP_PANES
-    };
-    let help_text = fit(variants, help.width as usize);
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(help_text, theme::dim()))),
-        help,
-    );
-}
-
-/// Paths and pane ids are right-aligned, but not to the far edge of a very wide pane: past
-/// roughly this column the eye can no longer connect a label to the value beside it.
-const ALIGN_CAP: usize = 96;
-
-/// The longest variant that fits, or the shortest one when none does.
-fn fit<'a>(variants: &[&'a str], width: usize) -> &'a str {
-    variants
-        .iter()
-        .find(|text| text.chars().count() <= width)
-        .copied()
-        .unwrap_or_else(|| variants.last().copied().unwrap_or_default())
-}
-
-fn header_line(mode: Mode) -> Paragraph<'static> {
-    let (panes, branches) = match mode {
-        Mode::Panes => (theme::header_active(), theme::header_inactive()),
-        Mode::Branches => (theme::header_inactive(), theme::header_active()),
-    };
-    Paragraph::new(Line::from(vec![
-        Span::styled(" Panes ", panes),
-        Span::raw(" "),
-        Span::styled(" Branches ", branches),
-    ]))
-}
-
-fn filter_line(state: &PanesState) -> Paragraph<'static> {
-    let query = state.query();
-    if state.is_filtering() {
-        // A block cursor, since the real one is parked wherever ratatui left it.
-        Paragraph::new(Line::from(vec![
-            Span::styled("/", theme::repo_style()),
-            Span::raw(query.to_string()),
-            Span::styled("\u{2588}", theme::dim()),
-        ]))
-    } else if let Some(message) = state.message() {
-        Paragraph::new(Line::from(Span::styled(
-            message.to_string(),
-            theme::header_active(),
-        )))
-    } else if query.is_empty() {
-        Paragraph::new(Line::from(Span::styled(
-            "press / to filter".to_string(),
-            theme::dim(),
-        )))
-    } else {
-        Paragraph::new(Line::from(vec![
-            Span::styled("/", theme::dim()),
-            Span::styled(query.to_string(), theme::dim()),
-        ]))
+        0
     }
 }
 
-fn draw_rows(frame: &mut Frame, state: &PanesState, area: Rect) {
-    if state.rows().is_empty() {
-        let text = if state.query().is_empty() {
+const HELP_PANES: &[&str] = &[
+    "\u{21b5} jump  n new pane  \u{21e5} branches  / search  b/w/i/d/a states  h other  r reload  esc close",
+    "\u{21b5} jump  n new  \u{21e5} branches  / search  b/w/i/d/a states  esc close",
+    "\u{21b5} jump  \u{21e5} branches  / search  esc close",
+    "\u{21b5} jump  esc close",
+];
+const HELP_PANES_SEARCH: &[&str] = &[
+    "\u{21b5} keep search  ctrl+u clear  esc cancel  \u{2191}\u{2193} move",
+    "\u{21b5} keep  esc cancel",
+];
+
+/// The panel, and the four rects inside it. Mirrors herdr's navigator geometry: search on
+/// the first line, a rule under it, the body, then the breadcrumb and the key hint.
+struct Panel {
+    search: Rect,
+    rule: Rect,
+    body: Rect,
+    detail: Rect,
+    footer: Rect,
+}
+
+fn render_shell(frame: &mut Frame, theme: &Theme) -> Option<Panel> {
+    let area = frame.area();
+    if area.width < 4 || area.height < 6 {
+        return None;
+    }
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent));
+    let inner = block.inner(area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+
+    Some(Panel {
+        search: Rect::new(inner.x, inner.y, inner.width, 1),
+        rule: Rect::new(inner.x, inner.y + 1, inner.width, 1),
+        body: Rect::new(inner.x, inner.y + 2, inner.width, inner.height - 4),
+        detail: Rect::new(inner.x, inner.y + inner.height - 2, inner.width, 1),
+        footer: Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1),
+    })
+}
+
+pub fn draw(frame: &mut Frame, state: &PanesState, theme: &Theme, _mode: Mode) {
+    let Some(panel) = render_shell(frame, theme) else {
+        return;
+    };
+
+    frame.render_widget(search_line(state, theme, panel.search.width), panel.search);
+    render_rule(frame, panel.rule, theme);
+    render_rows(frame, state, theme, panel.body);
+    render_detail(frame, &state.detail(), theme, panel.detail);
+
+    let variants = if state.is_filtering() {
+        HELP_PANES_SEARCH
+    } else {
+        HELP_PANES
+    };
+    frame.render_widget(footer(variants, theme, panel.footer.width), panel.footer);
+}
+
+/// `/ query` with the total on the right, or a state chip when one is active.
+fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'static> {
+    let focus = if state.is_filtering() {
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        theme.dim()
+    };
+    let mut spans = vec![Span::styled(" / ", focus)];
+
+    if let Some(message) = state.message() {
+        spans.push(Span::styled(
+            message.to_string(),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+    } else if let Some(filter) = state.state_filter() {
+        let (glyph, style) = theme.status_glyph(filter.status());
+        spans.push(Span::styled(glyph, style.add_modifier(Modifier::BOLD)));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            filter.label(),
+            style.add_modifier(Modifier::BOLD),
+        ));
+    } else if state.query().is_empty() {
+        spans.push(Span::styled("search panes", theme.dim()));
+    } else {
+        spans.push(Span::raw(state.query().to_string()));
+    }
+    if state.is_filtering() {
+        spans.push(Span::styled("\u{2588}", theme.dim()));
+    }
+
+    let count = format!("{} panes", state.pane_count());
+    let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+    let pad = (width as usize).saturating_sub(used + count.chars().count() + 1);
+    spans.push(Span::raw(" ".repeat(pad)));
+    spans.push(Span::styled(count, theme.dim()));
+    Paragraph::new(Line::from(spans))
+}
+
+fn render_rule(frame: &mut Frame, area: Rect, theme: &Theme) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    frame.render_widget(
+        Paragraph::new("\u{2500}".repeat(area.width as usize)).style(theme.rule()),
+        area,
+    );
+}
+
+/// The breadcrumb, drawn over a rule so the list has a bottom edge even when it is empty.
+fn render_detail(frame: &mut Frame, detail: &str, theme: &Theme, area: Rect) {
+    render_rule(frame, area, theme);
+    if detail.is_empty() || area.width < 4 {
+        return;
+    }
+    let text = truncate(detail, area.width.saturating_sub(2) as usize);
+    frame.render_widget(Paragraph::new(format!(" {text} ")).style(theme.dim()), area);
+}
+
+fn footer(variants: &[&'static str], theme: &Theme, width: u16) -> Paragraph<'static> {
+    let text = variants
+        .iter()
+        .find(|text| text.chars().count() < width as usize)
+        .copied()
+        .unwrap_or_else(|| variants.last().copied().unwrap_or_default());
+    Paragraph::new(Line::from(Span::styled(format!(" {text}"), theme.dim())))
+}
+
+fn render_rows(frame: &mut Frame, state: &PanesState, theme: &Theme, area: Rect) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    let lines = state.lines();
+    if lines.is_empty() {
+        let text = if state.query().is_empty() && state.state_filter().is_none() {
             "no repositories open"
         } else {
             "nothing matches"
         };
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(text, theme::dim())))
-                .block(Block::default().borders(Borders::NONE)),
+            Paragraph::new(Line::from(Span::styled(text, theme.dim()))),
             area,
         );
         return;
     }
 
-    let width = area.width as usize;
-    let items: Vec<ListItem> = state
-        .rows()
-        .iter()
-        .map(|row| ListItem::new(row_line(row, state, width)))
-        .collect();
+    let viewport = area.height as usize;
+    let scroll = scroll_offset(state.cursor(), lines.len(), viewport);
+    let end = lines.len().min(scroll + viewport);
+    let filtering = !state.query().trim().is_empty() || state.state_filter().is_some();
 
-    let mut list_state = ListState::default().with_selected(Some(state.cursor()));
-    frame.render_stateful_widget(
-        List::new(items).highlight_style(theme::selected()),
-        area,
-        &mut list_state,
-    );
+    for (offset, line) in lines[scroll..end].iter().enumerate() {
+        let DisplayLine::Row(index) = *line else {
+            continue;
+        };
+        let rect = Rect::new(area.x, area.y + offset as u16, area.width, 1);
+        let selected = scroll + offset == state.cursor();
+        render_row(
+            frame,
+            &state.rows()[index],
+            state.rows(),
+            index,
+            theme,
+            rect,
+            selected,
+            filtering,
+        );
+    }
+    render_scrollbar(frame, scroll, lines.len(), viewport, theme, area);
 }
 
-fn row_line<'a>(row: &'a Row, state: &'a PanesState, width: usize) -> Line<'a> {
-    let mut spans = vec![Span::raw("  ".repeat(row.indent as usize))];
-
-    match row.reference {
-        RowRef::Repo(index) => {
-            let marker = if state.is_collapsed(index) {
-                theme::REPO_COLLAPSED
-            } else {
-                theme::REPO_EXPANDED
-            };
-            spans.push(Span::styled(format!("{marker} "), theme::dim()));
-            spans.push(Span::styled(row.primary.as_str(), theme::repo_style()));
-        }
-        RowRef::Worktree(repo, worktree) => {
-            let node = &state.tree().repos[repo].worktrees[worktree];
-            let marker = if node.is_primary {
-                theme::PRIMARY_CHECKOUT
-            } else {
-                theme::LINKED_CHECKOUT
-            };
-            spans.push(Span::styled(format!("{marker} "), theme::dim()));
-            spans.push(Span::styled(row.primary.as_str(), theme::worktree_style()));
-            if node.is_idle() {
-                spans.push(Span::styled("  no pane", theme::dim()));
-            }
-        }
-        RowRef::Pane(..) | RowRef::Ungrouped(_) => {
-            let (glyph, style) = row
-                .status
-                .map(theme::agent_glyph)
-                .unwrap_or((" ", Style::default()));
-            spans.push(Span::styled(glyph, style));
-            spans.push(Span::raw(" "));
-            spans.push(Span::styled(row.primary.as_str(), theme::pane_style()));
-        }
-        RowRef::UngroupedHeader => {
-            spans.push(Span::styled(
-                format!("\u{2500}\u{2500} {} ", row.primary),
-                theme::dim(),
-            ));
-            return Line::from(spans);
-        }
+/// Keep the cursor on screen with as little movement as possible.
+fn scroll_offset(cursor: usize, total: usize, viewport: usize) -> usize {
+    if total <= viewport {
+        return 0;
     }
+    cursor
+        .saturating_sub(viewport / 2)
+        .min(total.saturating_sub(viewport))
+}
 
-    // The path or pane id, pushed to the right edge and dropped when it will not fit.
-    // A repository's path is only shown while it is folded: expanded, the primary worktree
-    // row directly beneath already carries it.
-    let show_secondary = match row.reference {
-        RowRef::Repo(index) => state.is_collapsed(index),
-        _ => true,
+#[allow(clippy::too_many_arguments)]
+fn render_row(
+    frame: &mut Frame,
+    row: &Row,
+    rows: &[Row],
+    index: usize,
+    theme: &Theme,
+    rect: Rect,
+    selected: bool,
+    filtering: bool,
+) {
+    let base = if selected {
+        theme.selected()
+    } else {
+        Style::default()
     };
-    if show_secondary && !row.secondary.is_empty() {
-        let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-        let secondary = row.secondary.chars().count();
-        let needed = used + secondary + 2;
-        if needed <= width {
-            // Align at the cap, but let a long path push past it rather than be dropped.
-            let end = ALIGN_CAP.max(needed).min(width);
-            spans.push(Span::raw(" ".repeat(end - used - secondary)));
-            spans.push(Span::styled(row.secondary.as_str(), theme::dim()));
+    // A row kept only because an ancestor or a sibling matched: present, but receding.
+    let context_only = filtering && !row.matched;
+
+    let label_style = if selected {
+        base.add_modifier(Modifier::BOLD)
+    } else if context_only {
+        let dim = theme.dim();
+        if row.reference.is_group() {
+            dim.add_modifier(Modifier::BOLD)
+        } else {
+            dim
         }
-    }
-    Line::from(spans)
-}
-
-// ---------------------------------------------------------------------------------------
-// Branches view
-// ---------------------------------------------------------------------------------------
-
-/// Help for the branch step. Typing filters, so there is no mode to explain.
-const HELP_BRANCH: &[&str] = &[
-    "type to filter  \u{21b5} choose  \u{21e5} panes  esc quit",
-    "\u{21b5} choose  \u{21e5} panes  esc quit",
-];
-const HELP_DESTINATION: &[&str] = &[
-    "\u{21b5} open here  \u{2191}\u{2193} move  esc back",
-    "\u{21b5} open  esc back",
-];
-
-pub fn draw_branches(frame: &mut Frame, state: &BranchesState) {
-    let [header, body, prompt, help] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .areas(frame.area());
-
-    frame.render_widget(header_line(Mode::Branches), header);
-
-    let (prompt_line, help_variants) = match state.step() {
-        Step::Branch => {
-            draw_branch_rows(frame, state, body);
-            (branch_prompt(state), HELP_BRANCH)
-        }
-        Step::Destination => {
-            draw_destination_rows(frame, state, body);
-            (destination_prompt(state), HELP_DESTINATION)
-        }
+    } else if row.reference.is_group() {
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD)
+    } else if row.is_current {
+        Style::default().add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
     };
-    frame.render_widget(prompt_line, prompt);
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            fit(help_variants, help.width as usize),
-            theme::dim(),
-        ))),
-        help,
-    );
-}
 
-fn branch_prompt(state: &BranchesState) -> Paragraph<'static> {
-    if let Some(message) = state.message() {
-        return Paragraph::new(Line::from(Span::styled(
-            message.to_string(),
-            theme::header_active(),
-        )));
-    }
-    let mut spans = vec![
-        Span::styled("\u{276f} ", theme::repo_style()),
-        Span::raw(state.query().to_string()),
-        Span::styled("\u{2588}", theme::dim()),
+    let (glyph, glyph_style) = theme.status_glyph(row.status);
+    let glyph_style = if selected {
+        base.add_modifier(Modifier::BOLD)
+    } else if context_only {
+        theme.dim()
+    } else {
+        glyph_style
+    };
+
+    let gutter = if row.is_current { " \u{25c6} " } else { "   " };
+    let gutter_style = if selected {
+        base
+    } else if row.is_current {
+        Style::default().fg(theme.accent)
+    } else {
+        theme.dim()
+    };
+
+    let prefix = tree_prefix(rows, index);
+    // Branch glyphs sit a shade behind the labels so the structure stays in the background.
+    let tree_style = if selected { base } else { theme.tree() };
+
+    let meta_width = metadata_width(rect.width);
+    let used = gutter.chars().count() + prefix.chars().count() + glyph.chars().count() + 2;
+    let label_budget = (rect.width as usize)
+        .saturating_sub(meta_width as usize)
+        .saturating_sub(used)
+        .saturating_sub(1);
+
+    let spans = vec![
+        Span::styled(gutter, gutter_style),
+        Span::styled(prefix, tree_style),
+        Span::styled(" ", base),
+        Span::styled(glyph, glyph_style),
+        Span::raw(" "),
+        Span::styled(truncate(&row.label, label_budget), label_style),
     ];
-    if state.is_loading() {
-        spans.push(Span::styled("  reading the remote\u{2026}", theme::dim()));
-    }
-    Paragraph::new(Line::from(spans))
-}
+    frame.render_widget(Paragraph::new(Line::from(spans)).style(base), rect);
 
-fn destination_prompt(state: &BranchesState) -> Paragraph<'static> {
-    if let Some(message) = state.message() {
-        return Paragraph::new(Line::from(Span::styled(
-            message.to_string(),
-            theme::header_active(),
-        )));
-    }
-    let name = state.chosen().map(|e| e.name.clone()).unwrap_or_default();
-    Paragraph::new(Line::from(vec![
-        Span::styled("where should ", theme::dim()),
-        Span::styled(name, theme::repo_style()),
-        Span::styled(" go?", theme::dim()),
-    ]))
-}
-
-fn draw_branch_rows(frame: &mut Frame, state: &BranchesState, area: Rect) {
-    let rows = state.rows();
-    if rows.is_empty() {
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled("no branches", theme::dim()))),
-            area,
-        );
+    if meta_width == 0 || row.meta.is_empty() {
         return;
     }
-
-    let width = area.width as usize;
-    // Align into columns so the eye can scan one at a time. The name column follows the
-    // longest name on screen, capped so one very long branch cannot squeeze out the detail.
-    const MAX_NAME_COLUMN: usize = 44;
-    const STATE_COLUMN: usize = 12;
-    let name_column = rows
-        .iter()
-        .map(|entry| entry.name.chars().count())
-        .max()
-        .unwrap_or(0)
-        .min(MAX_NAME_COLUMN);
-
-    let items: Vec<ListItem> = rows
-        .iter()
-        .map(|entry| {
-            let (glyph, label, style) = theme::branch_glyph(&entry.state);
-            let name = truncate(&entry.name, name_column);
-            let mut spans = vec![
-                Span::styled(glyph, style),
-                Span::raw(" "),
-                Span::raw(pad(&name, name_column)),
-                Span::raw("  "),
-                Span::styled(pad(label, STATE_COLUMN), theme::dim()),
-            ];
-
-            // A pull request is the most useful thing to know about a branch, so it wins
-            // the right-hand column over the commit subject.
-            let detail = match (&entry.pull_request, &entry.subject) {
-                (Some(pr), _) => Some(format!(
-                    "#{} {}{}",
-                    pr.number,
-                    pr.title,
-                    if pr.is_draft { " (draft)" } else { "" }
-                )),
-                (None, Some(subject)) => Some(subject.clone()),
-                (None, None) => None,
-            };
-            if let Some(detail) = detail {
-                let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-                let detail = truncate(&detail, width.saturating_sub(used + 1));
-                if !detail.is_empty() {
-                    spans.push(Span::raw(" "));
-                    spans.push(Span::styled(detail, theme::dim()));
-                }
-            }
-            ListItem::new(Line::from(spans))
-        })
-        .collect();
-
-    let mut list_state = ListState::default().with_selected(Some(state.cursor()));
-    frame.render_stateful_widget(
-        List::new(items).highlight_style(theme::selected()),
-        area,
-        &mut list_state,
+    let meta_rect = Rect::new(
+        rect.x + rect.width.saturating_sub(meta_width),
+        rect.y,
+        meta_width,
+        1,
+    );
+    let meta_style = if selected {
+        base
+    } else if context_only || row.reference.is_group() || row.reference.is_worktree() {
+        theme.dim()
+    } else {
+        theme.status_style(row.status)
+    };
+    frame.render_widget(
+        Paragraph::new(format!(
+            " {}",
+            truncate(&row.meta, meta_width.saturating_sub(2) as usize)
+        ))
+        .style(meta_style),
+        meta_rect,
     );
 }
 
-fn draw_destination_rows(frame: &mut Frame, state: &BranchesState, area: Rect) {
-    // The group name is a left column rather than a heading row, so the cursor index stays
-    // a plain index into the destination list and every row lines up.
-    let group_column = state
-        .destinations()
-        .iter()
-        .map(|destination| destination.group().chars().count())
-        .max()
-        .unwrap_or(0);
-
-    let mut items = Vec::new();
-    let mut last_group = "";
-    for destination in state.destinations() {
-        let group = destination.group();
-        // Only the first row of a run carries its group name.
-        let shown = if group == last_group { "" } else { group };
-        last_group = group;
-        items.push(ListItem::new(Line::from(vec![
-            Span::styled(pad(shown, group_column), theme::dim()),
-            Span::raw("  "),
-            Span::raw(destination.label()),
-        ])));
+/// Tree prefix for a row: an expand caret for a group, connected branch glyphs for its
+/// children (`├──`, `└──` for the last sibling, with `│` continuations under ancestors that
+/// still have siblings below).
+fn tree_prefix(rows: &[Row], index: usize) -> String {
+    let row = &rows[index];
+    if row.reference.is_group() {
+        return if row.expanded { "\u{25be}" } else { "\u{25b8}" }.to_string();
     }
-
-    let mut list_state = ListState::default().with_selected(Some(state.destination_cursor()));
-    frame.render_stateful_widget(
-        List::new(items).highlight_style(theme::selected()),
-        area,
-        &mut list_state,
-    );
+    if row.depth == 0 {
+        return "  ".to_string();
+    }
+    let mut prefix = String::new();
+    for level in 1..row.depth {
+        prefix.push_str(if has_following_sibling(rows, index, level) {
+            "\u{2502}  "
+        } else {
+            "   "
+        });
+    }
+    prefix.push_str(if has_following_sibling(rows, index, row.depth) {
+        "\u{251c}\u{2500}\u{2500}"
+    } else {
+        "\u{2514}\u{2500}\u{2500}"
+    });
+    prefix
 }
 
-/// Right-pad to `width` characters so a column lines up.
-fn pad(text: &str, width: usize) -> String {
-    let len = text.chars().count();
-    let mut out = text.to_string();
-    out.extend(std::iter::repeat_n(' ', width.saturating_sub(len)));
-    out
+/// Whether another row at `depth` follows `index` before the subtree at that depth ends.
+fn has_following_sibling(rows: &[Row], index: usize, depth: u8) -> bool {
+    rows[index + 1..]
+        .iter()
+        .take_while(|row| row.depth >= depth)
+        .any(|row| row.depth == depth)
+}
+
+fn render_scrollbar(
+    frame: &mut Frame,
+    scroll: usize,
+    total: usize,
+    viewport: usize,
+    theme: &Theme,
+    area: Rect,
+) {
+    if total <= viewport || area.width <= 1 {
+        return;
+    }
+    let track = area.height as usize;
+    let thumb = ((viewport * track) / total).max(1).min(track);
+    let span = total.saturating_sub(viewport);
+    let top = if span == 0 {
+        0
+    } else {
+        (scroll * track.saturating_sub(thumb)) / span
+    };
+    for offset in 0..track {
+        let filled = offset >= top && offset < top + thumb;
+        let rect = Rect::new(area.x + area.width - 1, area.y + offset as u16, 1, 1);
+        frame.render_widget(
+            Paragraph::new(if filled { "\u{2588}" } else { "\u{2502}" }).style(if filled {
+                Style::default().fg(theme.accent)
+            } else {
+                theme.tree()
+            }),
+            rect,
+        );
+    }
 }
 
 /// Cut to `width` characters, with an ellipsis when something was dropped.
-fn truncate(text: &str, width: usize) -> String {
+pub(crate) fn truncate(text: &str, width: usize) -> String {
     if width == 0 {
         return String::new();
     }
@@ -404,6 +411,289 @@ fn truncate(text: &str, width: usize) -> String {
     out
 }
 
+// ---------------------------------------------------------------------------------------
+// Branches view
+// ---------------------------------------------------------------------------------------
+
+const HELP_BRANCH: &[&str] = &[
+    "type to filter  \u{21b5} choose  \u{21e5} panes  ctrl+u clear  esc close",
+    "\u{21b5} choose  \u{21e5} panes  esc close",
+    "\u{21b5} choose  esc",
+];
+const HELP_DESTINATION: &[&str] = &[
+    "\u{21b5} open here  \u{2191}\u{2193} move  esc back",
+    "\u{21b5} open  esc back",
+];
+
+/// Widest branch name to give a column to. One very long name must not squeeze out the
+/// state and the pull request beside it.
+const MAX_BRANCH_COLUMN: usize = 40;
+/// Fits "checked out", the longest state word.
+const STATE_COLUMN: usize = 12;
+
+pub fn draw_branches(frame: &mut Frame, state: &BranchesState, theme: &Theme) {
+    let Some(panel) = render_shell(frame, theme) else {
+        return;
+    };
+
+    match state.step() {
+        Step::Branch => {
+            frame.render_widget(
+                branch_search_line(state, theme, panel.search.width),
+                panel.search,
+            );
+            render_rule(frame, panel.rule, theme);
+            render_branch_rows(frame, state, theme, panel.body);
+            render_detail(frame, &state.detail(), theme, panel.detail);
+            frame.render_widget(footer(HELP_BRANCH, theme, panel.footer.width), panel.footer);
+        }
+        Step::Destination => {
+            frame.render_widget(destination_prompt(state, theme), panel.search);
+            render_rule(frame, panel.rule, theme);
+            render_destination_rows(frame, state, theme, panel.body);
+            render_detail(frame, &state.destination_detail(), theme, panel.detail);
+            frame.render_widget(
+                footer(HELP_DESTINATION, theme, panel.footer.width),
+                panel.footer,
+            );
+        }
+    }
+}
+
+fn branch_search_line(state: &BranchesState, theme: &Theme, width: u16) -> Paragraph<'static> {
+    let mut spans = vec![Span::styled(
+        " / ",
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    )];
+    if let Some(message) = state.message() {
+        spans.push(Span::styled(
+            message.to_string(),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+    } else if state.query().is_empty() {
+        spans.push(Span::styled("search branches", theme.dim()));
+    } else {
+        spans.push(Span::raw(state.query().to_string()));
+    }
+    spans.push(Span::styled("\u{2588}", theme.dim()));
+    if state.is_loading() {
+        spans.push(Span::styled("  reading the remote\u{2026}", theme.dim()));
+    }
+
+    let count = format!("{} branches", state.rows().len());
+    let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+    let pad = (width as usize).saturating_sub(used + count.chars().count() + 1);
+    spans.push(Span::raw(" ".repeat(pad)));
+    spans.push(Span::styled(count, theme.dim()));
+    Paragraph::new(Line::from(spans))
+}
+
+fn destination_prompt(state: &BranchesState, theme: &Theme) -> Paragraph<'static> {
+    if let Some(message) = state.message() {
+        return Paragraph::new(Line::from(Span::styled(
+            format!(" {message}"),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )));
+    }
+    let name = state.chosen().map(|e| e.name.clone()).unwrap_or_default();
+    Paragraph::new(Line::from(vec![
+        Span::styled(" where should ", theme.dim()),
+        Span::styled(
+            name,
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" go?", theme.dim()),
+    ]))
+}
+
+fn render_branch_rows(frame: &mut Frame, state: &BranchesState, theme: &Theme, area: Rect) {
+    let rows = state.rows();
+    if rows.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(" no branches", theme.dim()))),
+            area,
+        );
+        return;
+    }
+
+    let width = area.width as usize;
+    let name_column = rows
+        .iter()
+        .map(|entry| entry.name.chars().count())
+        .max()
+        .unwrap_or(0)
+        .min(MAX_BRANCH_COLUMN);
+
+    let viewport = area.height as usize;
+    let scroll = scroll_offset(state.cursor(), rows.len(), viewport);
+    let end = rows.len().min(scroll + viewport);
+
+    for (offset, entry) in rows[scroll..end].iter().enumerate() {
+        let selected = scroll + offset == state.cursor();
+        let base = if selected {
+            theme.selected()
+        } else {
+            Style::default()
+        };
+        let (glyph, glyph_style) = branch_glyph(entry, theme);
+        let glyph_style = if selected { base } else { glyph_style };
+
+        let mut spans = vec![
+            Span::styled("   ", base),
+            Span::styled(glyph, glyph_style),
+            Span::raw(" "),
+            Span::styled(
+                pad(&truncate(&entry.name, name_column), name_column),
+                if selected {
+                    base.add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                },
+            ),
+            Span::raw("  "),
+            Span::styled(
+                pad(branch_state_label(entry), STATE_COLUMN),
+                if selected { base } else { theme.dim() },
+            ),
+        ];
+
+        // A pull request is the most useful thing to know about a branch, so it wins the
+        // remaining space over the commit subject.
+        let detail = match (&entry.pull_request, &entry.subject) {
+            (Some(pr), _) => Some(format!(
+                "#{} {}{}",
+                pr.number,
+                pr.title,
+                if pr.is_draft { " (draft)" } else { "" }
+            )),
+            (None, Some(subject)) => Some(subject.clone()),
+            (None, None) => None,
+        };
+        if let Some(detail) = detail {
+            let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+            let text = truncate(&detail, width.saturating_sub(used + 2));
+            if !text.is_empty() {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    text,
+                    if selected { base } else { theme.dim() },
+                ));
+            }
+        }
+
+        let rect = Rect::new(area.x, area.y + offset as u16, area.width, 1);
+        frame.render_widget(Paragraph::new(Line::from(spans)).style(base), rect);
+    }
+    render_scrollbar(frame, scroll, rows.len(), viewport, theme, area);
+}
+
+fn render_destination_rows(frame: &mut Frame, state: &BranchesState, theme: &Theme, area: Rect) {
+    // The group name is a left column rather than a heading row, so the cursor index stays
+    // a plain index into the destination list and every row lines up.
+    let group_column = state
+        .destinations()
+        .iter()
+        .map(|destination| destination.group().chars().count())
+        .max()
+        .unwrap_or(0);
+
+    let viewport = area.height as usize;
+    let scroll = scroll_offset(
+        state.destination_cursor(),
+        state.destinations().len(),
+        viewport,
+    );
+    let end = state.destinations().len().min(scroll + viewport);
+
+    let mut last_group = "";
+    for (index, destination) in state.destinations().iter().enumerate() {
+        let group = destination.group();
+        let shown = if group == last_group { "" } else { group };
+        last_group = group;
+        if index < scroll || index >= end {
+            continue;
+        }
+        let selected = index == state.destination_cursor();
+        let base = if selected {
+            theme.selected()
+        } else {
+            Style::default()
+        };
+        let rect = Rect::new(area.x, area.y + (index - scroll) as u16, area.width, 1);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(" ", base),
+                Span::styled(
+                    pad(shown, group_column),
+                    if selected { base } else { theme.dim() },
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    destination.label(),
+                    if selected {
+                        base.add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    },
+                ),
+            ]))
+            .style(base),
+            rect,
+        );
+    }
+    render_scrollbar(
+        frame,
+        scroll,
+        state.destinations().len(),
+        viewport,
+        theme,
+        area,
+    );
+}
+
+/// A glyph and colour for what a branch currently is, in the same visual language as the
+/// agent status glyphs.
+fn branch_glyph(entry: &BranchEntry, theme: &Theme) -> (&'static str, Style) {
+    match entry.state {
+        BranchState::LivePane { .. } => ("\u{25cf}", Style::default().fg(Color::Yellow)),
+        BranchState::IdleWorktree { .. } => ("\u{25cb}", Style::default().fg(Color::Green)),
+        BranchState::LocalRef => ("\u{b7}", theme.dim()),
+        BranchState::RemoteOnly => ("\u{2193}", Style::default().fg(Color::Blue)),
+        BranchState::New => (
+            "+",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+    }
+}
+
+fn branch_state_label(entry: &BranchEntry) -> &'static str {
+    match entry.state {
+        BranchState::LivePane { .. } => "running",
+        BranchState::IdleWorktree { .. } => "checked out",
+        BranchState::LocalRef => "local",
+        BranchState::RemoteOnly => "remote",
+        BranchState::New => "create",
+    }
+}
+
+/// Right-pad to `width` characters so a column lines up.
+fn pad(text: &str, width: usize) -> String {
+    let len = text.chars().count();
+    let mut out = text.to_string();
+    out.extend(std::iter::repeat_n(' ', width.saturating_sub(len)));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,17 +701,34 @@ mod tests {
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
 
+    use crate::domain::chrome::Chrome;
+    use crate::domain::dest::Destination;
     use crate::domain::model::{PaneNode, RepoNode, Tree, WorktreeNode};
-    use crate::port::AgentStatus;
+    use crate::port::{AgentStatus, GitRef, PullRequest, RefKind, SplitDirection};
 
-    fn pane(id: &str, name: &str, status: AgentStatus) -> PaneNode {
+    fn theme() -> Theme {
+        Theme::new(Chrome::default())
+    }
+
+    fn pane(id: &str, name: Option<&str>, status: AgentStatus, focused: bool) -> PaneNode {
+        let workspace = id.split(':').next().unwrap().to_string();
         PaneNode {
             pane_id: id.into(),
-            workspace_id: id.split(':').next().unwrap().into(),
-            tab_id: format!("{}:t1", id.split(':').next().unwrap()),
-            display_name: Some(name.into()),
+            tab_id: format!("{workspace}:t1"),
+            workspace_id: workspace,
+            display_name: name.map(str::to_string),
             agent_status: status,
-            focused: false,
+            focused,
+        }
+    }
+
+    fn worktree(branch: &str, primary: bool, panes: Vec<PaneNode>) -> WorktreeNode {
+        WorktreeNode {
+            branch: Some(branch.into()),
+            checkout_path: format!("/wt/{}", branch.replace('/', "-")),
+            is_primary: primary,
+            open_workspace_id: panes.first().map(|p| p.workspace_id.clone()),
+            panes,
         }
     }
 
@@ -433,126 +740,206 @@ mod tests {
                     repo_root: "/src/app".into(),
                     display_name: "me/app".into(),
                     worktrees: vec![
-                        WorktreeNode {
-                            branch: Some("main".into()),
-                            checkout_path: "/src/app".into(),
-                            is_primary: true,
-                            open_workspace_id: Some("w1".into()),
-                            panes: vec![
-                                pane("w1:p1", "claude", AgentStatus::Working),
-                                pane("w1:p2", "shell", AgentStatus::Unknown),
+                        worktree(
+                            "main",
+                            true,
+                            vec![
+                                pane("w1:p1", Some("claude"), AgentStatus::Working, true),
+                                pane("w1:p2", None, AgentStatus::Unknown, false),
                             ],
-                        },
-                        WorktreeNode {
-                            branch: Some("feat/login".into()),
-                            checkout_path: "/wt/app/feat-login".into(),
-                            is_primary: false,
-                            open_workspace_id: Some("w2".into()),
-                            panes: vec![pane("w2:p1", "codex", AgentStatus::Idle)],
-                        },
-                        WorktreeNode {
-                            branch: Some("fix/crash".into()),
-                            checkout_path: "/wt/app/fix-crash".into(),
-                            is_primary: false,
-                            open_workspace_id: None,
-                            panes: vec![],
-                        },
+                        ),
+                        worktree(
+                            "feat/login",
+                            false,
+                            vec![pane("w2:p1", Some("codex"), AgentStatus::Idle, false)],
+                        ),
+                        worktree("fix/crash", false, vec![]),
                     ],
                 },
                 RepoNode {
                     repo_key: "/src/site/.git".into(),
                     repo_root: "/src/site".into(),
                     display_name: "me/site".into(),
-                    worktrees: vec![WorktreeNode {
-                        branch: Some("develop".into()),
-                        checkout_path: "/src/site".into(),
-                        is_primary: true,
-                        open_workspace_id: Some("w3".into()),
-                        panes: vec![pane("w3:p1", "claude", AgentStatus::Blocked)],
-                    }],
+                    worktrees: vec![worktree(
+                        "develop",
+                        true,
+                        vec![pane("w3:p1", Some("claude"), AgentStatus::Blocked, false)],
+                    )],
                 },
             ],
-            ungrouped: vec![pane("w9:p1", "shell", AgentStatus::Unknown)],
+            ungrouped: vec![pane("w9:p1", None, AgentStatus::Unknown, false)],
         }
-    }
-
-    fn screen(state: &PanesState) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(72, 16)).unwrap();
-        terminal
-            .draw(|frame| draw(frame, state, Mode::Panes))
-            .unwrap();
-        terminal.backend().to_string()
     }
 
     fn press(state: &mut PanesState, code: KeyCode) {
         state.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
     }
 
-    #[test]
-    fn draws_the_repo_worktree_pane_tree() {
-        insta::assert_snapshot!(screen(&PanesState::new(tree())));
+    fn screen(state: &PanesState, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| draw(frame, state, &theme(), Mode::Panes))
+            .unwrap();
+        terminal.backend().to_string()
     }
 
     #[test]
-    fn draws_a_folded_repository() {
+    fn draws_the_navigator_panel_with_the_tree_the_gutter_and_the_meta_column() {
+        insta::assert_snapshot!(screen(&PanesState::new(tree()), 92, 16));
+    }
+
+    #[test]
+    fn draws_a_folded_repository_with_the_caret_turned() {
         let mut state = PanesState::new(tree());
         press(&mut state, KeyCode::Enter);
-        insta::assert_snapshot!(screen(&state));
+        insta::assert_snapshot!(screen(&state, 92, 14));
     }
 
     #[test]
-    fn draws_the_filter_line_while_searching() {
+    fn draws_a_search_with_its_non_matching_context_still_present() {
         let mut state = PanesState::new(tree());
         press(&mut state, KeyCode::Char('/'));
         for c in "codex".chars() {
             press(&mut state, KeyCode::Char(c));
         }
-        insta::assert_snapshot!(screen(&state));
+        insta::assert_snapshot!(screen(&state, 92, 12));
     }
 
     #[test]
-    fn draws_the_empty_state_when_nothing_matches() {
+    fn draws_a_state_filter_as_a_chip_in_the_search_line() {
+        let mut state = PanesState::new(tree());
+        press(&mut state, KeyCode::Char('b'));
+        insta::assert_snapshot!(screen(&state, 92, 12));
+    }
+
+    #[test]
+    fn draws_panes_outside_any_repository_as_their_own_group() {
+        let mut state = PanesState::new(tree());
+        press(&mut state, KeyCode::Char('h'));
+        insta::assert_snapshot!(screen(&state, 92, 18));
+    }
+
+    #[test]
+    fn drops_the_meta_column_rather_than_wrapping_in_a_narrow_pane() {
+        insta::assert_snapshot!(screen(&PanesState::new(tree()), 46, 14));
+    }
+
+    #[test]
+    fn scrolls_and_shows_a_scrollbar_when_the_list_does_not_fit() {
+        let mut state = PanesState::new(tree());
+        for _ in 0..8 {
+            press(&mut state, KeyCode::Char('j'));
+        }
+        insta::assert_snapshot!(screen(&state, 92, 10));
+    }
+
+    #[test]
+    fn draws_nothing_matching_without_losing_the_panel() {
         let mut state = PanesState::new(tree());
         press(&mut state, KeyCode::Char('/'));
         for c in "zzzz".chars() {
             press(&mut state, KeyCode::Char(c));
         }
-        insta::assert_snapshot!(screen(&state));
+        insta::assert_snapshot!(screen(&state, 92, 10));
+    }
+
+    /// The style of the cell where `needle` starts, on the first row containing it.
+    ///
+    /// Column, not byte offset: the rows are full of box-drawing and status glyphs, so
+    /// `str::find` would land several cells to the right of the label.
+    fn style_of_row(buffer: &ratatui::buffer::Buffer, needle: &str) -> Style {
+        let area = buffer.area();
+        for y in area.y..area.y + area.height {
+            let cells: Vec<String> = (area.x..area.x + area.width)
+                .map(|x| buffer[(x, y)].symbol().to_string())
+                .collect();
+            let line: String = cells.concat();
+            if !line.contains(needle) {
+                continue;
+            }
+            let column = (0..cells.len())
+                .find(|start| cells[*start..].concat().starts_with(needle))
+                .expect("the needle starts at some cell");
+            return buffer[(area.x + column as u16, y)].style();
+        }
+        panic!("no row containing {needle}");
+    }
+
+    fn buffer_of(state: &PanesState, width: u16, height: u16) -> ratatui::buffer::Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| draw(frame, state, &theme(), Mode::Panes))
+            .unwrap();
+        terminal.backend().buffer().clone()
     }
 
     #[test]
-    fn draws_panes_outside_any_repository_once_revealed() {
+    fn a_row_kept_only_as_context_is_dimmed_and_a_result_is_not() {
         let mut state = PanesState::new(tree());
-        press(&mut state, KeyCode::Char('h'));
-        insta::assert_snapshot!(screen(&state));
+        press(&mut state, KeyCode::Char('/'));
+        for c in "codex".chars() {
+            press(&mut state, KeyCode::Char(c));
+        }
+        let buffer = buffer_of(&state, 92, 12);
+        // Snapshots record glyphs, not styles, so this is the only place the difference
+        // between a result and the context around it is actually checked.
+        assert!(
+            style_of_row(&buffer, "feat/login")
+                .add_modifier
+                .contains(Modifier::DIM),
+            "the branch is only context here"
+        );
+        assert!(
+            !style_of_row(&buffer, "codex")
+                .add_modifier
+                .contains(Modifier::DIM),
+            "the pane is the result"
+        );
+    }
+
+    #[test]
+    fn nothing_is_dimmed_as_context_when_nothing_is_being_filtered() {
+        let buffer = buffer_of(&PanesState::new(tree()), 92, 16);
+        assert!(!style_of_row(&buffer, "feat/login")
+            .add_modifier
+            .contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn the_border_and_the_group_rows_carry_herdrs_accent() {
+        let accent = Color::Rgb(137, 180, 250);
+        let theme = Theme::new(Chrome {
+            accent: crate::domain::chrome::Accent::Rgb(137, 180, 250),
+            ..Chrome::default()
+        });
+        let state = PanesState::new(tree());
+        let mut terminal = Terminal::new(TestBackend::new(92, 16)).unwrap();
+        terminal
+            .draw(|frame| draw(frame, &state, &theme, Mode::Panes))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+
+        assert_eq!(buffer[(0, 0)].style().fg, Some(accent), "top-left corner");
+        // me/app is under the cursor and repainted with the selection, so check the other.
+        assert_eq!(style_of_row(&buffer, "me/site").fg, Some(accent));
+        // A pane row is not a group, so it keeps the terminal's own foreground.
+        assert_eq!(style_of_row(&buffer, "codex").fg, Some(Color::Reset));
     }
 
     // ---- branches view ----
 
     fn branches_state() -> BranchesState {
-        use crate::domain::dest::Destination;
-        use crate::domain::model::WorktreeNode;
-        use crate::port::{GitRef, PullRequest, RefKind, SplitDirection};
-
         let repo = RepoNode {
             repo_key: "/src/app/.git".into(),
             repo_root: "/src/app".into(),
             display_name: "me/app".into(),
             worktrees: vec![
-                WorktreeNode {
-                    branch: Some("feat/login".into()),
-                    checkout_path: "/wt/feat-login".into(),
-                    is_primary: false,
-                    open_workspace_id: Some("w2".into()),
-                    panes: vec![pane("w2:p1", "claude", AgentStatus::Working)],
-                },
-                WorktreeNode {
-                    branch: Some("fix/crash".into()),
-                    checkout_path: "/wt/fix-crash".into(),
-                    is_primary: false,
-                    open_workspace_id: None,
-                    panes: vec![],
-                },
+                worktree(
+                    "feat/login",
+                    false,
+                    vec![pane("w2:p1", Some("claude"), AgentStatus::Working, false)],
+                ),
+                worktree("fix/crash", false, vec![]),
             ],
         };
         let git_ref = |name: &str, at: i64| GitRef {
@@ -601,15 +988,17 @@ mod tests {
         state
     }
 
-    fn branches_screen(state: &BranchesState) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(78, 12)).unwrap();
-        terminal.draw(|frame| draw_branches(frame, state)).unwrap();
+    fn branches_screen(state: &BranchesState, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| draw_branches(frame, state, &theme()))
+            .unwrap();
         terminal.backend().to_string()
     }
 
     #[test]
-    fn draws_branches_with_their_state_and_pull_request() {
-        insta::assert_snapshot!(branches_screen(&branches_state()));
+    fn draws_branches_in_the_same_panel_as_the_panes_view() {
+        insta::assert_snapshot!(branches_screen(&branches_state(), 92, 12));
     }
 
     #[test]
@@ -618,7 +1007,7 @@ mod tests {
         for c in "feat/brand-new".chars() {
             state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
         }
-        insta::assert_snapshot!(branches_screen(&state));
+        insta::assert_snapshot!(branches_screen(&state, 92, 10));
     }
 
     #[test]
@@ -628,26 +1017,6 @@ mod tests {
             state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
         }
         state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        insta::assert_snapshot!(branches_screen(&state));
-    }
-
-    #[test]
-    fn stops_pushing_paths_rightwards_in_a_very_wide_pane() {
-        let state = PanesState::new(tree());
-        let mut terminal = Terminal::new(TestBackend::new(160, 14)).unwrap();
-        terminal
-            .draw(|frame| draw(frame, &state, Mode::Panes))
-            .unwrap();
-        insta::assert_snapshot!(terminal.backend().to_string());
-    }
-
-    #[test]
-    fn drops_the_trailing_path_rather_than_wrapping_in_a_narrow_terminal() {
-        let state = PanesState::new(tree());
-        let mut terminal = Terminal::new(TestBackend::new(28, 12)).unwrap();
-        terminal
-            .draw(|frame| draw(frame, &state, Mode::Panes))
-            .unwrap();
-        insta::assert_snapshot!(terminal.backend().to_string());
+        insta::assert_snapshot!(branches_screen(&state, 92, 12));
     }
 }

@@ -1,0 +1,20 @@
+---
+source: src/ui/render.rs
+expression: "screen(&PanesState::new(tree()), 92, 16)"
+---
+"┌──────────────────────────────────────────────────────────────────────────────────────────┐"
+"│ / search panes                                                                   5 panes │"
+"│──────────────────────────────────────────────────────────────────────────────────────────│"
+"│ ◆ ▾ ● me/app (3)                                              1 working · 1 idle        █│"
+"│   ├── ● main                                                  2 panes · 1 working       █│"
+"│ ◆ │  ├── ● claude                                             claude · working          █│"
+"│   │  └── · shell                                              shell                     █│"
+"│   ├── ○ feat/login                                            1 pane · 1 idle           █│"
+"│   │  └── ○ codex                                              codex · idle              █│"
+"│   └── · fix/crash                                             no pane                   █│"
+"│                                                                                         █│"
+"│   ▾ ● me/site (1)                                             1 blocked                 █│"
+"│   └── ● develop                                               1 pane · 1 blocked        ││"
+"│ me/app · 3 worktrees · 3 panes · /src/app ───────────────────────────────────────────────│"
+"│ ↵ jump  n new pane  ⇥ branches  / search  b/w/i/d/a states  h other  r reload  esc close │"
+"└──────────────────────────────────────────────────────────────────────────────────────────┘"

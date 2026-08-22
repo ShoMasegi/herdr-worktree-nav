@@ -16,6 +16,7 @@ use crate::domain::resolve::{self, BranchPlan};
 use crate::port::{GhPort, GitPort, HerdrPort, Pane, PullRequest, WorktreeCreate, WorktreeOpen};
 use crate::ui::branches::{BranchAction, BranchesState, Choice};
 use crate::ui::render;
+use crate::ui::theme::Theme;
 
 /// The remote this plugin fetches from and bases never-fetched branches on.
 const REMOTE: &str = "origin";
@@ -44,6 +45,7 @@ pub fn run(
     repo_root: &str,
     from_pane_id: Option<&str>,
     own_pane_id: Option<&str>,
+    theme: &Theme,
 ) -> Result<Exit> {
     let (snapshot, tree) = collect::collect_tree(herdr, git, own_pane_id)?;
     let repo = tree
@@ -83,7 +85,7 @@ pub fn run(
 
         let mut terminal = ratatui::try_init()?;
         let action = loop {
-            terminal.draw(|frame| render::draw_branches(frame, &state))?;
+            terminal.draw(|frame| render::draw_branches(frame, &state, theme))?;
 
             match receiver.try_recv() {
                 Ok(Update::RemoteHeads(heads)) => {

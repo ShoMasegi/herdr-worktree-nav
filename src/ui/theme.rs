@@ -1,84 +1,122 @@
-//! Symbols and colours, kept in one place so the two views read as one UI.
+//! Turning herdr's chrome into ratatui styles.
 //!
-//! Only the sixteen ANSI colours are used, so the picker inherits the palette of whatever
-//! theme the user has set rather than fighting it.
+//! Only the accent and the status glyph set come from herdr's configuration; everything
+//! else uses the terminal's own sixteen colours, so the pickers inherit whatever palette
+//! the user's terminal is set to rather than fighting it.
 
 use ratatui::style::{Color, Modifier, Style};
 
+use crate::domain::chrome::{Accent, Chrome, IndicatorStyle, NamedColor};
 use crate::port::AgentStatus;
 
-pub const REPO_EXPANDED: &str = "\u{25be}"; // ▾
-pub const REPO_COLLAPSED: &str = "\u{25b8}"; // ▸
-
-/// Marks the repository's main checkout, to separate it from linked worktrees.
-pub const PRIMARY_CHECKOUT: &str = "\u{25cf}"; // ●
-pub const LINKED_CHECKOUT: &str = "\u{25cb}"; // ○
-
-pub fn repo_style() -> Style {
-    Style::default()
-        .fg(Color::Cyan)
-        .add_modifier(Modifier::BOLD)
+pub struct Theme {
+    pub accent: Color,
+    indicators: IndicatorStyle,
 }
 
-pub fn worktree_style() -> Style {
-    Style::default().fg(Color::White)
-}
-
-pub fn pane_style() -> Style {
-    Style::default()
-}
-
-pub fn dim() -> Style {
-    Style::default().add_modifier(Modifier::DIM)
-}
-
-pub fn selected() -> Style {
-    Style::default()
-        .bg(Color::DarkGray)
-        .add_modifier(Modifier::BOLD)
-}
-
-pub fn header_active() -> Style {
-    Style::default()
-        .fg(Color::Black)
-        .bg(Color::Cyan)
-        .add_modifier(Modifier::BOLD)
-}
-
-pub fn header_inactive() -> Style {
-    Style::default().add_modifier(Modifier::DIM)
-}
-
-/// A glyph, a short label, and a colour for what a branch currently is.
-pub fn branch_glyph(
-    state: &crate::domain::resolve::BranchState,
-) -> (&'static str, &'static str, Style) {
-    use crate::domain::resolve::BranchState;
-    match state {
-        BranchState::LivePane { .. } => ("\u{25cf}", "running", Style::default().fg(Color::Yellow)),
-        BranchState::IdleWorktree { .. } => {
-            ("\u{25cb}", "checked out", Style::default().fg(Color::Green))
+impl Theme {
+    pub fn new(chrome: Chrome) -> Self {
+        Self {
+            accent: color(chrome.accent),
+            indicators: chrome.indicators,
         }
-        BranchState::LocalRef => ("\u{00b7}", "local", dim()),
-        BranchState::RemoteOnly => ("\u{2193}", "remote", Style::default().fg(Color::Blue)),
-        BranchState::New => (
-            "+",
-            "create",
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD),
-        ),
+    }
+
+    /// The selected row: herdr fills it with the accent and writes on top in the panel's
+    /// background colour. Black is the readable choice against every accent herdr ships.
+    pub fn selected(&self) -> Style {
+        Style::default().bg(self.accent).fg(Color::Black)
+    }
+
+    pub fn dim(&self) -> Style {
+        Style::default().add_modifier(Modifier::DIM)
+    }
+
+    /// Rules and inactive scrollbar track.
+    pub fn rule(&self) -> Style {
+        Style::default().fg(Color::DarkGray)
+    }
+
+    /// Tree glyphs recede one shade below the labels so the structure stays behind them.
+    pub fn tree(&self) -> Style {
+        Style::default().fg(Color::DarkGray)
+    }
+
+    /// herdr's glyph for an agent state, in `[ui] status_indicators` style.
+    pub fn status_glyph(&self, status: AgentStatus) -> (&'static str, Style) {
+        let glyph = match (self.indicators, status) {
+            (IndicatorStyle::Dots, AgentStatus::Blocked) => "\u{25cf}",
+            (IndicatorStyle::Dots, AgentStatus::Working) => "\u{25cf}",
+            (IndicatorStyle::Dots, AgentStatus::Done) => "\u{25cf}",
+            (IndicatorStyle::Dots, AgentStatus::Idle) => "\u{25cb}",
+            (IndicatorStyle::Dots, AgentStatus::Unknown) => "\u{b7}",
+            (IndicatorStyle::Symbols, AgentStatus::Blocked) => "\u{d7}",
+            (IndicatorStyle::Symbols, AgentStatus::Working) => "\u{25d0}",
+            (IndicatorStyle::Symbols, AgentStatus::Done) => "\u{2713}",
+            (IndicatorStyle::Symbols, AgentStatus::Idle) => "\u{25cb}",
+            (IndicatorStyle::Symbols, AgentStatus::Unknown) => "\u{b7}",
+        };
+        (glyph, self.status_style(status))
+    }
+
+    /// herdr's colour for an agent state.
+    pub fn status_style(&self, status: AgentStatus) -> Style {
+        match status {
+            AgentStatus::Blocked => Style::default().fg(Color::Red),
+            AgentStatus::Working => Style::default().fg(Color::Yellow),
+            // herdr draws a finished-but-unseen agent in teal, apart from a resting one.
+            AgentStatus::Done => Style::default().fg(Color::Cyan),
+            AgentStatus::Idle => Style::default().fg(Color::Green),
+            AgentStatus::Unknown => self.dim(),
+        }
     }
 }
 
-/// A glyph and colour for an agent's state. Unknown means herdr is not tracking an agent in
-/// that pane at all, which is the normal state of a plain shell, so it is drawn quietly.
-pub fn agent_glyph(status: AgentStatus) -> (&'static str, Style) {
-    match status {
-        AgentStatus::Working => ("\u{25cf}", Style::default().fg(Color::Yellow)),
-        AgentStatus::Idle => ("\u{25cb}", Style::default().fg(Color::Green)),
-        AgentStatus::Blocked => ("\u{25c6}", Style::default().fg(Color::Red)),
-        AgentStatus::Done => ("\u{2713}", Style::default().fg(Color::Blue)),
-        AgentStatus::Unknown => ("\u{00b7}", dim()),
+fn color(accent: Accent) -> Color {
+    match accent {
+        Accent::Rgb(r, g, b) => Color::Rgb(r, g, b),
+        Accent::Named(NamedColor::Black) => Color::Black,
+        Accent::Named(NamedColor::Red) => Color::Red,
+        Accent::Named(NamedColor::Green) => Color::Green,
+        Accent::Named(NamedColor::Yellow) => Color::Yellow,
+        Accent::Named(NamedColor::Blue) => Color::Blue,
+        Accent::Named(NamedColor::Magenta) => Color::Magenta,
+        Accent::Named(NamedColor::Cyan) => Color::Cyan,
+        Accent::Named(NamedColor::White) => Color::White,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uses_the_glyph_set_herdr_is_configured_for() {
+        let dots = Theme::new(Chrome {
+            indicators: IndicatorStyle::Dots,
+            ..Chrome::default()
+        });
+        let symbols = Theme::new(Chrome {
+            indicators: IndicatorStyle::Symbols,
+            ..Chrome::default()
+        });
+        assert_eq!(dots.status_glyph(AgentStatus::Working).0, "\u{25cf}");
+        assert_eq!(symbols.status_glyph(AgentStatus::Working).0, "\u{25d0}");
+        assert_eq!(dots.status_glyph(AgentStatus::Blocked).0, "\u{25cf}");
+        assert_eq!(symbols.status_glyph(AgentStatus::Blocked).0, "\u{d7}");
+        // Idle and unknown are the same in both, as they are in herdr.
+        assert_eq!(dots.status_glyph(AgentStatus::Idle).0, "\u{25cb}");
+        assert_eq!(symbols.status_glyph(AgentStatus::Idle).0, "\u{25cb}");
+        assert_eq!(dots.status_glyph(AgentStatus::Unknown).0, "\u{b7}");
+    }
+
+    #[test]
+    fn carries_the_accent_through_to_the_border_and_selection() {
+        let theme = Theme::new(Chrome {
+            accent: Accent::Rgb(137, 180, 250),
+            ..Chrome::default()
+        });
+        assert_eq!(theme.accent, Color::Rgb(137, 180, 250));
+        assert_eq!(theme.selected().bg, Some(Color::Rgb(137, 180, 250)));
     }
 }

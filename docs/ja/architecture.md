@@ -39,6 +39,7 @@ src/
 | `domain::rows` | この絞り込みとこの折りたたみ状態で、どの行がどの順で見えるか |
 | `domain::resolve` | このブランチは *何* であり、選んだとき最初に何が必要か |
 | `domain::dest` | pane はどこに置けて、各選択はどの herdr 呼び出しになるか |
+| `domain::chrome` | herdr はどの accent と状態グリフに設定されているか |
 
 ## herdr との通信
 
@@ -82,6 +83,10 @@ FetchThen… ─▶ fetch, create  ─┘                   └─ None ─▶ p
 ```
 
 `worktree.create` は必ず workspace を丸ごと作ります。既存 tab に pane を作らせる方法はありません。そのため「新しい space」以外の行き先はすべて、作成してから移動することで実現しています。空になった tab と workspace は herdr 自身が閉じ、checkout はそのまま残ります。これが後始末を不要にしています（[ADR 0001](../adr/0001-delegate-worktree-creation.md)）。
+
+## herdr に見た目を揃える
+
+ピッカーは herdr 本体の session navigator と同じ方式で描画しています（`src/ui/navigator.rs` を参照して再現）。パネル、検索行、tree グリフ、gutter、meta 列、詳細行、キーヒントが対象です。対応付けは `ui::theme` にあり、accent とグリフ種別は herdr の設定から読みます（API が palette を公開していないためです）。何を写して何を写していないかは [ADR 0004](../adr/0004-navigator-appearance.md) を参照してください。
 
 ## テスト
 

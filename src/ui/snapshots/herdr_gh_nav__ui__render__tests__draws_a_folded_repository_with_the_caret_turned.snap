@@ -1,14 +1,18 @@
 ---
 source: src/ui/render.rs
-expression: "branches_screen(&state, 92, 10)"
+expression: "screen(&state, 92, 14)"
 ---
 "┌──────────────────────────────────────────────────────────────────────────────────────────┐"
-"│ / feat/brand-new█                                                             1 branches │"
+"│ / search panes                                                                   5 panes │"
 "│──────────────────────────────────────────────────────────────────────────────────────────│"
-"│   + feat/brand-new  create                                                               │"
+"│ ◆ ▸ ● me/app (3)                                              1 working · 1 idle         │"
+"│                                                                                          │"
+"│   ▾ ● me/site (1)                                             1 blocked                  │"
+"│   └── ● develop                                               1 pane · 1 blocked         │"
+"│      └── ● claude                                             claude · blocked           │"
 "│                                                                                          │"
 "│                                                                                          │"
 "│                                                                                          │"
-"│ me/app · feat/brand-new · does not exist yet ────────────────────────────────────────────│"
-"│ type to filter  ↵ choose  ⇥ panes  ctrl+u clear  esc close                               │"
+"│ me/app · 3 worktrees · 3 panes · /src/app ───────────────────────────────────────────────│"
+"│ ↵ jump  n new pane  ⇥ branches  / search  b/w/i/d/a states  h other  r reload  esc close │"
 "└──────────────────────────────────────────────────────────────────────────────────────────┘"

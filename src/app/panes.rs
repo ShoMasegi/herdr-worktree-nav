@@ -7,6 +7,7 @@ use crate::app::collect;
 use crate::port::{GitPort, HerdrPort, PaneSplit, SplitDirection, WorktreeOpen};
 use crate::ui::render::{self, Mode};
 use crate::ui::state::{Action, PanesState};
+use crate::ui::theme::Theme;
 
 /// What the picker was left wanting when it closed. The caller decides whether that means
 /// switching views or exiting.
@@ -22,6 +23,7 @@ pub fn run(
     git: &dyn GitPort,
     initial_pane: Option<&str>,
     own_pane_id: Option<&str>,
+    theme: &Theme,
 ) -> Result<Exit> {
     let (_, tree) = collect::collect_tree(herdr, git, own_pane_id)?;
     let mut state = PanesState::new(tree);
@@ -31,7 +33,7 @@ pub fn run(
 
     let mut terminal = ratatui::try_init()?;
     let outcome = loop {
-        terminal.draw(|frame| render::draw(frame, &state, Mode::Panes))?;
+        terminal.draw(|frame| render::draw(frame, &state, theme, Mode::Panes))?;
 
         let Event::Key(key) = event::read()? else {
             continue;

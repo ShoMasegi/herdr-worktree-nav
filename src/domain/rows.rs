@@ -1,15 +1,20 @@
-//! Flattening the tree into the list of rows the panes view draws, and filtering it.
+//! Flattening the tree into the rows the panes picker draws, in the shape herdr's own
+//! session navigator uses.
 //!
-//! Pure, so the shape of the list under every combination of collapsing, filtering, and
-//! hidden ungrouped panes is covered by ordinary tests rather than by squinting at a
-//! terminal.
+//! A row carries what the navigator's rows carry: a depth for the tree glyphs, a label, a
+//! right-hand `meta` column, an aggregate status, whether it is the row the session is
+//! currently on, and whether it matched the active filter — a row that did not match itself
+//! is kept as context and drawn dimmed rather than removed.
+//!
+//! Pure, so the shape of the list under every combination of folding, filtering, and hidden
+//! ungrouped panes is covered by ordinary tests rather than by squinting at a terminal.
 
 use std::collections::HashSet;
 
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
-use crate::domain::model::Tree;
+use crate::domain::model::{PaneNode, Tree};
 use crate::port::AgentStatus;
 
 /// Which node of the tree a row stands for. Indices point into [`Tree`].
@@ -18,23 +23,94 @@ pub enum RowRef {
     Repo(usize),
     Worktree(usize, usize),
     Pane(usize, usize, usize),
-    /// The "not in any repository" separator.
-    UngroupedHeader,
+    /// The group holding panes that are not inside any git work tree.
+    UngroupedRepo,
     Ungrouped(usize),
+}
+
+impl RowRef {
+    /// Whether this row heads a group — the navigator's "workspace" role, which is what
+    /// gets the expand caret and the blank line above it.
+    pub fn is_group(self) -> bool {
+        matches!(self, RowRef::Repo(_) | RowRef::UngroupedRepo)
+    }
+
+    /// The navigator's "tab" role: a middle level that is neither a group nor a leaf.
+    pub fn is_worktree(self) -> bool {
+        matches!(self, RowRef::Worktree(..))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
     pub reference: RowRef,
-    /// Nesting level, in tree steps rather than columns.
-    pub indent: u16,
-    /// The name the row is identified by.
-    pub primary: String,
-    /// Dimmed detail: a checkout path, or a pane id.
-    pub secondary: String,
-    pub status: Option<AgentStatus>,
-    /// Whether the cursor may land here. Only the ungrouped separator may not.
-    pub selectable: bool,
+    /// Tree depth: 0 for a group, 1 for a worktree, 2 for a pane under one.
+    pub depth: u8,
+    pub label: String,
+    /// The right-hand column: activity for groups, pane counts for worktrees, and the
+    /// agent and its state for panes.
+    pub meta: String,
+    pub status: AgentStatus,
+    /// The row the session is currently on, marked with a caret in the gutter.
+    pub is_current: bool,
+    /// Only meaningful for a group row.
+    pub expanded: bool,
+    /// Whether this row matched the active filter, as opposed to being kept as ancestor
+    /// context or as part of a matching group's subtree. Always true with no filter.
+    pub matched: bool,
+}
+
+/// One rendered line. Blank lines separate groups and cannot be selected — the same shape
+/// herdr's navigator uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayLine {
+    Spacer,
+    Row(usize),
+}
+
+/// Interleave a blank line before every group but the first.
+pub fn display_lines(rows: &[Row]) -> Vec<DisplayLine> {
+    let mut lines = Vec::with_capacity(rows.len() * 2);
+    for (index, row) in rows.iter().enumerate() {
+        if row.reference.is_group() && !lines.is_empty() {
+            lines.push(DisplayLine::Spacer);
+        }
+        lines.push(DisplayLine::Row(index));
+    }
+    lines
+}
+
+/// Narrow the list to one agent state, the way the navigator's `b`/`w`/`i`/`d` keys do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StateFilter {
+    Blocked,
+    Working,
+    Idle,
+    Done,
+}
+
+impl StateFilter {
+    pub fn label(self) -> &'static str {
+        match self {
+            StateFilter::Blocked => "blocked",
+            StateFilter::Working => "working",
+            StateFilter::Idle => "idle",
+            StateFilter::Done => "done",
+        }
+    }
+
+    pub fn status(self) -> AgentStatus {
+        match self {
+            StateFilter::Blocked => AgentStatus::Blocked,
+            StateFilter::Working => AgentStatus::Working,
+            StateFilter::Idle => AgentStatus::Idle,
+            StateFilter::Done => AgentStatus::Done,
+        }
+    }
+
+    fn matches(self, status: AgentStatus) -> bool {
+        self.status() == status
+    }
 }
 
 /// Shown when a pane has no agent and no terminal title, which is what a plain shell looks
@@ -48,18 +124,26 @@ pub struct ViewOptions {
     /// `repo_key`s the user has folded away.
     pub collapsed: HashSet<String>,
     pub query: String,
+    pub state_filter: Option<StateFilter>,
+}
+
+impl ViewOptions {
+    fn filtering(&self) -> bool {
+        !self.query.trim().is_empty() || self.state_filter.is_some()
+    }
 }
 
 /// Build the visible row list.
 ///
-/// A match cascades downwards: matching a repository shows everything in it, and matching a
-/// worktree shows the panes running on it. A pane that matches on its own pulls its
-/// worktree and repository headers along so it is never shown without context.
+/// A match cascades downwards: matching a repository keeps its whole subtree, and matching a
+/// worktree keeps the panes running on it. Those descendants keep their own `matched` flag
+/// so they can be drawn as context. A pane that matches on its own pulls its headers along,
+/// so a result is never shown without the context that explains where it is.
 pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
     let query = options.query.trim();
     let pattern = (!query.is_empty())
         .then(|| Pattern::parse(query, CaseMatching::Smart, Normalization::Smart));
-    let filtering = pattern.is_some();
+    let filtering = options.filtering();
 
     let mut matcher = Matcher::new(Config::DEFAULT);
     let mut buf = Vec::new();
@@ -69,66 +153,84 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
         None => Some(0),
         Some(pattern) => pattern.score(Utf32Str::new(haystack, &mut buf), &mut matcher),
     };
+    let state_ok = |status: AgentStatus| match options.state_filter {
+        None => true,
+        Some(filter) => filter.matches(status),
+    };
 
-    // Built per repository first so that, while filtering, repositories and worktrees can
-    // be ordered by how well they matched. Fuzzy matching is permissive enough that an
-    // unrelated repository often matches weakly, and it must not sit above the real answer.
+    // Built per group first so that, while filtering, groups and worktrees can be ordered by
+    // how well they matched. Fuzzy matching is permissive enough that an unrelated
+    // repository often matches weakly, and it must not sit above the real answer.
     let mut groups: Vec<(u32, Vec<Row>)> = Vec::new();
 
     for (repo_index, repo) in tree.repos.iter().enumerate() {
+        let panes: Vec<&PaneNode> = repo
+            .worktrees
+            .iter()
+            .flat_map(|worktree| worktree.panes.iter())
+            .collect();
+        let repo_status = aggregate(panes.iter().map(|pane| pane.agent_status));
         let repo_score = score(&repo.display_name);
-        let repo_matches = repo_score.is_some();
-        // Filtering overrides collapsing: a fold set earlier should not hide what the user
-        // is searching for now.
+        let repo_matches = repo_score.is_some() && state_ok(repo_status);
+        // A matching repository carries its subtree along, but only for a text query. A
+        // state filter is a question about individual agents: a repository holding one
+        // blocked agent must not present all its idle ones as blocked too.
+        let cascade = repo_matches && options.state_filter.is_none();
         let collapsed = !filtering && options.collapsed.contains(&repo.repo_key);
 
         let mut subtrees: Vec<(u32, Vec<Row>)> = Vec::new();
         if !collapsed {
             for (worktree_index, worktree) in repo.worktrees.iter().enumerate() {
                 let worktree_haystack = format!("{} {}", repo.display_name, worktree.label());
+                let worktree_status =
+                    aggregate(worktree.panes.iter().map(|pane| pane.agent_status));
                 let own_score = score(&worktree_haystack);
-                let worktree_matches = repo_matches || own_score.is_some();
+                let worktree_matches =
+                    cascade || (own_score.is_some() && state_ok(worktree_status));
                 let mut best = own_score.unwrap_or(0).max(repo_score.unwrap_or(0));
 
-                let mut panes = Vec::new();
+                let mut pane_rows = Vec::new();
                 for (pane_index, pane) in worktree.panes.iter().enumerate() {
                     let haystack = format!(
-                        "{} {} {}",
-                        worktree_haystack,
+                        "{} {}",
                         pane.display_name.as_deref().unwrap_or_default(),
                         pane.pane_id
                     );
                     let pane_score = score(&haystack);
-                    if !worktree_matches && pane_score.is_none() {
+                    let pane_matches = pane_score.is_some() && state_ok(pane.agent_status);
+                    // A state filter narrows hard: an agent that is not in that state is
+                    // not context, it is noise. A text query keeps the subtree of a match.
+                    let keep = if options.state_filter.is_some() {
+                        pane_matches
+                    } else {
+                        worktree_matches || pane_matches
+                    };
+                    if !keep {
                         continue;
                     }
                     best = best.max(pane_score.unwrap_or(0));
-                    panes.push(Row {
-                        reference: RowRef::Pane(repo_index, worktree_index, pane_index),
-                        indent: 2,
-                        primary: pane
-                            .display_name
-                            .clone()
-                            .unwrap_or_else(|| UNNAMED_PANE.to_string()),
-                        secondary: pane.pane_id.clone(),
-                        status: Some(pane.agent_status),
-                        selectable: true,
-                    });
+                    pane_rows.push(pane_row(
+                        RowRef::Pane(repo_index, worktree_index, pane_index),
+                        2,
+                        pane,
+                        pane_matches,
+                    ));
                 }
 
-                if !worktree_matches && panes.is_empty() {
+                if !worktree_matches && pane_rows.is_empty() {
                     continue;
                 }
-                let mut subtree = Vec::new();
-                subtree.push(Row {
+                let mut subtree = vec![Row {
                     reference: RowRef::Worktree(repo_index, worktree_index),
-                    indent: 1,
-                    primary: worktree.label().to_string(),
-                    secondary: worktree.checkout_path.clone(),
-                    status: None,
-                    selectable: true,
-                });
-                subtree.append(&mut panes);
+                    depth: 1,
+                    label: worktree.label().to_string(),
+                    meta: worktree_meta(worktree.panes.len(), &worktree.panes),
+                    status: worktree_status,
+                    is_current: false,
+                    expanded: true,
+                    matched: worktree_matches,
+                }];
+                subtree.append(&mut pane_rows);
                 subtrees.push((best, subtree));
             }
         }
@@ -149,11 +251,13 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
 
         let mut group = vec![Row {
             reference: RowRef::Repo(repo_index),
-            indent: 0,
-            primary: repo.display_name.clone(),
-            secondary: repo.repo_root.clone(),
-            status: None,
-            selectable: true,
+            depth: 0,
+            label: format!("{} ({})", repo.display_name, panes.len()),
+            meta: activity(panes.iter().map(|pane| pane.agent_status)),
+            status: repo_status,
+            is_current: panes.iter().any(|pane| pane.focused),
+            expanded: !collapsed,
+            matched: repo_matches,
         }];
         for (_, mut subtree) in subtrees {
             group.append(&mut subtree);
@@ -174,29 +278,22 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                 pane.display_name.as_deref().unwrap_or_default(),
                 pane.pane_id
             );
-            if score(&haystack).is_none() {
+            let matched = score(&haystack).is_some() && state_ok(pane.agent_status);
+            if !matched {
                 continue;
             }
-            panes.push(Row {
-                reference: RowRef::Ungrouped(index),
-                indent: 1,
-                primary: pane
-                    .display_name
-                    .clone()
-                    .unwrap_or_else(|| UNNAMED_PANE.to_string()),
-                secondary: pane.pane_id.clone(),
-                status: Some(pane.agent_status),
-                selectable: true,
-            });
+            panes.push(pane_row(RowRef::Ungrouped(index), 1, pane, true));
         }
         if !panes.is_empty() {
             rows.push(Row {
-                reference: RowRef::UngroupedHeader,
-                indent: 0,
-                primary: "not in any repository".to_string(),
-                secondary: String::new(),
-                status: None,
-                selectable: false,
+                reference: RowRef::UngroupedRepo,
+                depth: 0,
+                label: format!("not in any repository ({})", tree.ungrouped.len()),
+                meta: activity(tree.ungrouped.iter().map(|pane| pane.agent_status)),
+                status: aggregate(tree.ungrouped.iter().map(|pane| pane.agent_status)),
+                is_current: tree.ungrouped.iter().any(|pane| pane.focused),
+                expanded: true,
+                matched: true,
             });
             rows.append(&mut panes);
         }
@@ -205,36 +302,227 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
     rows
 }
 
-/// Index of the first selectable row at or after `from`, wrapping to the start.
-pub fn next_selectable(rows: &[Row], from: usize) -> Option<usize> {
-    let len = rows.len();
-    (0..len).find_map(|offset| {
-        let index = (from + offset) % len;
-        rows[index].selectable.then_some(index)
+fn pane_row(reference: RowRef, depth: u8, pane: &PaneNode, matched: bool) -> Row {
+    Row {
+        reference,
+        depth,
+        label: pane
+            .display_name
+            .clone()
+            .unwrap_or_else(|| UNNAMED_PANE.to_string()),
+        meta: pane_meta(pane),
+        status: pane.agent_status,
+        is_current: pane.focused,
+        expanded: false,
+        matched,
+    }
+}
+
+/// `{agent} · {state}` when herdr is tracking an agent, otherwise just what the pane is.
+fn pane_meta(pane: &PaneNode) -> String {
+    match (
+        pane.display_name.as_deref(),
+        status_label(pane.agent_status),
+    ) {
+        (Some(name), Some(state)) => format!("{name} · {state}"),
+        (Some(name), None) => name.to_string(),
+        (None, _) => UNNAMED_PANE.to_string(),
+    }
+}
+
+/// `n panes`, with the activity appended when there is any, or a plain statement that the
+/// checkout is sitting there unused.
+fn worktree_meta(pane_count: usize, panes: &[PaneNode]) -> String {
+    if pane_count == 0 {
+        return "no pane".to_string();
+    }
+    let noun = if pane_count == 1 { "pane" } else { "panes" };
+    let activity = activity(panes.iter().map(|pane| pane.agent_status));
+    if activity.is_empty() {
+        format!("{pane_count} {noun}")
+    } else {
+        format!("{pane_count} {noun} · {activity}")
+    }
+}
+
+/// A summary like `1 blocked · 2 working`, most urgent first, omitting states nothing is in.
+/// Panes with no agent contribute nothing: "3 idle" would be a lie about a shell.
+fn activity(statuses: impl Iterator<Item = AgentStatus>) -> String {
+    let mut counts = [0usize; 4];
+    for status in statuses {
+        match status {
+            AgentStatus::Blocked => counts[0] += 1,
+            AgentStatus::Working => counts[1] += 1,
+            AgentStatus::Done => counts[2] += 1,
+            AgentStatus::Idle => counts[3] += 1,
+            AgentStatus::Unknown => {}
+        }
+    }
+    ["blocked", "working", "done", "idle"]
+        .iter()
+        .zip(counts)
+        .filter(|(_, count)| *count > 0)
+        .map(|(label, count)| format!("{count} {label}"))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// The state a parent row shows: the most urgent one anything under it is in.
+fn aggregate(statuses: impl Iterator<Item = AgentStatus>) -> AgentStatus {
+    let mut best = AgentStatus::Unknown;
+    for status in statuses {
+        if urgency(status) > urgency(best) {
+            best = status;
+        }
+    }
+    best
+}
+
+fn urgency(status: AgentStatus) -> u8 {
+    match status {
+        AgentStatus::Blocked => 4,
+        AgentStatus::Working => 3,
+        AgentStatus::Done => 2,
+        AgentStatus::Idle => 1,
+        AgentStatus::Unknown => 0,
+    }
+}
+
+/// herdr's wording for an agent state. `None` when there is no agent to describe.
+pub fn status_label(status: AgentStatus) -> Option<&'static str> {
+    match status {
+        AgentStatus::Blocked => Some("blocked"),
+        AgentStatus::Working => Some("working"),
+        AgentStatus::Done => Some("done"),
+        AgentStatus::Idle => Some("idle"),
+        AgentStatus::Unknown => None,
+    }
+}
+
+/// Index of the first selectable line at or after `from`, wrapping to the start.
+pub fn next_row(lines: &[DisplayLine], from: usize) -> Option<usize> {
+    let len = lines.len();
+    (0..len).find_map(|offset| match lines[(from + offset) % len] {
+        DisplayLine::Row(_) => Some((from + offset) % len),
+        DisplayLine::Spacer => None,
     })
 }
 
-/// Index of the first selectable row at or before `from`, wrapping to the end.
-pub fn previous_selectable(rows: &[Row], from: usize) -> Option<usize> {
-    let len = rows.len();
+/// Index of the first selectable line at or before `from`, wrapping to the end.
+pub fn previous_row(lines: &[DisplayLine], from: usize) -> Option<usize> {
+    let len = lines.len();
     (0..len).find_map(|offset| {
         let index = (from + len - offset) % len;
-        rows[index].selectable.then_some(index)
+        match lines[index] {
+            DisplayLine::Row(_) => Some(index),
+            DisplayLine::Spacer => None,
+        }
     })
+}
+
+/// The breadcrumb shown under the list for the row the cursor is on.
+///
+/// This is where the checkout path lives. The navigator keeps its rows to a label and one
+/// meta column and puts the fuller context here, so the list stays scannable and nothing is
+/// actually lost.
+pub fn detail(tree: &Tree, reference: RowRef) -> String {
+    let parts: Vec<String> = match reference {
+        RowRef::Repo(repo_index) => {
+            let Some(repo) = tree.repos.get(repo_index) else {
+                return String::new();
+            };
+            let panes: usize = repo.worktrees.iter().map(|w| w.panes.len()).sum();
+            let worktrees = repo.worktrees.len();
+            vec![
+                repo.display_name.clone(),
+                format!("{worktrees} {}", plural(worktrees, "worktree")),
+                format!("{panes} {}", plural(panes, "pane")),
+                repo.repo_root.clone(),
+            ]
+        }
+        RowRef::Worktree(repo_index, worktree_index) => {
+            let Some(repo) = tree.repos.get(repo_index) else {
+                return String::new();
+            };
+            let Some(worktree) = repo.worktrees.get(worktree_index) else {
+                return String::new();
+            };
+            let mut parts = vec![repo.display_name.clone(), worktree.label().to_string()];
+            if worktree.is_primary {
+                parts.push("main checkout".to_string());
+            }
+            parts.push(worktree.checkout_path.clone());
+            parts
+        }
+        RowRef::Pane(repo_index, worktree_index, pane_index) => {
+            let Some(repo) = tree.repos.get(repo_index) else {
+                return String::new();
+            };
+            let Some(worktree) = repo.worktrees.get(worktree_index) else {
+                return String::new();
+            };
+            let Some(pane) = worktree.panes.get(pane_index) else {
+                return String::new();
+            };
+            let mut parts = vec![
+                repo.display_name.clone(),
+                worktree.label().to_string(),
+                pane.pane_id.clone(),
+            ];
+            if let Some(label) = status_label(pane.agent_status) {
+                parts.push(label.to_string());
+            }
+            parts.push(worktree.checkout_path.clone());
+            parts
+        }
+        RowRef::UngroupedRepo => vec![
+            "not inside any git work tree".to_string(),
+            format!(
+                "{} {}",
+                tree.ungrouped.len(),
+                plural(tree.ungrouped.len(), "pane")
+            ),
+        ],
+        RowRef::Ungrouped(index) => {
+            let Some(pane) = tree.ungrouped.get(index) else {
+                return String::new();
+            };
+            let mut parts = vec![
+                pane.display_name
+                    .clone()
+                    .unwrap_or_else(|| UNNAMED_PANE.to_string()),
+                pane.pane_id.clone(),
+            ];
+            if let Some(label) = status_label(pane.agent_status) {
+                parts.push(label.to_string());
+            }
+            parts
+        }
+    };
+    parts.join(" \u{b7} ")
+}
+
+fn plural(count: usize, noun: &str) -> String {
+    if count == 1 {
+        noun.to_string()
+    } else {
+        format!("{noun}s")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{PaneNode, RepoNode, WorktreeNode};
+    use crate::domain::model::{RepoNode, WorktreeNode};
 
-    fn pane(id: &str, name: Option<&str>) -> PaneNode {
+    fn pane(id: &str, name: Option<&str>, status: AgentStatus) -> PaneNode {
+        let workspace = id.split(':').next().unwrap().to_string();
         PaneNode {
             pane_id: id.to_string(),
-            workspace_id: id.split(':').next().unwrap().to_string(),
-            tab_id: format!("{}:t1", id.split(':').next().unwrap()),
+            tab_id: format!("{workspace}:t1"),
+            workspace_id: workspace,
             display_name: name.map(str::to_string),
-            agent_status: AgentStatus::Idle,
+            agent_status: status,
             focused: false,
         }
     }
@@ -244,12 +532,13 @@ mod tests {
             branch: Some(branch.to_string()),
             checkout_path: format!("/wt/{}", branch.replace('/', "-")),
             is_primary: branch == "main",
-            open_workspace_id: None,
+            open_workspace_id: panes.first().map(|p| p.workspace_id.clone()),
             panes,
         }
     }
 
-    /// Two repositories: `me/app` on main and feat/login, and `me/site` on main.
+    /// `me/app` on main (a working agent and a plain shell) and feat/login (idle), plus an
+    /// unused fix/crash checkout; `me/site` on develop with a blocked agent.
     fn tree() -> Tree {
         Tree {
             repos: vec![
@@ -258,120 +547,212 @@ mod tests {
                     repo_root: "/src/app".into(),
                     display_name: "me/app".into(),
                     worktrees: vec![
-                        worktree("main", vec![pane("w1:p1", Some("claude"))]),
-                        worktree("feat/login", vec![pane("w2:p1", Some("codex"))]),
+                        worktree(
+                            "main",
+                            vec![
+                                pane("w1:p1", Some("claude"), AgentStatus::Working),
+                                pane("w1:p2", None, AgentStatus::Unknown),
+                            ],
+                        ),
+                        worktree(
+                            "feat/login",
+                            vec![pane("w2:p1", Some("codex"), AgentStatus::Idle)],
+                        ),
+                        worktree("fix/crash", vec![]),
                     ],
                 },
                 RepoNode {
                     repo_key: "/src/site/.git".into(),
                     repo_root: "/src/site".into(),
                     display_name: "me/site".into(),
-                    worktrees: vec![worktree("main", vec![pane("w3:p1", None)])],
+                    worktrees: vec![worktree(
+                        "develop",
+                        vec![pane("w3:p1", Some("claude"), AgentStatus::Blocked)],
+                    )],
                 },
             ],
-            ungrouped: vec![pane("w9:p1", None)],
+            ungrouped: vec![pane("w9:p1", None, AgentStatus::Unknown)],
         }
     }
 
+    /// The rows as `<indent><label>`, which is what the tree glyphs are drawn from.
     fn labels(rows: &[Row]) -> Vec<String> {
         rows.iter()
-            .map(|r| format!("{}{}", "  ".repeat(r.indent as usize), r.primary))
+            .map(|r| format!("{}{}", "  ".repeat(r.depth as usize), r.label))
             .collect()
     }
 
+    fn find<'a>(rows: &'a [Row], label: &str) -> &'a Row {
+        rows.iter()
+            .find(|r| r.label == label)
+            .unwrap_or_else(|| panic!("no row labelled {label}"))
+    }
+
     #[test]
-    fn lays_the_tree_out_as_repo_worktree_pane() {
-        let rows = flatten(&tree(), &ViewOptions::default());
+    fn lays_the_tree_out_as_repo_worktree_pane_with_a_count_on_the_group() {
         assert_eq!(
-            labels(&rows),
+            labels(&flatten(&tree(), &ViewOptions::default())),
             [
-                "me/app",
+                "me/app (3)",
                 "  main",
                 "    claude",
+                "    shell",
                 "  feat/login",
                 "    codex",
-                "me/site",
-                "  main",
-                "    shell",
+                "  fix/crash",
+                "me/site (1)",
+                "  develop",
+                "    claude",
             ]
         );
     }
 
     #[test]
-    fn names_a_pane_with_no_agent_and_no_title_rather_than_leaving_it_blank() {
+    fn a_blank_line_separates_each_group_but_not_the_first() {
         let rows = flatten(&tree(), &ViewOptions::default());
-        let unnamed = rows.iter().find(|r| r.secondary == "w3:p1").unwrap();
-        assert_eq!(unnamed.primary, "shell");
-    }
-
-    #[test]
-    fn hides_ungrouped_panes_unless_asked_for_them() {
-        let hidden = flatten(&tree(), &ViewOptions::default());
-        assert!(!labels(&hidden).iter().any(|l| l.contains("not in any")));
-
-        let shown = flatten(
-            &tree(),
-            &ViewOptions {
-                show_ungrouped: true,
-                ..Default::default()
-            },
-        );
-        assert_eq!(
-            labels(&shown).last().unwrap().trim(),
-            "shell",
-            "the ungrouped pane should be the final row"
-        );
-        assert!(shown
+        let lines = display_lines(&rows);
+        assert_eq!(lines[0], DisplayLine::Row(0), "no leading blank line");
+        let spacers: Vec<usize> = lines
             .iter()
-            .any(|r| r.reference == RowRef::UngroupedHeader && !r.selectable));
-    }
-
-    #[test]
-    fn collapsing_a_repo_hides_its_children_but_keeps_its_header() {
-        let options = ViewOptions {
-            collapsed: HashSet::from(["/src/app/.git".to_string()]),
-            ..Default::default()
-        };
+            .enumerate()
+            .filter(|(_, line)| **line == DisplayLine::Spacer)
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(spacers.len(), 1, "one group boundary, one blank line");
         assert_eq!(
-            labels(&flatten(&tree(), &options)),
-            ["me/app", "me/site", "  main", "    shell"]
+            lines[spacers[0] + 1],
+            DisplayLine::Row(7),
+            "me/site follows"
         );
     }
 
     #[test]
-    fn matching_a_worktree_brings_the_panes_running_on_it_along() {
+    fn the_meta_column_says_what_is_happening_not_where_the_files_are() {
+        let rows = flatten(&tree(), &ViewOptions::default());
+        assert_eq!(find(&rows, "me/app (3)").meta, "1 working · 1 idle");
+        assert_eq!(find(&rows, "main").meta, "2 panes · 1 working");
+        assert_eq!(find(&rows, "feat/login").meta, "1 pane · 1 idle");
+        assert_eq!(find(&rows, "claude").meta, "claude · working");
+        assert_eq!(find(&rows, "shell").meta, "shell");
+    }
+
+    #[test]
+    fn a_checkout_with_nothing_running_says_so_rather_than_counting_to_zero() {
+        let rows = flatten(&tree(), &ViewOptions::default());
+        assert_eq!(find(&rows, "fix/crash").meta, "no pane");
+    }
+
+    #[test]
+    fn a_parent_shows_the_most_urgent_state_underneath_it() {
+        let rows = flatten(&tree(), &ViewOptions::default());
+        // main holds a working agent and a plain shell; working wins over nothing.
+        assert_eq!(find(&rows, "main").status, AgentStatus::Working);
+        // The repository also holds an idle agent, but working is more urgent.
+        assert_eq!(find(&rows, "me/app (3)").status, AgentStatus::Working);
+        assert_eq!(find(&rows, "me/site (1)").status, AgentStatus::Blocked);
+        assert_eq!(find(&rows, "fix/crash").status, AgentStatus::Unknown);
+    }
+
+    #[test]
+    fn the_focused_pane_and_the_repository_holding_it_are_marked_as_current() {
+        let mut tree = tree();
+        tree.repos[1].worktrees[0].panes[0].focused = true;
+        let rows = flatten(&tree, &ViewOptions::default());
+        assert!(find(&rows, "me/site (1)").is_current);
+        assert!(
+            rows.iter()
+                .find(|r| r.reference == RowRef::Pane(1, 0, 0))
+                .unwrap()
+                .is_current
+        );
+        assert!(!find(&rows, "me/app (3)").is_current);
+        // The worktree level is never marked, matching herdr's tabs.
+        assert!(!find(&rows, "develop").is_current);
+    }
+
+    #[test]
+    fn a_match_keeps_the_whole_subtree_and_marks_the_rest_as_context() {
         let options = ViewOptions {
             query: "login".into(),
             ..Default::default()
         };
-        assert_eq!(
-            labels(&flatten(&tree(), &options)),
-            ["me/app", "  feat/login", "    codex"]
-        );
+        let rows = flatten(&tree(), &options);
+        assert_eq!(labels(&rows), ["me/app (3)", "  feat/login", "    codex"]);
+        assert!(find(&rows, "feat/login").matched);
+        // Kept so the result has context, but it is not itself a result.
+        assert!(!find(&rows, "me/app (3)").matched);
+        // Carried in by its worktree rather than by matching, so it is context too.
+        assert!(!find(&rows, "codex").matched);
     }
 
     #[test]
-    fn matching_a_pane_pulls_its_headers_along_so_it_is_never_shown_without_context() {
+    fn everything_is_a_match_when_nothing_is_being_filtered() {
+        let rows = flatten(&tree(), &ViewOptions::default());
+        assert!(rows.iter().all(|row| row.matched));
+    }
+
+    #[test]
+    fn a_state_filter_narrows_hard_instead_of_keeping_context_panes() {
         let options = ViewOptions {
-            query: "codex".into(),
+            state_filter: Some(StateFilter::Blocked),
+            ..Default::default()
+        };
+        let rows = flatten(&tree(), &options);
+        assert_eq!(labels(&rows), ["me/site (1)", "  develop", "    claude"]);
+    }
+
+    #[test]
+    fn a_state_filter_does_not_cascade_a_repositorys_match_onto_its_quiet_worktrees() {
+        // me/app aggregates to "working" because of main, but feat/login is idle and
+        // fix/crash holds nothing. Only the branch that is actually working may survive.
+        let options = ViewOptions {
+            state_filter: Some(StateFilter::Working),
             ..Default::default()
         };
         assert_eq!(
             labels(&flatten(&tree(), &options)),
-            ["me/app", "  feat/login", "    codex"]
+            ["me/app (3)", "  main", "    claude"]
         );
     }
 
     #[test]
-    fn matching_a_repo_shows_everything_inside_it() {
+    fn a_state_filter_that_matches_nothing_leaves_an_empty_list() {
         let options = ViewOptions {
-            query: "site".into(),
+            state_filter: Some(StateFilter::Done),
+            show_ungrouped: true,
             ..Default::default()
         };
-        assert_eq!(
-            labels(&flatten(&tree(), &options)),
-            ["me/site", "  main", "    shell"]
+        assert!(flatten(&tree(), &options).is_empty());
+    }
+
+    #[test]
+    fn panes_outside_a_repository_form_their_own_group_when_revealed() {
+        let options = ViewOptions {
+            show_ungrouped: true,
+            ..Default::default()
+        };
+        let rows = flatten(&tree(), &options);
+        let group = find(&rows, "not in any repository (1)");
+        assert!(
+            group.reference.is_group(),
+            "it folds and spaces like a repo"
         );
+        assert_eq!(rows.last().unwrap().label, "shell");
+    }
+
+    #[test]
+    fn collapsing_a_repo_hides_its_children_and_flips_the_caret() {
+        let options = ViewOptions {
+            collapsed: HashSet::from(["/src/app/.git".to_string()]),
+            ..Default::default()
+        };
+        let rows = flatten(&tree(), &options);
+        assert_eq!(
+            labels(&rows),
+            ["me/app (3)", "me/site (1)", "  develop", "    claude"]
+        );
+        assert!(!find(&rows, "me/app (3)").expanded);
+        assert!(find(&rows, "me/site (1)").expanded);
     }
 
     #[test]
@@ -383,14 +764,15 @@ mod tests {
         };
         assert_eq!(
             labels(&flatten(&tree(), &options)),
-            ["me/app", "  feat/login", "    codex"]
+            ["me/app (3)", "  feat/login", "    codex"]
         );
     }
 
     #[test]
     fn puts_the_best_match_first_because_fuzzy_matching_is_permissive() {
         // "harken" is a subsequence of plenty of unrelated text, so an exact-ish match has
-        // to outrank the incidental ones rather than sitting below them in tree order.
+        // to outrank the incidental ones. herdr's navigator keeps session order instead,
+        // but its rows are ordered by something the user already knows; ours are not.
         let tree = Tree {
             repos: vec![
                 RepoNode {
@@ -412,22 +794,11 @@ mod tests {
             query: "harken".into(),
             ..Default::default()
         };
-        let rows = flatten(&tree, &options);
-        assert_eq!(rows[0].primary, "me/harken");
+        assert_eq!(flatten(&tree, &options)[0].label, "me/harken (0)");
     }
 
     #[test]
-    fn a_query_that_matches_nothing_produces_no_rows() {
-        let options = ViewOptions {
-            query: "zzzznope".into(),
-            show_ungrouped: true,
-            ..Default::default()
-        };
-        assert!(flatten(&tree(), &options).is_empty());
-    }
-
-    #[test]
-    fn cursor_movement_skips_the_unselectable_separator_and_wraps() {
+    fn cursor_movement_steps_over_the_blank_lines_and_wraps() {
         let rows = flatten(
             &tree(),
             &ViewOptions {
@@ -435,21 +806,50 @@ mod tests {
                 ..Default::default()
             },
         );
-        let separator = rows
+        let lines = display_lines(&rows);
+        let spacer = lines
             .iter()
-            .position(|r| r.reference == RowRef::UngroupedHeader)
+            .position(|line| *line == DisplayLine::Spacer)
             .unwrap();
-
-        assert_eq!(next_selectable(&rows, separator), Some(separator + 1));
-        assert_eq!(previous_selectable(&rows, separator), Some(separator - 1));
-        // Past the end, wrap back to the first row.
-        assert_eq!(next_selectable(&rows, rows.len() - 1), Some(rows.len() - 1));
-        assert_eq!(previous_selectable(&rows, 0), Some(0));
+        assert_eq!(next_row(&lines, spacer), Some(spacer + 1));
+        assert_eq!(previous_row(&lines, spacer), Some(spacer - 1));
+        assert_eq!(next_row(&lines, lines.len() - 1), Some(lines.len() - 1));
+        assert_eq!(previous_row(&lines, 0), Some(0));
     }
 
     #[test]
     fn cursor_movement_on_an_empty_list_has_no_answer_rather_than_panicking() {
-        assert_eq!(next_selectable(&[], 0), None);
-        assert_eq!(previous_selectable(&[], 0), None);
+        assert_eq!(next_row(&[], 0), None);
+        assert_eq!(previous_row(&[], 0), None);
+    }
+
+    #[test]
+    fn the_breadcrumb_carries_the_checkout_path_the_rows_no_longer_show() {
+        let tree = tree();
+        assert_eq!(
+            detail(&tree, RowRef::Worktree(0, 1)),
+            "me/app · feat/login · /wt/feat-login"
+        );
+        assert_eq!(
+            detail(&tree, RowRef::Worktree(0, 0)),
+            "me/app · main · main checkout · /wt/main"
+        );
+        assert_eq!(
+            detail(&tree, RowRef::Pane(0, 0, 0)),
+            "me/app · main · w1:p1 · working · /wt/main"
+        );
+        assert_eq!(
+            detail(&tree, RowRef::Repo(0)),
+            "me/app · 3 worktrees · 3 panes · /src/app"
+        );
+    }
+
+    #[test]
+    fn the_breadcrumb_is_empty_rather_than_panicking_on_a_stale_reference() {
+        let tree = tree();
+        assert_eq!(detail(&tree, RowRef::Repo(99)), "");
+        assert_eq!(detail(&tree, RowRef::Worktree(0, 99)), "");
+        assert_eq!(detail(&tree, RowRef::Pane(0, 0, 99)), "");
+        assert_eq!(detail(&tree, RowRef::Ungrouped(99)), "");
     }
 }

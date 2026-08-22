@@ -10,34 +10,41 @@ Run a few agents across a few repositories and a few worktrees, and the question
 other direction too: take a branch that exists on GitHub and turn it into a working pane
 without leaving the keyboard.
 
-Two overlay pickers, one keystroke each, `Tab` between them.
+Two overlay pickers, one keystroke each, `Tab` between them. They are drawn the way herdr's
+own session navigator is, down to the tree glyphs and the accent from your herdr theme, so
+they read as part of herdr rather than as a different program.
 
 ## Panes — where is everything?
 
 Every open pane, grouped by repository and by the worktree it is checked out in.
 
 ```
- Panes   Branches
-▾ ShoMasegi/herdr-gh-nav
-  ● main                                          ~/Workspace/herdr-gh-nav
-    ● claude                                                         w7:p2
-    · shell                                                          w7:p3
-▾ ShoMasegi/harbour-backend
-  ● feat/hbr-51-grant-table-privileges     ~/Workspace/harbour-backend
-    ○ claude                                                         w1:p1
-    ○ claude                                                         w1:p9
-  ○ loop-review-fix-request  no pane   ~/.herdr/worktrees/harbour-backend/…
-▾ nightowl/harken_android
-  ● feature/use-presigned-url             ~/Workspace/harken_android
-    ◆ claude                                                         w5:p1
-
-press / to filter
-↵ jump  n new pane  ⇥ branches  / filter  h other  r reload  q quit
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ / search panes                                                      13 panes │
+│──────────────────────────────────────────────────────────────────────────────│
+│ ◆ ▾ ● ShoMasegi/herdr-gh-nav (2)                          1 working          │
+│   └── ● main                                              2 panes · 1 working│
+│ ◆    ├── ● claude                                         claude · working   │
+│      └── · shell                                          shell              │
+│                                                                              │
+│   ▾ ○ ShoMasegi/harbour-backend (5)                       3 idle             │
+│   ├── ○ feat/hbr-51-grant-table-privileges                5 panes · 3 idle   │
+│   │  ├── ○ claude                                         claude · idle      │
+│   │  └── · shell                                          shell              │
+│   └── · loop-review-fix-request                           no pane            │
+│                                                                              │
+│ ShoMasegi/herdr-gh-nav · 1 worktree · 2 panes · ~/Workspace/herdr-gh-nav ─────│
+│ ↵ jump  n new pane  ⇥ branches  / search  b/w/i/d/a states  h other  esc close│
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-`●` working `○` idle `◆` blocked `·` no agent.
+`●` working `○` idle `◆` blocked `·` no agent, in whichever glyph set your herdr is set to.
+`◆` in the gutter marks where the session currently is. The breadcrumb under the list carries
+the fuller context for the row you are on, including the checkout path.
 
 `Enter` goes there — across spaces, across tabs, straight to the pane. A worktree with no
+pane in it is listed too, and `Enter` opens it. `b`/`w`/`i`/`d` narrow to one agent state and
+`a` clears that, exactly as they do in the navigator.
 pane in it is listed too, and `Enter` opens it.
 
 ## Branches — get me onto that branch
@@ -45,14 +52,17 @@ pane in it is listed too, and `Enter` opens it.
 Every branch of the repository you summoned it from, whatever state it is in.
 
 ```
- Panes   Branches
-● feat/login   running      #123 Add the login screen (draft)
-○ fix/crash    checked out  latest work on fix/crash
-· main         local        latest work on main
-↓ feat/search  remote
-
-❯ █
-type to filter  ↵ choose  ⇥ panes  esc quit
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ / search branches█                                                24 branches│
+│──────────────────────────────────────────────────────────────────────────────│
+│   ● feat/login    running      #123 Add the login screen (draft)             │
+│   ○ fix/crash     checked out  latest work on fix/crash                      │
+│   · main          local        latest work on main                           │
+│   ↓ feat/search   remote                                                     │
+│                                                                              │
+│ me/app · feat/login · open in w2:p1 · ~/.herdr/worktrees/app/feat-login ──────│
+│ type to filter  ↵ choose  ⇥ panes  ctrl+u clear  esc close                   │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 Type to filter. Type something that does not exist yet and it offers to create it. Then pick

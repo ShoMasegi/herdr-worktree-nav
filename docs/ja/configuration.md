@@ -51,6 +51,24 @@ checkout は `<directory>/<repo>/<branch-slug>` に置かれます。このプ�
 directory = "~/Workspace/worktrees"
 ```
 
+## 見た目
+
+ピッカーは herdr の session navigator と同じ方式で描画されます。見た目に影響する herdr 側の設定が 2 つあり、どちらもこのプラグインの設定ではなく、herdr の設定をそのまま読んでいます。
+
+```toml
+[theme]
+name = "catppuccin"        # 枠・選択行・リポジトリ行に使う accent
+
+[ui]
+status_indicators = "dots" # または "symbols": ● ● ● ○ ·  と  × ◐ ✓ ○ ·
+```
+
+accent の解決順は herdr と同じです。明示的な `[theme.custom] accent` が最優先、次に既定の `cyan` から変更された `[ui] accent`、最後にテーマ自身の accent です。このプラグインが知らないテーマ名の場合は推測せず cyan にフォールバックするので、herdr が新しいテーマを追加しても動作します。
+
+それ以外は端末自身の 16 色を使うため、ピッカーは端末のテーマに逆らわず従います。herdr の palette はプラグインからは取得できず（socket API がテーマを一切公開していません）、完全一致は選択肢にありません。[ADR 0004](../adr/0004-navigator-appearance.md) を参照してください。
+
+解決結果は `herdr-gh-nav dump` で確認するのが最も手軽です。
+
 ## リモート
 
 リモートブランチの取得元、および未 fetch ブランチの fetch 元は `origin` です。v1 では変更できません。`origin` が無いリポジトリでも動作します。その場合、ブランチ一覧はローカルにあるものだけになり、`reading the remote…` の表示は消えます。
@@ -77,6 +95,7 @@ gh pr list --json number,title,headRefName,isDraft
 | `HERDR_PLUGIN_ROOT` | pane エントリポイントからバイナリを特定するため |
 | `HERDR_PLUGIN_STATE_DIR` | どのピッカー pane が開いているかを記録し、2 度目の押下でフォーカスするため |
 | `HERDR_PANE_ID` | pane プロセスにおける自身の pane ID。ピッカーが自分自身を一覧に出さないために使います |
+| `HERDR_PLUGIN_CONFIG_DIR` | herdr 本体の `config.toml` の場所を特定し、上記 2 設定を読むために使います |
 
 アクションは、pane プロセスが自力では知り得ない次の 2 つを、開く pane に渡します。
 
