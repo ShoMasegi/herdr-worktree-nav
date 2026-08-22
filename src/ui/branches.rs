@@ -541,11 +541,14 @@ impl BranchesState {
     }
 
     /// Reorder without losing the branch the cursor is on.
+    /// Reorder and go to the top.
+    ///
+    /// What a new order is for is seeing what is now first. Following the branch that was
+    /// under the cursor would leave it wherever that row happened to land, which is the one
+    /// place the answer is not.
     fn reorder(&mut self, order: Order) {
         self.order = order;
-        let anchor = self.selected().map(|entry| entry.name.clone());
         self.refilter();
-        self.restore_cursor(anchor);
     }
 
     fn move_cursor(&mut self, delta: isize) {
@@ -1528,15 +1531,41 @@ mod tests {
     }
 
     #[test]
-    fn reordering_keeps_the_cursor_on_the_branch_it_was_on() {
+    fn reordering_goes_to_the_top_rather_than_following_the_row_it_was_on() {
+        let mut state = state();
+        state.handle_key(key(KeyCode::Down));
+        state.handle_key(key(KeyCode::Down));
+        assert_eq!(state.rows()[state.cursor()].name, "chore/deps");
+
+        // A different key: the cursor takes the first row of the new order.
+        state.handle_key(key(KeyCode::Char('i')));
+        assert_eq!(state.cursor(), 0);
+        assert_eq!(state.rows()[0].name, "main", "the most recently committed");
+
+        // And so does a reversal, which is asked for to see the other end.
+        state.handle_key(key(KeyCode::Down));
+        state.handle_key(KeyEvent::new(KeyCode::Char('I'), KeyModifiers::SHIFT));
+        assert_eq!(state.cursor(), 0);
+        assert_eq!(state.rows()[0].name, "chore/deps", "the least");
+
+        // The chords do the same thing, so they land in the same place.
+        state.handle_key(key(KeyCode::Down));
+        ctrl(&mut state, 'r');
+        assert_eq!(state.cursor(), 0);
+    }
+
+    #[test]
+    fn new_data_arriving_still_leaves_the_cursor_where_it_was() {
+        // The remote listing landing is not a reason to move: nobody asked for it.
         let mut state = state();
         state.handle_key(key(KeyCode::Down));
         let before = state.rows()[state.cursor()].name.clone();
-        assert_eq!(before, "main");
-
-        ctrl(&mut state, 'o');
+        state.set_data(BranchData {
+            remote_heads: vec!["feat/from-the-remote".into()],
+            loading: false,
+            ..app_branches()
+        });
         assert_eq!(state.rows()[state.cursor()].name, before);
-        assert_eq!(state.cursor(), 0, "which has moved to the top");
     }
 
     #[test]

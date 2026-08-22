@@ -130,8 +130,9 @@ through this against a real session.
       from, and starts with the cursor on it.
 - [ ] Choosing another repository lists its branches; `Esc` goes back to the list, and going
       back into a repository already read does not run git again.
-- [ ] `Ctrl-O` walks state, updated, and name; `Ctrl-R` reverses the current one; both hold
-      while a filter is typed and across a change of repository.
+- [ ] `i` walks state, updated, and name and `Shift-I` reverses it, each landing the cursor
+      on the new first row; `Ctrl-O`/`Ctrl-R` do the same while typing, and the order holds
+      across a change of repository.
 - [ ] The branches view opens from **inside a worktree**, not just from the plugin directory.
       This is the case that catches a relative pane command.
 - [ ] A never-fetched remote branch is fetched and the worktree is based on

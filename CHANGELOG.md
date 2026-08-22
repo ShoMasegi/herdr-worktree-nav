@@ -16,7 +16,8 @@ All notable changes to this project are documented here. The format follows
   step is skipped. Each repository is read once and cached while the picker is up.
 - **An order for the branch list.** `i` walks `state` (the previous fixed order, still the
   default), `updated`, and `name`; `Shift-I` reverses the current one, and `Ctrl-O`/`Ctrl-R`
-  do the same while the search field has the keyboard. What is in force
+  do the same while the search field has the keyboard. Either puts the cursor on the first
+  row: what a new order is for is seeing what is now at the top. What is in force
   sits beside the count and takes the accent once it is no longer the default. The order
   holds while a filter is typed — the fuzzy score decides what is in the list, not where it
   sits — and across a change of repository. Branches with no date stay at the bottom in both

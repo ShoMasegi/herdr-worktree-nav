@@ -223,6 +223,11 @@ busiest, or z first. Changing the order puts the arrow back to that
 order's own direction, since "oldest first" is not what asking for a date order meant;
 `Shift-I` is how you say you meant it.
 
+Changing the order puts the cursor on the first row. What a new order is for is seeing what
+is now at the top, and carrying the cursor along with the branch it was on would leave it
+wherever that row happened to land — the one place the answer is not. Reversing does the same,
+for the same reason: it is asked for to see the other end.
+
 Two things stay put whichever order is chosen. A branch with no date — one seen only through
 `ls-remote` and never fetched — sinks to the bottom in both directions, because reversing an
 order should not fill the top of the screen with the rows that have the least to say. And the
