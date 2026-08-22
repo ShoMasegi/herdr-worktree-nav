@@ -481,18 +481,22 @@ const HELP_REPO: &[&str] = &[
     "\u{21b5} branches  \u{21e5} panes  esc close",
     "\u{21b5} branches  esc",
 ];
-/// The branch step, when Esc has a repository list to go back to.
+/// The branch step, when Esc has a repository list to go back to. Widest first, each rung
+/// dropping the least useful thing left — `type to filter` explains the whole interaction
+/// and is the last to go.
 const HELP_BRANCH_BACK: &[&str] = &[
-    "type to filter  \u{21b5} choose  ctrl+o order  ctrl+r reverse  \u{21e5} panes  ctrl+u clear  esc back",
-    "\u{21b5} choose  ctrl+o order  ctrl+r reverse  \u{21e5} panes  esc back",
-    "\u{21b5} choose  ctrl+o order  esc back",
+    "type to filter  \u{21b5} choose  ctrl+o order  ctrl+r reverse  ctrl+f fetch  \u{21e5} panes  ctrl+u clear  esc back",
+    "type to filter  \u{21b5} choose  ctrl+o order  ctrl+r reverse  ctrl+f fetch  \u{21e5} panes  esc back",
+    "type to filter  \u{21b5} choose  ctrl+o order  ctrl+f fetch  \u{21e5} panes  esc back",
+    "type to filter  \u{21b5} choose  \u{21e5} panes  esc back",
     "\u{21b5} choose  esc back",
 ];
 /// The same, with only one repository open: Esc has nowhere to go but out.
 const HELP_BRANCH: &[&str] = &[
-    "type to filter  \u{21b5} choose  ctrl+o order  ctrl+r reverse  \u{21e5} panes  ctrl+u clear  esc close",
-    "\u{21b5} choose  ctrl+o order  ctrl+r reverse  \u{21e5} panes  esc close",
-    "\u{21b5} choose  ctrl+o order  esc close",
+    "type to filter  \u{21b5} choose  ctrl+o order  ctrl+r reverse  ctrl+f fetch  \u{21e5} panes  ctrl+u clear  esc close",
+    "type to filter  \u{21b5} choose  ctrl+o order  ctrl+r reverse  ctrl+f fetch  \u{21e5} panes  esc close",
+    "type to filter  \u{21b5} choose  ctrl+o order  ctrl+f fetch  \u{21e5} panes  esc close",
+    "type to filter  \u{21b5} choose  \u{21e5} panes  esc close",
     "\u{21b5} choose  esc",
 ];
 const HELP_DESTINATION: &[&str] = &[
@@ -597,7 +601,13 @@ fn branch_search_line(state: &BranchesState, theme: &Theme, width: u16) -> Parag
         spans.push(Span::raw(state.query().to_string()));
     }
     spans.push(Span::styled("\u{2588}", theme.dim()));
-    if state.is_loading() {
+    // A fetch was asked for, so it says so louder than the listing that happens on its own.
+    if state.is_fetching() {
+        spans.push(Span::styled(
+            "  fetching origin\u{2026}",
+            Style::default().fg(theme.accent),
+        ));
+    } else if state.is_loading() {
         spans.push(Span::styled("  reading the remote\u{2026}", theme.dim()));
     }
 
@@ -1533,6 +1543,7 @@ mod tests {
                 is_draft: true,
             }],
             loading: false,
+            fetching: false,
         });
         state
     }

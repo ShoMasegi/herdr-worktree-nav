@@ -25,6 +25,12 @@ All notable changes to this project are documented here. The format follows
   running. One press is exactly one repository wherever in the current one you were, both
   ends wrap, and the panes in no repository count as a section. The arrows work while the
   search box has focus; the letters are text there.
+- **`Ctrl-F` fetches the repository** whose branches are on screen: `git fetch origin
+  --prune`, then a re-read. It is what fills in the date and the commit subject for branches
+  never fetched — `git ls-remote` knows only their names — and what removes the ones deleted
+  on the remote, which the list otherwise kept for ever. `fetching origin…` sits beside the
+  prompt while it runs and the list stays usable; a fetch that cannot reach the remote says
+  so and changes nothing.
 - **A picker that says what it is doing.** Opening a branch — a fetch across the network,
   a checkout of a whole working tree, then the move — used to happen after the picker had
   closed its screen, so herdr's popup framed an empty box for the seconds it took and looked
@@ -33,6 +39,9 @@ All notable changes to this project are documented here. The format follows
   beside it. `Ctrl-C` stops it during the fetch, and says so; once herdr has been asked for
   a worktree it does not, because leaving then would strand the workspace herdr made. See
   [ADR 0007](docs/adr/0007-stay-up-while-working.md).
+- **Closing the branches picker no longer waits for background work.** It used to join the
+  remote listing before it could return, which with a fetch in flight would have meant a
+  blank popup for as long as the network took.
 - **Failures are shown instead of vanishing.** A step that fails holds the screen with git's
   or herdr's own words on it until you close it, and still reaches
   `herdr plugin log list`. Before, the popup simply disappeared, which looked the same as

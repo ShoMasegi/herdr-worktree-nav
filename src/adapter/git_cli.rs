@@ -178,6 +178,15 @@ impl GitPort for GitCli {
         Ok(())
     }
 
+    fn fetch_all(&self, repo_root: &str) -> Result<()> {
+        // `--prune` is what makes this a refresh rather than an accumulation: without it a
+        // branch deleted on the remote stays in `refs/remotes` and so stays in the list,
+        // for ever. It deletes only remote-tracking refs, which are a cache of the remote
+        // and are rebuilt by the next fetch; no local branch and no working tree is touched.
+        GitCli::run_in_repo(repo_root, &["fetch", "origin", "--prune"])?;
+        Ok(())
+    }
+
     fn head_ref(&self, repo_root: &str) -> Result<String> {
         let head = GitCli::run_in_repo(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
         let head = head.trim();

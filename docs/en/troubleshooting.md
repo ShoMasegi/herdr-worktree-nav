@@ -136,6 +136,8 @@ through this against a real session.
       This is the case that catches a relative pane command.
 - [ ] A never-fetched remote branch is fetched and the worktree is based on
       `origin/<branch>`, not on `HEAD` — check `git log --oneline -1` in the new checkout.
+- [ ] `Ctrl-F` fetches: `fetching origin…` appears, a branch that only `ls-remote` knew
+      gains a date and a subject, and one deleted on the remote leaves the list.
 - [ ] While that runs, the picker stays up, names the step it is on, and animates. `Ctrl-C`
       stops it during the fetch and does nothing once `working…` is shown.
 - [ ] A step that fails holds the screen with git's or herdr's own words on it, closes on

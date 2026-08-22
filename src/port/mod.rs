@@ -170,6 +170,10 @@ pub trait GitPort: Sync {
     /// Fetch one branch so a worktree can be cut from it.
     fn fetch_branch(&self, repo_root: &str, branch: &str) -> Result<()>;
 
+    /// Bring every remote-tracking ref up to date, and drop the ones whose branch is gone
+    /// from the remote. What a person means by "fetch the repository".
+    fn fetch_all(&self, repo_root: &str) -> Result<()>;
+
     /// Current `HEAD` of `repo_root`, used as the base for a brand new branch.
     fn head_ref(&self, repo_root: &str) -> Result<String>;
 }

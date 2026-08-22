@@ -51,6 +51,11 @@ enum Update {
         repo_root: String,
         pull_requests: Vec<PullRequest>,
     },
+    /// A `git fetch` of the whole repository finished.
+    Fetched {
+        repo_root: String,
+        result: Result<()>,
+    },
     /// The chosen branch is being opened, and this is the step it has reached.
     Working(Stage),
     /// Opening finished. An error stays on screen rather than being printed after the
@@ -65,7 +70,8 @@ impl Update {
         match self {
             Update::RemoteHeads { repo_root, .. }
             | Update::RemoteUnavailable { repo_root }
-            | Update::PullRequests { repo_root, .. } => Some(repo_root),
+            | Update::PullRequests { repo_root, .. }
+            | Update::Fetched { repo_root, .. } => Some(repo_root),
             Update::Working(_) | Update::Done(_) => None,
         }
     }
@@ -116,17 +122,12 @@ pub fn run(
             // Reading one repository: the local refs synchronously because they are a few
             // milliseconds, the remote and the pull requests on a thread because they are a
             // network round trip.
-            let load = |repo_root: &str, cache: &mut HashMap<String, BranchData>| -> BranchData {
-                if let Some(data) = cache.get(repo_root) {
-                    return data.clone();
-                }
+            let read = |repo_root: &str| -> BranchData {
                 let data = BranchData {
                     local_refs: git.local_refs(repo_root).unwrap_or_default(),
                     loading: true,
                     ..BranchData::default()
                 };
-                cache.insert(repo_root.to_string(), data.clone());
-
                 let sender = sender.clone();
                 let root = repo_root.to_string();
                 scope.spawn(move || {
@@ -147,6 +148,14 @@ pub fn run(
                 });
                 data
             };
+            let load = |repo_root: &str, cache: &mut HashMap<String, BranchData>| -> BranchData {
+                if let Some(data) = cache.get(repo_root) {
+                    return data.clone();
+                }
+                let data = read(repo_root);
+                cache.insert(repo_root.to_string(), data.clone());
+                data
+            };
 
             // The repository the cursor starts on is read before the first frame, so opening it
             // is instant whether or not there is a repository step in front of it.
@@ -162,6 +171,31 @@ pub fn run(
                 terminal.draw(|frame| render::draw_branches(frame, &state, theme))?;
 
                 match receiver.try_recv() {
+                    Ok(Update::Fetched { repo_root, result }) => {
+                        match result {
+                            // Everything the fetch wrote is in the refs, so the answer is
+                            // to read the repository again rather than to patch what is on
+                            // screen. It also has to be: `--prune` deleted refs, and the
+                            // remote listing cached here would put them straight back.
+                            Ok(()) => {
+                                let fresh = read(&repo_root);
+                                cache.insert(repo_root.clone(), fresh.clone());
+                                if state.repo().repo_root == repo_root {
+                                    state.set_data(fresh);
+                                }
+                            }
+                            Err(error) => {
+                                let entry = cache.entry(repo_root.clone()).or_default();
+                                entry.fetching = false;
+                                let data = entry.clone();
+                                if state.repo().repo_root == repo_root {
+                                    state.set_data(data);
+                                    state.set_message(format!("{error:#}"));
+                                }
+                            }
+                        }
+                        continue;
+                    }
                     Ok(Update::Working(stage)) => {
                         state.set_stage(stage);
                         continue;
@@ -185,7 +219,9 @@ pub fn run(
                             Update::PullRequests { pull_requests, .. } => {
                                 entry.pull_requests = pull_requests
                             }
-                            Update::Working(_) | Update::Done(_) => unreachable!("handled above"),
+                            Update::Working(_) | Update::Done(_) | Update::Fetched { .. } => {
+                                unreachable!("handled above")
+                            }
                         }
                         // An answer for a repository the user has already left updates the cache
                         // and nothing else; it is there for them when they come back.
@@ -210,6 +246,24 @@ pub fn run(
                         let data = load(&repo_root, &mut cache);
                         state.set_data(data);
                     }
+                    BranchAction::Fetch { repo_root } => {
+                        let entry = cache.entry(repo_root.clone()).or_default();
+                        // A second fetch of the same repository would only race the first.
+                        if !entry.fetching {
+                            entry.fetching = true;
+                            let data = entry.clone();
+                            state.set_data(data);
+                            let sender = sender.clone();
+                            let root = repo_root.clone();
+                            scope.spawn(move || {
+                                let result = git.fetch_all(&root);
+                                let _ = sender.send(Update::Fetched {
+                                    repo_root: root,
+                                    result,
+                                });
+                            });
+                        }
+                    }
                     // The picker stays up and becomes a progress display. Breaking out here
                     // instead would restore the terminal and leave herdr's popup framing an
                     // empty box for as long as the fetch and the checkout take.
@@ -227,13 +281,18 @@ pub fn run(
                             let _ = sender.send(Update::Done(result));
                         });
                     }
-                    // Ctrl-C during a step that can still be abandoned. `thread::scope` joins
-                    // the worker before this function can return, which is precisely the wait
-                    // the user asked to stop, so leave the process instead. Nothing herdr knows
-                    // about exists yet — that is what `Stage::interruptible` guarantees — so
-                    // there is nothing left half-done. The `git fetch` finishes or dies on its
-                    // own; either way it only ever writes `refs/remotes`.
-                    BranchAction::Quit if state.is_working() => {
+                    // `thread::scope` joins every background thread before this function
+                    // can return, and a fetch can be a long way from done. Nothing the
+                    // picker does on the way out is worth that wait, so leave the process
+                    // instead. It is safe for the same reason in both cases: a `git fetch`
+                    // that outlives us only ever writes `refs/remotes`, and a step that
+                    // could leave something half-made does not offer Ctrl-C at all — see
+                    // `Stage::interruptible`.
+                    //
+                    // A failure is the exception: it is raised again on the way out so that
+                    // `herdr plugin log list` gets it. By then the work has finished, so
+                    // the join costs nothing.
+                    BranchAction::Quit if failure.is_none() => {
                         ratatui::try_restore()?;
                         std::process::exit(0);
                     }
@@ -279,7 +338,8 @@ fn perform(herdr: &dyn HerdrPort, action: BranchAction) -> Result<Exit> {
         BranchAction::Chosen(_)
         | BranchAction::Consumed
         | BranchAction::Ignored
-        | BranchAction::LoadRepo { .. } => Ok(Exit::Closed),
+        | BranchAction::LoadRepo { .. }
+        | BranchAction::Fetch { .. } => Ok(Exit::Closed),
     }
 }
 

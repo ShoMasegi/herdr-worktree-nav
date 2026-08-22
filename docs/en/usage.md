@@ -159,11 +159,22 @@ branch name is the common case.
 | `Ctrl-U` | empty the search |
 | `Ctrl-O` | next order |
 | `Ctrl-R` | reverse it |
+| `Ctrl-F` | fetch this repository |
 | `Tab` | back to panes |
 | `Esc` | back to the repositories |
 | `Ctrl-C` | close |
 
 Each repository is read once. Going back, picking another, and returning does not re-run git.
+
+`Ctrl-F` runs `git fetch origin --prune` on the repository and reads it again. That is what
+fills in the date and the commit subject for branches you have never fetched — until then
+`git ls-remote` knows only their names — and what removes the ones that no longer exist on
+the remote. It deletes nothing but remote-tracking refs, which are a cache of the remote:
+no local branch and no working tree is touched.
+
+`fetching origin…` sits beside the prompt in the accent colour while it runs, and the list
+stays usable throughout. A fetch that cannot reach the remote says so on that line and
+changes nothing.
 
 The remote is read in the background. The local answer is on screen immediately and
 `reading the remote…` sits beside the prompt until `git ls-remote` returns; branches that

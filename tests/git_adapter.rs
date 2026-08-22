@@ -199,6 +199,53 @@ fn lists_remote_heads_and_fetches_one_into_a_usable_base() {
 }
 
 #[test]
+fn fetching_the_repository_updates_every_branch_and_drops_the_ones_that_are_gone() {
+    let repo = repository();
+    let root = path_str(repo.path());
+    let remote = tempfile::tempdir().unwrap();
+    git(remote.path(), &["init", "--bare", "--initial-branch=main"]);
+    git(
+        repo.path(),
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
+    git(repo.path(), &["push", "-q", "origin", "main", "feat/login"]);
+    git(
+        repo.path(),
+        &["update-ref", "-d", "refs/remotes/origin/feat/login"],
+    );
+
+    // A branch the remote has and this clone has never fetched.
+    GitCli.fetch_all(&root).unwrap();
+    let refs = GitCli.local_refs(&root).unwrap();
+    let fetched = refs
+        .iter()
+        .find(|r| r.name == "feat/login" && r.kind == RefKind::Remote);
+    assert!(
+        fetched.is_some_and(|r| r.committed_at.is_some() && r.subject.is_some()),
+        "the fetch is what gives a remote branch a date and a subject: {refs:?}"
+    );
+
+    // And one it no longer has.
+    let remote_repo = remote.path().to_str().unwrap().to_string();
+    Command::new("git")
+        .arg("--git-dir")
+        .arg(&remote_repo)
+        .args(["branch", "-D", "feat/login"])
+        .output()
+        .unwrap();
+
+    GitCli.fetch_all(&root).unwrap();
+    assert!(
+        !GitCli
+            .local_refs(&root)
+            .unwrap()
+            .iter()
+            .any(|r| r.name == "feat/login" && r.kind == RefKind::Remote),
+        "--prune is what keeps a deleted branch from haunting the list"
+    );
+}
+
+#[test]
 fn a_fetch_that_cannot_reach_the_remote_says_so_rather_than_blaming_the_repository() {
     // git exits 128 for every fatal error, so treating that code alone as "not a git
     // repository" turns an unreachable remote into a diagnosis about the wrong thing —

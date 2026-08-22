@@ -110,6 +110,7 @@ herdr 側は CI ではテストできません（サーバーが無いため）�
 - [ ] `Ctrl-O` が state / updated / name を巡回し、`Ctrl-R` が現在の並びを反転する。どちらも絞り込み入力中とリポジトリ切り替えをまたいで保たれる
 - [ ] Branches ビューが、プラグインディレクトリからだけでなく **worktree の中から** も開ける（相対パスの pane コマンドを検出できるケース）
 - [ ] 未 fetch のリモートブランチが fetch され、worktree が `HEAD` ではなく `origin/<branch>` を基点に作られる（新しい checkout で `git log --oneline -1` を確認）
+- [ ] `Ctrl-F` で fetch できる。`fetching origin…` が出て、`ls-remote` しか知らなかったブランチに日付と件名が付き、リモートで削除済みのブランチが一覧から消える
 - [ ] その処理中、ピッカーが画面に残り、今の段階名を表示し、スピナーが回る。`Ctrl-C` は fetch 中は効き、`working…` 表示中は効かない
 - [ ] 失敗した段階で画面が保持され、git または herdr の言い分がそのまま出て、`Enter` か `Esc` で閉じる。同じメッセージが `herdr plugin log list` にも残る。リモートに到達できないことが「not a git repository」と報告されないこと
 - [ ] すでに pane で開いているブランチは、二重にチェックアウトせずジャンプする

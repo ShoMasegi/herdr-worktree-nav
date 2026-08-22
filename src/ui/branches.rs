@@ -31,6 +31,10 @@ pub enum BranchAction {
     LoadRepo {
         repo_root: String,
     },
+    /// Bring this repository up to date with its remote.
+    Fetch {
+        repo_root: String,
+    },
     /// The branch is already being worked on; go there instead of checking it out again.
     Jump {
         pane_id: String,
@@ -65,6 +69,8 @@ pub struct BranchData {
     pub pull_requests: Vec<PullRequest>,
     /// The remote listing is still in flight, so the list may still grow.
     pub loading: bool,
+    /// A `git fetch` of the whole repository is running, asked for by the user.
+    pub fetching: bool,
 }
 
 /// What the picker is doing, once the choosing is over.
@@ -290,6 +296,16 @@ impl BranchesState {
 
     pub fn is_loading(&self) -> bool {
         self.data.loading
+    }
+
+    pub fn is_fetching(&self) -> bool {
+        self.data.fetching
+    }
+
+    /// Say something in the prompt line until the next key. Used for what a background job
+    /// has to report — a fetch that could not reach the remote, say.
+    pub fn set_message(&mut self, message: String) {
+        self.message = Some(message);
     }
 
     pub fn message(&self) -> Option<&str> {
@@ -581,6 +597,9 @@ impl BranchesState {
                     self.reorder(self.order.reverse());
                     BranchAction::Consumed
                 }
+                KeyCode::Char('f') if self.step == Step::Branch => BranchAction::Fetch {
+                    repo_root: self.repo().repo_root.clone(),
+                },
                 _ => BranchAction::Ignored,
             };
         }
@@ -1466,6 +1485,41 @@ mod tests {
             error,
             "fatal: could not read from remote fatal: could not fetch"
         );
+    }
+
+    #[test]
+    fn ctrl_f_asks_for_the_repository_on_screen_to_be_fetched() {
+        let mut state = state();
+        assert_eq!(
+            ctrl(&mut state, 'f'),
+            BranchAction::Fetch {
+                repo_root: "/src/app".into()
+            }
+        );
+
+        // The caller answers by handing back data that says so, which is what the prompt
+        // line reads to say `fetching origin…`.
+        assert!(!state.is_fetching());
+        state.set_data(BranchData {
+            fetching: true,
+            ..app_branches()
+        });
+        assert!(state.is_fetching());
+    }
+
+    #[test]
+    fn fetching_is_only_offered_where_there_is_a_repository_on_screen() {
+        // On the repository step there is a list of them and no one is chosen yet; on the
+        // destination step the question has already moved on.
+        let mut on_the_repo_step = two_repos("/src/app");
+        assert_eq!(on_the_repo_step.step(), Step::Repo);
+        assert_eq!(ctrl(&mut on_the_repo_step, 'f'), BranchAction::Ignored);
+
+        let mut state = state();
+        type_in(&mut state, "chore");
+        state.handle_key(key(KeyCode::Enter));
+        assert_eq!(state.step(), Step::Destination);
+        assert_eq!(ctrl(&mut state, 'f'), BranchAction::Ignored);
     }
 
     #[test]
