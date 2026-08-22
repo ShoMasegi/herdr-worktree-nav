@@ -50,10 +50,14 @@ pub struct PanesState {
 }
 
 impl PanesState {
-    pub fn new(tree: Tree) -> Self {
+    /// `home` shortens checkout paths to `~/...`; pass `None` to leave them absolute.
+    pub fn new(tree: Tree, home: Option<String>) -> Self {
         let mut state = Self {
             tree,
-            options: ViewOptions::default(),
+            options: ViewOptions {
+                home,
+                ..ViewOptions::default()
+            },
             rows: Vec::new(),
             lines: Vec::new(),
             cursor: 0,
@@ -421,37 +425,40 @@ mod tests {
 
     /// `me/app` with main (a working agent), feat/login (blocked), and an idle fix/crash.
     fn state() -> PanesState {
-        PanesState::new(Tree {
-            repos: vec![RepoNode {
-                repo_key: "/src/app/.git".into(),
-                repo_root: "/src/app".into(),
-                display_name: "me/app".into(),
-                worktrees: vec![
-                    WorktreeNode {
-                        branch: Some("main".into()),
-                        checkout_path: "/src/app".into(),
-                        is_primary: true,
-                        open_workspace_id: Some("w1".into()),
-                        panes: vec![pane("w1:p1", "claude", AgentStatus::Working)],
-                    },
-                    WorktreeNode {
-                        branch: Some("feat/login".into()),
-                        checkout_path: "/wt/app/feat-login".into(),
-                        is_primary: false,
-                        open_workspace_id: Some("w2".into()),
-                        panes: vec![pane("w2:p1", "codex", AgentStatus::Blocked)],
-                    },
-                    WorktreeNode {
-                        branch: Some("fix/crash".into()),
-                        checkout_path: "/wt/app/fix-crash".into(),
-                        is_primary: false,
-                        open_workspace_id: None,
-                        panes: vec![],
-                    },
-                ],
-            }],
-            ungrouped: vec![pane("w9:p1", "zsh", AgentStatus::Unknown)],
-        })
+        PanesState::new(
+            Tree {
+                repos: vec![RepoNode {
+                    repo_key: "/src/app/.git".into(),
+                    repo_root: "/src/app".into(),
+                    display_name: "me/app".into(),
+                    worktrees: vec![
+                        WorktreeNode {
+                            branch: Some("main".into()),
+                            checkout_path: "/src/app".into(),
+                            is_primary: true,
+                            open_workspace_id: Some("w1".into()),
+                            panes: vec![pane("w1:p1", "claude", AgentStatus::Working)],
+                        },
+                        WorktreeNode {
+                            branch: Some("feat/login".into()),
+                            checkout_path: "/wt/app/feat-login".into(),
+                            is_primary: false,
+                            open_workspace_id: Some("w2".into()),
+                            panes: vec![pane("w2:p1", "codex", AgentStatus::Blocked)],
+                        },
+                        WorktreeNode {
+                            branch: Some("fix/crash".into()),
+                            checkout_path: "/wt/app/fix-crash".into(),
+                            is_primary: false,
+                            open_workspace_id: None,
+                            panes: vec![],
+                        },
+                    ],
+                }],
+                ungrouped: vec![pane("w9:p1", "zsh", AgentStatus::Unknown)],
+            },
+            None,
+        )
     }
 
     /// Put the cursor on the row with this label.

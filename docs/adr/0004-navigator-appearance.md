@@ -25,9 +25,15 @@ gutter carrying `◆` for where the session currently is, the connected `├─�
 glyphs, the status glyph, the label, the right-hand meta column at 28/20/14 columns, the
 blank line between groups, the breadcrumb drawn over a rule, the key hint, and the scrollbar.
 
-The meta column follows the navigator's meaning rather than this plugin's old one: what is
-happening, not where the files are. Checkout paths moved to the breadcrumb, which is where
-the navigator puts that kind of context.
+The meta column is the one place the navigator's *meaning* is not followed. It was, at first:
+the navigator puts activity there — an agent and its state, a count of panes — and checkout
+paths moved to the breadcrumb. In use that turned out to be the wrong trade for this picker.
+The navigator's rows are workspaces and tabs, which the user named and can already find;
+these rows are checkouts, and where one is on disk is the thing you cannot infer. So the
+column carries the checkout path and the pane id, as it did before, shortened to `~` and
+middle-elided when it will not fit. The breadcrumb keeps the whole path, which is where an
+elision can be read in full. Everything else about the column — its fixed 28/20/14 width, its
+position, its quiet styling — is the navigator's.
 
 Filtering also follows it. A row that did not match but is kept for context — the repository
 above a result, the panes under a matching branch — stays in the list, dimmed. Hiding it

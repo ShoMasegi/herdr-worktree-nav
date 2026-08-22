@@ -35,11 +35,11 @@
 ### 行の読み方
 
 ```
- ◆ ▾ ● ShoMasegi/herdr-gh-nav (2)               1 working
-   └── ● main                                   2 panes · 1 working
- ◆    ├── ● claude                              claude · working
-      └── · shell                               shell
-   └── · fix/crash                              no pane
+ ◆ ▾ ● ShoMasegi/herdr-gh-nav (2)
+   └── ● main                          ~/Workspace/herdr-gh-nav
+ ◆    ├── ● claude                      w7:p2
+      └── · shell                       w7:p3
+   └── · fix/crash  no pane             ~/.herdr/…gh-nav/fix-crash
 ```
 
 左から順に、gutter、tree、状態グリフ、ラベル、meta 列です。
@@ -47,9 +47,10 @@
 - **gutter** には、いまフォーカスされている pane と、それを含むリポジトリに `◆` が付きます。
 - **tree** はリポジトリに `▾`/`▸`（`Enter` で開閉）、その配下に `├──`/`└──` の連結グリフを使います。階層が深い worktree でも、どこに属しているかが読み取れます。
 - **ラベル** はリポジトリが `owner/repo (n)`（`n` は開いている pane 数）、worktree はブランチ名、pane はエージェント名（無ければ `shell`）です。
-- **meta 列** は「ファイルがどこにあるか」ではなく「いま何が起きているか」を示します。リポジトリは活動サマリ、worktree は `n panes · 活動`、pane は `エージェント · 状態` です。何も動いていない checkout は `no pane` と出ます。
+- **meta 列** は「それがどこにあるか」を示します。worktree は checkout パス、pane は pane ID です。リポジトリは折りたたまれている間だけルートを表示します（展開時は直下の主 checkout が同じパスを持つためです）。ホーム配下のパスは `~` に短縮し、列に収まらない場合は端ではなく**中央**を省略します。先頭はどのツリーの中か、末尾はどの checkout かを示すためです。
+- 何も動いていない checkout は、meta 列がパスで埋まっているため、名前の脇に `no pane` と付きます。
 
-checkout パスは一覧の下の詳細行に出て、カーソルに追従します。行からパスを外しているのは、一覧を「活動」の観点で一目で追えるようにするためです。
+一覧の下の詳細行には、カーソル位置の行の完全なパスが出ます。省略されたパスはここで読めます。
 
 リポジトリごとに空行が入り、一覧が pane より長い場合は右端にスクロールバーが出ます。
 

@@ -47,10 +47,14 @@ pub struct Row {
     /// Tree depth: 0 for a group, 1 for a worktree, 2 for a pane under one.
     pub depth: u8,
     pub label: String,
-    /// The right-hand column: activity for groups, pane counts for worktrees, and the
-    /// agent and its state for panes.
+    /// The right-hand column: where the thing is. A checkout path for a worktree, a pane id
+    /// for a pane, and for a repository its root — but only while it is folded, since the
+    /// main checkout directly beneath otherwise repeats it.
     pub meta: String,
     pub status: AgentStatus,
+    /// A worktree with no pane in it. Called out beside the label, since its meta column is
+    /// taken by the checkout path.
+    pub is_idle: bool,
     /// The row the session is currently on, marked with a caret in the gutter.
     pub is_current: bool,
     /// Only meaningful for a group row.
@@ -125,6 +129,9 @@ pub struct ViewOptions {
     pub collapsed: HashSet<String>,
     pub query: String,
     pub state_filter: Option<StateFilter>,
+    /// The user's home directory, so paths can be shown as `~/...`. Passed in rather than
+    /// read, because this module does not touch the environment.
+    pub home: Option<String>,
 }
 
 impl ViewOptions {
@@ -224,8 +231,9 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                     reference: RowRef::Worktree(repo_index, worktree_index),
                     depth: 1,
                     label: worktree.label().to_string(),
-                    meta: worktree_meta(worktree.panes.len(), &worktree.panes),
+                    meta: abbreviate(&worktree.checkout_path, options.home.as_deref()),
                     status: worktree_status,
+                    is_idle: worktree.panes.is_empty(),
                     is_current: false,
                     expanded: true,
                     matched: worktree_matches,
@@ -253,8 +261,14 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
             reference: RowRef::Repo(repo_index),
             depth: 0,
             label: format!("{} ({})", repo.display_name, panes.len()),
-            meta: activity(panes.iter().map(|pane| pane.agent_status)),
+            // Only while folded: expanded, the main checkout below carries the same path.
+            meta: if collapsed {
+                abbreviate(&repo.repo_root, options.home.as_deref())
+            } else {
+                String::new()
+            },
             status: repo_status,
+            is_idle: false,
             is_current: panes.iter().any(|pane| pane.focused),
             expanded: !collapsed,
             matched: repo_matches,
@@ -289,8 +303,9 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                 reference: RowRef::UngroupedRepo,
                 depth: 0,
                 label: format!("not in any repository ({})", tree.ungrouped.len()),
-                meta: activity(tree.ungrouped.iter().map(|pane| pane.agent_status)),
+                meta: String::new(),
                 status: aggregate(tree.ungrouped.iter().map(|pane| pane.agent_status)),
+                is_idle: false,
                 is_current: tree.ungrouped.iter().any(|pane| pane.focused),
                 expanded: true,
                 matched: true,
@@ -310,61 +325,27 @@ fn pane_row(reference: RowRef, depth: u8, pane: &PaneNode, matched: bool) -> Row
             .display_name
             .clone()
             .unwrap_or_else(|| UNNAMED_PANE.to_string()),
-        meta: pane_meta(pane),
+        meta: pane.pane_id.clone(),
         status: pane.agent_status,
+        is_idle: false,
         is_current: pane.focused,
         expanded: false,
         matched,
     }
 }
 
-/// `{agent} · {state}` when herdr is tracking an agent, otherwise just what the pane is.
-fn pane_meta(pane: &PaneNode) -> String {
-    match (
-        pane.display_name.as_deref(),
-        status_label(pane.agent_status),
-    ) {
-        (Some(name), Some(state)) => format!("{name} · {state}"),
-        (Some(name), None) => name.to_string(),
-        (None, _) => UNNAMED_PANE.to_string(),
+/// Show a path under the user's home as `~/...`. Popups are narrower than a full pane, and
+/// sixteen characters of `/Users/someone` are the least useful part of a checkout path.
+fn abbreviate(path: &str, home: Option<&str>) -> String {
+    let Some(home) = home.filter(|home| !home.is_empty()) else {
+        return path.to_string();
+    };
+    let home = home.trim_end_matches('/');
+    match path.strip_prefix(home) {
+        Some("") => "~".to_string(),
+        Some(rest) if rest.starts_with('/') => format!("~{rest}"),
+        _ => path.to_string(),
     }
-}
-
-/// `n panes`, with the activity appended when there is any, or a plain statement that the
-/// checkout is sitting there unused.
-fn worktree_meta(pane_count: usize, panes: &[PaneNode]) -> String {
-    if pane_count == 0 {
-        return "no pane".to_string();
-    }
-    let noun = if pane_count == 1 { "pane" } else { "panes" };
-    let activity = activity(panes.iter().map(|pane| pane.agent_status));
-    if activity.is_empty() {
-        format!("{pane_count} {noun}")
-    } else {
-        format!("{pane_count} {noun} · {activity}")
-    }
-}
-
-/// A summary like `1 blocked · 2 working`, most urgent first, omitting states nothing is in.
-/// Panes with no agent contribute nothing: "3 idle" would be a lie about a shell.
-fn activity(statuses: impl Iterator<Item = AgentStatus>) -> String {
-    let mut counts = [0usize; 4];
-    for status in statuses {
-        match status {
-            AgentStatus::Blocked => counts[0] += 1,
-            AgentStatus::Working => counts[1] += 1,
-            AgentStatus::Done => counts[2] += 1,
-            AgentStatus::Idle => counts[3] += 1,
-            AgentStatus::Unknown => {}
-        }
-    }
-    ["blocked", "working", "done", "idle"]
-        .iter()
-        .zip(counts)
-        .filter(|(_, count)| *count > 0)
-        .map(|(label, count)| format!("{count} {label}"))
-        .collect::<Vec<_>>()
-        .join(" · ")
 }
 
 /// The state a parent row shows: the most urgent one anything under it is in.
@@ -627,19 +608,66 @@ mod tests {
     }
 
     #[test]
-    fn the_meta_column_says_what_is_happening_not_where_the_files_are() {
+    fn the_meta_column_says_where_the_thing_is() {
         let rows = flatten(&tree(), &ViewOptions::default());
-        assert_eq!(find(&rows, "me/app (3)").meta, "1 working · 1 idle");
-        assert_eq!(find(&rows, "main").meta, "2 panes · 1 working");
-        assert_eq!(find(&rows, "feat/login").meta, "1 pane · 1 idle");
-        assert_eq!(find(&rows, "claude").meta, "claude · working");
-        assert_eq!(find(&rows, "shell").meta, "shell");
+        assert_eq!(find(&rows, "main").meta, "/wt/main");
+        assert_eq!(find(&rows, "feat/login").meta, "/wt/feat-login");
+        assert_eq!(find(&rows, "claude").meta, "w1:p1");
+        assert_eq!(find(&rows, "shell").meta, "w1:p2");
     }
 
     #[test]
-    fn a_checkout_with_nothing_running_says_so_rather_than_counting_to_zero() {
+    fn an_expanded_repository_leaves_its_path_to_the_checkout_below_it() {
+        // The main checkout sits directly under it with the same path; printing both is
+        // noise. Folded, that row is not on screen, so the repository carries it.
         let rows = flatten(&tree(), &ViewOptions::default());
-        assert_eq!(find(&rows, "fix/crash").meta, "no pane");
+        assert_eq!(find(&rows, "me/app (3)").meta, "");
+
+        let folded = ViewOptions {
+            collapsed: HashSet::from(["/src/app/.git".to_string()]),
+            ..Default::default()
+        };
+        assert_eq!(
+            find(&flatten(&tree(), &folded), "me/app (3)").meta,
+            "/src/app"
+        );
+    }
+
+    #[test]
+    fn a_checkout_with_nothing_running_is_flagged_beside_its_name() {
+        // Its meta column is taken by the path, so the note goes next to the label.
+        let rows = flatten(&tree(), &ViewOptions::default());
+        assert!(find(&rows, "fix/crash").is_idle);
+        assert_eq!(find(&rows, "fix/crash").meta, "/wt/fix-crash");
+        assert!(!find(&rows, "main").is_idle);
+    }
+
+    #[test]
+    fn paths_under_the_home_directory_are_shortened() {
+        let mut tree = tree();
+        tree.repos[0].worktrees[0].checkout_path = "/home/me/Workspace/app".into();
+        let options = ViewOptions {
+            home: Some("/home/me".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            find(&flatten(&tree, &options), "main").meta,
+            "~/Workspace/app"
+        );
+    }
+
+    #[test]
+    fn a_path_outside_the_home_directory_is_left_alone() {
+        assert_eq!(abbreviate("/srv/app", Some("/home/me")), "/srv/app");
+        // A sibling that merely shares the prefix must not be mangled.
+        assert_eq!(
+            abbreviate("/home/median/app", Some("/home/me")),
+            "/home/median/app"
+        );
+        assert_eq!(abbreviate("/home/me", Some("/home/me")), "~");
+        assert_eq!(abbreviate("/home/me/x", Some("/home/me/")), "~/x");
+        assert_eq!(abbreviate("/home/me/x", None), "/home/me/x");
+        assert_eq!(abbreviate("/home/me/x", Some("")), "/home/me/x");
     }
 
     #[test]

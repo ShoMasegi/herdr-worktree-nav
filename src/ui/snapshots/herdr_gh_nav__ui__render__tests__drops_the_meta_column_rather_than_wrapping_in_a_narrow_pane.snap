@@ -1,6 +1,6 @@
 ---
 source: src/ui/render.rs
-expression: "screen(&PanesState::new(tree()), 46, 14)"
+expression: "screen(&PanesState::new(tree(), None), 46, 14)"
 ---
 " / search panes                       5 panes "
 "──────────────────────────────────────────────"
@@ -10,7 +10,7 @@ expression: "screen(&PanesState::new(tree()), 46, 14)"
 "   │  └── · shell                            █"
 "   ├── ○ feat/login                          █"
 "   │  └── ○ codex                            █"
-"   └── · fix/crash                           █"
+"   └── · fix/crash  no pane                  █"
 "                                             █"
 "   ▾ ● me/site (1)                           █"
 "   └── ● develop                             │"

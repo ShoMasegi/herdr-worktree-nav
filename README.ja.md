@@ -16,16 +16,16 @@
 ┌─ herdr-gh-nav ───────────────────────────────────────────────────────────────┐
 │ / search panes                                                      13 panes │
 │──────────────────────────────────────────────────────────────────────────────│
-│ ◆ ▾ ● ShoMasegi/herdr-gh-nav (2)                          1 working          │
-│   └── ● main                                              2 panes · 1 working│
-│ ◆    ├── ● claude                                         claude · working   │
-│      └── · shell                                          shell              │
+│ ◆ ▾ ● ShoMasegi/herdr-gh-nav (2)                                             │
+│   └── ● main                                       ~/Workspace/herdr-gh-nav  │
+│ ◆    ├── ● claude                                  w7:p2                     │
+│      └── · shell                                   w7:p3                     │
 │                                                                              │
-│   ▾ ○ ShoMasegi/harbour-backend (5)                       3 idle             │
-│   ├── ○ feat/hbr-51-grant-table-privileges                5 panes · 3 idle   │
-│   │  ├── ○ claude                                         claude · idle      │
-│   │  └── · shell                                          shell              │
-│   └── · loop-review-fix-request                           no pane            │
+│   ▾ ○ ShoMasegi/harbour-backend (5)                                          │
+│   ├── ○ feat/hbr-51-grant-table-privileges         ~/Workspace/…nnks-backend │
+│   │  ├── ○ claude                                  w1:p1                     │
+│   │  └── · shell                                   w1:p2                     │
+│   └── · loop-review-fix-request  no pane           ~/.herdr/…w-fix-request   │
 │                                                                              │
 │ ShoMasegi/herdr-gh-nav · 1 worktree · 2 panes · ~/Workspace/herdr-gh-nav ─────│
 │ ↵ jump  n new pane  ⇥ branches  / search  b/w/i/d/a states  h other  esc close│

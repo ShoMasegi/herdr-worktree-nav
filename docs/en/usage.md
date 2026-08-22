@@ -45,11 +45,11 @@ to the keys above; `Esc` clears it.
 ### Reading a row
 
 ```
- ◆ ▾ ● ShoMasegi/herdr-gh-nav (2)               1 working
-   └── ● main                                   2 panes · 1 working
- ◆    ├── ● claude                              claude · working
-      └── · shell                               shell
-   └── · fix/crash                              no pane
+ ◆ ▾ ● ShoMasegi/herdr-gh-nav (2)
+   └── ● main                          ~/Workspace/herdr-gh-nav
+ ◆    ├── ● claude                      w7:p2
+      └── · shell                       w7:p3
+   └── · fix/crash  no pane             ~/.herdr/…gh-nav/fix-crash
 ```
 
 Left to right: a gutter, the tree, a status glyph, the label, and a meta column.
@@ -60,12 +60,16 @@ Left to right: a gutter, the tree, a status glyph, the label, and a meta column.
   glyphs for what is under it, so a deep worktree still reads as belonging somewhere.
 - **The label** is `owner/repo (n)` for a repository, where `n` counts its open panes; the
   branch for a worktree; and the agent's name, or `shell`, for a pane.
-- **The meta column** says what is happening, not where the files are: the activity summary
-  for a repository, `n panes · activity` for a worktree, and `agent · state` for a pane. A
-  checkout with nothing running in it says `no pane`.
+- **The meta column** says where the thing is: the checkout path for a worktree and the pane
+  id for a pane. A repository shows its root only while it is folded — expanded, the main
+  checkout directly beneath already carries it. Paths under your home are shortened to `~`,
+  and one too long for the column loses its middle rather than either end, since the head
+  says which tree the checkout is in and the tail says which checkout.
+- A checkout with nothing running in it is marked `no pane` beside its name, because its
+  meta column is taken by the path.
 
-The checkout path lives in the breadcrumb under the list, which follows the cursor. Keeping
-paths out of the rows is what lets the list be scanned for activity at a glance.
+The breadcrumb under the list carries the whole path for the row under the cursor, which is
+where an elided one can be read in full.
 
 A blank line separates each repository, and a scrollbar appears on the right when the list is
 longer than the pane.

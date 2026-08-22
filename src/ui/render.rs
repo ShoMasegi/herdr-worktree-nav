@@ -291,7 +291,7 @@ fn render_row(
         .saturating_sub(used)
         .saturating_sub(1);
 
-    let spans = vec![
+    let mut spans = vec![
         Span::styled(gutter, gutter_style),
         Span::styled(prefix, tree_style),
         Span::styled(" ", base),
@@ -299,6 +299,14 @@ fn render_row(
         Span::raw(" "),
         Span::styled(truncate(&row.label, label_budget), label_style),
     ];
+    // The meta column is taken by the checkout path, so a checkout with nothing running in
+    // it says so beside its name instead.
+    if row.is_idle {
+        spans.push(Span::styled(
+            "  no pane",
+            if selected { base } else { theme.dim() },
+        ));
+    }
     frame.render_widget(Paragraph::new(Line::from(spans)).style(base), rect);
 
     if meta_width == 0 || row.meta.is_empty() {
@@ -310,17 +318,12 @@ fn render_row(
         meta_width,
         1,
     );
-    let meta_style = if selected {
-        base
-    } else if context_only || row.reference.is_group() || row.reference.is_worktree() {
-        theme.dim()
-    } else {
-        theme.status_style(row.status)
-    };
+    // Paths and pane ids are locations, not states: they stay quiet whatever the row is.
+    let meta_style = if selected { base } else { theme.dim() };
     frame.render_widget(
         Paragraph::new(format!(
             " {}",
-            truncate(&row.meta, meta_width.saturating_sub(2) as usize)
+            middle_elide(&row.meta, meta_width.saturating_sub(2) as usize)
         ))
         .style(meta_style),
         meta_rect,
@@ -393,6 +396,28 @@ fn render_scrollbar(
             rect,
         );
     }
+}
+
+/// Cut out of the middle, keeping both ends. A path's head says which tree it is in and its
+/// tail says which checkout, so losing the middle costs the least. Matches herdr's own
+/// `middle_elide`: an even split around a single ellipsis.
+pub(crate) fn middle_elide(text: &str, width: usize) -> String {
+    let length = text.chars().count();
+    if length <= width {
+        return text.to_string();
+    }
+    if width <= 1 {
+        return "\u{2026}".to_string();
+    }
+    let content = width - 1;
+    let left = content / 2;
+    let right = content - left;
+    let prefix: String = text.chars().take(left).collect();
+    let suffix: String = text.chars().skip(length - right).collect();
+    let mut out = prefix;
+    out.push('\u{2026}');
+    out.push_str(&suffix);
+    out
 }
 
 /// Cut to `width` characters, with an ellipsis when something was dropped.
@@ -782,19 +807,19 @@ mod tests {
 
     #[test]
     fn draws_the_tree_the_gutter_and_the_meta_column() {
-        insta::assert_snapshot!(screen(&PanesState::new(tree()), 92, 16));
+        insta::assert_snapshot!(screen(&PanesState::new(tree(), None), 92, 16));
     }
 
     #[test]
     fn draws_a_folded_repository_with_the_caret_turned() {
-        let mut state = PanesState::new(tree());
+        let mut state = PanesState::new(tree(), None);
         press(&mut state, KeyCode::Enter);
         insta::assert_snapshot!(screen(&state, 92, 14));
     }
 
     #[test]
     fn draws_a_search_with_its_non_matching_context_still_present() {
-        let mut state = PanesState::new(tree());
+        let mut state = PanesState::new(tree(), None);
         press(&mut state, KeyCode::Char('/'));
         for c in "codex".chars() {
             press(&mut state, KeyCode::Char(c));
@@ -804,26 +829,26 @@ mod tests {
 
     #[test]
     fn draws_a_state_filter_as_a_chip_in_the_search_line() {
-        let mut state = PanesState::new(tree());
+        let mut state = PanesState::new(tree(), None);
         press(&mut state, KeyCode::Char('b'));
         insta::assert_snapshot!(screen(&state, 92, 12));
     }
 
     #[test]
     fn draws_panes_outside_any_repository_as_their_own_group() {
-        let mut state = PanesState::new(tree());
+        let mut state = PanesState::new(tree(), None);
         press(&mut state, KeyCode::Char('h'));
         insta::assert_snapshot!(screen(&state, 92, 18));
     }
 
     #[test]
     fn drops_the_meta_column_rather_than_wrapping_in_a_narrow_pane() {
-        insta::assert_snapshot!(screen(&PanesState::new(tree()), 46, 14));
+        insta::assert_snapshot!(screen(&PanesState::new(tree(), None), 46, 14));
     }
 
     #[test]
     fn scrolls_and_shows_a_scrollbar_when_the_list_does_not_fit() {
-        let mut state = PanesState::new(tree());
+        let mut state = PanesState::new(tree(), None);
         for _ in 0..8 {
             press(&mut state, KeyCode::Char('j'));
         }
@@ -832,7 +857,7 @@ mod tests {
 
     #[test]
     fn draws_nothing_matching_without_losing_the_chrome() {
-        let mut state = PanesState::new(tree());
+        let mut state = PanesState::new(tree(), None);
         press(&mut state, KeyCode::Char('/'));
         for c in "zzzz".chars() {
             press(&mut state, KeyCode::Char(c));
@@ -872,7 +897,7 @@ mod tests {
 
     #[test]
     fn a_row_kept_only_as_context_is_dimmed_and_a_result_is_not() {
-        let mut state = PanesState::new(tree());
+        let mut state = PanesState::new(tree(), None);
         press(&mut state, KeyCode::Char('/'));
         for c in "codex".chars() {
             press(&mut state, KeyCode::Char(c));
@@ -896,7 +921,7 @@ mod tests {
 
     #[test]
     fn nothing_is_dimmed_as_context_when_nothing_is_being_filtered() {
-        let buffer = buffer_of(&PanesState::new(tree()), 92, 16);
+        let buffer = buffer_of(&PanesState::new(tree(), None), 92, 16);
         assert!(!style_of_row(&buffer, "feat/login")
             .add_modifier
             .contains(Modifier::DIM));
@@ -911,7 +936,7 @@ mod tests {
             accent: crate::domain::chrome::Accent::Rgb(137, 180, 250),
             ..Chrome::default()
         });
-        let state = PanesState::new(tree());
+        let state = PanesState::new(tree(), None);
         let mut terminal = Terminal::new(TestBackend::new(92, 16)).unwrap();
         terminal
             .draw(|frame| draw(frame, &state, &theme, Mode::Panes))
@@ -927,6 +952,20 @@ mod tests {
         );
         // A pane row is not a group, so it keeps the terminal's own foreground.
         assert_eq!(style_of_row(&buffer, "codex").fg, Some(Color::Reset));
+    }
+
+    #[test]
+    fn a_path_too_long_for_the_column_loses_its_middle_not_its_ends() {
+        // Both ends carry meaning: the head says which tree the checkout is in, the tail
+        // says which checkout. Matches herdr's own middle_elide.
+        assert_eq!(
+            middle_elide("~/.herdr/worktrees/app/loop-review-fix-request", 26),
+            "~/.herdr/wor\u{2026}w-fix-request"
+        );
+        assert_eq!(middle_elide("~/short", 26), "~/short");
+        assert_eq!(middle_elide("~/short", 7), "~/short");
+        assert_eq!(middle_elide("abcdef", 1), "\u{2026}");
+        assert_eq!(middle_elide("abcdef", 0), "\u{2026}");
     }
 
     // ---- branches view ----

@@ -25,7 +25,7 @@ pub fn run(
     theme: &Theme,
 ) -> Result<Exit> {
     let (_, tree) = collect::collect_tree(herdr, git)?;
-    let mut state = PanesState::new(tree);
+    let mut state = PanesState::new(tree, home_dir());
     if let Some(pane_id) = initial_pane {
         state.focus_pane(pane_id);
     }
@@ -51,6 +51,11 @@ pub fn run(
     ratatui::try_restore()?;
 
     perform(herdr, outcome)
+}
+
+/// The user's home directory, for shortening checkout paths in the list.
+fn home_dir() -> Option<String> {
+    dirs::home_dir().and_then(|home| home.to_str().map(str::to_string))
 }
 
 fn perform(herdr: &dyn HerdrPort, action: Action) -> Result<Exit> {
