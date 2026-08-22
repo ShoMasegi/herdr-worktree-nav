@@ -1,0 +1,97 @@
+# Configuration
+
+[日本語](../ja/configuration.md)
+
+herdr-gh-nav has no configuration file of its own. Everything it honours is either herdr's
+configuration or the state of your repository, which is deliberate: two tools disagreeing
+about where worktrees go is worse than one tool having fewer knobs.
+
+## Keybindings
+
+Plugins cannot set your keybindings. Add them to `~/.config/herdr/config.toml`:
+
+```toml
+[[keys.command]]
+key = "prefix+g"
+type = "plugin_action"
+command = "herdr-gh-nav.open-panes"
+description = "list open panes"
+
+[[keys.command]]
+key = "prefix+shift+b"
+type = "plugin_action"
+command = "herdr-gh-nav.open-branches"
+description = "open a branch as a worktree"
+```
+
+Reload with `herdr server reload-config`.
+
+Both actions are available from herdr's action menu without a binding, and directly:
+
+```sh
+herdr plugin action invoke herdr-gh-nav.open-panes
+herdr plugin action invoke herdr-gh-nav.open-branches
+```
+
+Pressing the key again while a picker is open focuses it rather than stacking a second
+overlay on top of the first.
+
+## Where worktrees are created
+
+herdr's setting, not this plugin's:
+
+```toml
+[worktrees]
+directory = "~/.herdr/worktrees"
+```
+
+Checkouts are placed at `<directory>/<repo>/<branch-slug>`. This plugin asks herdr to create
+them and never computes that path itself — see
+[ADR 0001](../adr/0001-delegate-worktree-creation.md) for why that matters.
+
+For sibling-style checkouts, point the directory somewhere next to your projects:
+
+```toml
+[worktrees]
+directory = "~/Workspace/worktrees"
+```
+
+## The remote
+
+`origin` is the remote branches are read from and never-fetched branches are fetched from.
+This is not configurable in v1. A repository with no `origin` still works: the branch list is
+whatever git has locally, and the `reading the remote…` line goes away.
+
+## Pull requests
+
+If `gh` is on `PATH` and authenticated for the repository, open pull requests are shown
+against their branches and can be searched by number or title. If it is not, nothing else
+changes. This layer never fails the picker — see
+[ADR 0003](../adr/0003-git-first-gh-optional.md).
+
+To check what the picker sees:
+
+```sh
+gh auth status
+gh pr list --json number,title,headRefName,isDraft
+```
+
+## Environment
+
+herdr sets these; you do not.
+
+| Variable | Used for |
+| --- | --- |
+| `HERDR_SOCKET_PATH` | the API socket. Without it the binary exits with an explanation. |
+| `HERDR_PLUGIN_CONTEXT_JSON` | which pane and repository the action was invoked from |
+| `HERDR_PLUGIN_ROOT` | locating the binary from the pane entrypoints |
+| `HERDR_PLUGIN_STATE_DIR` | remembering which picker pane is open, so a second press focuses it |
+| `HERDR_PANE_ID` | in a pane process, that pane's own id — used to keep the picker out of its own list |
+
+The action passes two of its own to the pane it opens, because a pane process cannot work
+them out for itself:
+
+| Variable | Meaning |
+| --- | --- |
+| `GH_NAV_FROM_PANE` | the pane the picker was summoned from |
+| `GH_NAV_REPO_ROOT` | the repository it was summoned from, when herdr already knew |

@@ -1,0 +1,131 @@
+# herdr-gh-nav
+
+**[English](./README.md)**
+
+頭の中に収まらないほど大きくなった [herdr](https://herdr.dev) セッションを歩き回るためのプラグインです。
+
+複数のリポジトリ・複数の worktree にまたがってエージェントを走らせていると、問いは「このエージェントは何をしているか」から「あれは *どこ* にあるか」に変わります。herdr-gh-nav はそれに答えます。逆方向も同じで、GitHub 上にあるブランチを、キーボードから手を離さずに作業中の pane に変えられます。
+
+オーバーレイのピッカーが 2 つ、それぞれキー 1 つで開き、`Tab` で行き来します。
+
+## Panes — 何がどこにあるか
+
+開いている pane を、リポジトリと、チェックアウトされている worktree でグループ化して並べます。
+
+```
+ Panes   Branches
+▾ ShoMasegi/herdr-gh-nav
+  ● main                                          ~/Workspace/herdr-gh-nav
+    ● claude                                                         w7:p2
+    · shell                                                          w7:p3
+▾ ShoMasegi/harbour-backend
+  ● feat/hbr-51-grant-table-privileges     ~/Workspace/harbour-backend
+    ○ claude                                                         w1:p1
+    ○ claude                                                         w1:p9
+  ○ loop-review-fix-request  no pane   ~/.herdr/worktrees/harbour-backend/…
+▾ nightowl/harken_android
+  ● feature/use-presigned-url             ~/Workspace/harken_android
+    ◆ claude                                                         w5:p1
+
+press / to filter
+↵ jump  n new pane  ⇥ branches  / filter  h other  r reload  q quit
+```
+
+`●` 実行中 `○` 待機中 `◆` ブロック中 `·` エージェントなし。
+
+`Enter` でそこへ移動します。space をまたいでも tab をまたいでも、目的の pane に直接飛びます。pane が 1 つも無い worktree も一覧に出て、その行で `Enter` を押すと開きます。
+
+## Branches — そのブランチで作業を始める
+
+呼び出したリポジトリのブランチを、状態を問わず一覧します。
+
+```
+ Panes   Branches
+● feat/login   running      #123 Add the login screen (draft)
+○ fix/crash    checked out  latest work on fix/crash
+· main         local        latest work on main
+↓ feat/search  remote
+
+❯ █
+type to filter  ↵ choose  ⇥ panes  esc quit
+```
+
+打てば絞り込まれます。まだ存在しない名前を打てば、それを作る候補が出ます。続いて pane の行き先を選びます。
+
+```
+here            split right
+                split down
+existing tab    w1  app / logs
+                w5  harken / android
+existing space  w1  app → new tab
+new space       on its own
+```
+
+`Enter` `Enter` が最速で、呼び出した pane の右に split されます。
+
+その次に何が起きるかはブランチの状態で変わります。ここがこのプラグインの要点です。
+
+| ブランチの状態 | 起きること |
+| --- | --- |
+| すでに pane で開いている | そこへ移動します。すでにある作業を二重にチェックアウトしません |
+| チェックアウト済みだが pane が無い | 指定した場所にその checkout が開きます |
+| ローカルブランチ | そこから worktree を作ります |
+| リモートにのみ存在（未 fetch） | fetch してから `origin/<branch>` を基点に作ります |
+| どこにも無い | `HEAD` から作成し、そこから worktree を作ります |
+
+worktree の作成場所は herdr の設定に従います（herdr の設定ファイルの `[worktrees] directory`、既定は `~/.herdr/worktrees`）。このプラグインが独自の場所を決めることはありません。
+
+## インストール
+
+```sh
+herdr plugin install ShoMasegi/herdr-gh-nav
+```
+
+herdr 0.7.4 以降と `git` が必要です。対応は macOS と Linux です。
+
+インストール時はビルド済みバイナリをダウンロードしてチェックサムを検証します。対応するビルドが無い場合は `cargo build` にフォールバックするので、その場合は [Rust](https://rustup.rs) が必要です。
+
+`gh` は任意です。インストール済みで認証が通っていれば、各ブランチに対応する open な pull request を表示します。それ以外は `gh` に依存しておらず、オフラインでもすべて動作します。
+
+## キーの割り当て
+
+herdr のプラグインは利用者のキーバインドを勝手に設定できません。`~/.config/herdr/config.toml` に次を追加してください。
+
+```toml
+[[keys.command]]
+key = "prefix+g"
+type = "plugin_action"
+command = "herdr-gh-nav.open-panes"
+description = "list open panes"
+
+[[keys.command]]
+key = "prefix+shift+b"
+type = "plugin_action"
+command = "herdr-gh-nav.open-branches"
+description = "open a branch as a worktree"
+```
+
+追加したら `herdr server reload-config` を実行します。
+
+どちらのアクションも herdr のアクションメニューに出るほか、直接実行もできます。
+
+```sh
+herdr plugin action invoke herdr-gh-nav.open-panes
+```
+
+## ドキュメント
+
+- [インストール](docs/ja/installation.md)
+- [使い方](docs/ja/usage.md) — すべてのキーと、その動作
+- [設定](docs/ja/configuration.md)
+- [アーキテクチャ](docs/ja/architecture.md) — 構成と、その理由
+- [トラブルシューティング](docs/ja/troubleshooting.md)
+- [設計判断の記録](docs/adr/) — 後から読んだ人が元に戻したくなるであろう選択の理由（英語）
+
+## コントリビュート
+
+[CONTRIBUTING.md](./CONTRIBUTING.md) を参照してください。開発規約は [CLAUDE.md](./CLAUDE.md) にあります。
+
+## ライセンス
+
+[MIT](./LICENSE)
