@@ -48,8 +48,15 @@ fn dump() -> Result<()> {
     let herdr = SocketHerdr::from_env()?;
     let (snapshot, tree) = collect::collect_tree(&herdr, &GitCli)?;
 
-    println!("herdr {} (protocol {})", snapshot.version, snapshot.protocol);
-    println!("{} panes in {} repos", snapshot.panes.len(), tree.repos.len());
+    println!(
+        "herdr {} (protocol {})",
+        snapshot.version, snapshot.protocol
+    );
+    println!(
+        "{} panes in {} repos",
+        snapshot.panes.len(),
+        tree.repos.len()
+    );
     for repo in &tree.repos {
         println!("\n{}  [{}]", repo.display_name, repo.repo_root);
         for worktree in &repo.worktrees {
