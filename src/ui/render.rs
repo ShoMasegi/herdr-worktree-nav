@@ -517,11 +517,10 @@ fn render_scrollbar(
     let track = area.height as usize;
     let thumb = ((viewport * track) / total).max(1).min(track);
     let span = total.saturating_sub(viewport);
-    let top = if span == 0 {
-        0
-    } else {
-        (scroll * track.saturating_sub(thumb)) / span
-    };
+    // `span` is zero when the whole list fits, and there is nowhere to scroll it to then.
+    let top = (scroll * track.saturating_sub(thumb))
+        .checked_div(span)
+        .unwrap_or(0);
     for offset in 0..track {
         let filled = offset >= top && offset < top + thumb;
         let rect = Rect::new(area.x + area.width - 1, area.y + offset as u16, 1, 1);

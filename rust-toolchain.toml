@@ -1,0 +1,10 @@
+# The toolchain CI runs, so `cargo clippy` here sees exactly the lints `cargo clippy` there
+# does. It used to be a floating `stable`, which meant a Rust release could fail a pull
+# request that changed no code at all: 1.98.0 landed on 2026-08-20 and turned three existing
+# lines into errors under `-D warnings`, on a branch that only added documentation.
+#
+# Moving this is a deliberate act with its own commit. `scripts/check-invariants.sh` holds
+# the workflows to whatever it says.
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]

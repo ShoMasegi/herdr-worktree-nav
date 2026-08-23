@@ -17,7 +17,7 @@ jobs:
         with:
           # check-docs-sync compares against the base branch, so it needs the history.
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
       - name: Run the plugin build step
         run: ./scripts/fetch-or-build.sh
