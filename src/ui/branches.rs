@@ -367,12 +367,27 @@ impl BranchesState {
         format!("{} \u{b7} {}", repo.display_name, repo.repo_root)
     }
 
+    /// The heading over the branch list: which repository these branches belong to, and
+    /// where it is on disk.
+    ///
+    /// The same words the repository list put under the cursor, so choosing one moves the
+    /// line you were reading from the bottom of the screen to the top. With one repository
+    /// open there is no repository step at all, and this is the only place it is named.
+    pub fn repo_heading(&self) -> String {
+        let repo = self.repo();
+        format!("{} \u{b7} {}", repo.display_name, repo.repo_root)
+    }
+
     /// The breadcrumb under the list: where this branch is, and what picking it will do.
+    ///
+    /// It does not name the repository. Every row in the list belongs to the same one, so
+    /// repeating it here would spend width on a constant; the heading above the list says it
+    /// once.
     pub fn detail(&self) -> String {
         let Some(entry) = self.selected() else {
             return String::new();
         };
-        let mut parts = vec![self.repo().display_name.clone(), entry.name.clone()];
+        let mut parts = vec![entry.name.clone()];
         match &entry.state {
             BranchState::LivePane {
                 pane_id,

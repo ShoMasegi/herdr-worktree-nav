@@ -3,8 +3,8 @@ source: src/ui/render.rs
 expression: "branches_screen(&state, 92, 6)"
 ---
 " / █                                                                 ⇅ state ↓   5 branches "
-"────────────────────────────────────────────────────────────────────────────────────────────"
+" me/app · /src/app ─────────────────────────────────────────────────────────────────────────"
 "   ● feat/login   running      #123 Add the login screen (draft)                           █"
 "   ○ fix/crash    checked out  latest work on fix/crash                                    │"
-" me/app · feat/login · open in w2:p1 · /wt/feat-login · #123 Add the login screen (draft) ──"
+" feat/login · open in w2:p1 · /wt/feat-login · #123 Add the login screen (draft) ───────────"
 " ↵ choose  ctrl+u clear  esc cancel  ↑↓ move  ctrl+f fetch  ctrl+o order  ctrl+r reverse    "

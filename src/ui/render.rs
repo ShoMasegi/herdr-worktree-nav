@@ -678,7 +678,10 @@ pub fn draw_branches(frame: &mut Frame, state: &BranchesState, theme: &Theme) {
                 branch_search_line(state, theme, panel.search.width),
                 panel.search,
             );
-            render_rule(frame, panel.rule, theme);
+            // The rule the other steps draw plain is a heading here. A list of branches is
+            // the one thing on screen that means nothing without knowing whose branches they
+            // are, and it is the same line the repository step had under its cursor.
+            render_detail(frame, &state.repo_heading(), theme, panel.rule);
             render_branch_rows(frame, state, theme, panel.body);
             render_detail(frame, &state.detail(), theme, panel.detail);
             let variants = match (state.is_filtering(), state.has_repo_step()) {
@@ -1754,6 +1757,18 @@ mod tests {
     #[test]
     fn draws_branches_in_the_same_chrome_as_the_panes_view() {
         insta::assert_snapshot!(branches_screen(&branches_state(), 92, 12));
+    }
+
+    /// The rule over the list carries the repository the branches belong to, and the
+    /// breadcrumb under it no longer repeats it. Entered from the second repository rather
+    /// than the first, so a heading wired to whichever one the picker opened on would show.
+    #[test]
+    fn names_the_repository_above_the_list_and_not_on_every_row() {
+        let mut state = branches_picker();
+        state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        state.set_data(branch_data());
+        insta::assert_snapshot!(branches_screen(&state, 92, 12));
     }
 
     #[test]

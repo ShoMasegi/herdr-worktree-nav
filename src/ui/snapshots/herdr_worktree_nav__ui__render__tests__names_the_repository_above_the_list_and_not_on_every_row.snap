@@ -1,0 +1,16 @@
+---
+source: src/ui/render.rs
+expression: "branches_screen(&state, 92, 12)"
+---
+" / search branches                                                   ⇅ state ↓   5 branches "
+" me/notes · /home/me/src/notes ─────────────────────────────────────────────────────────────"
+"   ● main         running      latest work on main                                          "
+"   · feat/login   local        #123 Add the login screen (draft)                            "
+"   · fix/crash    local        latest work on fix/crash                                     "
+"   · chore/deps   local        latest work on chore/deps                                    "
+"   ↓ feat/search  remote                                                                    "
+"                                                                                            "
+"                                                                                            "
+"                                                                                            "
+" main · open in w3:p1 · /wt/main ───────────────────────────────────────────────────────────"
+" ↵ choose  j/k move  / search  f fetch  i order  shift+i reverse  ⇥ panes  esc back  q close"

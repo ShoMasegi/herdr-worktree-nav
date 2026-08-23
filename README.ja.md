@@ -58,13 +58,13 @@
 ```
 ┌─ herdr-worktree-nav ─────────────────────────────────────────────────────────┐
 │ / search branches                                   ⇅ state ↓    24 branches │
-│──────────────────────────────────────────────────────────────────────────────│
+│ me/app · ~/src/app ──────────────────────────────────────────────────────────│
 │   ● feat/login    running      #123 Add the login screen (draft)             │
 │   ○ fix/crash     checked out  latest work on fix/crash                      │
 │   · main          local        latest work on main                           │
 │   ↓ feat/search   remote                                                     │
 │                                                                              │
-│ me/app · feat/login · open in w2:p1 · ~/.herdr/worktrees/app/feat-login ──────│
+│ feat/login · open in w2:p1 · ~/.herdr/worktrees/app/feat-login ──────────────│
 │ ↵ choose  j/k move  / search  f fetch  i order  shift+i reverse  esc back    │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
