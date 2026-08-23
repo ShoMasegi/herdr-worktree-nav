@@ -33,6 +33,9 @@ These are enforced in CI. Breaking one fails the build.
 2. **`std::process::Command` appears only in `src/adapter/`.** Everything else reaches the
    outside world through the `HerdrPort` / `GitPort` / `GhPort` traits in `src/port/`.
 3. **`herdr-plugin.toml`'s `version` equals `Cargo.toml`'s `version`.**
+4. **Every workflow installs the toolchain `rust-toolchain.toml` pins.** CI ran a floating
+   `stable` until 1.98.0 turned three existing lines into clippy errors and failed a
+   pull request that had only added documentation. Moving the pin is its own commit.
 
 ## Talking to herdr
 

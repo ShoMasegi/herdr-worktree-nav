@@ -29,5 +29,22 @@ if [ "$manifest" != "$crate" ]; then
     fail "version mismatch: herdr-plugin.toml is $manifest, Cargo.toml is $crate"
 fi
 
-[ "$status" -eq 0 ] && printf 'invariants ok (version %s)\n' "$manifest"
+# 4. Every workflow installs the toolchain rust-toolchain.toml pins. A floating `stable`
+#    meant a Rust release could fail a pull request that changed no code at all — 1.98.0
+#    turned three existing lines into clippy errors under `-D warnings`, on a branch that
+#    only added documentation.
+pinned=$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' rust-toolchain.toml | head -n 1)
+if [ -z "$pinned" ]; then
+    fail "rust-toolchain.toml pins no channel"
+else
+    for workflow in .github/workflows/*.yml; do
+        [ -e "$workflow" ] || continue
+        for used in $(sed -n 's|.*dtolnay/rust-toolchain@\([^ ]*\).*|\1|p' "$workflow"); do
+            [ "$used" = "$pinned" ] || \
+                fail "$workflow installs rust-toolchain@$used; rust-toolchain.toml pins $pinned"
+        done
+    done
+fi
+
+[ "$status" -eq 0 ] && printf 'invariants ok (version %s, rust %s)\n' "$manifest" "$pinned"
 exit "$status"

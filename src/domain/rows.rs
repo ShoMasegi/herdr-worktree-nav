@@ -254,7 +254,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
         }
         if filtering {
             // Stable, so equally-scoring worktrees keep primary-first order.
-            subtrees.sort_by(|a, b| b.0.cmp(&a.0));
+            subtrees.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
         }
         let best = subtrees
             .iter()
@@ -281,7 +281,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
     }
 
     if filtering {
-        groups.sort_by(|a, b| b.0.cmp(&a.0));
+        groups.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
     }
     let mut rows: Vec<Row> = groups.into_iter().flat_map(|(_, group)| group).collect();
 

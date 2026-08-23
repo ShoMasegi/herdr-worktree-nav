@@ -51,6 +51,9 @@ cargo insta review
   same change. If you cannot write the Japanese, say so in the pull request and it can be
   written for you — but the pair must land together.
 - **The manifest and crate versions agree.**
+- **The toolchain is pinned.** `rust-toolchain.toml` says which Rust the gates run on, and
+  every workflow has to install that one. If `RUSTUP_TOOLCHAIN` is set in your shell it wins
+  over the file — unset it, or you are linting against something CI will not.
 
 ## Things worth knowing before changing behaviour
 
