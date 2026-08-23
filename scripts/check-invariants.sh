@@ -1,5 +1,5 @@
 #!/bin/sh
-# The architecture invariants from CLAUDE.md, as a gate rather than a promise.
+# The architecture invariants from CONTRIBUTING.md, as a gate rather than a promise.
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)

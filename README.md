@@ -171,8 +171,8 @@ herdr plugin action invoke herdr-worktree-nav.open-panes
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md). Development conventions live in
-[CLAUDE.md](./CLAUDE.md).
+See [CONTRIBUTING.md](./CONTRIBUTING.md) — the gates a pull request has to pass, and what
+CI will hold you to.
 
 ## Licence
 

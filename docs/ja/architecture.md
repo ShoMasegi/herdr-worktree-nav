@@ -52,6 +52,15 @@ src/
 
 ワイヤー型は意図的に寛容です。省略可能なフィールドはすべて既定値を持ち、未知のフィールドは無視します。フィールドが増えた新しい herdr でも、起動に失敗せずパースできます。
 
+この API の速く安全な側に留まるための決まりが 4 つあります。
+
+- **`$HERDR_BIN_PATH` 経由で呼ぶ**（無ければ `PATH` 上の `herdr`）。パスを直書きしないこと。インストール方法によってバイナリの場所は変わります
+- **`herdr api snapshot` を 1 回。細かい呼び出しを並べない。** workspaces・tabs・panes・agents・layouts がまとめて返り、1 回の読み取りなので互いに整合しています
+- **herdr が既に算出したものを使う。** worktree に紐づく workspace なら `WorkspaceInfo.worktree` が `repo_key` / `repo_root` / `checkout_path` を持ち、`WorktreeInfo.open_workspace_id` が worktree が開いているかを教えます。`git` を叩くのは、herdr が worktree として把握していない pane のためだけです
+- **`herdr worktree create` は必ず新しい workspace・tab・root pane を作る。** 既存の tab に入れる選択肢はありません。別の場所に置きたければ、作ってから root pane を移動し、空になった workspace を閉じることになります。`git worktree add` を直接呼ぶより、なぜこちらが良いかは [ADR 0001](../adr/0001-delegate-worktree-creation.md) を参照してください
+
+git の情報は作業ディレクトリ単位で解決してキャッシュします。複数の pane が同じ cwd を共有することが多く、pane ごとに `git` を起動するピッカーは体感で分かるほど遅くなります。
+
 ## Panes ビューの構築
 
 ```
@@ -96,6 +105,8 @@ FetchThen… ─▶ fetch, create  ─┘                   └─ None ─▶ p
 ピッカーは herdr 本体の session navigator と同じ方式で描画しています（`src/ui/navigator.rs` を参照して再現）。パネル、検索行、tree グリフ、gutter、meta 列、詳細行、キーヒントが対象です。対応付けは `ui::theme` にあり、accent とグリフ種別は herdr の設定から読みます（API が palette を公開していないためです）。何を写して何を写していないかは [ADR 0004](../adr/0004-navigator-appearance.md) を参照してください。
 
 ## テスト
+
+`domain` はテストを先に書きます。落ちるテストを書いてから実装します。plain なデータを受け取って plain なデータを返すだけの層で、言い訳の余地がなく、間違えると困る判断はここに集まっているためです。
 
 | レイヤー | 方法 |
 | --- | --- |
