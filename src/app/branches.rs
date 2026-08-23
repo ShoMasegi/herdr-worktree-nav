@@ -5,22 +5,29 @@
 //! `git ls-remote` and `gh pr list` both need the network, and a picker that blocks on them
 //! is a picker nobody uses offline.
 //!
-//! Each repository is read once. Walking back to the list and into another one is common
-//! enough that re-running git every time would be felt.
+//! Each repository's remote is asked once and remembered for as long as the picker is up —
+//! `Tab` to the panes view and back included, which is why the cache is owned by the caller.
+//! Walking between repositories, and between the two views, is common enough that a round
+//! trip in front of every frame would be felt.
 
 use std::collections::HashMap;
 use std::sync::mpsc::{self, TryRecvError};
 
 use anyhow::{anyhow, Result};
 use ratatui::crossterm::event::{self, Event};
+use ratatui::DefaultTerminal;
 
 use crate::app::collect;
 use crate::app::home_dir;
+use crate::app::Summoned;
 use crate::domain::dest;
+use crate::domain::listing;
 use crate::domain::model::{normalize_path, RepoNode};
 use crate::domain::progress::Stage;
 use crate::domain::resolve::{self, BranchPlan};
-use crate::port::{GhPort, GitPort, HerdrPort, Pane, PullRequest, WorktreeCreate, WorktreeOpen};
+use crate::port::{
+    GhPort, GitPort, GitRef, HerdrPort, Pane, PullRequest, WorktreeCreate, WorktreeOpen,
+};
 use crate::ui::branches::{self, BranchAction, BranchData, BranchesState, Choice};
 use crate::ui::render;
 use crate::ui::theme::Theme;
@@ -78,14 +85,17 @@ impl Update {
 }
 
 pub fn run(
+    terminal: &mut DefaultTerminal,
     herdr: &dyn HerdrPort,
     git: &dyn GitPort,
     gh: &dyn GhPort,
-    repo_root: Option<&str>,
-    from_pane_id: Option<&str>,
+    summoned: &Summoned,
     theme: &Theme,
+    listings: &mut listing::Cache,
 ) -> Result<Exit> {
     let (snapshot, tree) = collect::collect_tree(herdr, git)?;
+    let from_pane_id = summoned.pane.as_deref();
+    let repo_root = summoned.repo_root.as_deref();
 
     // Where the picker was summoned from, as precisely as it can be known: the checkout the
     // invoking pane is in beats the repository it belongs to, because it is the row the
@@ -122,12 +132,17 @@ pub fn run(
             // Reading one repository: the local refs synchronously because they are a few
             // milliseconds, the remote and the pull requests on a thread because they are a
             // network round trip.
-            let read = |repo_root: &str| -> BranchData {
-                let data = BranchData {
-                    local_refs: git.local_refs(repo_root).unwrap_or_default(),
-                    loading: true,
-                    ..BranchData::default()
-                };
+            //
+            // A remote an earlier visit already heard back from is not asked again. That is
+            // what `listings` is carried across a view switch for: `Tab` away and back is a
+            // frame, not a round trip.
+            let read = |repo_root: &str, listings: &mut listing::Cache| -> BranchData {
+                let local_refs = git.local_refs(repo_root).unwrap_or_default();
+                if let Some(remote) = listings.get(repo_root).filter(|remote| !remote.loading) {
+                    return shown(local_refs, remote.clone());
+                }
+
+                let waiting = listing::starting(listings, repo_root);
                 let sender = sender.clone();
                 let root = repo_root.to_string();
                 scope.spawn(move || {
@@ -146,13 +161,16 @@ pub fn run(
                         pull_requests,
                     });
                 });
-                data
+                shown(local_refs, waiting)
             };
-            let load = |repo_root: &str, cache: &mut HashMap<String, BranchData>| -> BranchData {
+            let load = |repo_root: &str,
+                        cache: &mut HashMap<String, BranchData>,
+                        listings: &mut listing::Cache|
+             -> BranchData {
                 if let Some(data) = cache.get(repo_root) {
                     return data.clone();
                 }
-                let data = read(repo_root);
+                let data = read(repo_root, listings);
                 cache.insert(repo_root.to_string(), data.clone());
                 data
             };
@@ -160,10 +178,9 @@ pub fn run(
             // The repository the cursor starts on is read before the first frame, so opening it
             // is instant whether or not there is a repository step in front of it.
             let first = state.repo().repo_root.clone();
-            let data = load(&first, &mut cache);
+            let data = load(&first, &mut cache, listings);
             state.set_data(data);
 
-            let mut terminal = ratatui::try_init()?;
             // The spinner turns on a clock rather than on redraws, so that it neither
             // speeds up while the user types nor stalls while they hold a key down.
             let mut last_tick = std::time::Instant::now();
@@ -182,7 +199,8 @@ pub fn run(
                             // screen. It also has to be: `--prune` deleted refs, and the
                             // remote listing cached here would put them straight back.
                             Ok(()) => {
-                                let fresh = read(&repo_root);
+                                listing::apply(listings, &repo_root, listing::Answer::Refetched);
+                                let fresh = read(&repo_root, listings);
                                 cache.insert(repo_root.clone(), fresh.clone());
                                 if state.repo().repo_root == repo_root {
                                     state.set_data(fresh);
@@ -213,24 +231,16 @@ pub fn run(
                     }
                     Ok(update) => {
                         let repo_root = update.repo_root().unwrap_or_default().to_string();
-                        let entry = cache.entry(repo_root.clone()).or_default();
-                        match update {
-                            Update::RemoteHeads { heads, .. } => {
-                                entry.remote_heads = heads;
-                                entry.loading = false;
+                        if let Some(remote) = listing::apply(listings, &repo_root, answer(update)) {
+                            let entry = cache.entry(repo_root.clone()).or_default();
+                            entry.remote_heads = remote.heads;
+                            entry.pull_requests = remote.pull_requests;
+                            entry.loading = remote.loading;
+                            // An answer for a repository the user has already left updates the
+                            // cache and nothing else; it is there for them when they come back.
+                            if state.repo().repo_root == repo_root {
+                                state.set_data(entry.clone());
                             }
-                            Update::RemoteUnavailable { .. } => entry.loading = false,
-                            Update::PullRequests { pull_requests, .. } => {
-                                entry.pull_requests = pull_requests
-                            }
-                            Update::Working(_) | Update::Done(_) | Update::Fetched { .. } => {
-                                unreachable!("handled above")
-                            }
-                        }
-                        // An answer for a repository the user has already left updates the cache
-                        // and nothing else; it is there for them when they come back.
-                        if state.repo().repo_root == repo_root {
-                            state.set_data(entry.clone());
                         }
                         continue;
                     }
@@ -247,7 +257,7 @@ pub fn run(
                 match state.handle_key(key) {
                     BranchAction::Consumed | BranchAction::Ignored => {}
                     BranchAction::LoadRepo { repo_root } => {
-                        let data = load(&repo_root, &mut cache);
+                        let data = load(&repo_root, &mut cache, listings);
                         state.set_data(data);
                     }
                     BranchAction::Fetch { repo_root } => {
@@ -303,14 +313,57 @@ pub fn run(
                     action => break action,
                 }
             };
-            ratatui::try_restore()?;
             Ok((action, failure))
         })?;
+
+    // `thread::scope` has joined every thread this view spawned, so whatever is still in the
+    // channel is a finished answer that landed after the last frame. Folding it in here is
+    // what makes coming back to this view a frame rather than another round trip — and it is
+    // what keeps a cached entry from being left claiming it is still loading.
+    while let Ok(update) = receiver.try_recv() {
+        let Some(repo_root) = update.repo_root().map(str::to_string) else {
+            continue;
+        };
+        let answer = match update {
+            Update::Fetched { result: Ok(()), .. } => listing::Answer::Refetched,
+            // A fetch that failed changed nothing, and the reason it gave belongs to a screen
+            // that has already been drawn over.
+            Update::Fetched { .. } => continue,
+            update => answer(update),
+        };
+        listing::apply(listings, &repo_root, answer);
+    }
 
     if let Some(error) = failure {
         return Err(error);
     }
     perform(herdr, outcome)
+}
+
+/// One repository as the picker draws it: the local refs it just read, and whatever it
+/// remembers about the remote.
+fn shown(local_refs: Vec<GitRef>, remote: listing::Remote) -> BranchData {
+    BranchData {
+        local_refs,
+        remote_heads: remote.heads,
+        pull_requests: remote.pull_requests,
+        loading: remote.loading,
+        fetching: false,
+    }
+}
+
+/// The listing answer an update carries. `Fetched` is not one — it is a repository to forget
+/// rather than a fact to record — and the worker's own traffic is about the branch being
+/// opened, not about a listing; both are sorted out before this is reached.
+fn answer(update: Update) -> listing::Answer {
+    match update {
+        Update::RemoteHeads { heads, .. } => listing::Answer::Heads(heads),
+        Update::RemoteUnavailable { .. } => listing::Answer::Unavailable,
+        Update::PullRequests { pull_requests, .. } => listing::Answer::PullRequests(pull_requests),
+        Update::Working(_) | Update::Done(_) | Update::Fetched { .. } => {
+            unreachable!("handled above")
+        }
+    }
 }
 
 /// A repository herdr has no worktree record for. Its branches are still listable.

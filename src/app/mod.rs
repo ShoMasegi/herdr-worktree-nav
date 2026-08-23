@@ -7,9 +7,11 @@ pub mod context;
 pub mod panes;
 
 use anyhow::Result;
+use ratatui::DefaultTerminal;
 
 use crate::adapter::herdr_config;
 use crate::app::context::{Context, FROM_PANE, REPO_ROOT};
+use crate::domain::listing;
 use crate::port::{GhPort, GitPort, HerdrPort};
 use crate::ui::theme::Theme;
 
@@ -18,6 +20,15 @@ use crate::ui::theme::Theme;
 pub enum Entrypoint {
     Panes,
     Branches,
+}
+
+/// Where the picker was summoned from, as precisely as the action could tell it.
+///
+/// `repo_root` is not fixed for the life of the picker: leaving the panes view carries the
+/// repository under the cursor into the branches view.
+pub struct Summoned {
+    pub pane: Option<String>,
+    pub repo_root: Option<String>,
 }
 
 /// The user's home directory, for shortening checkout paths in the lists.
@@ -53,34 +64,58 @@ pub fn run_picker(
     // Borrowed from herdr's own configuration so the pickers look like its navigator
     // rather than like a different program.
     let theme = Theme::new(herdr_config::load());
+    let summoned = Summoned {
+        pane: from_pane,
+        repo_root,
+    };
 
+    // The picker owns the terminal for as long as it is up, and the views borrow it. Putting
+    // it back between them would leave herdr's popup framing the empty primary screen for
+    // however long the next view takes to gather what it draws — see
+    // `docs/adr/0009-the-picker-owns-the-terminal.md`.
+    let mut terminal = ratatui::try_init()?;
+    let result = views(&mut terminal, herdr, git, gh, &theme, start, summoned);
+    // Restoring on every path out, including the ones `?` takes inside `views`. A loop that
+    // failed says more than a terminal that would not go back, so it wins.
+    let restored = ratatui::try_restore();
+    result.and(restored.map_err(Into::into))
+}
+
+/// Switch between the two views until the user leaves the picker.
+fn views(
+    terminal: &mut DefaultTerminal,
+    herdr: &dyn HerdrPort,
+    git: &dyn GitPort,
+    gh: &dyn GhPort,
+    theme: &Theme,
+    start: Entrypoint,
+    mut summoned: Summoned,
+) -> Result<()> {
+    // What each repository's remote answered, kept across the switch. Re-reading it every
+    // time `Tab` came back would be a network round trip in front of every frame.
+    let mut listings = listing::Cache::new();
     let mut view = start;
     loop {
         match view {
             Entrypoint::Branches => {
                 // No repository in hand is not a failure: the picker opens on its list of
                 // them. It falls back to the panes view only when there are none at all.
-                match branches::run(
-                    herdr,
-                    git,
-                    gh,
-                    repo_root.as_deref(),
-                    from_pane.as_deref(),
-                    &theme,
-                )? {
+                match branches::run(terminal, herdr, git, gh, &summoned, theme, &mut listings)? {
                     branches::Exit::Closed => return Ok(()),
                     branches::Exit::ShowPanes => view = Entrypoint::Panes,
                 }
             }
-            Entrypoint::Panes => match panes::run(herdr, git, from_pane.as_deref(), &theme)? {
-                panes::Exit::Closed => return Ok(()),
-                panes::Exit::ShowBranches { repo_root: root } => {
-                    // `None` when the cursor was not in a repository; the branches picker
-                    // then simply starts with nothing preselected.
-                    repo_root = root;
-                    view = Entrypoint::Branches;
+            Entrypoint::Panes => {
+                match panes::run(terminal, herdr, git, summoned.pane.as_deref(), theme)? {
+                    panes::Exit::Closed => return Ok(()),
+                    panes::Exit::ShowBranches { repo_root } => {
+                        // `None` when the cursor was not in a repository; the branches picker
+                        // then simply starts with nothing preselected.
+                        summoned.repo_root = repo_root;
+                        view = Entrypoint::Branches;
+                    }
                 }
-            },
+            }
         }
     }
 }

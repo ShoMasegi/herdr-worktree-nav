@@ -120,5 +120,20 @@ herdr 側は CI ではテストできません（サーバーが無いため）�
 - [ ] 作成して移動した後、`herdr workspace list` に余分な workspace が残っておらず、checkout はディスク上に残っている
 - [ ] herdr サーバーを停止した状態でバイナリを実行すると、panic せず説明を出して終了する
 - [ ] `Tab` を押しても枠のタイトルは変わらず（ビュー名ではなくプラグイン名のため）、検索行とキーヒントだけがビューに追従する
+- [ ] `Tab` を連打すると 2 つのビューが交互に入れ替わり、その間 popup が一瞬も空にならない。目視しづらいので下記の方法で確かめる
 
 popup はアドレス指定できないため、`herdr pane read` や `herdr pane send-keys` でピッカーを操作できません。同じコードをキー入力付きで確認するには、通常の pane で `./bin/herdr-worktree-nav pane panes` を実行してください。枠だけは目視で確認する必要があります。
+
+空フレームを目で捉えないと分からない類の確認は、pty を与えて出力を読みます。
+
+```sh
+printf '\t\t\t\t\t\t\t\tq' | script -q /tmp/out.txt \
+  sh -c 'stty rows 40 cols 120; exec ./bin/herdr-worktree-nav pane panes'
+
+# `Tab` を何回押しても、alternate screen への出入りは 1 回ずつ。
+# どちらかが 2 回以上なら、ビューの切り替えごとに端末を戻している。
+# docs/adr/0009-the-picker-owns-the-terminal.md を参照。
+grep -c -F $'\033[?1049h' /tmp/out.txt
+```
+
+`q` の前の `Tab` が奇数回なら Branches ビュー、偶数回なら Panes ビューで終わります。`b` は Panes ビューでは状態フィルタになり Branches ビューでは何もしないので、出力に `blocked` があるかどうかでどちらが生きていたかが分かります。

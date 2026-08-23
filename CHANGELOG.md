@@ -91,6 +91,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **`Tab` no longer blanks the popup on its way between the views.** Each view used to take
+  the terminal for itself and put it back on the way out, so every switch left the alternate
+  screen — leaving herdr's popup framing an empty primary screen — while it waited for the
+  outgoing view's listing threads, read the session again, and re-entered. Held down, the
+  gaps ran together and the picker looked like it had stopped drawing: eight rapid presses
+  spent 2.48 s mostly blank. The picker now holds the terminal for as long as it is up and
+  the views borrow it, so `Tab` changes what is drawn and nothing else. See
+  [ADR 0009](docs/adr/0009-the-picker-owns-the-terminal.md).
+- **The branches view keeps what the remote told it across a switch.** `git ls-remote` and
+  `gh pr list` were run again on every visit, and — because they are joined before the view
+  can return — waited for again on the way out. They are asked once now and remembered for as
+  long as the picker is up; only the local refs, which are milliseconds and are the half that
+  changes, are read again. A `git fetch` still drops what is remembered rather than patching
+  it, because `--prune` deletes refs.
 - **The search field drops its `search …` hint once it has the keyboard**, in both views. It
   is advice about a field you are not in, and under the cursor it read as text that would not
   go away.

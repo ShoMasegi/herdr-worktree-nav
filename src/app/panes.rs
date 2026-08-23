@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use ratatui::crossterm::event::{self, Event};
+use ratatui::DefaultTerminal;
 
 use crate::app::collect;
 use crate::app::home_dir;
@@ -21,9 +22,11 @@ pub enum Exit {
     },
 }
 
-/// Run the picker to completion. The terminal is restored before any herdr call, so a
-/// failure surfaces as text rather than as a corrupted screen.
+/// Run the picker to completion on the terminal the picker already holds. `run_picker` puts
+/// it back on every path out, so a failure still surfaces as text rather than as a corrupted
+/// screen — it is simply printed after the picker has finished rather than before.
 pub fn run(
+    terminal: &mut DefaultTerminal,
     herdr: &dyn HerdrPort,
     git: &dyn GitPort,
     initial_pane: Option<&str>,
@@ -35,7 +38,6 @@ pub fn run(
         state.focus_pane(pane_id);
     }
 
-    let mut terminal = ratatui::try_init()?;
     let outcome = loop {
         terminal.draw(|frame| render::draw(frame, &state, theme, Mode::Panes))?;
 
@@ -70,7 +72,6 @@ pub fn run(
             action => break action,
         }
     };
-    ratatui::try_restore()?;
 
     perform(herdr, outcome)
 }

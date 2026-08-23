@@ -156,7 +156,26 @@ through this against a real session.
 - [ ] With the herdr server stopped, the binary exits with an explanation rather than a panic.
 - [ ] `Tab` leaves the border title alone (it is the plugin's name, not the view's) while the
       search line and key hint follow the view.
+- [ ] `Tab` held down alternates the two views and the popup is never empty between them —
+      not for a frame. See below for how to check that without watching for it.
 
 A popup is not addressable, so `herdr pane read` and `herdr pane send-keys` cannot drive the
 picker. Run `./bin/herdr-worktree-nav pane panes` in an ordinary pane to exercise the same
 code with keys you can send; only the framing has to be looked at.
+
+For the keys that are hard to watch — the ones you would have to catch a blank frame to see
+going wrong — give it a pty and read what it wrote:
+
+```sh
+printf '\t\t\t\t\t\t\t\tq' | script -q /tmp/out.txt \
+  sh -c 'stty rows 40 cols 120; exec ./bin/herdr-worktree-nav pane panes'
+
+# The picker enters the alternate screen once and leaves it once, however many
+# times `Tab` was pressed. More than one of either means it is putting the
+# terminal back between views — see docs/adr/0009-the-picker-owns-the-terminal.md.
+grep -c -F $'\033[?1049h' /tmp/out.txt
+```
+
+Press `Tab` an odd number of times before `q` and the run ends in the branches view, an even
+number and it ends in the panes view; `b` reaches a state filter in the panes view and does
+nothing in the branches view, so a `blocked` in the output says which one was live.
