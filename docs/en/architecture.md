@@ -63,6 +63,26 @@ connection lifetime.
 The wire types are permissive by design — every optional field defaults, unknown fields are
 ignored — so a newer herdr that adds fields keeps parsing rather than failing to start.
 
+Four rules keep the plugin on the fast, supported side of that API.
+
+- **Reach it by `$HERDR_BIN_PATH`**, falling back to `herdr` on `PATH`. Never a hardcoded
+  path: the binary moves with the install method.
+- **One `herdr api snapshot`, not several narrower calls.** It returns workspaces, tabs,
+  panes, agents and layouts together, and they are consistent with each other because they
+  came from one read.
+- **Prefer what herdr has already worked out.** `WorkspaceInfo.worktree` carries
+  `repo_key` / `repo_root` / `checkout_path` for a worktree-backed workspace, and
+  `WorktreeInfo.open_workspace_id` says whether a worktree is open. `git` is for the panes
+  herdr has no worktree record for, and nothing else.
+- **`herdr worktree create` always makes a new workspace, tab and root pane.** There is no
+  option to place one into an existing tab, so landing a pane anywhere else means creating it
+  and then moving the root pane and closing what it left behind — see
+  [ADR 0001](../adr/0001-delegate-worktree-creation.md) for why this beats calling
+  `git worktree add` directly.
+
+Git answers are resolved per working directory and cached. Several panes usually share one
+cwd, and a picker that spawns a `git` process per pane is slow enough to feel.
+
 ## Building the panes view
 
 ```
@@ -127,6 +147,10 @@ glyph set are read from herdr's configuration because its API exposes no palette
 [ADR 0004](../adr/0004-navigator-appearance.md) for what is copied and what is not.
 
 ## Testing
+
+`domain` is written test-first: the failing test, then the code. It is the layer with no
+excuse — it takes plain data and returns plain data — and it is where every decision worth
+getting wrong lives.
 
 | Layer | How |
 | --- | --- |

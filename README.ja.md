@@ -149,7 +149,7 @@ herdr plugin action invoke herdr-worktree-nav.open-panes
 
 ## コントリビュート
 
-[CONTRIBUTING.md](./CONTRIBUTING.md) を参照してください。開発規約は [CLAUDE.md](./CLAUDE.md) にあります。
+[CONTRIBUTING.md](./CONTRIBUTING.md) を参照してください。pull request が通すべきゲートと、CI が見ている規約がまとまっています（英語）。
 
 ## ライセンス
 

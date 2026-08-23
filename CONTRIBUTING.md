@@ -2,8 +2,9 @@
 
 Thanks for taking a look. Issues and pull requests are both welcome.
 
-The development conventions — architecture invariants, testing approach, commit format,
-translation rules — live in [CLAUDE.md](./CLAUDE.md). This file is only the practical steps.
+How the repository is worked on — the gates, the commit format, the translation rule, when a
+decision earns a record — is below. What shapes the code itself, the layers and how herdr is
+talked to, is in [docs/en/architecture.md](./docs/en/architecture.md).
 
 ## Getting set up
 
@@ -44,6 +45,8 @@ cargo insta review
 
 ## What CI will hold you to
 
+- **Everything you write here is in English.** Code, comments, commit messages, pull request
+  titles and bodies, documentation. `docs/ja` is the one exception, and it is a translation.
 - **Conventional Commits.** `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `ci:`.
 - **`src/domain` stays pure.** No processes, filesystem, network, environment, or clock.
   `Command::new` belongs in `src/adapter` alone.
@@ -63,9 +66,23 @@ why the socket is used instead of the CLI, and why `gh` is only decoration. If y
 to undo one of those, read the record first — each one exists because the obvious alternative
 was tried and had a specific problem.
 
+Add one yourself when a decision is non-obvious, and "non-obvious" has a test: would a later
+reader be tempted to undo it? If yes, the reason has to outlive you. Documentation ships in
+the same commit as the code it describes, records included.
+
 Anything touching herdr cannot be tested in CI, because there is no server there. The manual
 checklist is in [docs/en/troubleshooting.md](./docs/en/troubleshooting.md); please run it and
 say in the pull request which parts you covered.
+
+## Releasing
+
+Maintainers only, and deliberately manual:
+
+1. Bump `version` in both `Cargo.toml` and `herdr-plugin.toml`. `check-invariants.sh` fails if
+   they disagree, because `scripts/fetch-or-build.sh` looks for a release tag named after the
+   manifest's.
+2. Add the `CHANGELOG.md` entry.
+3. Tag `vX.Y.Z`. The tag is what triggers the cross-compiled release build.
 
 ## Reporting a bug
 
