@@ -1,6 +1,7 @@
 # 3. Branches come from git; `gh` only decorates them
 
-Status: accepted
+Status: accepted; the scope this gives `gh` is widened by
+[ADR 0011](./0011-what-may-be-swept.md)
 
 ## Context
 
