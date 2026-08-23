@@ -65,6 +65,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **The branch list names the repository it belongs to**, on the rule directly above it,
+  reading `me/app · /src/app` — the same line the repository step had under its cursor,
+  moved to the top when you choose one. With one repository open there is no repository step
+  at all, so it was the one thing on screen that never said whose branches these were. The
+  breadcrumb under the list no longer repeats it: every row belongs to the same repository,
+  so it started with the same words whatever the cursor was on, and now starts at the branch.
+
 - **The branches view has a command mode, reached the way the panes view's is.** Both its
   lists — repositories and branches — used to be search boxes with no mode to enter. Now `/`
   gives the search field the keyboard and letters are commands until it does: `j`/`k` move,

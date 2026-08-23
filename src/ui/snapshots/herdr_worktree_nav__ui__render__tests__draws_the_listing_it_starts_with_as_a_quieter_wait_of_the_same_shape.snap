@@ -3,10 +3,10 @@ source: src/ui/render.rs
 expression: "branches_screen(&state, 110, 8)"
 ---
 " / search branches  ⠋ reading the remote…                                              ⇅ state ↓   5 branches "
-"──────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+" me/app · /src/app ───────────────────────────────────────────────────────────────────────────────────────────"
 "   ● feat/login   running      #123 Add the login screen (draft)                                             █"
 "   ○ fix/crash    checked out  latest work on fix/crash                                                      █"
 "   · main         local        latest work on main                                                           █"
 "   · chore/deps   local        latest work on chore/deps                                                     │"
-" me/app · feat/login · open in w2:p1 · /wt/feat-login · #123 Add the login screen (draft) ────────────────────"
+" feat/login · open in w2:p1 · /wt/feat-login · #123 Add the login screen (draft) ─────────────────────────────"
 " ↵ choose  j/k move  / search  f fetch  i order  shift+i reverse  ⇥ panes  esc back  q close                  "

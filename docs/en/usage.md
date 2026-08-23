@@ -183,6 +183,12 @@ one thing is asking nothing. `Esc` then closes the branch list rather than going
 
 ### Choosing a branch
 
+The list is headed by the repository the branches belong to and where it is on disk — the
+same line the repository step had under its cursor, moved to the top. With one repository
+open there is no repository step, so that heading is the only place it is named. Nothing
+below repeats it: every row belongs to the same repository, so the breadcrumb under the list
+starts at the branch.
+
 | Key | Does |
 | --- | --- |
 | `↑` `↓`, `k` `j`, `Ctrl-P` `Ctrl-N` | move |
