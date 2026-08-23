@@ -65,7 +65,7 @@
 │   ↓ feat/search   remote                                                     │
 │                                                                              │
 │ feat/login · open in w2:p1 · ~/.herdr/worktrees/app/feat-login ──────────────│
-│ ↵ choose  j/k move  / search  f fetch  i order  shift+i reverse  esc back    │
+│ ↵ choose  j/k move  / search  n new branch  f fetch  i order  esc back       │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 

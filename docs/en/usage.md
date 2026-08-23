@@ -196,10 +196,37 @@ starts at the branch.
 | `/` | search |
 | `i` | next order |
 | `Shift-I` | reverse it |
+| `n` | start a branch from this one |
 | `f` | fetch this repository |
 | `Tab` | back to panes |
 | `Esc` | back to the repositories |
 | `q`, `Ctrl-C` | close |
+
+### Starting a branch from another
+
+`n` on a branch asks what to call a new one cut from it, and then where its pane should go —
+the same destination step every other branch goes through.
+
+```
+ + new branch from main: feat/login-v2█                           5 branches
+ me/app · ~/src/app ─────────────────────────────────────────────────────────
+   ● feat/login    running      #123 Add the login screen (draft)
+   · main          local        latest work on main
+```
+
+The prompt names what is being cut from, because that is the whole difference between this
+and the `+ create` offer, which starts from `HEAD`. The base is settled the moment `n` is
+pressed: the list stays on screen so you can see the row it names, but the cursor no longer
+moves — a base that changed while you typed would not be one you chose.
+
+`Ctrl-U` clears the name, `Esc` goes back to the list. `Esc` from the destination comes back
+here with the name still typed.
+
+A name is refused at the prompt — empty, one git would reject, or one this repository already
+has — rather than after a destination has been chosen and the work has started.
+
+Starting from a branch that has only ever been on the remote fetches it first and cuts from
+`origin/<branch>`, exactly as choosing that row on its own does.
 
 ### Searching either list
 

@@ -283,7 +283,7 @@ pub fn run(
                     // empty box for as long as the fetch and the checkout take.
                     BranchAction::Chosen(choice) => {
                         state.start_working(Stage::Starting {
-                            branch: choice.entry.name.clone(),
+                            branch: choice.chosen.name().to_string(),
                         });
                         let sender = sender.clone();
                         let repo_root = state.repo().repo_root.clone();
@@ -413,7 +413,7 @@ fn open(
     report: &dyn Fn(Stage),
 ) -> Result<()> {
     let head = git.head_ref(repo_root)?;
-    let root_pane = match resolve::plan(&choice.entry, &head, REMOTE) {
+    let root_pane = match resolve::plan(&choice.chosen, &head, REMOTE) {
         BranchPlan::Focus { pane_id } => {
             // Reachable only if the branch started running while the picker was open.
             herdr.pane_focus(&pane_id)?;
@@ -421,7 +421,7 @@ fn open(
         }
         BranchPlan::Open { checkout_path } => {
             report(Stage::Opening {
-                branch: choice.entry.name.clone(),
+                branch: choice.chosen.name().to_string(),
             });
             open_existing(herdr, repo_root, &checkout_path)?
         }
@@ -432,15 +432,20 @@ fn open(
             create(herdr, repo_root, &branch, base)?
         }
         BranchPlan::FetchThenCreate { branch, base } => {
+            // What to fetch is what `base` names, not what is being created. The two are the
+            // same branch when the user picked a never-fetched row — `base` is
+            // `origin/<branch>` there — and different when they started a new branch from
+            // one. Reading it off `branch` was right only by coincidence.
+            let fetch = base.strip_prefix(&format!("{REMOTE}/")).unwrap_or(&base);
             report(Stage::Fetching {
                 remote: REMOTE.to_string(),
-                branch: branch.clone(),
+                branch: fetch.to_string(),
             });
-            git.fetch_branch(repo_root, &branch)?;
+            git.fetch_branch(repo_root, fetch)?;
             report(Stage::Creating {
                 branch: branch.clone(),
             });
-            create(herdr, repo_root, &branch, Some(base))?
+            create(herdr, repo_root, &branch, Some(base.clone()))?
         }
     };
 
