@@ -6,175 +6,125 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-24
+
+First release. Two overlay pickers for herdr, backed by one Rust binary. `<Tab>` moves
+between them, and they are one UI rather than two features: the picker holds the terminal for
+as long as it is up, so switching redraws the screen instead of tearing it down.
+
 ### Added
 
-- **`n` starts a branch from the one under the cursor**, and opens it as a worktree pane
-  where you choose. It asks what to call it — `+ new branch from main: …`, with the base
-  named rather than merely highlighted — and then goes through the same destination step
-  every other branch does. The list stays on screen underneath, frozen: the base is settled
-  when `n` is pressed, so nothing can move it out from under the question. `Esc` from the
-  destination comes back to the name still typed. A name that is empty, that git would
-  reject, or that this repository already has is refused at the prompt rather than after the
-  work has started, and a base that has only ever been on the remote is fetched first and cut
-  from `origin/<branch>`. This is the second way to create a branch, not a replacement for
-  the first: typing a name that matches nothing still offers `+ create` from `HEAD`, and
-  [ADR 0013](docs/adr/0013-two-ways-to-start-a-branch.md) says why the two cannot be one.
-- **A repository step in the branches view.** It now opens on every repository herdr has
-  open — the same set the panes view groups by — with the one you summoned it from marked and
-  under the cursor, so another repository's branches are one `↓` and one `Enter` away instead
-  of a trip through the panes view. Rows carry how much of each repository is open and where
-  it is on disk, and the path is searchable along with the name. With one repository open the
-  step is skipped. Each repository is read once and cached while the picker is up.
-- **An order for the branch list.** `i` walks `state` (the previous fixed order, still the
-  default), `updated`, and `name`; `Shift-I` reverses the current one, and `Ctrl-O`/`Ctrl-R`
-  do the same while the search field has the keyboard. Either puts the cursor on the first
-  row: what a new order is for is seeing what is now at the top. What is in force
-  sits beside the count and takes the accent once it is no longer the default. The order
-  holds while a filter is typed — the fuzzy score decides what is in the list, not where it
-  sits — and across a change of repository. Branches with no date stay at the bottom in both
-  directions. See [ADR 0006](docs/adr/0006-repository-step-and-branch-order.md).
-- **`←` and `→` in the panes view** — and `h`/`l`, as `↑`/`↓` are also `k`/`j` — move to the
-  head of the previous or next repository: its first pane, or its first checkout with nothing
-  running. One press is exactly one repository wherever in the current one you were, both
-  ends wrap, and the panes in no repository count as a section. The arrows work while the
-  search box has focus; the letters are text there.
-- **`Ctrl-F` fetches the repository** whose branches are on screen: `git fetch origin
-  --prune`, then a re-read. It is what fills in the date and the commit subject for branches
-  never fetched — `git ls-remote` knows only their names — and what removes the ones deleted
-  on the remote, which the list otherwise kept for ever. `⠙ fetching origin…` sits beside the
-  prompt while it runs and the list stays usable; a fetch that cannot reach the remote says
-  so and changes nothing.
-- **A spinner beside anything the picker is waiting for**, `reading the remote…` as well as
-  `fetching origin…`, turning on a clock rather than on redraws so it neither speeds up
-  while you type nor stalls while you hold a key down.
-- **A picker that says what it is doing.** Opening a branch — a fetch across the network,
-  a checkout of a whole working tree, then the move — used to happen after the picker had
-  closed its screen, so herdr's popup framed an empty box for the seconds it took and looked
-  exactly like a plugin that had hung. The picker now stays where it is, keeps the
-  destination list and its preview on screen, and names the step it is on with a spinner
-  beside it. `Ctrl-C` stops it during the fetch, and says so; once herdr has been asked for
-  a worktree it does not, because leaving then would strand the workspace herdr made. See
-  [ADR 0007](docs/adr/0007-stay-up-while-working.md).
-- **Closing the branches picker no longer waits for background work.** It used to join the
-  remote listing before it could return, which with a fetch in flight would have meant a
-  blank popup for as long as the network took.
-- **Failures are shown instead of vanishing.** A step that fails holds the screen with git's
-  or herdr's own words on it until you close it, and still reaches
-  `herdr plugin log list`. Before, the popup simply disappeared, which looked the same as
-  success.
+#### Panes view
 
-- **`Shift-D` deletes a checkout that has nothing running in it**, from the panes view, after
-  asking in a box over the list — naming the branch and the path that is about to go — where
-  `y` is the only key that answers. It
-  runs `git worktree remove` and nothing else — the branch stays, and there is no `--force`,
-  so git's refusal to throw away uncommitted work stands and is what you read. It is refused
-  before the question on a pane, on a busy checkout, and on the repository's own checkout.
-  The picker stays open and reloads, since tidying up comes in batches. This is the first
-  thing the plugin does that cannot be undone by doing it again the other way; see
+- **Every open pane, grouped as repository → worktree → pane**, with each agent's state.
+  `Enter` jumps to a pane across spaces and tabs. A worktree with nothing running in it is
+  listed too, and `Enter` opens it.
+- **The cursor stops only where there is somewhere to go** — a pane, or a checkout with
+  nothing running. Repository headings and checkouts that already have panes are stepped over
+  and still drawn, so reaching what you want is fewer presses.
+- **`←`/`→`, and `h`/`l`**, move to the head of the previous or next repository: its first
+  pane, or its first idle checkout. One press is one repository wherever you were, both ends
+  wrap, and panes that are in no repository count as a section of their own — they are always
+  listed rather than hidden behind a toggle.
+- **`n`** adds a pane to the checkout under the cursor.
+- **`Shift-D` deletes a checkout that has nothing running in it**, after asking in a box over
+  the list that names the branch and the path about to go, where `y` is the only key that
+  answers. It runs `git worktree remove` and nothing else: the branch stays, and there is no
+  `--force`, so git's refusal to throw away uncommitted work stands and is what you read. It
+  is refused before the question on a pane, on a busy checkout, and on the repository's own
+  checkout. The picker stays open and reloads, because tidying up comes in batches. This is
+  the one thing the plugin does that cannot be undone by doing it again the other way — see
   [ADR 0008](docs/adr/0008-removing-a-worktree.md), which also records why herdr could not be
   asked to do it.
+- **`b`/`w`/`i`/`d`/`a`** narrow the list to one agent state, as they do in herdr's own
+  navigator. A state filter and a typed query coexist: the chip sits beside what is being
+  typed.
 
-### Changed
+#### Branches view
 
-- **The branch list names the repository it belongs to**, on the rule directly above it,
-  reading `me/app · /src/app` — the same line the repository step had under its cursor,
-  moved to the top when you choose one. With one repository open there is no repository step
-  at all, so it was the one thing on screen that never said whose branches these were. The
-  breadcrumb under the list no longer repeats it: every row belongs to the same repository,
-  so it started with the same words whatever the cursor was on, and now starts at the branch.
-
-- **The branches view has a command mode, reached the way the panes view's is.** Both its
-  lists — repositories and branches — used to be search boxes with no mode to enter. Now `/`
-  gives the search field the keyboard and letters are commands until it does: `j`/`k` move,
-  `f` fetches, `i` and `Shift-I` order and reverse, `q` closes. The `/` at the left is dim while
-  the list has the keys and takes the accent while the search field does. `Enter` while
-  searching picks rather than committing the filter — narrowing a branch list is how you
-  reach the branch you are about to open — and `Esc` abandons what was typed, which costs
-  nothing because the `Ctrl-` forms of every command keep working while you type.
-- **The panes view's cursor stops only where there is somewhere to go**: a pane, or a
-  checkout with nothing running in it. Repository headings and checkouts that already have
-  panes are stepped over — the panes listed directly under them are the answer — so reaching
-  the one you want is fewer presses. Both still appear in the list.
-- **Folding a repository is gone**, with it. `Enter` on a repository was the only way to fold
-  one, and there is no cursor there to press it any more; the caret it used is gone from the
-  heading rather than left promising something that no longer happens.
-- `Esc` now goes back one step everywhere in the branches view — destination, branch,
-  repository, out — rather than closing outright from the branch list.
-- `Tab` in the panes view no longer refuses when the cursor is not in a repository; the
-  branches view opens on its repository list either way.
-- **Panes that are not inside a repository are always listed**, in their own section at the
-  bottom, rather than hidden behind a toggle. They are still panes, and a picker that hides
-  some of them makes you wonder which. `h` — which was that toggle — now moves between
-  repositories.
-
-### Fixed
-
-- **`Tab` no longer blanks the popup on its way between the views.** Each view used to take
-  the terminal for itself and put it back on the way out, so every switch left the alternate
-  screen — leaving herdr's popup framing an empty primary screen — while it waited for the
-  outgoing view's listing threads, read the session again, and re-entered. Held down, the
-  gaps ran together and the picker looked like it had stopped drawing: eight rapid presses
-  spent 2.48 s mostly blank. The picker now holds the terminal for as long as it is up and
-  the views borrow it, so `Tab` changes what is drawn and nothing else. See
-  [ADR 0009](docs/adr/0009-the-picker-owns-the-terminal.md).
-- **The branches view keeps what the remote told it across a switch.** `git ls-remote` and
-  `gh pr list` were run again on every visit, and — because they are joined before the view
-  can return — waited for again on the way out. They are asked once now and remembered for as
-  long as the picker is up; only the local refs, which are milliseconds and are the half that
-  changes, are read again. A `git fetch` still drops what is remembered rather than patching
-  it, because `--prune` deletes refs.
-- **The search field drops its `search …` hint once it has the keyboard**, in both views. It
-  is advice about a field you are not in, and under the cursor it read as text that would not
-  go away.
-- **A state filter and a typed query no longer hide each other** in the panes view. The chip
-  was drawn in place of the query, so with `b` on, letters went in and nothing appeared.
-
-- **A remote that cannot be reached is no longer reported as "not a git repository".** The
-  git adapter treated exit code 128 as "not a repository"; 128 is git's catch-all for every
-  fatal error, so a failed fetch was given a diagnosis about entirely the wrong thing. It now
-  requires git to have actually said so. Reachable since 0.1.0, but only visible now that
-  failures are put in front of the user.
-- `Ctrl-U` empties the branch search, which the key hint and the documentation had claimed
-  since 0.1.0 without it being implemented.
-- A list of one no longer says "1 branches".
-
-## [0.1.0]
-
-First release. Two overlay pickers for herdr, backed by one Rust binary.
-
-### Added
-
-- **Panes view.** Every open pane, grouped as repository → worktree → pane, with agent state.
-  `Enter` jumps to a pane across spaces and tabs; a worktree with no pane is listed and can
-  be opened; `n` adds a pane to a checkout; repositories fold; `/` filters.
-- **Branches view.** Every branch of the repository the picker was summoned from, whatever
-  state it is in — running, checked out, local, remote-only, or not yet existing. Typing
-  filters and offers to create a name that does not exist. Choosing a branch that is already
-  open jumps to it instead of checking it out twice.
+- **A repository step.** It opens on every repository herdr has open — the same set the panes
+  view groups by — with the one you summoned it from marked and under the cursor, so another
+  repository's branches are one `↓` and one `Enter` away. Rows carry how much of each
+  repository is open and where it is on disk, and the path is searchable along with the name.
+  With one repository open the step is skipped.
+- **Every branch, whatever state it is in** — running, checked out, local, remote-only, or
+  not yet existing. Choosing one that is already open jumps to it rather than checking it out
+  twice. A never-fetched branch is fetched and the worktree is cut from `origin/<branch>`,
+  not from `HEAD`. The list is headed by the repository it belongs to and where that is on
+  disk.
+- **`n` starts a branch from the one under the cursor.** It asks what to call it —
+  `+ new branch from main: …`, naming the base rather than merely highlighting it — and then
+  goes through the same destination step every other branch does. The list stays on screen
+  underneath, frozen: the base is settled when `n` is pressed, so nothing can move it out
+  from under the question. `Esc` from the destination comes back to the name still typed. A
+  name that is empty, that git would reject, or that the repository already has is refused at
+  the prompt rather than after the work has started, and a base that has only ever been on
+  the remote is fetched first. Typing a name that matches nothing offers `+ create` from
+  `HEAD` instead — [ADR 0013](docs/adr/0013-two-ways-to-start-a-branch.md) records why those
+  two cannot be one.
+- **An order for the list.** `i` walks `state` (the default), `updated`, and `name`;
+  `Shift-I` reverses the current one, and `Ctrl-O`/`Ctrl-R` do the same while the search
+  field has the keyboard. Either puts the cursor on the first row, because what a new order
+  is for is seeing what is now at the top. What is in force sits beside the count and takes
+  the accent once it is no longer the default. The order holds while a filter is typed and
+  across a change of repository, and branches with no date stay at the bottom in both
+  directions. See [ADR 0006](docs/adr/0006-repository-step-and-branch-order.md).
+- **`Ctrl-F` fetches the repository** on screen: `git fetch origin --prune`, then a re-read.
+  It fills in the date and commit subject for branches only `ls-remote` knew about, and drops
+  the ones deleted on the remote. `⠙ fetching origin…` sits beside the prompt while it runs
+  and the list stays usable; a fetch that cannot reach the remote says so and changes
+  nothing.
 - **Destinations.** A worktree pane can go beside the pane you came from, into an existing
   tab, into an existing space, or into a new space. `Enter` `Enter` takes the first. Beside
   the list is a preview of the chosen tab with the arriving pane drawn into it, predicted
   exactly rather than sketched. A zoomed tab shows a warning instead: herdr answers a move
   into one with success and then does not move the pane, so the picker refuses up front.
-- **Pull request annotations** when `gh` is installed and authenticated. Entirely optional;
-  branches are read from git so the picker works offline and against non-GitHub remotes.
-- `herdr-worktree-nav dump`, a diagnostic that prints the resolved tree as plain text.
+- **Pull request annotations** when `gh` is installed and authenticated. Entirely optional —
+  branches are read from git, so the picker works offline and against non-GitHub remotes.
+
+#### Both views
+
+- **A command mode, and a search that is entered deliberately.** Letters are commands until
+  `/` gives the search field the keyboard; `Ctrl-U` empties it and `Esc` abandons it, which
+  costs nothing because the `Ctrl-` form of every command keeps working while you type. The
+  `/` at the left is dim while the list has the keys and takes the accent while the field
+  does, and the `search …` hint gives way to what you are typing. Rows kept only for context
+  stay in the list, dimmed, rather than disappearing.
+- **`Esc` goes back one step**, everywhere, rather than closing outright.
+- **A picker that says what it is doing.** Opening a branch can mean a fetch across the
+  network and a checkout of a whole working tree. The picker stays on screen throughout,
+  keeps the destination list and its preview where they were, and names the step it is on
+  with a spinner beside it — as it does for `reading the remote…` and `fetching origin…`. The
+  spinner turns on a clock rather than on redraws, so it neither speeds up while you type nor
+  stalls while you hold a key down. `Ctrl-C` stops the work during the fetch and says so;
+  once herdr has been asked for a worktree it does not, because leaving then would strand the
+  workspace herdr made. See [ADR 0007](docs/adr/0007-stay-up-while-working.md).
+- **Failures are shown rather than vanishing.** A step that fails holds the screen with git's
+  or herdr's own words on it until you close it, and still reaches `herdr plugin log list`.
+- **Each repository's remote is asked once** and remembered for as long as the picker is up,
+  `Tab` between the views included. Only the local refs — milliseconds, and the half that
+  changes — are read again.
 - **The look of herdr's session navigator.** Both pickers open as popups over the live
-  session — framed by herdr in your accent colour, at the navigator's own proportions — and
+  session, framed by herdr in your accent colour at the navigator's own proportions, and
   inside that frame use its search line, tree glyphs, current-row gutter, meta column,
-  breadcrumb and key hint, taking the accent colour and status glyph set from your herdr
+  breadcrumb and key hint. The accent colour and status glyph set come from your herdr
   configuration. The meta column holds the checkout path and the pane id — shortened to `~`,
-  and placed just past the longest label rather than against the right edge, so a path stays
-  beside its row on a wide pane — since where a checkout is on disk is what a repository
-  picker cannot infer for you. `b`/`w`/`i`/`d`/`a` narrow the
-  panes view to one agent state, as they do in the navigator, and rows kept only for context
-  stay in the list dimmed rather than disappearing.
+  and placed just past the longest label rather than against the right edge — because where a
+  checkout is on disk is what a repository picker cannot infer for you. The key hint sheds
+  its least useful entry as the pane narrows, and what it sheds last is the way to the other
+  view.
+- **`herdr-worktree-nav dump`**, a diagnostic that prints the resolved tree as plain text, to
+  tell "herdr or git said something odd" apart from "the picker drew it wrong".
 
 ### Notes
 
 - Requires herdr 0.7.4 or later. macOS and Linux; Windows is not supported yet.
 - Worktrees are placed wherever herdr is configured to put them. This plugin never computes
   that path itself.
+- Installing downloads the prebuilt binary for your platform and verifies its SHA-256. On any
+  miss — no matching release, no network, an unsupported platform, a checksum mismatch — it
+  falls back to `cargo build --release`, so a Rust toolchain is never required but never
+  needed either.
 
 [Unreleased]: https://github.com/ShoMasegi/herdr-worktree-nav/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/ShoMasegi/herdr-worktree-nav/releases/tag/v0.1.0
