@@ -68,6 +68,7 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v5
         with:
           path: dist
@@ -75,9 +76,25 @@ jobs:
       - name: Collect the checksums into one file
         # fetch-or-build.sh looks for a single SHA256SUMS next to the archives.
         run: cd dist && cat *.sha256 > SHA256SUMS && rm -f *.sha256 && cat SHA256SUMS
+
+      - name: Take the release notes from the changelog
+        # The newest released section — skipping `[Unreleased]`, dropping the heading because
+        # GitHub already titles the release, and dropping the link definitions because they
+        # render as nothing. Without this the notes are the auto-generated list of merged
+        # pull requests, which says what landed but not what the plugin does.
+        shell: bash
+        run: |
+          awk '/^## \[Unreleased\]/ { next }
+               /^## \[/ { if (seen) exit; seen = 1; next }
+               seen && !/^\[[^]]+\]: https?:/' CHANGELOG.md > NOTES.md
+          test -s NOTES.md || { echo "no changelog section to release"; exit 1; }
+          cat NOTES.md
+
       - uses: softprops/action-gh-release@v2
         with:
+          body_path: NOTES.md
           files: |
             dist/*.tar.gz
             dist/SHA256SUMS
+          # Appended under the changelog, so the prose leads and the commit trail follows.
           generate_release_notes: true
