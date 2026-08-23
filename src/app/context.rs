@@ -8,8 +8,8 @@ use serde::Deserialize;
 
 /// The environment variables the action sets on the pane it opens. herdr's own
 /// `HERDR_PANE_ID` in a pane process is that pane's id, not the one it was summoned from.
-pub const FROM_PANE: &str = "GH_NAV_FROM_PANE";
-pub const REPO_ROOT: &str = "GH_NAV_REPO_ROOT";
+pub const FROM_PANE: &str = "WORKTREE_NAV_FROM_PANE";
+pub const REPO_ROOT: &str = "WORKTREE_NAV_REPO_ROOT";
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Context {

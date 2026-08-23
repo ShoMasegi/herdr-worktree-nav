@@ -101,5 +101,5 @@ gh pr list --json number,title,headRefName,isDraft
 
 | 変数 | 意味 |
 | --- | --- |
-| `GH_NAV_FROM_PANE` | ピッカーを呼び出した pane |
-| `GH_NAV_REPO_ROOT` | 呼び出し元のリポジトリ（herdr が既に把握していた場合） |
+| `WORKTREE_NAV_FROM_PANE` | ピッカーを呼び出した pane |
+| `WORKTREE_NAV_REPO_ROOT` | 呼び出し元のリポジトリ（herdr が既に把握していた場合） |

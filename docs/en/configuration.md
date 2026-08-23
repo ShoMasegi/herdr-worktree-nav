@@ -123,5 +123,5 @@ them out for itself:
 
 | Variable | Meaning |
 | --- | --- |
-| `GH_NAV_FROM_PANE` | the pane the picker was summoned from |
-| `GH_NAV_REPO_ROOT` | the repository it was summoned from, when herdr already knew |
+| `WORKTREE_NAV_FROM_PANE` | the pane the picker was summoned from |
+| `WORKTREE_NAV_REPO_ROOT` | the repository it was summoned from, when herdr already knew |
