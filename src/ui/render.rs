@@ -584,21 +584,29 @@ const HELP_REPO_SEARCH: &[&str] = &[
     "\u{21b5} branches  esc cancel",
 ];
 /// The branch step, when Esc has a repository list to go back to. Widest first, each rung
-/// dropping the least useful thing left.
+/// dropping the least useful thing left — and, as in the panes view, the other view outranks
+/// a way of moving around this one, so `Tab` survives to the second-to-last rung.
 const HELP_BRANCH_BACK: &[&str] = &[
-    "\u{21b5} choose  j/k move  / search  f fetch  i order  shift+i reverse  \u{21e5} panes  esc back  q close",
-    "\u{21b5} choose  j/k move  / search  f fetch  i order  shift+i reverse  esc back",
-    "\u{21b5} choose  / search  f fetch  i order  esc back",
-    "\u{21b5} choose  / search  esc back",
+    "\u{21b5} choose  j/k move  / search  n new branch  f fetch  i order  shift+i reverse  \u{21e5} panes  esc back  q close",
+    "\u{21b5} choose  j/k move  / search  n new branch  f fetch  i order  \u{21e5} panes  esc back  q close",
+    "\u{21b5} choose  / search  n new branch  f fetch  \u{21e5} panes  esc back",
+    "\u{21b5} choose  / search  n new branch  \u{21e5} panes  esc back",
+    "\u{21b5} choose  / search  \u{21e5} panes  esc back",
     "\u{21b5} choose  esc",
 ];
 /// The same, with only one repository open: Esc has nowhere to go but out.
 const HELP_BRANCH: &[&str] = &[
-    "\u{21b5} choose  j/k move  / search  f fetch  i order  shift+i reverse  \u{21e5} panes  q close",
-    "\u{21b5} choose  j/k move  / search  f fetch  i order  shift+i reverse  q close",
-    "\u{21b5} choose  / search  f fetch  i order  q close",
-    "\u{21b5} choose  / search  esc close",
+    "\u{21b5} choose  j/k move  / search  n new branch  f fetch  i order  shift+i reverse  \u{21e5} panes  q close",
+    "\u{21b5} choose  j/k move  / search  n new branch  f fetch  i order  \u{21e5} panes  q close",
+    "\u{21b5} choose  / search  n new branch  f fetch  \u{21e5} panes  q close",
+    "\u{21b5} choose  / search  n new branch  \u{21e5} panes  q close",
+    "\u{21b5} choose  / search  \u{21e5} panes  q close",
     "\u{21b5} choose  esc",
+];
+/// While the name of a new branch is being typed.
+const HELP_NAME: &[&str] = &[
+    "\u{21b5} next  ctrl+u clear  esc back",
+    "\u{21b5} next  esc back",
 ];
 const HELP_DESTINATION: &[&str] = &[
     "\u{21b5} open here  \u{2191}\u{2193} move  esc back  q close",
@@ -691,6 +699,16 @@ pub fn draw_branches(frame: &mut Frame, state: &BranchesState, theme: &Theme) {
             };
             frame.render_widget(footer(variants, theme, panel.footer.width), panel.footer);
         }
+        // The branch list, frozen, under a prompt asking what to call the branch being cut
+        // from the row the cursor is on. The list stays because the base is on it: taking it
+        // away would ask the question without showing what the answer is about.
+        Step::Name => {
+            frame.render_widget(name_prompt(state, theme, panel.search.width), panel.search);
+            render_detail(frame, &state.repo_heading(), theme, panel.rule);
+            render_branch_rows(frame, state, theme, panel.body);
+            render_detail(frame, &state.detail(), theme, panel.detail);
+            frame.render_widget(footer(HELP_NAME, theme, panel.footer.width), panel.footer);
+        }
         Step::Destination => {
             frame.render_widget(
                 destination_prompt(state, theme, panel.search.width),
@@ -773,6 +791,45 @@ fn branch_search_line(state: &BranchesState, theme: &Theme, width: u16) -> Parag
 
 /// Between the order and the count on the search line.
 const ORDER_GAP: usize = 3;
+
+/// `+ new branch from <base>: <name>`, in place of the search line.
+///
+/// The base is named rather than only highlighted in the list: it is the whole difference
+/// between this and the offer to create, which starts from `HEAD`.
+fn name_prompt(state: &BranchesState, theme: &Theme, width: u16) -> Paragraph<'static> {
+    let (base, typed) = state.naming().unwrap_or(("", ""));
+    let mut spans = vec![
+        Span::styled(
+            " + ",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("new branch from ", theme.dim()),
+        Span::styled(base.to_string(), Style::default().fg(theme.accent)),
+        Span::styled(": ", theme.dim()),
+    ];
+    match state.message() {
+        // The reason a name was refused belongs where the name is, not under the list.
+        Some(message) => spans.push(Span::styled(
+            message.to_string(),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )),
+        None => {
+            spans.push(Span::raw(typed.to_string()));
+            spans.push(Span::styled("\u{2588}", theme.dim()));
+        }
+    }
+
+    let count = count_of(state.rows().len(), "branch", "branches");
+    let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+    let pad = (width as usize).saturating_sub(used + count.chars().count() + 1);
+    spans.push(Span::raw(" ".repeat(pad)));
+    spans.push(Span::styled(count, theme.dim()));
+    Paragraph::new(Line::from(spans))
+}
 
 fn repo_search_line(state: &BranchesState, theme: &Theme, width: u16) -> Paragraph<'static> {
     let mut spans = vec![Span::styled(" / ", prompt_style(state, theme))];
@@ -928,7 +985,10 @@ fn destination_prompt(state: &BranchesState, theme: &Theme, width: u16) -> Parag
                 .add_modifier(Modifier::BOLD),
         )));
     }
-    let name = state.chosen().map(|e| e.name.clone()).unwrap_or_default();
+    let name = state
+        .chosen()
+        .map(|c| c.name().to_string())
+        .unwrap_or_default();
     Paragraph::new(Line::from(vec![
         Span::styled(" where should ", theme.dim()),
         Span::styled(
@@ -1854,6 +1914,31 @@ mod tests {
         search(&mut state, "chore");
         state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         insta::assert_snapshot!(branches_screen(&state, 110, 22));
+    }
+
+    /// The prompt names what the branch is being cut from, and the list stays put so the
+    /// row it names is still on screen underneath it.
+    #[test]
+    fn draws_the_prompt_for_a_branch_started_from_the_one_under_the_cursor() {
+        let mut state = branches_state();
+        state.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+        for c in "feat/login-v2".chars() {
+            state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        insta::assert_snapshot!(branches_screen(&state, 92, 12));
+    }
+
+    /// A name git would take is not the same as a name this repository has room for, and the
+    /// reason goes where the name is rather than under the list.
+    #[test]
+    fn draws_the_reason_a_name_was_refused_where_the_name_is() {
+        let mut state = branches_state();
+        state.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+        for c in "main".chars() {
+            state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        insta::assert_snapshot!(branches_screen(&state, 92, 12));
     }
 
     #[test]

@@ -149,11 +149,65 @@ pub fn new_branch(name: &str) -> BranchEntry {
     }
 }
 
-/// What picking this branch should do first.
+/// What the picker was left holding when the user chose.
 ///
-/// `head_ref` is what a brand new branch is based on; `remote` is the remote a never-fetched
-/// branch is fetched from.
-pub fn plan(entry: &BranchEntry, head_ref: &str, remote: &str) -> BranchPlan {
+/// Two shapes rather than one, because the branch list can be asked for two different
+/// things: the row itself, or a branch that does not exist yet cut from that row. The second
+/// is deliberately not a [`BranchState`] — that enum says what a row *is*, and every renderer
+/// matches on it, while this never appears as a row at all. See
+/// `docs/adr/0013-two-ways-to-start-a-branch.md`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Chosen {
+    /// A branch already in the list.
+    Listed(BranchEntry),
+    /// A branch to create, cut from one that is in the list.
+    NewFrom { name: String, base: BranchEntry },
+}
+
+impl Chosen {
+    /// The branch being worked on, for anything that reports progress. For a new branch that
+    /// is the name being created, not the one it is cut from.
+    pub fn name(&self) -> &str {
+        match self {
+            Chosen::Listed(entry) => &entry.name,
+            Chosen::NewFrom { name, .. } => name,
+        }
+    }
+}
+
+/// What picking this should do first.
+///
+/// `head_ref` is what a brand new branch is based on when nothing else names a base; `remote`
+/// is the remote a never-fetched branch is fetched from.
+pub fn plan(chosen: &Chosen, head_ref: &str, remote: &str) -> BranchPlan {
+    let entry = match chosen {
+        Chosen::Listed(entry) => entry,
+        Chosen::NewFrom { name, base } => {
+            return match &base.state {
+                // The base has never been fetched, so there is no local ref to cut from.
+                // Fetch it and cut from the remote-tracking ref — the same answer choosing
+                // that row on its own would have given.
+                BranchState::RemoteOnly => BranchPlan::FetchThenCreate {
+                    branch: name.clone(),
+                    base: format!("{remote}/{}", base.name),
+                },
+                // A base that does not exist yet cannot be cut from. The branch list refuses
+                // to offer it; `head_ref` is the honest answer if it ever gets here.
+                BranchState::New => BranchPlan::Create {
+                    branch: name.clone(),
+                    base: Some(head_ref.to_string()),
+                },
+                // Everything else names a ref git already has. Whether it is checked out, or
+                // has an agent running in it, says nothing about cutting a branch from it.
+                BranchState::LivePane { .. }
+                | BranchState::IdleWorktree { .. }
+                | BranchState::LocalRef => BranchPlan::Create {
+                    branch: name.clone(),
+                    base: Some(base.name.clone()),
+                },
+            };
+        }
+    };
     match &entry.state {
         BranchState::LivePane { pane_id, .. } => BranchPlan::Focus {
             pane_id: pane_id.clone(),
@@ -373,7 +427,7 @@ mod tests {
             &[],
         )[0];
         assert_eq!(
-            plan(entry, "main", "origin"),
+            plan(&Chosen::Listed(entry.clone()), "main", "origin"),
             BranchPlan::Focus {
                 pane_id: "w2:p1".into()
             }
@@ -384,7 +438,7 @@ mod tests {
     fn picking_an_idle_checkout_opens_it() {
         let entry = &resolve(&repo(vec![worktree("fix/crash", vec![])]), &[], &[], &[])[0];
         assert_eq!(
-            plan(entry, "main", "origin"),
+            plan(&Chosen::Listed(entry.clone()), "main", "origin"),
             BranchPlan::Open {
                 checkout_path: "/wt/fix-crash".into()
             }
@@ -395,7 +449,7 @@ mod tests {
     fn picking_a_local_ref_cuts_a_worktree_with_no_base() {
         let entry = &resolve(&repo(vec![]), &[local("chore/deps", 100)], &[], &[])[0];
         assert_eq!(
-            plan(entry, "main", "origin"),
+            plan(&Chosen::Listed(entry.clone()), "main", "origin"),
             BranchPlan::Create {
                 branch: "chore/deps".into(),
                 base: None,
@@ -409,7 +463,7 @@ mod tests {
         // shares a name with the one on GitHub.
         let entry = &resolve(&repo(vec![]), &[], &["feat/search".into()], &[])[0];
         assert_eq!(
-            plan(entry, "main", "origin"),
+            plan(&Chosen::Listed(entry.clone()), "main", "origin"),
             BranchPlan::FetchThenCreate {
                 branch: "feat/search".into(),
                 base: "origin/feat/search".into(),
@@ -420,9 +474,95 @@ mod tests {
     #[test]
     fn picking_a_name_that_exists_nowhere_creates_it_from_head() {
         assert_eq!(
-            plan(&new_branch("feat/brand-new"), "develop", "origin"),
+            plan(
+                &Chosen::Listed(new_branch("feat/brand-new")),
+                "develop",
+                "origin"
+            ),
             BranchPlan::Create {
                 branch: "feat/brand-new".into(),
+                base: Some("develop".into()),
+            }
+        );
+    }
+
+    fn cut_from(base: &BranchEntry) -> BranchPlan {
+        plan(
+            &Chosen::NewFrom {
+                name: "feat/new".into(),
+                base: base.clone(),
+            },
+            "develop",
+            "origin",
+        )
+    }
+
+    #[test]
+    fn a_new_branch_is_cut_from_the_local_ref_it_was_started_from() {
+        let base = &resolve(&repo(vec![]), &[local("main", 100)], &[], &[])[0];
+        assert_eq!(
+            cut_from(base),
+            BranchPlan::Create {
+                branch: "feat/new".into(),
+                base: Some("main".into()),
+            }
+        );
+    }
+
+    /// A checkout is a fact about where a branch is, not about whether it can be cut from.
+    #[test]
+    fn a_checked_out_base_is_still_cut_from_the_branch_rather_than_opened() {
+        let base = &resolve(&repo(vec![worktree("fix/crash", vec![])]), &[], &[], &[])[0];
+        assert_eq!(
+            cut_from(base),
+            BranchPlan::Create {
+                branch: "feat/new".into(),
+                base: Some("fix/crash".into()),
+            }
+        );
+    }
+
+    /// Choosing this row on its own goes to the pane. Starting a branch from it must not:
+    /// the user asked for new work, not for the work that is already open.
+    #[test]
+    fn a_running_base_is_cut_from_rather_than_jumped_to() {
+        let base = &resolve(
+            &repo(vec![worktree("feat/login", vec![pane("w2:p1")])]),
+            &[local("feat/login", 100)],
+            &[],
+            &[],
+        )[0];
+        assert_eq!(
+            cut_from(base),
+            BranchPlan::Create {
+                branch: "feat/new".into(),
+                base: Some("feat/login".into()),
+            }
+        );
+    }
+
+    /// The base has no local ref at all, so it is fetched first — and what is cut from is the
+    /// remote-tracking ref, which is the branch the remote actually has.
+    #[test]
+    fn a_never_fetched_base_is_fetched_before_the_branch_is_cut_from_it() {
+        let base = &resolve(&repo(vec![]), &[], &["feat/search".into()], &[])[0];
+        assert_eq!(
+            cut_from(base),
+            BranchPlan::FetchThenCreate {
+                branch: "feat/new".into(),
+                base: "origin/feat/search".into(),
+            }
+        );
+    }
+
+    /// Unreachable through the branch list, which does not offer `n` on the create row. The
+    /// answer is still an honest one rather than a ref git would reject.
+    #[test]
+    fn a_base_that_does_not_exist_yet_falls_back_to_head() {
+        assert_eq!(
+            cut_from(&new_branch("feat/not-yet")),
+            BranchPlan::Create {
+                branch: "feat/new".into(),
                 base: Some("develop".into()),
             }
         );

@@ -8,6 +8,17 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **`n` starts a branch from the one under the cursor**, and opens it as a worktree pane
+  where you choose. It asks what to call it — `+ new branch from main: …`, with the base
+  named rather than merely highlighted — and then goes through the same destination step
+  every other branch does. The list stays on screen underneath, frozen: the base is settled
+  when `n` is pressed, so nothing can move it out from under the question. `Esc` from the
+  destination comes back to the name still typed. A name that is empty, that git would
+  reject, or that this repository already has is refused at the prompt rather than after the
+  work has started, and a base that has only ever been on the remote is fetched first and cut
+  from `origin/<branch>`. This is the second way to create a branch, not a replacement for
+  the first: typing a name that matches nothing still offers `+ create` from `HEAD`, and
+  [ADR 0013](docs/adr/0013-two-ways-to-start-a-branch.md) says why the two cannot be one.
 - **A repository step in the branches view.** It now opens on every repository herdr has
   open — the same set the panes view groups by — with the one you summoned it from marked and
   under the cursor, so another repository's branches are one `↓` and one `Enter` away instead

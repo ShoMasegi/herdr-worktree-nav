@@ -16,7 +16,7 @@ use crate::domain::model::{normalize_path, RepoNode};
 use crate::domain::order::Order;
 use crate::domain::preview::{self, Preview};
 use crate::domain::progress::Stage;
-use crate::domain::resolve::{self, BranchEntry, BranchState};
+use crate::domain::resolve::{self, BranchEntry, BranchState, Chosen};
 use crate::port::{GitRef, PullRequest, Snapshot};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,16 +47,27 @@ pub enum BranchAction {
 /// A branch and where its pane should go.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Choice {
-    pub entry: BranchEntry,
+    pub chosen: Chosen,
     pub destination: Destination,
 }
 
-/// Which of the three steps is on screen.
+/// Which of the steps is on screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
     Repo,
     Branch,
+    /// Typing the name of a branch to cut from the one under the cursor. A step of its own
+    /// rather than a mode of the branch list, so that `Esc` from the destination comes back
+    /// to the name rather than throwing it away.
+    Name,
     Destination,
+}
+
+/// A branch being started from another one, while its name is being typed.
+#[derive(Debug, Clone)]
+struct Naming {
+    base: BranchEntry,
+    name: String,
 }
 
 /// Everything known about one repository's branches. The picker holds one of these for the
@@ -136,9 +147,12 @@ pub struct BranchesState {
     tick: usize,
 
     step: Step,
+    /// Set for as long as a new branch is being started, including while its destination is
+    /// being chosen — that is what lets `Esc` there come back to the name.
+    naming: Option<Naming>,
     destinations: Vec<Destination>,
     destination_cursor: usize,
-    chosen: Option<BranchEntry>,
+    chosen: Option<Chosen>,
     activity: Activity,
     message: Option<String>,
 }
@@ -191,6 +205,7 @@ impl BranchesState {
             } else {
                 Step::Branch
             },
+            naming: None,
             destinations,
             destination_cursor: 0,
             chosen: None,
@@ -275,7 +290,7 @@ impl BranchesState {
                 branch: self
                     .chosen
                     .as_ref()
-                    .map(|entry| entry.name.clone())
+                    .map(|chosen| chosen.name().to_string())
                     .unwrap_or_default(),
             },
         };
@@ -342,8 +357,16 @@ impl BranchesState {
         &self.destinations
     }
 
-    /// The branch whose destination is being chosen.
-    pub fn chosen(&self) -> Option<&BranchEntry> {
+    /// The branch a new one is being cut from, and the name typed so far. `None` unless a
+    /// branch is being started.
+    pub fn naming(&self) -> Option<(&str, &str)> {
+        self.naming
+            .as_ref()
+            .map(|naming| (naming.base.name.as_str(), naming.name.as_str()))
+    }
+
+    /// What the destination is being chosen for.
+    pub fn chosen(&self) -> Option<&Chosen> {
         self.chosen.as_ref()
     }
 
@@ -419,13 +442,13 @@ impl BranchesState {
 
     /// What the tab under the cursor will look like once the branch's pane lands in it.
     pub fn preview(&self) -> Preview {
-        let (Some(destination), Some(entry)) = (
+        let (Some(destination), Some(chosen)) = (
             self.destinations.get(self.destination_cursor),
             self.chosen.as_ref(),
         ) else {
             return Preview::Unavailable;
         };
-        preview::predict(&self.snapshot, destination, &entry.name)
+        preview::predict(&self.snapshot, destination, chosen.name())
     }
 
     /// Whether the destination under the cursor can actually take the pane.
@@ -444,7 +467,7 @@ impl BranchesState {
         let branch = self
             .chosen
             .as_ref()
-            .map(|entry| entry.name.as_str())
+            .map(Chosen::name)
             .unwrap_or("the branch");
         match destination {
             Destination::SplitHere { direction, .. } => format!(
@@ -571,6 +594,9 @@ impl BranchesState {
             Step::Repo => self.repo_visible.len(),
             Step::Branch => self.rows().len(),
             Step::Destination => self.destinations.len(),
+            // The list is on screen but frozen: the base was chosen before the name was
+            // asked for, and moving off it would silently change what is being cut from.
+            Step::Name => return,
         };
         if len == 0 {
             return;
@@ -579,6 +605,7 @@ impl BranchesState {
             Step::Repo => &mut self.repo_cursor,
             Step::Branch => &mut self.cursor,
             Step::Destination => &mut self.destination_cursor,
+            Step::Name => return,
         };
         *cursor = (*cursor as isize + delta).rem_euclid(len as isize) as usize;
     }
@@ -615,6 +642,11 @@ impl BranchesState {
                             self.query.clear();
                             self.refilter();
                         }
+                        Step::Name => {
+                            if let Some(naming) = &mut self.naming {
+                                naming.name.clear();
+                            }
+                        }
                         Step::Destination => return BranchAction::Ignored,
                     }
                     BranchAction::Consumed
@@ -641,6 +673,7 @@ impl BranchesState {
             (Step::Repo, true) => self.handle_repo_search_key(key),
             (Step::Branch, false) => self.handle_branch_key(key),
             (Step::Branch, true) => self.handle_branch_search_key(key),
+            (Step::Name, _) => self.handle_name_key(key),
             (Step::Destination, _) => self.handle_destination_key(key),
         }
     }
@@ -777,6 +810,7 @@ impl BranchesState {
             KeyCode::Char('f') => BranchAction::Fetch {
                 repo_root: self.repo().repo_root.clone(),
             },
+            KeyCode::Char('n') => self.start_naming(),
             KeyCode::Enter => self.choose_branch(),
             _ => BranchAction::Ignored,
         }
@@ -841,9 +875,86 @@ impl BranchesState {
                 pane_id: pane_id.clone(),
             };
         }
-        self.chosen = Some(entry);
+        self.chosen = Some(Chosen::Listed(entry));
         self.step = Step::Destination;
         self.filtering = false;
+        self.destination_cursor = 0;
+        BranchAction::Consumed
+    }
+
+    /// Start a branch from the row under the cursor. What it is cut from is decided here,
+    /// before the name is asked for, so that the list can stay on screen without the cursor
+    /// being able to change the answer.
+    fn start_naming(&mut self) -> BranchAction {
+        let Some(base) = self.selected().cloned() else {
+            self.message = Some("no branch selected".into());
+            return BranchAction::Consumed;
+        };
+        if base.state == BranchState::New {
+            // Not reachable today: the offer to create is only on screen while something is
+            // being typed, and letters are text there. It is guarded anyway because the
+            // alternative is a `git worktree add` based on a ref that does not exist, and
+            // because a search that survived its own keystrokes would make it reachable.
+            self.message = Some(format!("{} does not exist yet", base.name));
+            return BranchAction::Consumed;
+        }
+        self.filtering = false;
+        self.naming = Some(Naming {
+            base,
+            name: String::new(),
+        });
+        self.step = Step::Name;
+        BranchAction::Consumed
+    }
+
+    fn handle_name_key(&mut self, key: KeyEvent) -> BranchAction {
+        match key.code {
+            KeyCode::Esc => {
+                self.step = Step::Branch;
+                self.naming = None;
+                BranchAction::Consumed
+            }
+            KeyCode::Enter => self.finish_naming(),
+            KeyCode::Backspace => {
+                if let Some(naming) = &mut self.naming {
+                    naming.name.pop();
+                }
+                BranchAction::Consumed
+            }
+            KeyCode::Char(c) => {
+                if let Some(naming) = &mut self.naming {
+                    naming.name.push(c);
+                }
+                BranchAction::Consumed
+            }
+            _ => BranchAction::Ignored,
+        }
+    }
+
+    /// Everything that would make git refuse is refused here instead, where it can be said
+    /// in the prompt rather than surfacing as a failed step after the picker has committed.
+    fn finish_naming(&mut self) -> BranchAction {
+        let Some(naming) = self.naming.clone() else {
+            return BranchAction::Ignored;
+        };
+        let name = naming.name.trim().to_string();
+        if name.is_empty() {
+            self.message = Some("name the branch first".into());
+            return BranchAction::Consumed;
+        }
+        if !is_branch_name(&name) {
+            self.message = Some(format!("git would refuse the name {name}"));
+            return BranchAction::Consumed;
+        }
+        if self.entries.iter().any(|entry| entry.name == name) {
+            self.message = Some(format!("{name} already exists here"));
+            return BranchAction::Consumed;
+        }
+        self.chosen = Some(Chosen::NewFrom {
+            name,
+            base: naming.base,
+        });
+        self.step = Step::Destination;
         self.destination_cursor = 0;
         BranchAction::Consumed
     }
@@ -851,7 +962,13 @@ impl BranchesState {
     fn handle_destination_key(&mut self, key: KeyEvent) -> BranchAction {
         match key.code {
             KeyCode::Esc | KeyCode::Backspace => {
-                self.step = Step::Branch;
+                // One step back rather than all the way out: a name that has just been typed
+                // is worth keeping while its destination is reconsidered.
+                self.step = if self.naming.is_some() {
+                    Step::Name
+                } else {
+                    Step::Branch
+                };
                 self.chosen = None;
                 BranchAction::Consumed
             }
@@ -870,14 +987,17 @@ impl BranchesState {
                     self.message = Some(reason);
                     return BranchAction::Consumed;
                 }
-                let (Some(entry), Some(destination)) = (
+                let (Some(chosen), Some(destination)) = (
                     self.chosen.clone(),
                     self.destinations.get(self.destination_cursor).cloned(),
                 ) else {
                     self.message = Some("no destination available".into());
                     return BranchAction::Consumed;
                 };
-                BranchAction::Chosen(Box::new(Choice { entry, destination }))
+                BranchAction::Chosen(Box::new(Choice {
+                    chosen,
+                    destination,
+                }))
             }
             _ => BranchAction::Ignored,
         }
@@ -1197,6 +1317,125 @@ mod tests {
         assert_eq!(rows.last().unwrap().state, BranchState::New);
     }
 
+    /// The row the cursor is on when the picker opens.
+    fn under_cursor(state: &BranchesState) -> String {
+        state.rows()[state.cursor()].name.clone()
+    }
+
+    #[test]
+    fn n_starts_a_branch_from_the_row_under_the_cursor() {
+        let mut state = state();
+        let base = under_cursor(&state);
+
+        state.handle_key(key(KeyCode::Char('n')));
+
+        assert_eq!(state.step(), Step::Name);
+        assert_eq!(state.naming(), Some((base.as_str(), "")));
+    }
+
+    /// The base is settled when `n` is pressed, so the list underneath is inert. Moving the
+    /// cursor while typing must not quietly change what the branch is cut from.
+    #[test]
+    fn the_base_does_not_move_while_the_name_is_being_typed() {
+        let mut state = state();
+        let base = under_cursor(&state);
+        state.handle_key(key(KeyCode::Char('n')));
+
+        type_in(&mut state, "feat/x");
+        state.handle_key(key(KeyCode::Down));
+        ctrl(&mut state, 'n');
+
+        assert_eq!(state.naming(), Some((base.as_str(), "feat/x")));
+    }
+
+    #[test]
+    fn enter_carries_the_name_and_the_base_into_the_destination_step() {
+        let mut state = state();
+        let base = under_cursor(&state);
+        state.handle_key(key(KeyCode::Char('n')));
+        type_in(&mut state, "feat/x");
+
+        state.handle_key(key(KeyCode::Enter));
+
+        assert_eq!(state.step(), Step::Destination);
+        match state.chosen() {
+            Some(Chosen::NewFrom { name, base: from }) => {
+                assert_eq!(name, "feat/x");
+                assert_eq!(from.name, base);
+            }
+            other => panic!("expected a new branch, got {other:?}"),
+        }
+    }
+
+    /// Reconsidering the destination is not reconsidering the name.
+    #[test]
+    fn esc_from_the_destination_comes_back_to_the_name_still_typed() {
+        let mut state = state();
+        state.handle_key(key(KeyCode::Char('n')));
+        type_in(&mut state, "feat/x");
+        state.handle_key(key(KeyCode::Enter));
+
+        state.handle_key(key(KeyCode::Esc));
+
+        assert_eq!(state.step(), Step::Name);
+        assert_eq!(state.naming().map(|(_, name)| name), Some("feat/x"));
+    }
+
+    #[test]
+    fn esc_from_the_name_goes_back_to_the_list_and_forgets_it() {
+        let mut state = state();
+        state.handle_key(key(KeyCode::Char('n')));
+        type_in(&mut state, "feat/x");
+
+        state.handle_key(key(KeyCode::Esc));
+
+        assert_eq!(state.step(), Step::Branch);
+        assert_eq!(state.naming(), None);
+    }
+
+    #[test]
+    fn ctrl_u_clears_the_name_without_leaving_the_step() {
+        let mut state = state();
+        state.handle_key(key(KeyCode::Char('n')));
+        type_in(&mut state, "feat/x");
+
+        ctrl(&mut state, 'u');
+
+        assert_eq!(state.step(), Step::Name);
+        assert_eq!(state.naming().map(|(_, name)| name), Some(""));
+    }
+
+    /// Refused here rather than by git, which would only say so after the picker had
+    /// committed to a destination and started work.
+    #[test]
+    fn a_name_that_is_empty_invalid_or_taken_is_refused_at_the_prompt() {
+        for bad in ["", "  ", "feat/..x", "main"] {
+            let mut state = state();
+            state.handle_key(key(KeyCode::Char('n')));
+            type_in(&mut state, bad);
+
+            state.handle_key(key(KeyCode::Enter));
+
+            assert_eq!(state.step(), Step::Name, "{bad:?} should not have advanced");
+            assert!(state.message().is_some(), "{bad:?} should say why not");
+        }
+    }
+
+    /// Which is also what keeps the offer to create out of reach as a base: it is only ever
+    /// on screen while something is being typed, and there is no commit to cut from until
+    /// choosing it has made it exist.
+    #[test]
+    fn n_is_text_while_the_search_box_has_the_keyboard() {
+        let mut state = state();
+        search(&mut state, "feat/brand-new");
+        assert_eq!(state.rows()[state.cursor()].state, BranchState::New);
+
+        state.handle_key(key(KeyCode::Char('n')));
+
+        assert_eq!(state.step(), Step::Branch);
+        assert_eq!(state.query(), "feat/brand-newn");
+    }
+
     #[test]
     fn a_name_that_matches_nothing_becomes_an_offer_to_create_it() {
         let mut state = state();
@@ -1255,7 +1494,7 @@ mod tests {
             BranchAction::Consumed
         );
         assert_eq!(state.step(), Step::Destination);
-        assert_eq!(state.chosen().unwrap().name, "chore/deps");
+        assert_eq!(state.chosen().unwrap().name(), "chore/deps");
     }
 
     #[test]
@@ -1267,7 +1506,7 @@ mod tests {
         let BranchAction::Chosen(choice) = action else {
             panic!("expected a choice, got {action:?}");
         };
-        assert_eq!(choice.entry.name, "chore/deps");
+        assert_eq!(choice.chosen.name(), "chore/deps");
         assert_eq!(choice.destination, destinations()[0]);
     }
 
