@@ -1406,6 +1406,7 @@ mod tests {
             checkout_path: format!("/wt/{}", branch.replace('/', "-")),
             is_primary: primary,
             open_workspace_id: panes.first().map(|p| p.workspace_id.clone()),
+            track: None,
             panes,
         }
     }

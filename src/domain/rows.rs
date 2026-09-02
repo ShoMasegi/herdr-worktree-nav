@@ -13,7 +13,7 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 use crate::domain::model::{PaneNode, Tree};
-use crate::port::AgentStatus;
+use crate::port::{AgentStatus, Track};
 
 /// Which node of the tree a row stands for. Indices point into [`Tree`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +57,12 @@ pub struct Row {
     /// takes the place of the `no pane` note, since it is the more urgent fact about the
     /// same row — see `docs/adr/0014-removing-outlives-the-picker.md`.
     pub is_removing: bool,
+    /// A checkout holding uncommitted changes or untracked files. False also means "not
+    /// asked yet": the answer costs a process per checkout and arrives after the first
+    /// frame, and a marker that is wrong for a moment is worse than one that is late.
+    pub is_dirty: bool,
+    /// What git said about this checkout's branch against its upstream.
+    pub track: Option<Track>,
     /// The row the session is currently on, marked with a caret in the gutter.
     pub is_current: bool,
     /// Whether this row matched the active filter, as opposed to being kept as ancestor
@@ -153,6 +159,9 @@ pub struct ViewOptions {
     /// for the same reason `home` is: which processes are running is not something this
     /// module is allowed to find out for itself.
     pub removing: Vec<String>,
+    /// Checkout paths git has said are holding uncommitted work. Only the ones that are:
+    /// clean and not-yet-asked are the same answer here, because they draw the same.
+    pub dirty: Vec<String>,
 }
 
 impl ViewOptions {
@@ -258,6 +267,11 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                         .removing
                         .iter()
                         .any(|path| path == &worktree.checkout_path),
+                    is_dirty: options
+                        .dirty
+                        .iter()
+                        .any(|path| path == &worktree.checkout_path),
+                    track: worktree.track,
                     is_current: false,
                     matched: worktree_matches,
                 }];
@@ -289,6 +303,8 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
             status: repo_status,
             is_idle: false,
             is_removing: false,
+            is_dirty: false,
+            track: None,
             is_current: panes.iter().any(|pane| pane.focused),
             matched: repo_matches,
         }];
@@ -328,6 +344,8 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                 status: aggregate(tree.ungrouped.iter().map(|pane| pane.agent_status)),
                 is_idle: false,
                 is_removing: false,
+                is_dirty: false,
+                track: None,
                 is_current: tree.ungrouped.iter().any(|pane| pane.focused),
                 matched: true,
             });
@@ -350,6 +368,8 @@ fn pane_row(reference: RowRef, depth: u8, pane: &PaneNode, matched: bool) -> Row
         status: pane.agent_status,
         is_idle: false,
         is_removing: false,
+        is_dirty: false,
+        track: None,
         is_current: pane.focused,
         matched,
     }
@@ -584,6 +604,7 @@ mod tests {
             checkout_path: format!("/wt/{}", branch.replace('/', "-")),
             is_primary: branch == "main",
             open_workspace_id: panes.first().map(|p| p.workspace_id.clone()),
+            track: None,
             panes,
         }
     }
@@ -708,6 +729,40 @@ mod tests {
         assert!(find(&rows, "fix/crash").is_idle);
         assert_eq!(find(&rows, "fix/crash").meta, "/wt/fix-crash");
         assert!(!find(&rows, "main").is_idle);
+    }
+
+    #[test]
+    fn a_checkout_holding_uncommitted_work_is_marked_as_such() {
+        let options = ViewOptions {
+            dirty: vec!["/wt/fix-crash".into()],
+            ..Default::default()
+        };
+        let rows = flatten(&tree(), &options);
+        assert!(find(&rows, "fix/crash").is_dirty);
+        assert!(!find(&rows, "feat/login").is_dirty);
+    }
+
+    #[test]
+    fn a_checkout_whose_answer_has_not_arrived_is_drawn_without_a_marker() {
+        // Asking whether a checkout is dirty is a process per checkout, so the answers
+        // arrive after the first frame. Not yet known and known-clean draw the same, on
+        // purpose: the alternative is a marker that is wrong for a moment.
+        let rows = flatten(&tree(), &ViewOptions::default());
+        assert!(!find(&rows, "fix/crash").is_dirty);
+    }
+
+    #[test]
+    fn a_checkout_carries_what_git_said_about_its_branch() {
+        let mut tree = tree();
+        tree.repos[0].worktrees[2].track = Some(Track::Gone);
+        let rows = flatten(&tree, &ViewOptions::default());
+        assert_eq!(find(&rows, "fix/crash").track, Some(Track::Gone));
+        assert_eq!(find(&rows, "feat/login").track, None);
+        assert_eq!(
+            find(&rows, "me/app (3)").track,
+            None,
+            "a repository heading has no branch of its own"
+        );
     }
 
     #[test]

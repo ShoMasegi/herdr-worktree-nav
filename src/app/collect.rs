@@ -159,6 +159,7 @@ fn collect_repos(
                 repo_root,
                 display_name,
                 worktrees: listed.worktrees,
+                refs: Vec::new(),
             })
         })
         .collect()

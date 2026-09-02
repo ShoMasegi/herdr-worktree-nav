@@ -546,6 +546,7 @@ mod tests {
                             checkout_path: "/src/app".into(),
                             is_primary: true,
                             open_workspace_id: Some("w1".into()),
+                            track: None,
                             panes: vec![pane("w1:p1", "claude", AgentStatus::Working)],
                         },
                         WorktreeNode {
@@ -553,6 +554,7 @@ mod tests {
                             checkout_path: "/wt/app/feat-login".into(),
                             is_primary: false,
                             open_workspace_id: Some("w2".into()),
+                            track: None,
                             panes: vec![pane("w2:p1", "codex", AgentStatus::Blocked)],
                         },
                         WorktreeNode {
@@ -560,6 +562,7 @@ mod tests {
                             checkout_path: "/wt/app/fix-crash".into(),
                             is_primary: false,
                             open_workspace_id: None,
+                            track: None,
                             panes: vec![],
                         },
                     ],
@@ -836,6 +839,7 @@ mod tests {
                             checkout_path: "/src/app".into(),
                             is_primary: true,
                             open_workspace_id: None,
+                            track: None,
                             panes: vec![],
                         },
                         WorktreeNode {
@@ -843,6 +847,7 @@ mod tests {
                             checkout_path: "/wt/app/feat-login".into(),
                             is_primary: false,
                             open_workspace_id: Some("w2".into()),
+                            track: None,
                             panes: vec![pane("w2:p1", "codex", AgentStatus::Blocked)],
                         },
                     ],

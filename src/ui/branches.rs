@@ -1093,6 +1093,7 @@ mod tests {
                 checkout_path: "/wt/feat-live".into(),
                 is_primary: false,
                 open_workspace_id: Some("w2".into()),
+                track: None,
                 panes: vec![PaneNode {
                     pane_id: "w2:p1".into(),
                     workspace_id: "w2".into(),
@@ -1115,6 +1116,7 @@ mod tests {
                 checkout_path: "/src/tools".into(),
                 is_primary: true,
                 open_workspace_id: Some("w5".into()),
+                track: None,
                 panes: vec![],
             }],
         }
