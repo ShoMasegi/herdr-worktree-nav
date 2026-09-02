@@ -177,15 +177,17 @@ pub struct GitRef {
     pub worktree_path: Option<String>,
 }
 
-/// What git says about a branch's position relative to its upstream.
+/// What git says about a branch's position relative to the upstream it tracks.
 ///
-/// Read straight out of `%(upstream:track)`, which the one `for-each-ref` this plugin
-/// already runs can print for free — the alternative, a `rev-list --count` per branch, is a
-/// process per branch.
+/// Read straight out of `%(upstream:track)`, which the one `for-each-ref` this plugin already
+/// runs prints alongside everything else it is being asked for. The alternative is a
+/// `rev-list --count` per branch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Track {
-    /// The upstream branch is no longer on the remote. Usually a branch whose pull request
-    /// was merged and whose head GitHub then deleted, which is what makes it worth showing.
+    /// git could not find the ref this branch tracks. Usually that is a merged pull request
+    /// whose head GitHub deleted and a pruning fetch then dropped, which is what makes it
+    /// worth showing — but a never-fetched upstream and a hand-pruned `refs/remotes` read
+    /// the same, because to git they are the same: the ref is not there.
     Gone,
     /// Commits on one side the other does not have. At least one of the two is non-zero:
     /// git prints nothing at all for a branch level with its upstream.
@@ -212,9 +214,9 @@ pub struct RepoIdentity {
 }
 
 /// `Sync` because pane working directories are resolved from several threads at once, and
-/// `Send` because asking whether a checkout is dirty outlives the view that asked: those
-/// answers are wanted on both sides of a `Tab`, so the threads waiting for them cannot be
-/// scoped to one of them.
+/// `Send` because the port is shared into detached threads through an `Arc` — which requires
+/// both. It is detached rather than scoped because asking whether a checkout is dirty
+/// outlives the view that asked: those answers are wanted on both sides of a `Tab`.
 pub trait GitPort: Send + Sync {
     /// Resolve which repository and branch a directory belongs to. `Ok(None)` when the path
     /// is not inside a work tree — that is an ordinary answer, not an error.

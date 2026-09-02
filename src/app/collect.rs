@@ -24,11 +24,14 @@ pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapsho
 
 /// Read every repository's refs, all at once.
 ///
-/// One `for-each-ref` per repository, which is where ahead/behind and `gone` come from — and
-/// they come from the format string rather than from any extra call, so this is the whole
-/// cost of them. In front of the first frame on purpose: they are known the moment git
-/// answers, unlike whether a checkout is dirty, and a marker that appears a beat later is a
-/// list that moves under the reader.
+/// One `for-each-ref` per repository, which is where ahead/behind and `gone` come from. They
+/// ride on the format string of a call that has to be made anyway rather than on a
+/// `rev-list --count` per branch, which is what makes one process per repository the whole
+/// cost of them.
+///
+/// In front of the first frame on purpose: unlike whether a checkout is dirty, these are
+/// known the moment git answers, so there is nothing to be gained by drawing the list
+/// without them first.
 ///
 /// A repository git could not answer for simply carries no markers.
 fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
@@ -43,6 +46,8 @@ fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
             })
             .collect();
         for (repo, handle) in repos.iter_mut().zip(handles) {
+            // A panicking ref read must not take the picker down with it; that repository's
+            // checkouts just carry no markers, the same as one git declined to answer for.
             repo.refs = handle.join().unwrap_or_default();
         }
     });
