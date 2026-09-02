@@ -679,7 +679,10 @@ const HELP_BRANCH_SEARCH: &[&str] = &[
 /// Widest branch name to give a column to. One very long name must not squeeze out the
 /// state and the pull request beside it.
 const MAX_BRANCH_COLUMN: usize = 40;
-/// Fits "checked out", the longest state word.
+/// Fits "checked out", the longest state word, and is a floor rather than a fixed width:
+/// `gone` goes inside this column so that what follows — the pull request, or the commit
+/// subject — stays lined up down the list, and a list with nothing gone in it reads exactly
+/// as it did before `gone` existed.
 const STATE_COLUMN: usize = 12;
 
 /// Widest repository name to give a column to, for the same reason as the branch column.
@@ -1061,6 +1064,15 @@ fn render_branch_rows(frame: &mut Frame, state: &BranchesState, theme: &Theme, a
         .max()
         .unwrap_or(0)
         .min(MAX_BRANCH_COLUMN);
+    // The longest state actually in this list, plus the space that keeps it off whatever
+    // follows, and never narrower than the floor. Only a branch whose upstream is gone
+    // needs more than the floor, so only the lists that have one pay for it.
+    let state_column = rows
+        .iter()
+        .map(|entry| branch_state_label(entry).chars().count() + 1)
+        .max()
+        .unwrap_or(0)
+        .max(STATE_COLUMN);
 
     let viewport = area.height as usize;
     let scroll = scroll_offset(state.cursor(), rows.len(), viewport);
@@ -1090,7 +1102,7 @@ fn render_branch_rows(frame: &mut Frame, state: &BranchesState, theme: &Theme, a
             ),
             Span::raw("  "),
             Span::styled(
-                pad(branch_state_label(entry), STATE_COLUMN),
+                pad(&branch_state_label(entry), state_column),
                 if selected { base } else { theme.dim() },
             ),
         ];
@@ -1368,13 +1380,21 @@ fn branch_glyph(entry: &BranchEntry, theme: &Theme) -> (&'static str, Style) {
     }
 }
 
-fn branch_state_label(entry: &BranchEntry) -> &'static str {
-    match entry.state {
+fn branch_state_label(entry: &BranchEntry) -> String {
+    let state = match entry.state {
         BranchState::LivePane { .. } => "running",
         BranchState::IdleWorktree { .. } => "checked out",
         BranchState::LocalRef => "local",
         BranchState::RemoteOnly => "remote",
         BranchState::New => "create",
+    };
+    // What the branch is, and then whether the remote still has what it was tracking. The
+    // second is not a state of its own: a branch whose upstream is gone is still checked
+    // out, or still running, and saying only `gone` would drop the half that says where it
+    // is.
+    match entry.upstream_gone {
+        true => format!("{state} gone"),
+        false => state.to_string(),
     }
 }
 
@@ -1908,6 +1928,21 @@ mod tests {
     #[test]
     fn draws_the_repositories_the_session_has_open() {
         insta::assert_snapshot!(branches_screen(&branches_picker(), 92, 12));
+    }
+
+    #[test]
+    fn a_branch_whose_upstream_is_gone_says_so_beside_what_it_is() {
+        // The ordinary end of a merged branch: GitHub deleted the head, a pruning fetch
+        // noticed, and the local branch and its checkout are all that is left. `gone` goes
+        // inside the state column, which widens for this list and no other, so the subjects
+        // beside it stay lined up.
+        let mut state = branches_picker();
+        state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let mut data = branch_data();
+        data.local_refs[1].track = Some(Track::Gone);
+        data.local_refs[3].track = Some(Track::Gone);
+        state.set_data(data);
+        insta::assert_snapshot!(branches_screen(&state, 92, 12));
     }
 
     #[test]

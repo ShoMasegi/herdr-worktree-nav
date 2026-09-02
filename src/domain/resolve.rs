@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use crate::domain::model::RepoNode;
 use crate::domain::order::Order;
-use crate::port::{GitRef, PullRequest, RefKind};
+use crate::port::{GitRef, PullRequest, RefKind, Track};
 
 /// What a branch resolved to, in the order the picker prefers to show them.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +40,10 @@ pub struct BranchEntry {
     pub committed_at: Option<i64>,
     /// Decoration only — an open pull request whose head is this branch.
     pub pull_request: Option<PullRequest>,
+    /// The upstream this branch tracked is no longer on the remote — the ordinary end of a
+    /// branch whose pull request was merged. Only ever set from a local ref: a branch that
+    /// exists nowhere but the remote has nothing to be gone.
+    pub upstream_gone: bool,
 }
 
 /// The first herdr/git step picking a branch requires. Everything after it — moving the new
@@ -80,10 +84,12 @@ pub fn resolve(
             subject: None,
             committed_at: None,
             pull_request: None,
+            upstream_gone: false,
         });
         // A local ref beats a remote-only one; a remote ref only fills in missing detail.
         if git_ref.kind == RefKind::Local {
             entry.state = BranchState::LocalRef;
+            entry.upstream_gone = git_ref.track == Some(Track::Gone);
         }
         if entry.committed_at.is_none() || git_ref.kind == RefKind::Local {
             entry.committed_at = git_ref.committed_at.or(entry.committed_at);
@@ -98,6 +104,7 @@ pub fn resolve(
             subject: None,
             committed_at: None,
             pull_request: None,
+            upstream_gone: false,
         });
     }
 
@@ -113,6 +120,7 @@ pub fn resolve(
             subject: None,
             committed_at: None,
             pull_request: None,
+            upstream_gone: false,
         });
         entry.state = match worktree.panes.first() {
             Some(pane) => BranchState::LivePane {
@@ -146,6 +154,7 @@ pub fn new_branch(name: &str) -> BranchEntry {
         subject: None,
         committed_at: None,
         pull_request: None,
+        upstream_gone: false,
     }
 }
 
@@ -286,6 +295,29 @@ mod tests {
             kind: RefKind::Remote,
             ..local(name, at)
         }
+    }
+
+    #[test]
+    fn a_local_branch_whose_upstream_is_gone_says_so() {
+        // And a remote-only branch never can: there is nothing it was tracking that could
+        // have been deleted.
+        let mut local_ref = local("fix/crash", 20);
+        local_ref.track = Some(Track::Gone);
+        let entries = resolve(
+            &repo(vec![]),
+            &[local_ref, remote_ref("feat/search", 10)],
+            &[],
+            &[],
+        );
+        assert!(entry_named(&entries, "fix/crash").upstream_gone);
+        assert!(!entry_named(&entries, "feat/search").upstream_gone);
+    }
+
+    fn entry_named<'a>(entries: &'a [BranchEntry], name: &str) -> &'a BranchEntry {
+        entries
+            .iter()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("{name} should be listed"))
     }
 
     fn state_of<'a>(entries: &'a [BranchEntry], name: &str) -> &'a BranchState {
