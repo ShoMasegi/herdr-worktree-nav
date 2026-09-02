@@ -2,7 +2,7 @@
 
 [English](../en/architecture.md)
 
-Rust のバイナリ 1 つです。herdr はこれを 3 通りの方法で起動します。
+Rust のバイナリ 1 つです。herdr はこれを 3 通りの方法で起動し、ピッカー自身が 4 つ目を起動します。
 
 ```
 キーバインド ──▶ herdr-worktree-nav action open-panes
@@ -10,9 +10,11 @@ Rust のバイナリ 1 つです。herdr はこれを 3 通りの方法で起動
                      │  呼び出し元の pane とリポジトリを env で渡す
                      ▼
                  plugin.pane.open ──▶ herdr-worktree-nav pane panes    ─▶ ピッカー
-                                      herdr-worktree-nav pane branches
-
-診断 ──────────▶ herdr-worktree-nav dump
+                                      herdr-worktree-nav pane branches  │
+                                                                        │ Shift-D, y
+診断 ──────────▶ herdr-worktree-nav dump                                ▼
+                                      herdr-worktree-nav remove <repo> <path> <branch>
+                                          setsid する。ピッカーを閉じても殺されないため
 ```
 
 アクションはピッカーそのものではありません。アクションはプラグインディレクトリを作業ディレクトリとして起動され、利用者がどこにいたかを知りません。そのため、herdr から渡されたコンテキストを読み、正しい場所に pane を開くことだけが仕事です。
@@ -21,7 +23,7 @@ Rust のバイナリ 1 つです。herdr はこれを 3 通りの方法で起動
 
 ```
 src/
-  main.rs      argv から 3 つのモードのいずれかへ
+  main.rs      argv から 4 つのモードのいずれかへ
   app/         配線: herdr の各エントリポイントが何をするか
   ui/          描画とキー処理
   domain/      純粋ロジック — I/O を一切持たない
@@ -42,6 +44,7 @@ src/
 | `domain::dest` | pane はどこに置けて、各選択はどの herdr 呼び出しになるか |
 | `domain::preview` | pane が着地した後、行き先の tab はどう見えるか |
 | `domain::progress` | ブランチを開く処理は今どの段階で、まだ中断できるか |
+| `domain::removal` | 終わった削除は何を、誰に向かって言うのか |
 | `domain::chrome` | herdr はどの accent と状態グリフに設定されているか |
 
 ## herdr との通信
@@ -99,6 +102,21 @@ FetchThen… ─▶ fetch, create  ─┘                   └─ None ─▶ p
 これらはすべてワーカースレッドで実行され、その間ピッカーは画面に残って今どの段階かを表示します。fetch と checkout は数秒かかる処理で、その間だけ真っ白になるピッカーはハングしたものと区別がつかないためです（[ADR 0007](../adr/0007-stay-up-while-working.md)）。`HerdrPort` が `Sync` なのも同じ理由です。
 
 `worktree.create` は必ず workspace を丸ごと作ります。既存 tab に pane を作らせる方法はありません。そのため「新しい space」以外の行き先はすべて、作成してから移動することで実現しています。空になった tab と workspace は herdr 自身が閉じ、checkout はそのまま残ります。これが後始末を不要にしています（[ADR 0001](../adr/0001-delegate-worktree-creation.md)）。
+
+## checkout を削除する
+
+ここに書かれている他のすべてはピッカーのプロセスの中で起きます。削除だけは違います。`git worktree remove` は working tree 全体を歩いてからでないと消せず、`y` と答えた後にユーザーが自然に取る行動はピッカーを閉じることだからです。
+
+```
+Shift-D, y ─▶ setsid herdr-worktree-nav remove …  ─┬─▶ git worktree remove
+                   │                               └─▶ notification.show   常に
+                   │ stdout に 1 行
+                   ▼
+             ピッカー（まだ開いていれば）:
+               行に deleting ⠻、断られた理由はプロンプト行に
+```
+
+報告するのは子プロセスで、ピッカーはそれを飾るだけです。パイプに書いた 1 行が読まれたかどうかは、ループにも子にも分かりません——利用者は Branches ビューにいるかもしれず、既に閉じているかもしれない——ので、通知は無条件に出し、成功時にピッカーは何も足しません。`setsid` は本質的な部分です。herdr は閉じた pane のプロセスグループを殺すためです（[ADR 0014](../adr/0014-removing-outlives-the-picker.md)）。
 
 ## herdr に見た目を揃える
 

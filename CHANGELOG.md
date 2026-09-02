@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **`Shift-D` no longer holds the picker while it deletes.** `git worktree remove` walks a
+  whole working tree before it deletes it, which is seconds on a repository of any size, and
+  it used to run between one keypress and the next — so the picker froze for it. `y` now
+  starts the removal in a session of its own and comes straight back: the row's `no pane`
+  becomes `deleting` with a spinner and stops being selectable, and everything else in the
+  picker keeps working. Closing the picker is free, because the removal is no longer running
+  inside it.
+- **A removal reports itself with a herdr notification.** `removed <branch>` with the path,
+  silently; or `could not remove <branch>` with git's own words and a sound. That is the
+  report which still arrives when the picker has been closed, which is now the ordinary case.
+  With the picker still up, a refusal is on the prompt line as well, and a success is simply
+  the row leaving the list. A notification herdr declines — because they are turned off, or
+  no client is attached — is accepted in silence: a refused removal leaves the checkout
+  standing, so the row is there next time. See
+  [ADR 0014](docs/adr/0014-removing-outlives-the-picker.md).
+
 ## [0.1.0] - 2026-08-24
 
 First release. Two overlay pickers for herdr, backed by one Rust binary. `<Tab>` moves

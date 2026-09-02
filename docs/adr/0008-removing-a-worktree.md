@@ -1,8 +1,9 @@
 # 8. Remove a worktree with git, and ask first
 
 Status: accepted; the refusal of a checkout with panes in it is lifted by
-[ADR 0010](./0010-closing-the-panes-first.md), and the branch is deleted after all by
-[ADR 0011](./0011-what-may-be-swept.md) when it is swept
+[ADR 0010](./0010-closing-the-panes-first.md), the branch is deleted after all by
+[ADR 0011](./0011-what-may-be-swept.md) when it is swept, and the removal itself moves out of
+the picker's process by [ADR 0014](./0014-removing-outlives-the-picker.md)
 
 ## Context
 

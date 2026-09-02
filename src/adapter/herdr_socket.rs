@@ -252,4 +252,20 @@ impl HerdrPort for SocketHerdr {
             Err(error) => Err(error),
         }
     }
+
+    fn notify(&self, notification: &Notification) -> Result<()> {
+        // The answer carries `shown` and a reason — `disabled`, `no_foreground_client`,
+        // `rate_limited`, `busy`. None of them is acted on: a user who has turned
+        // notifications off has said so, and routing around that would be overruling them.
+        // No `position` either; herdr's configuration decides where its own toasts go.
+        self.call(
+            "notification.show",
+            json!({
+                "title": notification.title,
+                "body": notification.body,
+                "sound": notification.sound.as_str(),
+            }),
+        )?;
+        Ok(())
+    }
 }

@@ -78,14 +78,37 @@ same thing either way.
 
 It runs `git worktree remove <path>` and nothing else. The branch stays — a checkout is
 rebuilt by making it again, and a branch that was never pushed is not. There is no `--force`,
-so git refuses a checkout with uncommitted changes or untracked files in it and says so on
-that line; that refusal is the feature rather than an obstacle.
+so git refuses a checkout with uncommitted changes or untracked files in it and says so; that
+refusal is the feature rather than an obstacle.
 
 Two things are refused before the question is even asked: a pane, or a checkout with panes in
 it, because nothing there is safe to delete; and the repository's own checkout, because git
 cannot remove a main working tree and it is not a worktree anyway.
 
-The picker stays open and the list reloads, since tidying up comes in batches.
+`y` comes straight back. The removal runs somewhere else — git has to walk a whole working
+tree before it can delete it, which is seconds on a repository of any size — and the row
+says so while it does:
+
+```
+   └── · fix/crash  deleting ⠻    ~/.herdr/worktrees/app/fix-crash
+```
+
+The cursor steps over that row from then on: there is nothing left to do to it, and the next
+thing to tidy up is usually the row below. Keep going, delete another, `Tab` to the branches
+view, or close the picker — none of that waits for it, and closing costs nothing.
+
+However it ends, herdr says so:
+
+| | |
+| --- | --- |
+| removed | `removed fix/crash`, with the path underneath and no sound |
+| refused | `could not remove fix/crash`, with git's own words underneath, and a sound |
+
+That notification is the report, because it is the one that still arrives when the picker has
+gone. If yours are turned off you will not see it, and nothing is lost: a removal that was
+refused leaves the checkout exactly where it was, so the row is there next time and
+`Shift-D` on it will give you git's reason again. With the picker still up, a refusal is on
+the prompt line as well.
 
 `b`/`w`/`i`/`d` replace the search box with a state chip. Pressing the same one again clears
 it, so a filter is never a one-way door.

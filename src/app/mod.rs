@@ -5,14 +5,17 @@ pub mod branches;
 pub mod collect;
 pub mod context;
 pub mod panes;
+pub mod removals;
+pub mod remove;
 
 use anyhow::Result;
 use ratatui::DefaultTerminal;
 
 use crate::adapter::herdr_config;
 use crate::app::context::{Context, FROM_PANE, REPO_ROOT};
+use crate::app::removals::Removals;
 use crate::domain::listing;
-use crate::port::{GhPort, GitPort, HerdrPort};
+use crate::port::{GhPort, GitPort, HerdrPort, RemovalPort};
 use crate::ui::theme::Theme;
 
 /// Which picker to start on. They toggle with `Tab`, so this is only the entry point.
@@ -41,6 +44,7 @@ pub fn run_picker(
     herdr: &dyn HerdrPort,
     git: &dyn GitPort,
     gh: &dyn GhPort,
+    remover: &dyn RemovalPort,
     start: Entrypoint,
 ) -> Result<()> {
     // The action that opened this pane forwarded where it was summoned from; `HERDR_PANE_ID`
@@ -74,7 +78,16 @@ pub fn run_picker(
     // however long the next view takes to gather what it draws — see
     // `docs/adr/0009-the-picker-owns-the-terminal.md`.
     let mut terminal = ratatui::try_init()?;
-    let result = views(&mut terminal, herdr, git, gh, &theme, start, summoned);
+    let result = views(
+        &mut terminal,
+        herdr,
+        git,
+        gh,
+        remover,
+        &theme,
+        start,
+        summoned,
+    );
     // Restoring on every path out, including the ones `?` takes inside `views`. A loop that
     // failed says more than a terminal that would not go back, so it wins.
     let restored = ratatui::try_restore();
@@ -82,11 +95,13 @@ pub fn run_picker(
 }
 
 /// Switch between the two views until the user leaves the picker.
+#[allow(clippy::too_many_arguments)]
 fn views(
     terminal: &mut DefaultTerminal,
     herdr: &dyn HerdrPort,
     git: &dyn GitPort,
     gh: &dyn GhPort,
+    remover: &dyn RemovalPort,
     theme: &Theme,
     start: Entrypoint,
     mut summoned: Summoned,
@@ -94,6 +109,10 @@ fn views(
     // What each repository's remote answered, kept across the switch. Re-reading it every
     // time `Tab` came back would be a network round trip in front of every frame.
     let mut listings = listing::Cache::new();
+    // Removals in flight, kept across the switch for the same reason and one more: they
+    // outlive the picker entirely, so the view that started one is not necessarily the view
+    // that is up when it finishes.
+    let mut removals = Removals::new(remover);
     let mut view = start;
     loop {
         match view {
@@ -106,7 +125,14 @@ fn views(
                 }
             }
             Entrypoint::Panes => {
-                match panes::run(terminal, herdr, git, summoned.pane.as_deref(), theme)? {
+                match panes::run(
+                    terminal,
+                    herdr,
+                    git,
+                    &mut removals,
+                    summoned.pane.as_deref(),
+                    theme,
+                )? {
                     panes::Exit::Closed => return Ok(()),
                     panes::Exit::ShowBranches { repo_root } => {
                         // `None` when the cursor was not in a repository; the branches picker

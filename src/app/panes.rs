@@ -6,10 +6,16 @@ use ratatui::DefaultTerminal;
 
 use crate::app::collect;
 use crate::app::home_dir;
+use crate::app::removals::Removals;
+use crate::domain::removal;
 use crate::port::{GitPort, HerdrPort, PaneSplit, SplitDirection, WorktreeOpen};
 use crate::ui::render::{self, Mode};
 use crate::ui::state::{Action, PanesState};
 use crate::ui::theme::Theme;
+
+/// How long to wait for a key before turning the spinner on a removal in flight. The same
+/// tick the branches view runs on; with nothing being removed this loop does not use one.
+const TICK: std::time::Duration = std::time::Duration::from_millis(80);
 
 /// What the picker was left wanting when it closed. The caller decides whether that means
 /// switching views or exiting.
@@ -29,44 +35,76 @@ pub fn run(
     terminal: &mut DefaultTerminal,
     herdr: &dyn HerdrPort,
     git: &dyn GitPort,
+    removals: &mut Removals,
     initial_pane: Option<&str>,
     theme: &Theme,
 ) -> Result<Exit> {
     let (_, tree) = collect::collect_tree(herdr, git)?;
     let mut state = PanesState::new(tree, home_dir());
+    // Removals started before a trip through the branches view are still going.
+    state.set_removing(removals.paths());
     if let Some(pane_id) = initial_pane {
         state.focus_pane(pane_id);
     }
 
+    // The spinner runs on a clock rather than on redraws, so it neither speeds up while the
+    // user types nor stalls while they hold a key down.
+    let mut last_tick = std::time::Instant::now();
     let outcome = loop {
+        let waiting = !removals.is_empty();
+        if waiting && last_tick.elapsed() >= TICK {
+            state.tick();
+            last_tick = std::time::Instant::now();
+        }
         terminal.draw(|frame| render::draw(frame, &state, theme, Mode::Panes))?;
 
+        // Whatever has reported back — including from before the last trip to the branches
+        // view, since the removals outlive both views and the picker itself.
+        while let Some(finished) = removals.finished() {
+            state.set_removing(removals.paths());
+            match finished.outcome {
+                Ok(outcome) => {
+                    // Nothing to say when it worked: the row leaving the list is the report,
+                    // and the toast has already said it to whoever was not looking.
+                    if let Some(message) = removal::message(&finished.label, &outcome) {
+                        state.set_message(message);
+                    }
+                    // Errors here are not fatal: the picker keeps showing what it had.
+                    if let Ok((_, tree)) = collect::collect_tree(herdr, git) {
+                        state.replace_tree(tree);
+                    }
+                }
+                Err(error) => state.set_message(format!("{error:#}")),
+            }
+        }
+
+        // With nothing in flight there is nothing to wake up for, so the loop blocks on the
+        // key and draws no frames at all until one arrives.
+        if waiting && !event::poll(TICK)? {
+            continue;
+        }
         let Event::Key(key) = event::read()? else {
             continue;
         };
         match state.handle_key(key) {
             Action::Consumed | Action::Ignored => {}
             Action::Reload => {
-                // Errors here are not fatal: the picker keeps showing what it had.
                 if let Ok((_, tree)) = collect::collect_tree(herdr, git) {
                     state.replace_tree(tree);
                 }
             }
             // Deleting is housekeeping, and housekeeping comes in batches: the picker stays
-            // open on the list the deletion just changed rather than closing over it.
+            // open on the list the deletion is changing rather than closing over it — and
+            // the deletion itself goes to a process of its own, so that neither the loop
+            // nor the user has to wait for git to walk a working tree. See
+            // `docs/adr/0014-removing-outlives-the-picker.md`.
             Action::RemoveWorktree {
                 repo_root,
                 checkout_path,
                 label,
-            } => match git.remove_worktree(&repo_root, &checkout_path) {
-                Ok(()) => {
-                    state.set_message(format!("removed the checkout for {label}"));
-                    if let Ok((_, tree)) = collect::collect_tree(herdr, git) {
-                        state.replace_tree(tree);
-                    }
-                }
-                // git refuses a checkout with work in it, which is the answer rather than
-                // an obstacle: it says what would have been lost.
+            } => match removals.start(&repo_root, &checkout_path, &label) {
+                // The row says what is happening to it; there is nothing to add here.
+                Ok(()) => state.set_removing(removals.paths()),
                 Err(error) => state.set_message(format!("{error:#}")),
             },
             action => break action,
