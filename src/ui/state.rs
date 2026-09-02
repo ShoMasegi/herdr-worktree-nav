@@ -60,6 +60,8 @@ pub struct PanesState {
     /// Frame of the spinner on the rows being removed. Advanced by the loop that owns the
     /// clock, the same way the branches view does it — `domain` is not allowed to read one.
     tick: usize,
+    /// Whether an answer is still on its way, which the prompt line says with a spinner.
+    waiting: bool,
 }
 
 /// A checkout the user has asked to delete, held until they say yes.
@@ -87,6 +89,7 @@ impl PanesState {
             pending_removal: None,
             message: None,
             tick: 0,
+            waiting: false,
         };
         state.rebuild(None);
         state
@@ -98,6 +101,30 @@ impl PanesState {
         let anchor = self.selected_pane_id().map(str::to_string);
         self.tree = tree;
         self.rebuild(anchor.as_deref());
+    }
+
+    /// Say which checkouts are holding uncommitted work. Arrives after the first frame,
+    /// one answer at a time, so the cursor stays exactly where it is — nothing about a row
+    /// changes except what it says about itself.
+    pub fn set_dirty(&mut self, paths: Vec<String>) {
+        if self.options.dirty == paths {
+            return;
+        }
+        self.options.dirty = paths;
+        let at = self.cursor;
+        self.rows = rows::flatten(&self.tree, &self.options);
+        self.lines = rows::display_lines(&self.rows);
+        self.cursor = at.min(self.lines.len().saturating_sub(1));
+    }
+
+    /// Whether something is still being waited for, which the prompt line turns a spinner
+    /// for. Set by the loop; the state cannot see a thread any more than it can see a clock.
+    pub fn set_waiting(&mut self, waiting: bool) {
+        self.waiting = waiting;
+    }
+
+    pub fn is_waiting(&self) -> bool {
+        self.waiting
     }
 
     /// Say which checkouts are being removed, so their rows can say so and stop being

@@ -91,6 +91,45 @@ impl Row {
     }
 }
 
+/// A checkout holding uncommitted changes or untracked files.
+const DIRTY: &str = "\u{2731}";
+/// An upstream that is no longer on the remote. A word rather than a glyph: it is the one
+/// of these that says a branch is finished with, and it is worth being unmissable.
+const GONE: &str = "gone";
+
+/// What a row says about itself between its label and its `no pane` note.
+///
+/// Two spaces before each, the same gap the note uses. Everything is optional and most rows
+/// have none of it, which is why these ride beside the label rather than in a column of
+/// their own: a column that is blank on most rows is a permanent gap between the name and
+/// the path.
+///
+/// Dirty comes first because it is the one that stops a checkout being removable.
+pub fn marks(row: &Row) -> String {
+    let mut out = String::new();
+    if row.is_dirty {
+        out.push_str("  ");
+        out.push_str(DIRTY);
+    }
+    match row.track {
+        Some(Track::Gone) => {
+            out.push_str("  ");
+            out.push_str(GONE);
+        }
+        Some(Track::Divergence { ahead, behind }) => {
+            out.push_str("  ");
+            if ahead > 0 {
+                out.push_str(&format!("\u{2191}{ahead}"));
+            }
+            if behind > 0 {
+                out.push_str(&format!("\u{2193}{behind}"));
+            }
+        }
+        None => {}
+    }
+    out
+}
+
 /// One rendered line. Blank lines separate groups and cannot be selected — the same shape
 /// herdr's navigator uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -729,6 +768,69 @@ mod tests {
         assert!(find(&rows, "fix/crash").is_idle);
         assert_eq!(find(&rows, "fix/crash").meta, "/wt/fix-crash");
         assert!(!find(&rows, "main").is_idle);
+    }
+
+    fn marks_for(is_dirty: bool, track: Option<Track>) -> String {
+        let mut tree = tree();
+        tree.repos[0].worktrees[2].track = track;
+        let options = ViewOptions {
+            dirty: if is_dirty {
+                vec!["/wt/fix-crash".into()]
+            } else {
+                Vec::new()
+            },
+            ..Default::default()
+        };
+        marks(find(&flatten(&tree, &options), "fix/crash"))
+    }
+
+    #[test]
+    fn a_checkout_with_nothing_to_report_says_nothing() {
+        assert_eq!(marks_for(false, None), "");
+    }
+
+    #[test]
+    fn each_thing_a_checkout_can_be_reads_on_its_own() {
+        assert_eq!(marks_for(true, None), "  \u{2731}");
+        assert_eq!(
+            marks_for(
+                false,
+                Some(Track::Divergence {
+                    ahead: 2,
+                    behind: 0
+                })
+            ),
+            "  \u{2191}2"
+        );
+        assert_eq!(
+            marks_for(
+                false,
+                Some(Track::Divergence {
+                    ahead: 0,
+                    behind: 1
+                })
+            ),
+            "  \u{2193}1"
+        );
+        assert_eq!(
+            marks_for(
+                false,
+                Some(Track::Divergence {
+                    ahead: 2,
+                    behind: 1
+                })
+            ),
+            "  \u{2191}2\u{2193}1",
+            "one gap, not two: they are one answer"
+        );
+        assert_eq!(marks_for(false, Some(Track::Gone)), "  gone");
+    }
+
+    #[test]
+    fn a_dirty_checkout_whose_upstream_is_gone_says_both() {
+        // Which is the pair that decides whether a checkout can be swept: gone says it is
+        // finished with, and dirty says it cannot go anyway.
+        assert_eq!(marks_for(true, Some(Track::Gone)), "  \u{2731}  gone");
     }
 
     #[test]

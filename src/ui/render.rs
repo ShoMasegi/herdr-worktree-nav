@@ -19,7 +19,7 @@ use crate::domain::model::RepoNode;
 use crate::domain::order::Order;
 use crate::domain::preview::{Preview, PreviewPane};
 use crate::domain::resolve::{BranchEntry, BranchState};
-use crate::domain::rows::{abbreviate, DisplayLine, Row};
+use crate::domain::rows::{abbreviate, marks, DisplayLine, Row};
 use crate::port::LayoutRect;
 use crate::ui::branches::{Activity, BranchesState, Step};
 use crate::ui::diagram::{Fit, Frame as DiagramFrame};
@@ -71,6 +71,7 @@ fn label_end(row: &Row) -> usize {
         + tree
         + 2
         + row.label.chars().count()
+        + marks(row).chars().count()
         + if row.is_idle { IDLE_NOTE.len() } else { 0 }
 }
 
@@ -211,6 +212,15 @@ fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'stat
     }
     if state.is_filtering() {
         spans.push(Span::styled("\u{2588}", theme.dim()));
+    }
+    // Whether a checkout is holding uncommitted work is a walk of its whole working tree,
+    // one per checkout, so the answers land after the first frame. The spinner says the
+    // list is still filling in rather than finished and empty-handed — the same thing the
+    // branches view does while it waits on a remote.
+    if state.is_waiting() {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(spinner(state.frame()), theme.dim()));
+        spans.push(Span::styled(" reading working trees\u{2026}", theme.dim()));
     }
 
     let count = format!("{} panes", state.pane_count());
@@ -454,7 +464,7 @@ fn render_row(
     let quiet = if selected { base } else { theme.dim() };
 
     let used = gutter.chars().count() + prefix.chars().count() + glyph.chars().count() + 1;
-    let note = note_width(row);
+    let note = note_width(row) + marks(row).chars().count();
     // A row with nothing in the meta column may use the whole line for its label; one with
     // something has to stop short of the column so the two do not collide.
     let label_budget = if row.meta.is_empty() {
@@ -470,6 +480,12 @@ fn render_row(
         Span::raw(" "),
         Span::styled(truncate(&row.label, label_budget), label_style),
     ];
+    // What the checkout itself is: uncommitted work, and where it stands against its
+    // upstream. Beside the name rather than in a column, because most rows have none of it.
+    let marks = marks(row);
+    if !marks.is_empty() {
+        spans.push(Span::styled(marks, quiet));
+    }
     // The meta column is taken by the checkout path, so a checkout with nothing running in
     // it says so beside its name instead — and one that is going says that, which is the
     // more urgent thing to know about the same row.
@@ -1381,7 +1397,7 @@ mod tests {
     use crate::domain::dest::Destination;
     use crate::domain::model::{PaneNode, RepoNode, Tree, WorktreeNode};
     use crate::domain::progress::Stage;
-    use crate::port::{AgentStatus, GitRef, PullRequest, RefKind, SplitDirection};
+    use crate::port::{AgentStatus, GitRef, PullRequest, RefKind, SplitDirection, Track};
     use crate::ui::branches::BranchData;
 
     fn theme() -> Theme {
@@ -1467,6 +1483,35 @@ mod tests {
         // Tall enough for the whole list, including the panes that are in no repository:
         // they are a section of it like any other.
         insta::assert_snapshot!(screen(&PanesState::new(tree(), None), 92, 18));
+    }
+
+    #[test]
+    fn every_checkout_says_what_state_it_is_in() {
+        // The four answers, on four checkouts: ahead and behind its upstream, an upstream
+        // that is gone, uncommitted work, and a checkout with nothing to report at all.
+        let mut tree = tree();
+        tree.repos[0].worktrees[0].track = Some(Track::Divergence {
+            ahead: 2,
+            behind: 1,
+        });
+        tree.repos[0].worktrees[1].track = Some(Track::Gone);
+        tree.repos[0].worktrees[2].track = Some(Track::Divergence {
+            ahead: 0,
+            behind: 3,
+        });
+        let mut state = PanesState::new(tree, None);
+        state.set_dirty(vec!["/wt/feat-login".into(), "/wt/fix-crash".into()]);
+        insta::assert_snapshot!(screen(&state, 92, 18));
+    }
+
+    #[test]
+    fn nothing_is_claimed_about_a_working_tree_that_has_not_been_read_yet() {
+        // Asking costs a process per checkout, so the answers land after the first frame.
+        // Until one does, the row says nothing about uncommitted work — and the prompt line
+        // says the list is still filling in rather than finished and empty-handed.
+        let mut state = PanesState::new(tree(), None);
+        state.set_waiting(true);
+        insta::assert_snapshot!(screen(&state, 92, 18));
     }
 
     #[test]

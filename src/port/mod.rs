@@ -211,8 +211,11 @@ pub struct RepoIdentity {
     pub branch: Option<String>,
 }
 
-/// `Sync` because pane working directories are resolved from several threads at once.
-pub trait GitPort: Sync {
+/// `Sync` because pane working directories are resolved from several threads at once, and
+/// `Send` because asking whether a checkout is dirty outlives the view that asked: those
+/// answers are wanted on both sides of a `Tab`, so the threads waiting for them cannot be
+/// scoped to one of them.
+pub trait GitPort: Send + Sync {
     /// Resolve which repository and branch a directory belongs to. `Ok(None)` when the path
     /// is not inside a work tree — that is an ordinary answer, not an error.
     fn identify(&self, cwd: &str) -> Result<Option<RepoIdentity>>;

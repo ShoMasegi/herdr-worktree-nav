@@ -16,9 +16,36 @@ use crate::port::{GitPort, HerdrPort, Snapshot};
 pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapshot, Tree)> {
     let snapshot = herdr.snapshot()?;
     let placements = resolve_placements(&snapshot, git);
-    let repos = collect_repos(herdr, git, &placements);
+    let mut repos = collect_repos(herdr, git, &placements);
+    read_refs(git, &mut repos);
     let tree = tree::build(&snapshot, &repos, &placements);
     Ok((snapshot, tree))
+}
+
+/// Read every repository's refs, all at once.
+///
+/// One `for-each-ref` per repository, which is where ahead/behind and `gone` come from — and
+/// they come from the format string rather than from any extra call, so this is the whole
+/// cost of them. In front of the first frame on purpose: they are known the moment git
+/// answers, unlike whether a checkout is dirty, and a marker that appears a beat later is a
+/// list that moves under the reader.
+///
+/// A repository git could not answer for simply carries no markers.
+fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
+    // No chunking: repositories are however many the user has panes open in, which is a
+    // handful — unlike working directories, where every pane can have its own.
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = repos
+            .iter()
+            .map(|repo| {
+                let repo_root = repo.repo_root.clone();
+                scope.spawn(move || git.local_refs(&repo_root).unwrap_or_default())
+            })
+            .collect();
+        for (repo, handle) in repos.iter_mut().zip(handles) {
+            repo.refs = handle.join().unwrap_or_default();
+        }
+    });
 }
 
 /// Work out which repository and checkout each pane sits in.

@@ -72,7 +72,9 @@ herdr-worktree-nav — navigate herdr panes by repo and worktree
 fn pane(start: Entrypoint) -> Result<()> {
     run_picker(
         &SocketHerdr::from_env()?,
-        &GitCli,
+        // Shared rather than borrowed: the threads asking whether each checkout is dirty
+        // outlive the view that started them, so they cannot borrow from one.
+        std::sync::Arc::new(GitCli),
         &GhCli,
         &DetachedRemovals,
         start,
