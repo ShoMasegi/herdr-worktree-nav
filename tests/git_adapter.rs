@@ -34,6 +34,10 @@ fn repository() -> TempDir {
     git(path, &["init", "--initial-branch=main"]);
     git(path, &["config", "user.email", "test@example.com"]);
     git(path, &["config", "user.name", "Test"]);
+    // Pinned, not inherited. `%(push:track)` answers a different question under each
+    // `push.default`, so a test that leaves it to the machine's global config is testing
+    // the machine — see `a_branch_nobody_has_pushed_is_never_gone`.
+    git(path, &["config", "push.default", "simple"]);
     std::fs::write(path.join("README.md"), "hello\n").unwrap();
     git(path, &["add", "."]);
     git(path, &["commit", "-m", "first"]);
@@ -475,6 +479,19 @@ fn ahead_and_behind_come_out_of_the_ref_walk() {
             behind: 1
         })
     );
+}
+
+#[test]
+fn a_branch_nobody_has_pushed_is_never_gone() {
+    // Under `push.default = current` the push destination of a never-pushed branch is a ref
+    // that has never existed, and git reports that as `[gone]` in `%(push:track)`. Believing
+    // it would put the finished-with marker on the newest branch in the repository — and on
+    // exactly the branches a sweep could not undo deleting, since they exist nowhere else.
+    let (repo, _remote) = with_origin();
+    git(repo.path(), &["config", "push.default", "current"]);
+
+    let refs = GitCli.local_refs(&path_str(repo.path())).unwrap();
+    assert_eq!(track_of(&refs, "feat/login"), None);
 }
 
 #[test]

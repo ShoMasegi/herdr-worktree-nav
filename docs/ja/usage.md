@@ -83,10 +83,10 @@
 
 ```
  ◆ ● ShoMasegi/herdr-worktree-nav (2)
-   └── ● main  ↑2↓1                 ~/Workspace/herdr-worktree-nav
- ◆    ├── ● claude                  w7:p2
-      └── · shell                   w7:p3
-   └── · fix/crash  ✱  gone  no pane  ~/.herdr/worktrees/herdr-worktree-nav/fix-crash
+   └── ● main  ↑2↓1                    ~/Workspace/herdr-worktree-nav
+ ◆    ├── ● claude                     w7:p2
+      └── · shell                      w7:p3
+   └── · fix/crash  ✱  gone  no pane   ~/.herdr/worktrees/herdr-worktree-nav/fix-crash
                                     ↑ four columns past the longest label
 ```
 
@@ -109,9 +109,11 @@
 | `↑2↓1` | upstream にない commit が 2 つ、こちらにない commit が 1 つ |
 | `gone` | 追跡していたブランチがリモートにもう無い |
 
-`✱` は `Shift-D` が通らない理由そのものです。git は誰もコミットしていない作業を抱えた checkout の削除を拒みます。これはその拒否を、キーを押す前に見せているだけです。`gone` はたいてい pull request がマージされたブランチです。GitHub が head を消し、Branches ビューの `Ctrl-F` による fetch がそれに気づきます。
+`✱` は `Shift-D` が通らない理由そのものです。git は誰もコミットしていない作業を抱えた checkout の削除を拒みます。これはその拒否を、キーを押す前に見せているだけです。`gone` は「そのブランチが追跡している ref を git が見つけられない」という意味です。たいていは pull request がマージされて GitHub が head を消し、Branches ビューの `f` による fetch が prune した結果ですが、一度も fetch していない upstream も同じに見えます。git にとって同じことだからです。
 
 ahead / behind と `gone` は、ピッカーが既に実行している `git for-each-ref` から出てくるので、最初のフレームから揃っています。作業ツリーが汚れているかは違います。git はツリー全体を歩かないと分からず、しかも checkout ごとに 1 回必要です。そのためこれだけはバックグラウンドで訊き、答えが届いた行から埋めていきます。届くまでその行は何も言いません——推測するくらいなら黙るほうが良いからです——代わりにプロンプト行がスピナーを回し、「まだ埋まっている途中」が「何も見つからなかった」に見えないようにしています。
+
+`✱` の場所は、実際に付くかどうかに関わらず最初のフレームから確保してあります。答えが届いても隣のパスが動かないようにするためです。3 桁の余白は、読んでいる最中に一覧がずれないことの対価です。
 
 もう一度訊かせるのは `r` だけです。それ以外の場合、答えはピッカーが開いている間ずっと保持されます。`Tab` で Branches ビューへ行って戻ってきても同じです。
 
@@ -252,7 +254,9 @@ herdr が開いているリポジトリがすべて並びます。Panes ビュ�
 | `↓ remote` | リモートにあるが未 fetch | fetch してから `origin/<branch>` を基点に作る |
 | `+ create` | まだ存在しない（入力した名前） | `HEAD` から作成し、そこから worktree を作る |
 
-これに加えて `gone` が付くことがあります。独立した状態ではなく、状態への注記です（`checked out gone`、`local gone`）。追跡していたブランチがリモートにもう無い、という意味です。マージされた pull request の head を GitHub が削除し、prune 付きの fetch がそれに気づいた状態です。ブランチも checkout もまだここにありますが、upstream にはもう何もありません。
+これに加えて `gone` が付くことがあります。独立した状態ではなく、状態への注記です（`checked out gone`、`local gone`）。そのブランチが追跡している ref を git が見つけられない、という意味です。たいていはマージされた pull request の head を GitHub が削除し、prune 付きの fetch がそれに気づいた状態です。ブランチも checkout もまだここにありますが、追跡していたものはもうありません。
+
+**一度も push していないブランチは `gone` になりません。** 追跡するものが無いことと、追跡していたものが消えたことは別であり、ピッカーはこの 2 つを混同しません。
 
 `running` は行き先の選択を飛ばします。その作業はすでに開いているので、「二重に開いた分をどこに置くか」を尋ねるのは筋が違うためです。
 

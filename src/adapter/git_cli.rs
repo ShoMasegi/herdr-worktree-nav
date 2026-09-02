@@ -51,8 +51,12 @@ impl GitCli {
     }
 }
 
-/// Read `%(upstream:track)` — `[gone]`, `[ahead 2]`, `[behind 1]`, `[ahead 2, behind 1]`, or
-/// nothing at all for a branch level with its upstream or without one.
+/// Read a `:track` field — `%(upstream:track)` or `%(push:track)`, which share a grammar:
+/// `[gone]`, `[ahead 2]`, `[behind 1]`, `[ahead 2, behind 1]`, or nothing at all for a branch
+/// level with what it is being compared against, or with nothing to compare against.
+///
+/// What `[gone]` *means* differs between the two, which is why the caller and not this
+/// function decides whether to believe it.
 ///
 /// Anything unrecognised is `None` rather than a guess. A marker that is wrong is worse than
 /// no marker, because the whole point of these is to answer "which of these is behind"
@@ -137,10 +141,10 @@ impl GitPort for GitCli {
         // The full refname, not `refname:short`: a local branch called `feat/login` and a
         // remote ref printed as `origin/main` are indistinguishable once shortened.
         //
-        // Everything in one format string. `upstream:track`, `push:track` and
-        // `worktreepath` are answers git has to hand while it is walking the refs anyway;
-        // asking for them separately would be `rev-list --count` and `worktree list` on top
-        // of a call that was already being made.
+        // Everything in one format string. Not because the extra fields are free —
+        // `:track` costs git an ahead/behind walk per ref — but because they arrive in the
+        // one process that was being started anyway. Asking separately would be a
+        // `rev-list --count` per branch and a `worktree list` on top.
         //
         // The subject goes last because it is the only field that can contain anything.
         let out = GitCli::run_in_repo(
@@ -161,9 +165,17 @@ impl GitPort for GitCli {
             };
             // A branch with no upstream configured but a push destination still has
             // somewhere to be ahead of, and `push:track` is where git says so.
+            //
+            // It may not say `gone`, though. Under `push.default = current` the push
+            // destination of a branch nobody has pushed yet resolves to a ref that has
+            // never existed, and git reports that as `[gone]` — the opposite of what this
+            // marker means, on precisely the branches where being wrong is unrecoverable:
+            // `docs/adr/0011-what-may-be-swept.md` makes `gone` the signal a sweep deletes
+            // a branch on, and an unpushed branch is the one kind that cannot be got back.
             let upstream = parts.next().unwrap_or_default();
             let push = parts.next().unwrap_or_default();
-            let track = parse_track(upstream).or_else(|| parse_track(push));
+            let track = parse_track(upstream)
+                .or_else(|| parse_track(push).filter(|track| *track != Track::Gone));
             let worktree_path = parts
                 .next()
                 .map(str::to_string)
@@ -240,10 +252,20 @@ impl GitPort for GitCli {
     }
 
     fn is_dirty(&self, checkout_path: &str) -> Result<bool> {
-        // Untracked files count, because they count to `git worktree remove` — the marker
-        // has to mean the same thing there as it does on `Shift-D`, or it is telling the
-        // user something they cannot act on.
-        let status = GitCli::run_in_repo(checkout_path, &["status", "--porcelain"])?;
+        // `--no-optional-locks` because of where this runs: on every checkout at once, in
+        // the background, in the very working trees the session's agents are committing in.
+        // Plain `git status` refreshes the index as a side effect and takes `index.lock` to
+        // do it — git's own documentation offers this flag to turn that off — and a picker
+        // that only looks at a repository has no business making somebody's `git commit`
+        // fail.
+        //
+        // Untracked files count, because they count to `git worktree remove`: the marker has
+        // to mean the same thing there as it does on `Shift-D`, or it is telling the user
+        // something they cannot act on.
+        let status = GitCli::run_in_repo(
+            checkout_path,
+            &["--no-optional-locks", "status", "--porcelain"],
+        )?;
         Ok(!status.trim().is_empty())
     }
 
