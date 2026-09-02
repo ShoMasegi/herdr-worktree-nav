@@ -79,12 +79,20 @@ herdr api snapshot ─┬─▶ workspaces（一部は .worktree を持つ: repo
                                 ▼
                     リポジトリごとに worktree.list
                                 ▼
+                    リポジトリごとに for-each-ref ─▶ ahead/behind、gone、
+                                ▼                    どの checkout がどのブランチを持つか
                           domain::tree::build
+                                │
+                                ▼
+                    checkout ごとに git status --porcelain（8 並列、
+                    起動したビューより長生きするスレッドの上で）
 ```
 
 即座に開くための工夫が 2 つあります。作業ディレクトリの解決は pane ごとではなく重複を除いた cwd ごとに 1 回だけ行います（複数の pane が同じ cwd を共有することが多いためです）。また、herdr が既にその workspace を worktree として把握している場合は git を実行せずその答えを使います。ただし、pane がその checkout 配下に留まっている場合に限ります。pane はいつでも隣のリポジトリへ `cd` できるためです。
 
 pane と worktree の対応付けは checkout パスで行い、`open_workspace_id` では行いません。pane を別の場所へ移した worktree は、実際に pane が動いていても `open_workspace_id: None` を返すためです。
+
+各 checkout が今どういう状態かは、2 つの速度で届きます。この分け方自体が設計です。ahead / behind と `gone` は、どのみち ref を歩く `for-each-ref` のフィールドなので、最初のフレームで画面に出ます。作業ツリーが汚れているかはそのツリーを歩くことであり、しかも checkout ごとに 1 回必要なので、最初のフレームの裏で訊き、答えが届いた行から埋めます。まだ答えの無い checkout は、間違った印ではなく印なしで描きます。答えはピッカーが開いている間ずっと保持します。ビュー切り替え側が所有していて panes ビューが所有していないのは、そのためです。
 
 ## ブランチを開く
 

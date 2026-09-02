@@ -120,10 +120,10 @@ to the keys above, `Esc` abandons it, and `Ctrl-U` empties it without leaving se
 
 ```
  ◆ ● ShoMasegi/herdr-worktree-nav (2)
-   └── ● main                       ~/Workspace/herdr-worktree-nav
+   └── ● main  ↑2↓1                 ~/Workspace/herdr-worktree-nav
  ◆    ├── ● claude                  w7:p2
       └── · shell                   w7:p3
-   └── · fix/crash  no pane         ~/.herdr/worktrees/herdr-worktree-nav/fix-crash
+   └── · fix/crash  ✱  gone  no pane  ~/.herdr/worktrees/herdr-worktree-nav/fix-crash
                                     ↑ four columns past the longest label
 ```
 
@@ -146,6 +146,33 @@ Left to right: a gutter, the tree, a status glyph, the label, and a meta column.
   says which tree the checkout is in and the tail says which checkout.
 - A checkout with nothing running in it is marked `no pane` beside its name, because its
   meta column is taken by the path.
+
+### What a checkout is in the middle of
+
+Between the branch name and the `no pane` note, a checkout says what state it is in. Most
+have none of this, which is why it rides beside the name rather than in a column of its own:
+a column that is blank on most rows is a permanent gap between the name and the path.
+
+| | |
+| --- | --- |
+| `✱` | the working tree has uncommitted changes or untracked files |
+| `↑2↓1` | two commits its upstream does not have, one it does not have |
+| `gone` | the branch it tracked is no longer on the remote |
+
+`✱` is the one that stops `Shift-D` working: git refuses to remove a checkout holding work
+nobody has committed, and this is that refusal, before you press the key. `gone` is usually a
+branch whose pull request was merged — GitHub deletes the head, and a `Ctrl-F` fetch in the
+branches view notices.
+
+Ahead, behind and `gone` come out of the same `git for-each-ref` the picker already runs, so
+they are there in the first frame. Whether a working tree is dirty is not: git has to walk
+the whole tree to know, once per checkout, so those are asked in the background and each row
+is filled in as its answer lands. Until one does, the row says nothing rather than guessing,
+and the prompt line carries a spinner so a list that is still filling in does not read as one
+that found nothing.
+
+`r` asks again. It is the only thing that does: the answers are otherwise kept for as long as
+the picker is open, `Tab` to the branches view and back included.
 
 The breadcrumb under the list carries the whole path for the row under the cursor, which is
 where an elided one can be read in full.
@@ -342,6 +369,11 @@ plugin writes nothing to disk.
 | `· local` | a local branch, no worktree | cuts a worktree from it |
 | `↓ remote` | on the remote, never fetched | fetches it, then cuts from `origin/<branch>` |
 | `+ create` | nothing yet — you typed it | creates it from `HEAD`, then cuts |
+
+A branch can also be `gone`, which is not a state of its own but a note beside one:
+`checked out gone`, `local gone`. It means the branch it was tracking is no longer on the
+remote — a merged pull request whose head GitHub deleted, noticed by a pruning fetch. The
+branch and its checkout are still here; nothing upstream is.
 
 `running` skips the destination step. You already have that work open; being asked where to
 put a second copy of it would be the wrong question.

@@ -83,10 +83,10 @@
 
 ```
  ◆ ● ShoMasegi/herdr-worktree-nav (2)
-   └── ● main                       ~/Workspace/herdr-worktree-nav
+   └── ● main  ↑2↓1                 ~/Workspace/herdr-worktree-nav
  ◆    ├── ● claude                  w7:p2
       └── · shell                   w7:p3
-   └── · fix/crash  no pane         ~/.herdr/worktrees/herdr-worktree-nav/fix-crash
+   └── · fix/crash  ✱  gone  no pane  ~/.herdr/worktrees/herdr-worktree-nav/fix-crash
                                     ↑ four columns past the longest label
 ```
 
@@ -98,6 +98,22 @@
 - **meta 列** は「それがどこにあるか」を示します。worktree は checkout パス、pane は pane ID です。リポジトリ行には何も出しません。直下の主 checkout が同じパスを持つためです。ホーム配下のパスは `~` に短縮します。
 - 列の開始位置は右端ではなく、**中身のある行のうち最長のラベルから 4 桁後ろ**です。幅の広いペインでもパスが行の隣に留まり、画面の反対側まで目線を運ばずに済みます。そこから行末までを使うので、パスはたいてい省略なしで表示されます。それでも入らない場合は端ではなく**中央**を省略します。先頭はどのツリーの中か、末尾はどの checkout かを示すためです。
 - 何も動いていない checkout は、meta 列がパスで埋まっているため、名前の脇に `no pane` と付きます。
+
+### checkout が今どういう状態か
+
+ブランチ名と `no pane` の間に、その checkout 自身の状態が出ます。ほとんどの行には何も付きません。列にせず名前の脇に置いているのはそのためです。ほとんどの行で空になる列は、名前とパスの間に恒久的な隙間を作るだけだからです。
+
+| | |
+| --- | --- |
+| `✱` | 作業ツリーに未コミットの変更か未追跡ファイルがある |
+| `↑2↓1` | upstream にない commit が 2 つ、こちらにない commit が 1 つ |
+| `gone` | 追跡していたブランチがリモートにもう無い |
+
+`✱` は `Shift-D` が通らない理由そのものです。git は誰もコミットしていない作業を抱えた checkout の削除を拒みます。これはその拒否を、キーを押す前に見せているだけです。`gone` はたいてい pull request がマージされたブランチです。GitHub が head を消し、Branches ビューの `Ctrl-F` による fetch がそれに気づきます。
+
+ahead / behind と `gone` は、ピッカーが既に実行している `git for-each-ref` から出てくるので、最初のフレームから揃っています。作業ツリーが汚れているかは違います。git はツリー全体を歩かないと分からず、しかも checkout ごとに 1 回必要です。そのためこれだけはバックグラウンドで訊き、答えが届いた行から埋めていきます。届くまでその行は何も言いません——推測するくらいなら黙るほうが良いからです——代わりにプロンプト行がスピナーを回し、「まだ埋まっている途中」が「何も見つからなかった」に見えないようにしています。
+
+もう一度訊かせるのは `r` だけです。それ以外の場合、答えはピッカーが開いている間ずっと保持されます。`Tab` で Branches ビューへ行って戻ってきても同じです。
 
 一覧の下の詳細行には、カーソル位置の行の完全なパスが出ます。省略されたパスはここで読めます。
 
@@ -235,6 +251,8 @@ herdr が開いているリポジトリがすべて並びます。Panes ビュ�
 | `· local` | ローカルブランチ、worktree なし | そこから worktree を作る |
 | `↓ remote` | リモートにあるが未 fetch | fetch してから `origin/<branch>` を基点に作る |
 | `+ create` | まだ存在しない（入力した名前） | `HEAD` から作成し、そこから worktree を作る |
+
+これに加えて `gone` が付くことがあります。独立した状態ではなく、状態への注記です（`checked out gone`、`local gone`）。追跡していたブランチがリモートにもう無い、という意味です。マージされた pull request の head を GitHub が削除し、prune 付きの fetch がそれに気づいた状態です。ブランチも checkout もまだここにありますが、upstream にはもう何もありません。
 
 `running` は行き先の選択を飛ばします。その作業はすでに開いているので、「二重に開いた分をどこに置くか」を尋ねるのは筋が違うためです。
 

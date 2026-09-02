@@ -118,6 +118,11 @@ through this against a real session.
 - [ ] The picker opens as a centred popup framed by herdr, titled `herdr-worktree-nav`,
       with the session still visible around it — and it does **not** list itself.
 - [ ] A worktree with no pane appears with `no pane`, and `Enter` opens it.
+- [ ] A checkout that is ahead of or behind its upstream says so in the first frame, and one
+      whose upstream has been deleted on the remote says `gone` — in both views.
+- [ ] Leave an untracked file in a checkout: `✱` appears on its row a moment after the
+      picker opens, with a spinner beside the prompt until every checkout has answered.
+      Commit or delete the file and press `r`: the marker goes.
 - [ ] `↑`/`↓` stop only on panes and on checkouts with nothing running: repository headings
       and checkouts that already have panes are stepped over, and still drawn.
 - [ ] `←`/`→` move one repository per press, landing on its first pane or first idle
