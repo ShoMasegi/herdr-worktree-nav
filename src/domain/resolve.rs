@@ -40,9 +40,9 @@ pub struct BranchEntry {
     pub committed_at: Option<i64>,
     /// Decoration only — an open pull request whose head is this branch.
     pub pull_request: Option<PullRequest>,
-    /// The upstream this branch tracked is no longer on the remote — the ordinary end of a
-    /// branch whose pull request was merged. Only ever set from a local ref: a branch that
-    /// exists nowhere but the remote has nothing to be gone.
+    /// git cannot find the ref this branch tracks — the ordinary end of a branch whose pull
+    /// request was merged and whose head the remote then deleted. Only ever set from a local
+    /// ref: a branch that exists nowhere but the remote has nothing to be gone.
     pub upstream_gone: bool,
 }
 
