@@ -1713,6 +1713,8 @@ mod tests {
             kind: RefKind::Local,
             committed_at: Some(at),
             subject: Some(format!("latest work on {name}")),
+            track: None,
+            worktree_path: None,
         }
     }
 

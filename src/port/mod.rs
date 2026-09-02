@@ -168,6 +168,28 @@ pub struct GitRef {
     /// Committer date, for ordering most-recent-first. `None` when unknown.
     pub committed_at: Option<i64>,
     pub subject: Option<String>,
+    /// Where this branch stands against the upstream it tracks. `None` when it is level
+    /// with it, or has none at all.
+    pub track: Option<Track>,
+    /// The checkout that currently has this branch, when one does. git answers this in the
+    /// same breath as everything else here, which is what ties a branch to a checkout
+    /// without having to assume that two things named `feat/login` are the same one.
+    pub worktree_path: Option<String>,
+}
+
+/// What git says about a branch's position relative to its upstream.
+///
+/// Read straight out of `%(upstream:track)`, which the one `for-each-ref` this plugin
+/// already runs can print for free — the alternative, a `rev-list --count` per branch, is a
+/// process per branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Track {
+    /// The upstream branch is no longer on the remote. Usually a branch whose pull request
+    /// was merged and whose head GitHub then deleted, which is what makes it worth showing.
+    Gone,
+    /// Commits on one side the other does not have. At least one of the two is non-zero:
+    /// git prints nothing at all for a branch level with its upstream.
+    Divergence { ahead: u32, behind: u32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -215,6 +237,15 @@ pub trait GitPort: Sync {
     /// is left alone, and git refuses when the checkout has uncommitted work — neither of
     /// which this plugin overrides.
     fn remove_worktree(&self, repo_root: &str, checkout_path: &str) -> Result<()>;
+
+    /// Whether this checkout is holding work that is not committed: modified tracked files,
+    /// or untracked ones. The same question `git worktree remove` asks before it refuses,
+    /// which is why untracked files count.
+    ///
+    /// One process per checkout, and the only thing here that cannot be folded into an
+    /// existing call — so it is asked in the background rather than in front of the first
+    /// frame.
+    fn is_dirty(&self, checkout_path: &str) -> Result<bool>;
 
     /// Current `HEAD` of `repo_root`, used as the base for a brand new branch.
     fn head_ref(&self, repo_root: &str) -> Result<String>;

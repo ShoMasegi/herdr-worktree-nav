@@ -4,7 +4,7 @@ use std::process::{Command, Output, Stdio};
 
 use anyhow::{bail, Context, Result};
 
-use crate::port::{GitPort, GitRef, RefKind, RepoIdentity};
+use crate::port::{GitPort, GitRef, RefKind, RepoIdentity, Track};
 
 /// git's catch-all exit code for a fatal error. It says almost nothing on its own: a path
 /// that is not a repository and a fetch that could not reach the remote both exit 128, so
@@ -49,6 +49,32 @@ impl GitCli {
         Self::run(dir, args)?
             .with_context(|| format!("{dir} is not a git repository, but was expected to be"))
     }
+}
+
+/// Read `%(upstream:track)` — `[gone]`, `[ahead 2]`, `[behind 1]`, `[ahead 2, behind 1]`, or
+/// nothing at all for a branch level with its upstream or without one.
+///
+/// Anything unrecognised is `None` rather than a guess. A marker that is wrong is worse than
+/// no marker, because the whole point of these is to answer "which of these is behind"
+/// without leaving the picker to check.
+fn parse_track(field: &str) -> Option<Track> {
+    let inside = field.trim().strip_prefix('[')?.strip_suffix(']')?;
+    if inside == "gone" {
+        return Some(Track::Gone);
+    }
+    let mut ahead = 0;
+    let mut behind = 0;
+    for part in inside.split(", ") {
+        match part.split_once(' ') {
+            Some(("ahead", count)) => ahead = count.parse().ok()?,
+            Some(("behind", count)) => behind = count.parse().ok()?,
+            _ => return None,
+        }
+    }
+    if ahead == 0 && behind == 0 {
+        return None;
+    }
+    Some(Track::Divergence { ahead, behind })
 }
 
 /// Extract `owner/repo` from any GitHub remote URL form:
@@ -110,11 +136,18 @@ impl GitPort for GitCli {
     fn local_refs(&self, repo_root: &str) -> Result<Vec<GitRef>> {
         // The full refname, not `refname:short`: a local branch called `feat/login` and a
         // remote ref printed as `origin/main` are indistinguishable once shortened.
+        //
+        // Everything in one format string. `upstream:track`, `push:track` and
+        // `worktreepath` are answers git has to hand while it is walking the refs anyway;
+        // asking for them separately would be `rev-list --count` and `worktree list` on top
+        // of a call that was already being made.
+        //
+        // The subject goes last because it is the only field that can contain anything.
         let out = GitCli::run_in_repo(
             repo_root,
             &[
                 "for-each-ref",
-                "--format=%(refname)%09%(committerdate:unix)%09%(contents:subject)",
+                "--format=%(refname)%09%(committerdate:unix)%09%(upstream:track)%09%(push:track)%09%(worktreepath)%09%(contents:subject)",
                 "refs/heads",
                 "refs/remotes",
             ],
@@ -122,10 +155,19 @@ impl GitPort for GitCli {
 
         let mut refs = Vec::new();
         for line in out.lines() {
-            let mut parts = line.splitn(3, '\t');
+            let mut parts = line.splitn(6, '\t');
             let (Some(refname), Some(date)) = (parts.next(), parts.next()) else {
                 continue;
             };
+            // A branch with no upstream configured but a push destination still has
+            // somewhere to be ahead of, and `push:track` is where git says so.
+            let upstream = parts.next().unwrap_or_default();
+            let push = parts.next().unwrap_or_default();
+            let track = parse_track(upstream).or_else(|| parse_track(push));
+            let worktree_path = parts
+                .next()
+                .map(str::to_string)
+                .filter(|path| !path.is_empty());
             let subject = parts.next().map(str::to_string).filter(|s| !s.is_empty());
 
             let (name, kind) = if let Some(branch) = refname.strip_prefix("refs/heads/") {
@@ -153,6 +195,8 @@ impl GitPort for GitCli {
                 kind,
                 committed_at: date.parse().ok(),
                 subject,
+                track,
+                worktree_path,
             });
         }
         Ok(refs)
@@ -195,6 +239,14 @@ impl GitPort for GitCli {
         Ok(())
     }
 
+    fn is_dirty(&self, checkout_path: &str) -> Result<bool> {
+        // Untracked files count, because they count to `git worktree remove` — the marker
+        // has to mean the same thing there as it does on `Shift-D`, or it is telling the
+        // user something they cannot act on.
+        let status = GitCli::run_in_repo(checkout_path, &["status", "--porcelain"])?;
+        Ok(!status.trim().is_empty())
+    }
+
     fn head_ref(&self, repo_root: &str) -> Result<String> {
         let head = GitCli::run_in_repo(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
         let head = head.trim();
@@ -210,7 +262,52 @@ impl GitPort for GitCli {
 
 #[cfg(test)]
 mod tests {
-    use super::github_slug_from_url;
+    use super::{github_slug_from_url, parse_track};
+    use crate::port::Track;
+
+    #[test]
+    fn reads_every_shape_git_prints_for_upstream_track() {
+        assert_eq!(parse_track("[gone]"), Some(Track::Gone));
+        assert_eq!(
+            parse_track("[ahead 2]"),
+            Some(Track::Divergence {
+                ahead: 2,
+                behind: 0
+            })
+        );
+        assert_eq!(
+            parse_track("[behind 1]"),
+            Some(Track::Divergence {
+                ahead: 0,
+                behind: 1
+            })
+        );
+        assert_eq!(
+            parse_track("[ahead 2, behind 1]"),
+            Some(Track::Divergence {
+                ahead: 2,
+                behind: 1
+            })
+        );
+    }
+
+    #[test]
+    fn a_branch_with_nothing_to_report_gets_no_marker() {
+        // Level with its upstream, and no upstream at all, both print nothing — and both
+        // mean there is nothing to draw.
+        assert_eq!(parse_track(""), None);
+        assert_eq!(parse_track("   "), None);
+    }
+
+    #[test]
+    fn anything_unrecognised_is_no_marker_rather_than_a_guess() {
+        // A marker that is wrong is worse than none: these exist so the user does not have
+        // to leave the picker to check.
+        assert_eq!(parse_track("[ahead many]"), None);
+        assert_eq!(parse_track("[sideways 2]"), None);
+        assert_eq!(parse_track("gone"), None);
+        assert_eq!(parse_track("[ahead 0]"), None);
+    }
 
     #[test]
     fn extracts_the_slug_from_every_github_remote_form() {
