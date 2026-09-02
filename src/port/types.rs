@@ -272,9 +272,10 @@ impl NotificationSound {
 
 /// How a removal ended.
 ///
-/// `Refused` is git declining rather than anything going wrong: a checkout with uncommitted
-/// work or untracked files is exactly what `git worktree remove` is meant to protect, and
-/// what it said is what the user reads.
+/// `Refused` is usually git declining rather than anything going wrong: a checkout with
+/// uncommitted work or untracked files is exactly what `git worktree remove` is meant to
+/// protect. Either way it carries git's own words, because they say what would have been
+/// lost, and either way the checkout is still there afterwards.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemovalOutcome {
     Removed,

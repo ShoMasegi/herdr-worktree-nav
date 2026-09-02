@@ -53,6 +53,10 @@ pub struct Row {
     /// A worktree with no pane in it. Called out beside the label, since its meta column is
     /// taken by the checkout path.
     pub is_idle: bool,
+    /// A checkout whose removal has been started and is still running somewhere else. It
+    /// takes the place of the `no pane` note, since it is the more urgent fact about the
+    /// same row — see `docs/adr/0014-removing-outlives-the-picker.md`.
+    pub is_removing: bool,
     /// The row the session is currently on, marked with a caret in the gutter.
     pub is_current: bool,
     /// Whether this row matched the active filter, as opposed to being kept as ancestor
@@ -68,6 +72,11 @@ impl Row {
     /// answered by the panes listed directly under it — stopping on either would only make
     /// the arrow keys longer to press.
     pub fn is_selectable(&self) -> bool {
+        if self.is_removing {
+            // Nothing left to do to it. A second `Shift-D` would race the first, and Enter
+            // would open a checkout that is being deleted underneath.
+            return false;
+        }
         match self.reference {
             RowRef::Pane(..) | RowRef::Ungrouped(_) => true,
             RowRef::Worktree(..) => self.is_idle,
@@ -140,6 +149,10 @@ pub struct ViewOptions {
     /// The user's home directory, so paths can be shown as `~/...`. Passed in rather than
     /// read, because this module does not touch the environment.
     pub home: Option<String>,
+    /// Checkout paths whose removal has been started and has not reported back. Passed in
+    /// for the same reason `home` is: which processes are running is not something this
+    /// module is allowed to find out for itself.
+    pub removing: Vec<String>,
 }
 
 impl ViewOptions {
@@ -241,6 +254,10 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                     meta: abbreviate(&worktree.checkout_path, options.home.as_deref()),
                     status: worktree_status,
                     is_idle: worktree.panes.is_empty(),
+                    is_removing: options
+                        .removing
+                        .iter()
+                        .any(|path| path == &worktree.checkout_path),
                     is_current: false,
                     matched: worktree_matches,
                 }];
@@ -271,6 +288,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
             meta: String::new(),
             status: repo_status,
             is_idle: false,
+            is_removing: false,
             is_current: panes.iter().any(|pane| pane.focused),
             matched: repo_matches,
         }];
@@ -309,6 +327,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                 meta: String::new(),
                 status: aggregate(tree.ungrouped.iter().map(|pane| pane.agent_status)),
                 is_idle: false,
+                is_removing: false,
                 is_current: tree.ungrouped.iter().any(|pane| pane.focused),
                 matched: true,
             });
@@ -330,6 +349,7 @@ fn pane_row(reference: RowRef, depth: u8, pane: &PaneNode, matched: bool) -> Row
         meta: pane.pane_id.clone(),
         status: pane.agent_status,
         is_idle: false,
+        is_removing: false,
         is_current: pane.focused,
         matched,
     }
@@ -688,6 +708,35 @@ mod tests {
         assert!(find(&rows, "fix/crash").is_idle);
         assert_eq!(find(&rows, "fix/crash").meta, "/wt/fix-crash");
         assert!(!find(&rows, "main").is_idle);
+    }
+
+    #[test]
+    fn a_checkout_being_removed_says_that_instead_of_saying_it_is_empty() {
+        // The removal runs in a process of its own, so the row has to say what is happening
+        // to it for as long as the picker is up to draw it.
+        let options = ViewOptions {
+            removing: vec!["/wt/fix-crash".into()],
+            ..Default::default()
+        };
+        let rows = flatten(&tree(), &options);
+        assert!(find(&rows, "fix/crash").is_removing);
+        assert!(!find(&rows, "feat/login").is_removing);
+    }
+
+    #[test]
+    fn the_cursor_does_not_stop_on_a_checkout_that_is_going() {
+        // There is nothing left to do to it: a second Shift-D would race the first, and
+        // opening it would open something that is being deleted underneath.
+        let options = ViewOptions {
+            removing: vec!["/wt/fix-crash".into()],
+            ..Default::default()
+        };
+        let rows = flatten(&tree(), &options);
+        assert!(!find(&rows, "fix/crash").is_selectable());
+        assert!(
+            find(&rows, "fix/crash").is_idle,
+            "it is still a checkout with nothing running in it"
+        );
     }
 
     #[test]

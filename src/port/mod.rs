@@ -120,6 +120,43 @@ pub trait HerdrPort: Sync {
     /// `Ok(Some(refusal))` is herdr declining for a reason the caller can act on, as opposed
     /// to an error.
     fn plugin_pane_open(&self, req: &PluginPaneOpen) -> Result<Option<OpenRefusal>>;
+
+    /// Show a toast. The only call here that says something to the user rather than doing
+    /// something to the session, and the only thing this plugin can do once its own window
+    /// has gone — which is what a removal that outlives the picker needs.
+    ///
+    /// herdr may decline to show it: notifications turned off, no client attached, too many
+    /// already. That is an answer rather than a failure, and it is one this plugin accepts
+    /// in silence — see `docs/adr/0014-removing-outlives-the-picker.md`.
+    fn notify(&self, notification: &Notification) -> Result<()>;
+}
+
+/// Starting a removal that outlives this process.
+///
+/// `git worktree remove` walks a whole working tree before it deletes it, which is seconds
+/// on a repository of any size. The picker starts one and is then free to be closed; the
+/// process that carries it out reports itself. See
+/// `docs/adr/0014-removing-outlives-the-picker.md`.
+pub trait RemovalPort {
+    /// Start removing `checkout_path`. `label` is the branch, which is what the report
+    /// names — the reader was waiting on a branch, not on a path.
+    fn start(
+        &self,
+        repo_root: &str,
+        checkout_path: &str,
+        label: &str,
+    ) -> Result<Box<dyn RunningRemoval>>;
+}
+
+/// A removal already running somewhere else.
+///
+/// `Send`, because waiting for it is the one thing the picker cannot do on the thread it
+/// draws with. Dropping it without waiting is not an abandonment: the removal carries on and
+/// reports itself either way.
+pub trait RunningRemoval: Send {
+    /// Wait for it to finish and read what it said. `Err` when it ended without saying
+    /// anything this side can read, which is the one case neither outcome covers.
+    fn wait(self: Box<Self>) -> Result<RemovalOutcome>;
 }
 
 /// A branch reference as git reports it.
