@@ -128,6 +128,14 @@ through this against a real session.
 - [ ] `Shift-D` on a `no pane` row asks in a box naming the branch and the path, `y` removes the checkout and leaves the branch, and
       any other key cancels. It refuses on a pane, on a busy checkout, and on the
       repository's own checkout; a checkout with uncommitted work refuses with git's reason.
+- [ ] After `y` the picker comes straight back, the row says `deleting` with a turning
+      spinner, and the cursor steps over it. The row goes when the removal finishes.
+- [ ] Close the picker immediately after `y` on a large checkout: the removal still
+      completes, and herdr shows `removed <branch>` when it does. This is the one thing CI
+      cannot see, and the reason the removal runs in a session of its own — see
+      [ADR 0014](../adr/0014-removing-outlives-the-picker.md).
+- [ ] The same with a checkout holding uncommitted work: the toast says
+      `could not remove <branch>` with git's reason, and the checkout is still there.
 - [ ] `Tab` reaches the branches view, on the repository under the cursor.
 - [ ] The branches view lists every repository herdr has open, marks the one it was summoned
       from, and starts with the cursor on it.

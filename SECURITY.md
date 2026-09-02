@@ -32,6 +32,10 @@ Specifically, herdr-worktree-nav:
   with nothing running in it. There is no `--force`: git refuses a checkout holding
   uncommitted changes or untracked files, and this plugin does not override that. The branch
   is left alone.
+- **That removal outlives the picker.** It runs as a second copy of this binary, in a session
+  of its own, so closing the picker does not leave a half-deleted checkout behind. It removes
+  the one checkout it was given and then exits; it takes no further instructions and does
+  nothing else. It reports what happened as a herdr notification.
 - **Runs `gh pr list`** if `gh` is on your `PATH`, to annotate branches. Read-only.
 
 Nothing here rewrites history, deletes a branch, changes a file in a working tree, or pushes.

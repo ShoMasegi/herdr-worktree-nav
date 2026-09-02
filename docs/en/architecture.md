@@ -2,7 +2,7 @@
 
 [日本語](../ja/architecture.md)
 
-One Rust binary. herdr launches it three ways:
+One Rust binary. herdr launches it three ways, and the picker launches it a fourth:
 
 ```
 keybinding ──▶ herdr-worktree-nav action open-panes
@@ -10,9 +10,11 @@ keybinding ──▶ herdr-worktree-nav action open-panes
                    │  forwards the invoking pane and repo as env
                    ▼
                plugin.pane.open ──▶ herdr-worktree-nav pane panes   ─▶ the picker
-                                    herdr-worktree-nav pane branches
-
-troubleshooting ─▶ herdr-worktree-nav dump
+                                    herdr-worktree-nav pane branches │
+                                                                     │ Shift-D, y
+troubleshooting ─▶ herdr-worktree-nav dump                           ▼
+                                    herdr-worktree-nav remove <repo> <path> <branch>
+                                        setsid, so closing the picker cannot kill it
 ```
 
 The action is not the picker. It runs with the plugin directory as its working directory and
@@ -23,7 +25,7 @@ open the pane in the right place.
 
 ```
 src/
-  main.rs      argv -> one of the three modes
+  main.rs      argv -> one of the four modes
   app/         wiring: what each herdr entry point does
   ui/          drawing and key handling
   domain/      pure logic — no I/O of any kind
@@ -48,6 +50,7 @@ goes are all pure functions over plain data.
 | `domain::dest` | where can a pane go, and what herdr call does each choice mean? |
 | `domain::preview` | what will the destination tab look like once the pane lands in it? |
 | `domain::progress` | what step is opening a branch on, and can it still be abandoned? |
+| `domain::removal` | what does a finished removal say, and to whom? |
 | `domain::chrome` | what accent and status glyphs is herdr configured for? |
 
 ## Talking to herdr
@@ -137,6 +140,27 @@ in an existing tab — so every destination except "a new space" is reached by c
 then moving. herdr closes the emptied tab and workspace itself and leaves the checkout alone,
 which is what makes this leave no residue. See
 [ADR 0001](../adr/0001-delegate-worktree-creation.md).
+
+## Removing a checkout
+
+Everything else here happens inside the picker's process. A removal does not, because
+`git worktree remove` walks a whole working tree before it deletes it and the natural move
+after answering `y` is to close the picker.
+
+```
+Shift-D, y ─▶ setsid herdr-worktree-nav remove …  ─┬─▶ git worktree remove
+                   │                               └─▶ notification.show   always
+                   │ stdout: one line
+                   ▼
+             the picker, while it happens to still be up:
+               deleting ⠻ on the row, and a refusal on the prompt line
+```
+
+The child reports and the picker only decorates. Neither the loop nor the child can tell
+whether a line down that pipe was ever read — the user may be in the branches view, or gone —
+so the notification is unconditional and the picker adds nothing on success. `setsid` is
+load-bearing: herdr kills a closed pane's process group. See
+[ADR 0014](../adr/0014-removing-outlives-the-picker.md).
 
 ## Looking like herdr
 
