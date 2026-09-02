@@ -57,6 +57,9 @@ pub struct PanesState {
     /// A removal waiting on a yes. Nothing on disk has been touched yet.
     pending_removal: Option<Removal>,
     message: Option<String>,
+    /// Frame of the spinner on the rows being removed. Advanced by the loop that owns the
+    /// clock, the same way the branches view does it — `domain` is not allowed to read one.
+    tick: usize,
 }
 
 /// A checkout the user has asked to delete, held until they say yes.
@@ -83,6 +86,7 @@ impl PanesState {
             filtering: false,
             pending_removal: None,
             message: None,
+            tick: 0,
         };
         state.rebuild(None);
         state
@@ -94,6 +98,35 @@ impl PanesState {
         let anchor = self.selected_pane_id().map(str::to_string);
         self.tree = tree;
         self.rebuild(anchor.as_deref());
+    }
+
+    /// Say which checkouts are being removed, so their rows can say so and stop being
+    /// selectable. The removals themselves are running in other processes entirely.
+    ///
+    /// The cursor holds its place rather than being sent back to the top: tidying up comes
+    /// in batches, and the next thing to delete is usually the next row down. It only moves
+    /// when the row it is on has just become one of these.
+    pub fn set_removing(&mut self, paths: Vec<String>) {
+        if self.options.removing == paths {
+            return;
+        }
+        self.options.removing = paths;
+        let at = self.cursor;
+        self.rows = rows::flatten(&self.tree, &self.options);
+        self.lines = rows::display_lines(&self.rows);
+        self.cursor =
+            rows::next_row(&self.rows, &self.lines, at.min(self.lines.len())).unwrap_or(0);
+    }
+
+    /// Advance the spinner one frame. Called by the loop that owns the clock, and only
+    /// while something is actually being removed.
+    pub fn tick(&mut self) {
+        self.tick = self.tick.wrapping_add(1);
+    }
+
+    /// Which frame of the spinner the rows being removed should show.
+    pub fn frame(&self) -> usize {
+        self.tick
     }
 
     /// Put the cursor on a specific pane, used to open the picker on the pane you came from.
@@ -721,6 +754,40 @@ mod tests {
         assert!(
             state.pending_removal().is_none(),
             "the question is answered"
+        );
+    }
+
+    #[test]
+    fn the_cursor_steps_off_a_checkout_once_its_removal_has_started() {
+        // The removal is running in a process of its own by then, so there is nothing left
+        // to do to the row: a second `Shift-D` would race the first, and `Enter` would open
+        // a checkout being deleted underneath it.
+        let mut state = state();
+        select(&mut state, "fix/crash");
+        state.set_removing(vec!["/wt/app/fix-crash".into()]);
+
+        assert_ne!(
+            state.selected().map(|row| row.label.as_str()),
+            Some("fix/crash")
+        );
+        assert_eq!(
+            state.handle_key(key(KeyCode::Char('D'))),
+            Action::Consumed,
+            "and Shift-D cannot reach it"
+        );
+        assert!(state.pending_removal().is_none());
+    }
+
+    #[test]
+    fn a_removal_that_finished_gives_the_row_back() {
+        let mut state = state();
+        state.set_removing(vec!["/wt/app/fix-crash".into()]);
+        state.set_removing(Vec::new());
+        select(&mut state, "fix/crash");
+        state.handle_key(key(KeyCode::Char('D')));
+        assert!(
+            state.pending_removal().is_some(),
+            "a refused removal leaves a checkout that can be asked about again"
         );
     }
 

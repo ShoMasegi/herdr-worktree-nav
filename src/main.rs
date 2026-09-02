@@ -4,12 +4,16 @@
 //! - `pane <entrypoint>` — herdr is starting the plugin pane itself. Runs the picker.
 //!
 //! `dump` is a third, diagnostic mode for troubleshooting what the plugin sees.
+//!
+//! `remove` is the fourth, and the only one herdr does not start: the picker starts it, in
+//! a session of its own, so that deleting a checkout outlives the window that asked for it.
+//! See `docs/adr/0014-removing-outlives-the-picker.md`.
 
 use std::process::ExitCode;
 
 use anyhow::{bail, Result};
-use herdr_worktree_nav::adapter::{herdr_config, GhCli, GitCli, SocketHerdr};
-use herdr_worktree_nav::app::{action, collect, run_picker, Entrypoint};
+use herdr_worktree_nav::adapter::{herdr_config, DetachedRemovals, GhCli, GitCli, SocketHerdr};
+use herdr_worktree_nav::app::{action, collect, remove, run_picker, Entrypoint};
 
 fn main() -> ExitCode {
     match run() {
@@ -36,7 +40,19 @@ fn run() -> Result<()> {
             None => bail!("`pane` needs an entrypoint: `panes` or `branches`"),
         },
         Some("dump") => dump(),
-        Some(other) => bail!("unknown command `{other}`. Expected `action`, `pane`, or `dump`."),
+        Some("remove") => match (args.next(), args.next(), args.next()) {
+            (Some(repo_root), Some(checkout_path), Some(label)) => remove::run(
+                &SocketHerdr::from_env()?,
+                &GitCli,
+                &repo_root,
+                &checkout_path,
+                &label,
+            ),
+            _ => bail!("`remove` needs a repository root, a checkout path, and a branch name"),
+        },
+        Some(other) => {
+            bail!("unknown command `{other}`. Expected `action`, `pane`, `dump`, or `remove`.")
+        }
         None => {
             eprintln!("{USAGE}");
             bail!("no command given")
@@ -49,10 +65,18 @@ herdr-worktree-nav — navigate herdr panes by repo and worktree
 
   herdr-worktree-nav action <action-id>   open the picker for a plugin action (herdr calls this)
   herdr-worktree-nav pane <entrypoint>    run the picker itself (herdr calls this)
-  herdr-worktree-nav dump                 print what the plugin currently sees, for troubleshooting";
+  herdr-worktree-nav dump                 print what the plugin currently sees, for troubleshooting
+  herdr-worktree-nav remove <repo-root> <checkout-path> <branch>
+                                          remove one checkout and say so (the picker calls this)";
 
 fn pane(start: Entrypoint) -> Result<()> {
-    run_picker(&SocketHerdr::from_env()?, &GitCli, &GhCli, start)
+    run_picker(
+        &SocketHerdr::from_env()?,
+        &GitCli,
+        &GhCli,
+        &DetachedRemovals,
+        start,
+    )
 }
 
 /// Print the resolved tree as plain text. Useful when the picker shows something surprising:

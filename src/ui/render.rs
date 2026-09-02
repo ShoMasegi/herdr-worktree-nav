@@ -77,6 +77,27 @@ fn label_end(row: &Row) -> usize {
 /// `" ◆ "` or three spaces.
 const GUTTER_WIDTH: usize = 3;
 const IDLE_NOTE: &str = "  no pane";
+/// A checkout being removed says so where its `no pane` note would go: it is the more
+/// urgent fact about the same row, and the removal is running somewhere this picker cannot
+/// see. The spinner glyph follows.
+const REMOVING_NOTE: &str = "  deleting ";
+
+/// How wide the note actually drawn on a row is.
+///
+/// The `deleting` note is the wider of the two, and it is deliberately not counted by
+/// `label_end`: the meta column is computed over every row, so measuring it there would
+/// shunt every path in the list sideways the moment somebody pressed `y`. Left out, the
+/// three columns come out of that one row's label instead, and the column does not move.
+fn note_width(row: &Row) -> usize {
+    if row.is_removing {
+        // The spinner glyph follows the note.
+        return REMOVING_NOTE.chars().count() + 1;
+    }
+    if row.is_idle {
+        return IDLE_NOTE.len();
+    }
+    0
+}
 
 /// Widest first; the picker draws the first that fits. Each rung drops the least useful
 /// thing left, so a narrow pane loses `r reload` before it loses how to move.
@@ -353,6 +374,7 @@ fn render_rows(frame: &mut Frame, state: &PanesState, theme: &Theme, area: Rect)
             selected,
             filtering,
             column,
+            state.frame(),
         );
     }
     render_scrollbar(frame, scroll, lines.len(), viewport, theme, area);
@@ -379,6 +401,7 @@ fn render_row(
     selected: bool,
     filtering: bool,
     meta_column: usize,
+    tick: usize,
 ) {
     let base = if selected {
         theme.selected()
@@ -431,7 +454,7 @@ fn render_row(
     let quiet = if selected { base } else { theme.dim() };
 
     let used = gutter.chars().count() + prefix.chars().count() + glyph.chars().count() + 1;
-    let note = if row.is_idle { IDLE_NOTE.len() } else { 0 };
+    let note = note_width(row);
     // A row with nothing in the meta column may use the whole line for its label; one with
     // something has to stop short of the column so the two do not collide.
     let label_budget = if row.meta.is_empty() {
@@ -448,8 +471,12 @@ fn render_row(
         Span::styled(truncate(&row.label, label_budget), label_style),
     ];
     // The meta column is taken by the checkout path, so a checkout with nothing running in
-    // it says so beside its name instead.
-    if row.is_idle {
+    // it says so beside its name instead — and one that is going says that, which is the
+    // more urgent thing to know about the same row.
+    if row.is_removing {
+        spans.push(Span::styled(REMOVING_NOTE, quiet));
+        spans.push(Span::styled(spinner(tick), quiet));
+    } else if row.is_idle {
         spans.push(Span::styled(IDLE_NOTE, quiet));
     }
 
@@ -1442,6 +1469,16 @@ mod tests {
     }
 
     #[test]
+    fn a_checkout_being_removed_says_so_where_its_no_pane_note_was() {
+        // The removal is running in another process and may well outlive this window, so
+        // the row has to say what is happening to it rather than simply going quiet. The
+        // cursor has stepped off it: there is nothing left to do to it from here.
+        let mut state = PanesState::new(tree(), None);
+        state.set_removing(vec!["/wt/fix-crash".into()]);
+        insta::assert_snapshot!(screen(&state, 92, 18));
+    }
+
+    #[test]
     fn an_empty_search_field_with_the_keyboard_shows_only_its_cursor() {
         // The placeholder is advice about a field you are not in. Leaving it under the
         // cursor would read as text that will not go away.
@@ -1636,6 +1673,17 @@ mod tests {
         let state = PanesState::new(tree(), None);
         // `fix/crash` plus its "no pane" note is the longest row that has a path, at 27.
         assert_eq!(meta_column(state.rows(), 92), 27 + META_GAP);
+    }
+
+    #[test]
+    fn starting_a_removal_does_not_move_the_meta_column() {
+        // The wider note is paid for out of that row's own label, not out of everyone
+        // else's alignment: a removal starts on a keypress, and a list that shifts
+        // sideways under one is a list nobody can read while tidying up.
+        let mut state = PanesState::new(tree(), None);
+        let before = meta_column(state.rows(), 92);
+        state.set_removing(vec!["/wt/fix-crash".into()]);
+        assert_eq!(meta_column(state.rows(), 92), before);
     }
 
     #[test]
