@@ -238,3 +238,45 @@ pub struct WorktreeOpened {
     #[serde(default)]
     pub already_open: bool,
 }
+
+/// A herdr toast: `notification.show`.
+///
+/// This is the plugin's only way to say something after its own window has gone, which is
+/// what a removal that outlives the picker needs — see
+/// `docs/adr/0014-removing-outlives-the-picker.md`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notification {
+    pub title: String,
+    pub body: Option<String>,
+    pub sound: NotificationSound,
+}
+
+/// The three sounds herdr's API offers. `Done` is unused here on purpose: tidying up is
+/// done often, and a chime for every checkout that goes would be noise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotificationSound {
+    None,
+    Done,
+    Request,
+}
+
+impl NotificationSound {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NotificationSound::None => "none",
+            NotificationSound::Done => "done",
+            NotificationSound::Request => "request",
+        }
+    }
+}
+
+/// How a removal ended.
+///
+/// `Refused` is git declining rather than anything going wrong: a checkout with uncommitted
+/// work or untracked files is exactly what `git worktree remove` is meant to protect, and
+/// what it said is what the user reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemovalOutcome {
+    Removed,
+    Refused(String),
+}

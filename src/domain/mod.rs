@@ -7,6 +7,7 @@ pub mod model;
 pub mod order;
 pub mod preview;
 pub mod progress;
+pub mod removal;
 pub mod resolve;
 pub mod rows;
 pub mod tree;
