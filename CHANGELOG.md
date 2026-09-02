@@ -19,7 +19,9 @@ All notable changes to this project are documented here. The format follows
   background eight at a time and each row fills in as its answer lands. A checkout that has
   not answered yet carries no marker rather than a wrong one, and the prompt line turns a
   spinner so a list that is still filling in does not read as one that found nothing. `r`
-  asks again; otherwise the answers are kept for as long as the picker is open.
+  asks again; otherwise the answers are kept for as long as the picker is open. The room a
+  `✱` would take is kept from the first frame, so an answer arriving never moves the paths
+  beside it.
 
 ### Changed
 

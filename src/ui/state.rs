@@ -103,9 +103,10 @@ impl PanesState {
         self.rebuild(anchor.as_deref());
     }
 
-    /// Say which checkouts are holding uncommitted work. Arrives after the first frame,
-    /// one answer at a time, so the cursor stays exactly where it is — nothing about a row
-    /// changes except what it says about itself.
+    /// Say which checkouts are holding uncommitted work. Arrives after the first frame, one
+    /// answer at a time, so nothing may move under the reader: the cursor stays where it is,
+    /// the row count cannot change, and the meta column is measured with room for these
+    /// already kept (`domain::rows::marks_reserve`).
     pub fn set_dirty(&mut self, paths: Vec<String>) {
         if self.options.dirty == paths {
             return;

@@ -19,7 +19,7 @@ use crate::domain::model::RepoNode;
 use crate::domain::order::Order;
 use crate::domain::preview::{Preview, PreviewPane};
 use crate::domain::resolve::{BranchEntry, BranchState};
-use crate::domain::rows::{abbreviate, marks, DisplayLine, Row};
+use crate::domain::rows::{abbreviate, marks, marks_reserve, DisplayLine, Row};
 use crate::port::LayoutRect;
 use crate::ui::branches::{Activity, BranchesState, Step};
 use crate::ui::diagram::{Fit, Frame as DiagramFrame};
@@ -71,7 +71,7 @@ fn label_end(row: &Row) -> usize {
         + tree
         + 2
         + row.label.chars().count()
-        + marks(row).chars().count()
+        + marks_reserve(row)
         + if row.is_idle { IDLE_NOTE.len() } else { 0 }
 }
 
@@ -85,10 +85,13 @@ const REMOVING_NOTE: &str = "  deleting ";
 
 /// How wide the note actually drawn on a row is.
 ///
-/// The `deleting` note is the wider of the two, and it is deliberately not counted by
-/// `label_end`: the meta column is computed over every row, so measuring it there would
-/// shunt every path in the list sideways the moment somebody pressed `y`. Left out, the
-/// three columns come out of that one row's label instead, and the column does not move.
+/// The rule behind every width here: **the meta column is a maximum over every row, so
+/// nothing that can appear while the picker is up may make a row wider than it was
+/// measured.** `domain::rows::marks_reserve` keeps room for the `✱` whether or not it is
+/// showing, so the column does not move when a `git status` answers. The `deleting` note is
+/// the other direction — it is three columns wider than the `no pane` note it replaces, and
+/// it is deliberately *not* reserved, because it appears on a keypress on one row and the
+/// three columns come out of that row's own label rather than out of everyone's alignment.
 fn note_width(row: &Row) -> usize {
     if row.is_removing {
         // The spinner glyph follows the note.
@@ -463,8 +466,11 @@ fn render_row(
     let tree_style = if selected { base } else { theme.tree() };
     let quiet = if selected { base } else { theme.dim() };
 
+    // What the checkout itself is: uncommitted work, and where it stands against its
+    // upstream. Measured and drawn from the same string, so the two cannot drift.
+    let marks = marks(row);
     let used = gutter.chars().count() + prefix.chars().count() + glyph.chars().count() + 1;
-    let note = note_width(row) + marks(row).chars().count();
+    let note = note_width(row) + marks.chars().count();
     // A row with nothing in the meta column may use the whole line for its label; one with
     // something has to stop short of the column so the two do not collide.
     let label_budget = if row.meta.is_empty() {
@@ -480,9 +486,7 @@ fn render_row(
         Span::raw(" "),
         Span::styled(truncate(&row.label, label_budget), label_style),
     ];
-    // What the checkout itself is: uncommitted work, and where it stands against its
-    // upstream. Beside the name rather than in a column, because most rows have none of it.
-    let marks = marks(row);
+    // Beside the name rather than in a column, because most rows have none of it.
     if !marks.is_empty() {
         spans.push(Span::styled(marks, quiet));
     }
@@ -1737,8 +1741,9 @@ mod tests {
     #[test]
     fn the_meta_column_sits_just_past_the_longest_label_that_has_one() {
         let state = PanesState::new(tree(), None);
-        // `fix/crash` plus its "no pane" note is the longest row that has a path, at 27.
-        assert_eq!(meta_column(state.rows(), 92), 27 + META_GAP);
+        // `fix/crash`, its "no pane" note, and the three columns kept for a `✱` that has
+        // not arrived yet: 30. Nothing else in this tree has anything to line up with.
+        assert_eq!(meta_column(state.rows(), 92), 30 + META_GAP);
     }
 
     #[test]
@@ -1749,6 +1754,16 @@ mod tests {
         let mut state = PanesState::new(tree(), None);
         let before = meta_column(state.rows(), 92);
         state.set_removing(vec!["/wt/fix-crash".into()]);
+        assert_eq!(meta_column(state.rows(), 92), before);
+    }
+
+    #[test]
+    fn an_answer_about_uncommitted_work_does_not_move_the_meta_column_either() {
+        // The same rule, and the case it was written for: these answers arrive a beat after
+        // the first frame, with the list already on screen and being read.
+        let mut state = PanesState::new(tree(), None);
+        let before = meta_column(state.rows(), 92);
+        state.set_dirty(vec!["/wt/fix-crash".into(), "/wt/main".into()]);
         assert_eq!(meta_column(state.rows(), 92), before);
     }
 

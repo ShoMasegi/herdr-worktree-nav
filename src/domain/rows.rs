@@ -91,8 +91,8 @@ impl Row {
     }
 }
 
-/// A checkout holding uncommitted changes or untracked files.
-const DIRTY: &str = "\u{2731}";
+/// A checkout holding uncommitted changes or untracked files, with the gap that precedes it.
+const DIRTY: &str = "  \u{2731}";
 /// An upstream that is no longer on the remote. A word rather than a glyph: it is the one
 /// of these that says a branch is finished with, and it is worth being unmissable.
 const GONE: &str = "gone";
@@ -108,26 +108,51 @@ const GONE: &str = "gone";
 pub fn marks(row: &Row) -> String {
     let mut out = String::new();
     if row.is_dirty {
-        out.push_str("  ");
         out.push_str(DIRTY);
     }
-    match row.track {
-        Some(Track::Gone) => {
-            out.push_str("  ");
-            out.push_str(GONE);
-        }
+    out.push_str(&track_mark(row.track));
+    out
+}
+
+/// How much room a row's marks are allowed to take without moving the meta column.
+///
+/// The dirty marker is counted whether it is showing or not. It appears when a `git status`
+/// answers — a beat after the first frame, with the list already on screen — and the meta
+/// column is a maximum over every row, so measuring only what is showing would jump every
+/// path in the list sideways once, including the paths of rows in repositories that have not
+/// changed at all. Three reserved columns are the price of that not happening.
+///
+/// Ahead, behind and `gone` are measured exactly, because they are known before the first
+/// frame and cannot change without a reload — which redraws the whole list anyway.
+pub fn marks_reserve(row: &Row) -> usize {
+    if !row.reference.is_worktree() {
+        return 0;
+    }
+    DIRTY.chars().count() + track_mark(row.track).chars().count()
+}
+
+/// Where the branch stands against its upstream, with the gap that precedes it.
+fn track_mark(track: Option<Track>) -> String {
+    match track {
+        Some(Track::Gone) => format!("  {GONE}"),
         Some(Track::Divergence { ahead, behind }) => {
-            out.push_str("  ");
+            let mut out = String::new();
             if ahead > 0 {
                 out.push_str(&format!("\u{2191}{ahead}"));
             }
             if behind > 0 {
                 out.push_str(&format!("\u{2193}{behind}"));
             }
+            // A divergence git reports as level with its upstream is one git does not
+            // report at all, but nothing in the type says so — and a bare gap with no
+            // arrows after it would take room on the row and say nothing.
+            match out.is_empty() {
+                true => out,
+                false => format!("  {out}"),
+            }
         }
-        None => {}
+        None => String::new(),
     }
-    out
 }
 
 /// One rendered line. Blank lines separate groups and cannot be selected — the same shape
@@ -787,6 +812,48 @@ mod tests {
     #[test]
     fn a_checkout_with_nothing_to_report_says_nothing() {
         assert_eq!(marks_for(false, None), "");
+    }
+
+    #[test]
+    fn a_divergence_of_nothing_takes_no_room_on_the_row() {
+        // git never prints it — it prints nothing for a branch level with its upstream —
+        // but the type permits it, and a bare gap with no arrows after it would reserve
+        // columns to say nothing at all.
+        assert_eq!(
+            marks_for(
+                false,
+                Some(Track::Divergence {
+                    ahead: 0,
+                    behind: 0
+                })
+            ),
+            ""
+        );
+    }
+
+    #[test]
+    fn the_room_kept_for_the_marks_does_not_depend_on_the_dirty_answer() {
+        // Which is what stops every path in the list moving sideways when a `git status`
+        // finally answers.
+        let mut tree = tree();
+        tree.repos[0].worktrees[2].track = Some(Track::Gone);
+        let clean = flatten(&tree, &ViewOptions::default());
+        let dirty = flatten(
+            &tree,
+            &ViewOptions {
+                dirty: vec!["/wt/fix-crash".into()],
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            marks_reserve(find(&clean, "fix/crash")),
+            marks_reserve(find(&dirty, "fix/crash"))
+        );
+        assert_eq!(
+            marks_reserve(find(&clean, "me/app (3)")),
+            0,
+            "a repository heading has no checkout to say anything about"
+        );
     }
 
     #[test]
