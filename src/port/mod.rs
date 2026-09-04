@@ -111,7 +111,9 @@ pub trait HerdrPort: Sync {
     ///
     /// The first call here that takes something out of the session rather than adding to it
     /// or rearranging it — see `docs/adr/0010-closing-the-panes-first.md`. herdr collapses a
-    /// tab and a workspace that end up empty, which is what lets this leave no residue.
+    /// tab and a workspace that end up empty, which is what lets this leave no residue:
+    /// measured against herdr 0.7.4 by closing the only pane of a fresh workspace, which
+    /// took its tab and its workspace with it and left every other one alone.
     fn pane_close(&self, pane_id: &str) -> Result<()>;
 
     /// Relocate a pane. herdr closes the tab and workspace the pane leaves behind if they
@@ -147,8 +149,8 @@ pub trait HerdrPort: Sync {
 pub trait RemovalPort {
     /// Start removing `checkout_path`. `label` is the branch, which is what the report
     /// names — the reader was waiting on a branch, not on a path. `panes_closed` is what was
-    /// stopped to get here, which only the caller knows and which the report needs when git
-    /// then declines.
+    /// stopped to get here: the caller has to say, because by the time this runs the panes
+    /// are gone and there is nothing left to count.
     fn start(
         &self,
         repo_root: &str,

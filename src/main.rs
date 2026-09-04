@@ -48,8 +48,9 @@ fn run() -> Result<()> {
                 &checkout_path,
                 &label,
                 // How many panes the picker stopped to get here, for the one report that
-                // has to say more than what git said. Absent means none, so running this
-                // by hand stays three arguments.
+                // has to say more than what git said. Absent means none, so running this by
+                // hand stays three arguments; unreadable means none too, which understates
+                // rather than invents, and only ever costs the report one clause.
                 args.next().and_then(|n| n.parse().ok()).unwrap_or(0),
             ),
             _ => bail!("`remove` needs a repository root, a checkout path, and a branch name"),

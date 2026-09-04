@@ -16,9 +16,8 @@ use crate::port::{GitPort, HerdrPort, RemovalOutcome};
 /// listening.
 ///
 /// `panes_closed` is what the picker stopped to get here. It is passed in rather than
-/// worked out because the picker is the only thing that knows which panes belonged to the
-/// checkout — that grouping is the whole of the panes view — and because by the time this
-/// runs they are already gone.
+/// worked out because by the time this runs the panes are already gone: the grouping this
+/// process could rebuild for itself would be a grouping with nothing in it.
 ///
 /// git declining is an outcome rather than a failure — a checkout with uncommitted work is
 /// exactly what it is meant to protect — so this returns `Ok` either way and the answer

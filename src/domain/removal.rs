@@ -47,7 +47,7 @@ pub fn parse_report(line: &str) -> Option<RemovalOutcome> {
 /// checkouts of the same branch name apart.
 ///
 /// `panes_closed` is how many panes were stopped to get this far, and it appears only when
-/// the removal was then refused — see [`refusal`].
+/// the removal was then refused — see `refusal`.
 pub fn notification(
     label: &str,
     checkout_path: &str,
@@ -75,14 +75,30 @@ pub fn notification(
 ///
 /// A removal that stopped panes and then failed is the one failure that is not "nothing
 /// happened": the panes are gone and the checkout is not. Saying only what git said would
-/// leave the reader to work that out from an empty tab. Nothing is added when the removal
-/// worked — the panes were named in the question, and the checkout going is the answer.
+/// leave the reader to reconcile it with work that has stopped for no visible reason —
+/// herdr collapses the emptied tab, so there is not even an empty one left to explain it.
+/// Nothing is added when the removal worked: the panes were named in the question, and the
+/// checkout going is the answer.
 fn refusal(reason: &str, panes_closed: usize) -> String {
     match panes_closed {
         0 => reason.to_string(),
         1 => format!("{reason} — its 1 pane was closed first"),
         many => format!("{reason} — its {many} panes were closed first"),
     }
+}
+
+/// What the picker says when closing the panes stopped partway.
+///
+/// The same rule as `refusal`, for the failure that happens one step earlier: some panes
+/// are gone, the checkout is untouched, and the removal never started. herdr's own words
+/// alone would leave the reader with work that has stopped and no account of why.
+pub fn interrupted(pane_id: &str, reason: &str, closed: usize, total: usize) -> String {
+    let so_far = match closed {
+        0 => format!("none of its {total} panes were closed"),
+        1 => format!("1 of its {total} panes was closed first"),
+        many => format!("{many} of its {total} panes were closed first"),
+    };
+    format!("could not close {pane_id}: {reason} — {so_far}, and the checkout was not removed")
 }
 
 /// What the picker puts on its prompt line, when it is still up to read the answer.
@@ -167,6 +183,32 @@ mod tests {
             Some(format!(
                 "could not remove fix/crash: {REFUSAL} — its 1 pane was closed first"
             ))
+        );
+    }
+
+    #[test]
+    fn a_close_that_stopped_partway_says_how_far_it_got() {
+        // The other half of the same rule: panes are gone, the checkout is not, and the
+        // reader would otherwise have herdr's bare refusal and an emptied tab to reconcile.
+        assert_eq!(
+            interrupted(
+                "w1:p3",
+                "herdr rejected pane.close: no such pane (not_found)",
+                1,
+                3
+            ),
+            "could not close w1:p3: herdr rejected pane.close: no such pane (not_found) \
+             — 1 of its 3 panes was closed first, and the checkout was not removed"
+        );
+        assert_eq!(
+            interrupted("w1:p1", "gone", 0, 2),
+            "could not close w1:p1: gone — none of its 2 panes were closed, and the \
+             checkout was not removed"
+        );
+        assert_eq!(
+            interrupted("w1:p3", "gone", 2, 3),
+            "could not close w1:p3: gone — 2 of its 3 panes were closed first, and the \
+             checkout was not removed"
         );
     }
 

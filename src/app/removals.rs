@@ -122,3 +122,106 @@ impl<'a> Removals<'a> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::port::{RemovalOutcome, RunningRemoval};
+    use std::sync::Mutex;
+
+    /// A removal that finishes when the test says so, so two can be made to answer in the
+    /// order the test chooses rather than the order they were started in.
+    struct Held(std::sync::mpsc::Receiver<RemovalOutcome>);
+
+    impl RunningRemoval for Held {
+        fn wait(self: Box<Self>) -> Result<RemovalOutcome> {
+            Ok(self.0.recv()?)
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeRemover {
+        /// One sender per started removal, in the order they were started.
+        started: Mutex<Vec<(String, std::sync::mpsc::Sender<RemovalOutcome>)>>,
+    }
+
+    impl FakeRemover {
+        fn finish(&self, checkout_path: &str, outcome: RemovalOutcome) {
+            let started = self.started.lock().unwrap();
+            let (_, sender) = started
+                .iter()
+                .find(|(path, _)| path == checkout_path)
+                .unwrap_or_else(|| panic!("nothing was started for {checkout_path}"));
+            sender
+                .send(outcome)
+                .expect("the waiter should still be there");
+        }
+    }
+
+    impl RemovalPort for FakeRemover {
+        fn start(
+            &self,
+            _repo_root: &str,
+            checkout_path: &str,
+            _label: &str,
+            _panes_closed: usize,
+        ) -> Result<Box<dyn RunningRemoval>> {
+            let (sender, receiver) = mpsc::channel();
+            self.started
+                .lock()
+                .unwrap()
+                .push((checkout_path.to_string(), sender));
+            Ok(Box::new(Held(receiver)))
+        }
+    }
+
+    /// Spin until `ready`, or fail the test: the waiting happens on threads of its own.
+    fn until(what: &str, mut ready: impl FnMut() -> bool) {
+        for _ in 0..2000 {
+            if ready() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        panic!("{what}");
+    }
+
+    #[test]
+    fn an_answer_is_matched_to_the_removal_that_asked_for_it() {
+        // Several can be in flight at once, and they do not answer in the order they were
+        // started. Getting this wrong names the wrong branch in the refusal and miscounts
+        // the panes it closed — both of which read as facts about the wrong checkout.
+        let port = FakeRemover::default();
+        let mut removals = Removals::new(&port);
+        removals.start("/src/app", "/wt/a", "feat/a", 3).unwrap();
+        removals.start("/src/app", "/wt/b", "feat/b", 1).unwrap();
+        assert_eq!(removals.paths(), ["/wt/a".to_string(), "/wt/b".to_string()]);
+
+        // The second one answers first.
+        port.finish("/wt/b", RemovalOutcome::Refused("no".into()));
+        let mut finished = None;
+        until("the second removal never reported", || {
+            finished = removals.finished();
+            finished.is_some()
+        });
+        let finished = finished.unwrap();
+        assert_eq!(finished.label, "feat/b");
+        assert_eq!(finished.panes_closed, 1);
+        assert_eq!(
+            removals.paths(),
+            ["/wt/a".to_string()],
+            "the other is still going"
+        );
+
+        port.finish("/wt/a", RemovalOutcome::Removed);
+        let mut finished = None;
+        until("the first removal never reported", || {
+            finished = removals.finished();
+            finished.is_some()
+        });
+        let finished = finished.unwrap();
+        assert_eq!(finished.label, "feat/a");
+        assert_eq!(finished.panes_closed, 3);
+        assert!(removals.is_empty());
+    }
+}
