@@ -137,9 +137,9 @@ through this against a real session.
 - [ ] `Shift-D` on a pane asks about the checkout that pane is in, and the box lists every
       pane that will close — including ones you moved into another tab or space. `y` closes
       all of them and then removes the checkout.
-- [ ] After that, **no empty workspace or tab is left behind**: herdr collapses them, and
-      that this holds for `pane.close` as well as for `pane.move` is the assumption CI
-      cannot check.
+- [ ] After that, **no empty workspace or tab is left behind**. herdr collapses them —
+      measured against 0.7.4 — and this is the regression check for it, since CI has no
+      server to try it against.
 - [ ] A checkout with panes that is holding uncommitted work is refused *before* the
       question, so the panes are still there afterwards.
 - [ ] After `y` the picker comes straight back, the row says `deleting` with a turning

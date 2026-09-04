@@ -53,6 +53,13 @@ Routing around a user who has turned notifications off is overruling them. And t
 not actually lost: a refused removal leaves the checkout standing, so the row is there next
 time, and `Shift-D` on it gives git's reason inline.
 
+That last sentence stopped being wholly true when
+[ADR 0010](./0010-closing-the-panes-first.md) was implemented. A refusal that came after the
+panes were closed says so — `— its 2 panes were closed first` — and that clause is the half
+the backstop cannot reproduce: next time, the row has no panes to close, so asking again
+gives git's reason without it. The checkout still being there is still a report; what it has
+stopped being is the whole of one.
+
 **Nothing is queued.** One process per removal, started when the key is pressed. A queue
 would have to be owned by the picker, and a queue owned by something the user is free to
 close is a queue that can strand what it has not started yet.

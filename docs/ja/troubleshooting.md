@@ -108,7 +108,7 @@ herdr 側は CI ではテストできません（サーバーが無いため）�
 - [ ] `n` でカーソル位置の checkout に pane が追加される
 - [ ] `no pane` の行で `Shift-D` を押すとブランチ名とパスを載せた枠が出て、`y` で checkout が消えブランチは残る。他のキーは取り消し。リポジトリ自身の checkout では断られ、未コミットの変更がある checkout では git の理由が出る
 - [ ] pane の上で `Shift-D` を押すと、その pane が居る checkout について訊かれ、閉じられる pane が枠にすべて並ぶ（別の tab や space へ移した pane も含む）。`y` で全部閉じてから checkout が消える
-- [ ] そのあと **空の workspace や tab が残っていない**。herdr が畳むはずで、それが `pane.move` だけでなく `pane.close` でも成り立つことは CI では確認できない
+- [ ] そのあと **空の workspace や tab が残っていない**。herdr が畳むことは 0.7.4 で実測済みで、これはその回帰確認（CI には試す相手のサーバーが無い）
 - [ ] pane が動いていて未コミットの作業を抱えた checkout は、**問いが出る前に**断られる（pane はそのまま残っている）
 - [ ] `y` の直後にピッカーが戻ってきて、その行が `deleting` とスピナーを出し、カーソルがその行を飛ばす。削除が終わると行が消える
 - [ ] 大きな checkout で `y` を押した直後にピッカーを閉じる。削除は最後まで走り、終わると herdr が `removed <branch>` を出す。CI では確認できない唯一の点であり、削除を独立したセッションで走らせている理由そのもの（[ADR 0014](../adr/0014-removing-outlives-the-picker.md)）

@@ -90,8 +90,8 @@ question names each one:
         ┌──────────────────────────────────────┐
         │ Delete this checkout?                │
         │                                      │
-        │   feat/login                         │
-        │   ~/.herdr/worktrees/app/feat-login  │
+        │   fix/crash                          │
+        │   ~/.herdr/worktrees/app/fix-crash   │
         │                                      │
         │   these panes close:                 │
         │   ● claude  working   w2:p1          │
@@ -103,7 +103,9 @@ question names each one:
 
 Still one key. git protects uncommitted work and does not protect what a working agent has in
 flight, and that list is the only safety net there is for it — which is why the panes outlast
-the path when the box has to shrink.
+the path when the box has to shrink, and why a pane too short even for a line each says
+`2 panes close` rather than dropping them. A question that did not say panes would close
+would not be one you could answer.
 
 The cursor does not stop on a checkout that has panes, because the panes listed under it are
 the answer to where to go. Ask from the pane instead: `Shift-D` there is about the checkout it
@@ -111,9 +113,12 @@ is in, and the box names it before you answer.
 
 Two things are refused before the question is even asked: the repository's own checkout,
 because git cannot remove a main working tree and it is not a worktree anyway; and a checkout
-with panes in it that is holding uncommitted work, or that git would not read at all. That
-second refusal exists only where there are panes at stake: on an empty checkout git can answer
-for itself, but here the panes would already be closed by the time it did.
+with panes in it whose working tree is holding uncommitted work, or that git would not read,
+or that it has not finished reading yet. That second refusal exists only where there are panes
+at stake: on an empty checkout git can answer for itself, but here the panes would already be
+closed by the time it did — and "nobody has asked yet" is not the same answer as "clean",
+which is why pressing `Shift-D` in the first moments after the picker opens asks you to try
+again rather than guessing.
 
 `y` comes straight back. The removal runs somewhere else — git has to walk a whole working
 tree before it can delete it, which is seconds on a repository of any size — and the row

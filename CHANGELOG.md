@@ -14,8 +14,9 @@ All notable changes to this project are documented here. The format follows
   the cursor does not stop on a checkout that has panes. The question names every pane that
   stops: git protects uncommitted work and does not protect what a working agent has in
   flight. A checkout holding uncommitted work, or one git would not read, is refused before
-  the question rather than after its panes have gone — on an empty checkout git still answers
-  for itself. See [ADR 0010](docs/adr/0010-closing-the-panes-first.md).
+  the question rather than after its panes have gone — as is one whose working tree git has
+  not finished reading, since "nobody has asked yet" is not the answer "clean". On an empty
+  checkout git still answers for itself. See [ADR 0010](docs/adr/0010-closing-the-panes-first.md).
 
 - **Every checkout says what state it is in**, beside its branch name in the panes view:
   `✱` for a working tree holding uncommitted changes or untracked files, `↑2↓1` for how far
