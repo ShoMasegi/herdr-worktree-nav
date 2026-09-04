@@ -46,8 +46,10 @@ fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
             })
             .collect();
         for (repo, handle) in repos.iter_mut().zip(handles) {
-            // A panicking ref read must not take the picker down with it; that repository's
-            // checkouts just carry no markers, the same as one git declined to answer for.
+            // `join` fails for one reason: the thread panicked. ratatui's hook has already
+            // restored the terminal and printed by then, so there is no picker left to
+            // protect — this only decides whether that repository's markers are missing or
+            // the whole view is. Missing markers, and the panic is in the log.
             repo.refs = handle.join().unwrap_or_default();
         }
     });

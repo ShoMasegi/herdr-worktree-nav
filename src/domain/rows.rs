@@ -135,21 +135,22 @@ pub fn marks_reserve(row: &Row) -> usize {
 fn track_mark(track: Option<Track>) -> String {
     match track {
         Some(Track::Gone) => format!("  {GONE}"),
+        // A divergence git reports as level with its upstream is one git does not report at
+        // all, but nothing in the type says so — and a bare gap with no arrows after it
+        // would take room on the row to say nothing.
+        Some(Track::Divergence {
+            ahead: 0,
+            behind: 0,
+        }) => String::new(),
         Some(Track::Divergence { ahead, behind }) => {
-            let mut out = String::new();
+            let mut out = String::from("  ");
             if ahead > 0 {
                 out.push_str(&format!("\u{2191}{ahead}"));
             }
             if behind > 0 {
                 out.push_str(&format!("\u{2193}{behind}"));
             }
-            // A divergence git reports as level with its upstream is one git does not
-            // report at all, but nothing in the type says so — and a bare gap with no
-            // arrows after it would take room on the row and say nothing.
-            match out.is_empty() {
-                true => out,
-                false => format!("  {out}"),
-            }
+            out
         }
         None => String::new(),
     }
