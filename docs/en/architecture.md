@@ -106,8 +106,8 @@ herdr api snapshot ─┬─▶ workspaces (some carry .worktree: repo_key, repo
                           domain::tree::build
                                 │
                                 ▼
-                    git status --porcelain per checkout, eight at a time,
-                    on threads that outlive the view that started them
+                    git --no-optional-locks status --porcelain per checkout,
+                    eight at a time, on threads that outlive the view that started them
 ```
 
 Two shortcuts keep it instant. Working directories are resolved once each rather than once

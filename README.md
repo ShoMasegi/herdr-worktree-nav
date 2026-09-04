@@ -44,9 +44,9 @@ Every open pane, grouped by repository and by the worktree it is checked out in.
 the fuller context for the row you are on, including the checkout path.
 
 Each checkout also says what state it is in, beside its name: `↑2↓1` for how far it has
-drifted from its upstream, `gone` when the branch it tracked is no longer on the remote, and
-`✱` when its working tree is holding work nobody has committed — which is also the reason
-`Shift-D` would refuse it.
+drifted from its upstream, `gone` when git cannot find the ref it tracks, `✱` when its
+working tree is holding work nobody has committed — which is what `git worktree remove` would
+refuse — and `?` when git would not read the working tree at all.
 
 `Enter` goes there — across spaces, across tabs, straight to the pane. A worktree with no
 pane in it is listed too, and `Enter` opens it. `←`/`→` jump to the head of the previous or

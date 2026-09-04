@@ -156,11 +156,13 @@ a column that is blank on most rows is a permanent gap between the name and the 
 | | |
 | --- | --- |
 | `✱` | the working tree has uncommitted changes or untracked files |
+| `?` | git would not read this working tree, so nothing is claimed about it |
 | `↑2↓1` | two commits its upstream does not have, one it does not have |
-| `gone` | the branch it tracked is no longer on the remote |
+| `gone` | git cannot find the ref this branch tracks |
 
-`✱` is the one that stops `Shift-D` working: git refuses to remove a checkout holding work
-nobody has committed, and this is that refusal, before you press the key. `gone` means git
+`✱` is the one that stops `Shift-D` finishing: git refuses to remove a checkout holding work
+nobody has committed, and this is that refusal in advance — the picker will still let you
+ask, and git's answer comes back as a notification. `gone` means git
 cannot find the ref the branch tracks; usually that is a merged pull request whose head
 GitHub deleted and an `f` fetch in the branches view then pruned, but an upstream you have
 never fetched reads the same, because to git it is the same.
@@ -176,16 +178,18 @@ The room for a `✱` is kept from the first frame whether or not one turns up, s
 landing never moves the paths beside it. Three columns is the price of a list that does not
 shift while you are reading it.
 
-When git will not answer at all — a `safe.directory` refusal, or a `git` that is not on the
-path herdr launched the plugin with — the prompt line says so where the spinner was:
+When git will not answer at all, the row says `?` rather than nothing:
 
 ```
- / search panes  2 working trees unreadable                                          5 panes
+   └── · fix/crash  ?  no pane        ~/.herdr/worktrees/app/fix-crash
 ```
 
-That refusal fails the same way for every checkout at once, so without it a list of unmarked
-rows would be a confident claim that nothing anywhere is holding uncommitted work. An unread
-working tree is the absence of an answer, not the answer `clean`.
+An unread working tree is the absence of an answer, not the answer `clean`, and without the
+marker such a row is indistinguishable from one that was answered for. Both shapes of failure
+need it: a `safe.directory` refusal, or a `git` that is not on the path herdr launched the
+plugin with, fails the same way for every checkout at once — while a worktree whose directory
+has gone out from under git fails for exactly one, on a list where every other row is fine.
+It takes the room already kept for `✱`, so nothing moves.
 
 `r` asks again. It is the only thing that does: the answers are otherwise kept for as long as
 the picker is open, `Tab` to the branches view and back included.

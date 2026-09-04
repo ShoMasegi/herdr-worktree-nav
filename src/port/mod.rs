@@ -168,8 +168,9 @@ pub struct GitRef {
     /// Committer date, for ordering most-recent-first. `None` when unknown.
     pub committed_at: Option<i64>,
     pub subject: Option<String>,
-    /// Where this branch stands against the upstream it tracks. `None` when it is level
-    /// with it, or has none at all.
+    /// Where this branch stands against the upstream it tracks — or, for a branch with no
+    /// upstream configured, against where it would push. `None` when it is level with
+    /// whichever of those it was measured against, and when there is neither.
     pub track: Option<Track>,
     /// The checkout that currently has this branch, when one does. git answers this in the
     /// same breath as everything else here, which is what ties a branch to a checkout
@@ -179,9 +180,10 @@ pub struct GitRef {
 
 /// What git says about a branch's position relative to the upstream it tracks.
 ///
-/// Read straight out of `%(upstream:track)`, which the one `for-each-ref` this plugin already
-/// runs prints alongside everything else it is being asked for. The alternative is a
-/// `rev-list --count` per branch.
+/// Read out of `%(upstream:track)`, or `%(push:track)` for a branch with no upstream
+/// configured, both of which the one `for-each-ref` this plugin already runs prints
+/// alongside everything else it is being asked for. The alternative is a `rev-list --count`
+/// per branch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Track {
     /// git could not find the ref this branch tracks. Usually that is a merged pull request

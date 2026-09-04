@@ -46,10 +46,11 @@ fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
             })
             .collect();
         for (repo, handle) in repos.iter_mut().zip(handles) {
-            // `join` fails for one reason: the thread panicked. ratatui's hook has already
-            // restored the terminal and printed by then, so there is no picker left to
-            // protect — this only decides whether that repository's markers are missing or
-            // the whole view is. Missing markers, and the panic is in the log.
+            // `join` fails for one reason: the thread panicked. In the shipped binary that
+            // is unreachable — `panic = "abort"` in the release profile ends the process
+            // before this line — so what is chosen here only applies to a debug build,
+            // where ratatui's hook has already restored the terminal and the picker would
+            // carry on drawing onto it either way. That repository's markers are missing.
             repo.refs = handle.join().unwrap_or_default();
         }
     });

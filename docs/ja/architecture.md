@@ -84,8 +84,8 @@ herdr api snapshot ─┬─▶ workspaces（一部は .worktree を持つ: repo
                           domain::tree::build
                                 │
                                 ▼
-                    checkout ごとに git status --porcelain（8 並列、
-                    起動したビューより長生きするスレッドの上で）
+                    checkout ごとに git --no-optional-locks status --porcelain
+                    （8 並列、起動したビューより長生きするスレッドの上で）
 ```
 
 即座に開くための工夫が 2 つあります。作業ディレクトリの解決は pane ごとではなく重複を除いた cwd ごとに 1 回だけ行います（複数の pane が同じ cwd を共有することが多いためです）。また、herdr が既にその workspace を worktree として把握している場合は git を実行せずその答えを使います。ただし、pane がその checkout 配下に留まっている場合に限ります。pane はいつでも隣のリポジトリへ `cd` できるためです。

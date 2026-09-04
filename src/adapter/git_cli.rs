@@ -146,7 +146,9 @@ impl GitPort for GitCli {
         // one process that was being started anyway. Asking separately would be a
         // `rev-list --count` per branch and a `worktree list` on top.
         //
-        // The subject goes last because it is the only field that can contain anything.
+        // The subject goes last because it is the field most likely to contain a tab. A
+        // checkout path could too, which would mis-split the line; nothing here can prevent
+        // that, and a path with a tab in it would be the least of that user's problems.
         let out = GitCli::run_in_repo(
             repo_root,
             &[
@@ -166,12 +168,13 @@ impl GitPort for GitCli {
             // A branch with no upstream configured but a push destination still has
             // somewhere to be ahead of, and `push:track` is where git says so.
             //
-            // It may not say `gone`, though. Under `push.default = current` the push
-            // destination of a branch nobody has pushed yet resolves to a ref that has
-            // never existed, and git reports that as `[gone]` — the opposite of what this
-            // marker means, on precisely the branches where being wrong is unrecoverable:
-            // `docs/adr/0011-what-may-be-swept.md` makes `gone` the signal a sweep deletes
-            // a branch on, and an unpushed branch is the one kind that cannot be got back.
+            // It may not say `gone`, though. Under `push.default = current` or `matching`,
+            // the push destination of a branch nobody has pushed yet resolves to a ref that
+            // has never existed, and git reports that as `[gone]` — the opposite of what
+            // this marker means, on the branches where being wrong matters most:
+            // `docs/adr/0011-what-may-be-swept.md` makes `gone` the signal a sweep marks a
+            // branch for deletion on, and an unpushed branch is the one kind that exists
+            // nowhere else.
             let upstream = parts.next().unwrap_or_default();
             let push = parts.next().unwrap_or_default();
             let track = parse_track(upstream)

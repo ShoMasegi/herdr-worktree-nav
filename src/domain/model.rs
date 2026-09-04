@@ -26,7 +26,8 @@ pub struct WorktreeNode {
     /// The workspace herdr has this checkout open in, when it has one.
     pub open_workspace_id: Option<String>,
     /// Where this checkout's branch stands against its upstream, when it has anything to
-    /// say. Free with the ref walk that is already happening; see `port::Track`.
+    /// say. It rides on a ref walk that is happening anyway rather than costing a process
+    /// of its own; see `port::Track`.
     pub track: Option<Track>,
     /// Panes currently working in this checkout, in the order herdr reported them.
     pub panes: Vec<PaneNode>,
