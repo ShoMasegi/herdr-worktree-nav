@@ -60,6 +60,8 @@ pub struct PanesState {
     /// Frame of the spinner on the rows being removed. Advanced by the loop that owns the
     /// clock, the same way the branches view does it — `domain` is not allowed to read one.
     tick: usize,
+    /// Whether an answer is still on its way, which the prompt line says with a spinner.
+    waiting: bool,
 }
 
 /// A checkout the user has asked to delete, held until they say yes.
@@ -87,6 +89,7 @@ impl PanesState {
             pending_removal: None,
             message: None,
             tick: 0,
+            waiting: false,
         };
         state.rebuild(None);
         state
@@ -98,6 +101,43 @@ impl PanesState {
         let anchor = self.selected_pane_id().map(str::to_string);
         self.tree = tree;
         self.rebuild(anchor.as_deref());
+    }
+
+    /// Say which checkouts are holding uncommitted work. Arrives after the first frame, one
+    /// answer at a time, so nothing may move under the reader: the cursor stays where it is,
+    /// the row count cannot change, and the meta column is measured with room for these
+    /// already kept (`domain::rows::marks_reserve`).
+    pub fn set_dirty(&mut self, paths: Vec<String>) {
+        if self.options.dirty == paths {
+            return;
+        }
+        self.options.dirty = paths;
+        // The cursor is not touched at all, which says the promise above more strongly than
+        // clamping it would: `dirty` feeds nothing but `Row::is_dirty`, so the row list that
+        // comes back has the same length and the same order it went in with.
+        self.rows = rows::flatten(&self.tree, &self.options);
+        self.lines = rows::display_lines(&self.rows);
+    }
+
+    /// Whether something is still being waited for, which the prompt line turns a spinner
+    /// for. Set by the loop; the state cannot see a thread any more than it can see a clock.
+    pub fn set_waiting(&mut self, waiting: bool) {
+        self.waiting = waiting;
+    }
+
+    pub fn is_waiting(&self) -> bool {
+        self.waiting
+    }
+
+    /// Say which checkouts git would not answer for, so their rows can say it themselves. A
+    /// row with no marker is then the absence of a claim rather than a claim of clean.
+    pub fn set_unreadable(&mut self, paths: Vec<String>) {
+        if self.options.unreadable == paths {
+            return;
+        }
+        self.options.unreadable = paths;
+        self.rows = rows::flatten(&self.tree, &self.options);
+        self.lines = rows::display_lines(&self.rows);
     }
 
     /// Say which checkouts are being removed, so their rows can say so and stop being
@@ -546,6 +586,7 @@ mod tests {
                             checkout_path: "/src/app".into(),
                             is_primary: true,
                             open_workspace_id: Some("w1".into()),
+                            track: None,
                             panes: vec![pane("w1:p1", "claude", AgentStatus::Working)],
                         },
                         WorktreeNode {
@@ -553,6 +594,7 @@ mod tests {
                             checkout_path: "/wt/app/feat-login".into(),
                             is_primary: false,
                             open_workspace_id: Some("w2".into()),
+                            track: None,
                             panes: vec![pane("w2:p1", "codex", AgentStatus::Blocked)],
                         },
                         WorktreeNode {
@@ -560,6 +602,7 @@ mod tests {
                             checkout_path: "/wt/app/fix-crash".into(),
                             is_primary: false,
                             open_workspace_id: None,
+                            track: None,
                             panes: vec![],
                         },
                     ],
@@ -836,6 +879,7 @@ mod tests {
                             checkout_path: "/src/app".into(),
                             is_primary: true,
                             open_workspace_id: None,
+                            track: None,
                             panes: vec![],
                         },
                         WorktreeNode {
@@ -843,6 +887,7 @@ mod tests {
                             checkout_path: "/wt/app/feat-login".into(),
                             is_primary: false,
                             open_workspace_id: Some("w2".into()),
+                            track: None,
                             panes: vec![pane("w2:p1", "codex", AgentStatus::Blocked)],
                         },
                     ],

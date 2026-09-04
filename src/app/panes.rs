@@ -5,6 +5,7 @@ use ratatui::crossterm::event::{self, Event};
 use ratatui::DefaultTerminal;
 
 use crate::app::collect;
+use crate::app::dirty::Dirty;
 use crate::app::home_dir;
 use crate::app::removals::Removals;
 use crate::domain::removal;
@@ -13,8 +14,8 @@ use crate::ui::render::{self, Mode};
 use crate::ui::state::{Action, PanesState};
 use crate::ui::theme::Theme;
 
-/// How long to wait for a key before turning the spinner on a removal in flight. The same
-/// tick the branches view runs on; with nothing being removed this loop does not use one.
+/// How long to wait for a key before turning the spinner on whatever is still coming. The
+/// same tick the branches view runs on; with nothing outstanding this loop does not use one.
 const TICK: std::time::Duration = std::time::Duration::from_millis(80);
 
 /// What the picker was left wanting when it closed. The caller decides whether that means
@@ -36,12 +37,16 @@ pub fn run(
     herdr: &dyn HerdrPort,
     git: &dyn GitPort,
     removals: &mut Removals,
+    dirty: &mut Dirty,
     initial_pane: Option<&str>,
     theme: &Theme,
 ) -> Result<Exit> {
     let (_, tree) = collect::collect_tree(herdr, git)?;
     let mut state = PanesState::new(tree, home_dir());
-    // Removals started before a trip through the branches view are still going.
+    // Both outlive this view: a removal started before a trip through the branches view is
+    // still going, and a working tree walked once does not need walking again.
+    dirty.ask(state.tree());
+    state.set_dirty(dirty.paths());
     state.set_removing(removals.paths());
     if let Some(pane_id) = initial_pane {
         state.focus_pane(pane_id);
@@ -51,7 +56,14 @@ pub fn run(
     // user types nor stalls while they hold a key down.
     let mut last_tick = std::time::Instant::now();
     let outcome = loop {
-        let waiting = !removals.is_empty();
+        if dirty.drain() {
+            state.set_dirty(dirty.paths());
+            state.set_unreadable(dirty.unreadable());
+        }
+        let reading_working_trees = dirty.is_waiting();
+        state.set_waiting(reading_working_trees);
+        state.set_unreadable(dirty.unreadable());
+        let waiting = !removals.is_empty() || reading_working_trees;
         if waiting && last_tick.elapsed() >= TICK {
             state.tick();
             last_tick = std::time::Instant::now();
@@ -72,6 +84,7 @@ pub fn run(
                     // Errors here are not fatal: the picker keeps showing what it had.
                     if let Ok((_, tree)) = collect::collect_tree(herdr, git) {
                         state.replace_tree(tree);
+                        dirty.ask(state.tree());
                     }
                 }
                 Err(error) => state.set_message(format!("{error:#}")),
@@ -88,11 +101,19 @@ pub fn run(
         };
         match state.handle_key(key) {
             Action::Consumed | Action::Ignored => {}
-            Action::Reload => {
-                if let Ok((_, tree)) = collect::collect_tree(herdr, git) {
+            // `r` is the only thing that asks about the working trees again, so a reload
+            // that quietly does nothing is a reload the user reads as "still dirty, then".
+            Action::Reload => match collect::collect_tree(herdr, git) {
+                Ok((_, tree)) => {
                     state.replace_tree(tree);
+                    // Reload means reload: whether a checkout is dirty is a fact about a
+                    // working tree the user has been editing since it was last asked.
+                    dirty.reask(state.tree());
+                    state.set_dirty(dirty.paths());
+                    state.set_unreadable(dirty.unreadable());
                 }
-            }
+                Err(error) => state.set_message(format!("{error:#}")),
+            },
             // Deleting is housekeeping, and housekeeping comes in batches: the picker stays
             // open on the list the deletion is changing rather than closing over it — and
             // the deletion itself goes to a process of its own, so that neither the loop

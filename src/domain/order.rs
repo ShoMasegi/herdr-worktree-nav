@@ -140,6 +140,7 @@ mod tests {
             subject: None,
             committed_at,
             pull_request: None,
+            upstream_gone: false,
         }
     }
 

@@ -1,7 +1,7 @@
 //! The model both pickers display: repositories, their worktrees, and the panes sitting in
 //! each one.
 
-use crate::port::AgentStatus;
+use crate::port::{AgentStatus, Track};
 
 /// A repository, identified the way herdr identifies it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +25,10 @@ pub struct WorktreeNode {
     pub is_primary: bool,
     /// The workspace herdr has this checkout open in, when it has one.
     pub open_workspace_id: Option<String>,
+    /// Where this checkout's branch stands against its upstream, when it has anything to
+    /// say. It rides on a ref walk that is happening anyway rather than costing a process
+    /// of its own; see `port::Track`.
+    pub track: Option<Track>,
     /// Panes currently working in this checkout, in the order herdr reported them.
     pub panes: Vec<PaneNode>,
 }
@@ -113,6 +117,7 @@ mod tests {
             checkout_path: "/tmp/wt/detached-head".into(),
             is_primary: false,
             open_workspace_id: None,
+            track: None,
             panes: vec![],
         };
         assert_eq!(detached.label(), "detached-head");

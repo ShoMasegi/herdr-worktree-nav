@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use crate::domain::model::{normalize_path, PaneNode, RepoNode, Tree, WorktreeNode};
-use crate::port::{Snapshot, Worktree};
+use crate::port::{GitRef, RefKind, Snapshot, Track, Worktree};
 
 /// A repository the caller has identified, together with the worktrees herdr reported for it.
 #[derive(Debug, Clone)]
@@ -16,6 +16,28 @@ pub struct RepoInput {
     /// `owner/repo` for a GitHub origin, otherwise the directory name.
     pub display_name: String,
     pub worktrees: Vec<Worktree>,
+    /// The repository's refs, for what git says about each branch's upstream. Empty when
+    /// the read failed: a checkout simply carries no marker then, which is the same thing
+    /// it does for a branch with nothing to report.
+    pub refs: Vec<GitRef>,
+}
+
+/// What git said about the branch this checkout has out.
+///
+/// Matched on `%(worktreepath)` rather than on the branch name. git is answering "which
+/// checkout has this ref", which is the question being asked here, and it is right about a
+/// detached checkout — nothing points at it, so it gets no marker — where a name match would
+/// have to guess.
+fn track_of(refs: &[GitRef], checkout_path: &str) -> Option<Track> {
+    refs.iter()
+        .find(|git_ref| {
+            git_ref.kind == RefKind::Local
+                && git_ref
+                    .worktree_path
+                    .as_deref()
+                    .is_some_and(|path| normalize_path(path) == checkout_path)
+        })?
+        .track
 }
 
 /// Which repository and checkout a pane's working directory resolved to.
@@ -50,6 +72,7 @@ pub fn build(
                     checkout_path: normalize_path(&worktree.path).to_string(),
                     is_primary: !worktree.is_linked_worktree,
                     open_workspace_id: worktree.open_workspace_id.clone(),
+                    track: track_of(&repo.refs, normalize_path(&worktree.path)),
                     panes: Vec::new(),
                 })
                 .collect(),
@@ -105,6 +128,9 @@ pub fn build(
                     checkout_path: checkout.to_string(),
                     is_primary: false,
                     open_workspace_id: Some(node.workspace_id.clone()),
+                    // git knows about it even where herdr does not, and `nodes` was built
+                    // from `repos` in order, so the refs for this one are at the same index.
+                    track: track_of(&repos[index].refs, checkout),
                     panes: vec![node],
                 });
             }
@@ -180,7 +206,78 @@ mod tests {
             repo_root: root.to_string(),
             display_name: display_name.to_string(),
             worktrees,
+            refs: Vec::new(),
         }
+    }
+
+    fn local_ref(name: &str, worktree_path: Option<&str>, track: Option<Track>) -> GitRef {
+        GitRef {
+            name: name.to_string(),
+            kind: RefKind::Local,
+            committed_at: None,
+            subject: None,
+            track,
+            worktree_path: worktree_path.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_checkout_carries_what_git_said_about_the_branch_it_has_out() {
+        let mut input = repo(
+            "me/app",
+            "/src/app",
+            vec![
+                worktree("main", "/src/app", false),
+                worktree("feat/login", "/wt/feat-login", true),
+            ],
+        );
+        input.refs = vec![
+            local_ref("main", Some("/src/app"), None),
+            local_ref(
+                "feat/login",
+                Some("/wt/feat-login"),
+                Some(Track::Divergence {
+                    ahead: 2,
+                    behind: 1,
+                }),
+            ),
+        ];
+
+        let tree = build(&snapshot(json!([])), &[input], &HashMap::new());
+        let worktrees = &tree.repos[0].worktrees;
+        assert_eq!(worktrees[0].track, None);
+        assert_eq!(
+            worktrees[1].track,
+            Some(Track::Divergence {
+                ahead: 2,
+                behind: 1
+            })
+        );
+    }
+
+    #[test]
+    fn the_branch_is_matched_by_the_checkout_git_says_has_it() {
+        // Not by name. A ref that is not checked out anywhere says nothing about a checkout
+        // that merely shares its name, and a detached checkout has nothing pointing at it —
+        // which is exactly right: no marker rather than the wrong one.
+        let mut input = repo(
+            "me/app",
+            "/src/app",
+            vec![
+                worktree("main", "/src/app", false),
+                worktree("", "/wt/detached", true),
+            ],
+        );
+        input.refs = vec![
+            local_ref("main", Some("/src/app"), Some(Track::Gone)),
+            local_ref("feat/login", None, Some(Track::Gone)),
+        ];
+
+        let tree = build(&snapshot(json!([])), &[input], &HashMap::new());
+        let worktrees = &tree.repos[0].worktrees;
+        assert_eq!(worktrees[0].track, Some(Track::Gone));
+        assert_eq!(worktrees[1].branch, None, "detached");
+        assert_eq!(worktrees[1].track, None);
     }
 
     fn placements(pairs: &[(&str, &str, &str)]) -> HashMap<String, PanePlacement> {

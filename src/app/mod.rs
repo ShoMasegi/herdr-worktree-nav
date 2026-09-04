@@ -4,6 +4,7 @@ pub mod action;
 pub mod branches;
 pub mod collect;
 pub mod context;
+pub mod dirty;
 pub mod panes;
 pub mod removals;
 pub mod remove;
@@ -11,8 +12,11 @@ pub mod remove;
 use anyhow::Result;
 use ratatui::DefaultTerminal;
 
+use std::sync::Arc;
+
 use crate::adapter::herdr_config;
 use crate::app::context::{Context, FROM_PANE, REPO_ROOT};
+use crate::app::dirty::Dirty;
 use crate::app::removals::Removals;
 use crate::domain::listing;
 use crate::port::{GhPort, GitPort, HerdrPort, RemovalPort};
@@ -42,7 +46,7 @@ pub(crate) fn home_dir() -> Option<String> {
 /// Run the picker until the user leaves it, switching views as they ask.
 pub fn run_picker(
     herdr: &dyn HerdrPort,
-    git: &dyn GitPort,
+    git: Arc<dyn GitPort>,
     gh: &dyn GhPort,
     remover: &dyn RemovalPort,
     start: Entrypoint,
@@ -99,7 +103,7 @@ pub fn run_picker(
 fn views(
     terminal: &mut DefaultTerminal,
     herdr: &dyn HerdrPort,
-    git: &dyn GitPort,
+    git: Arc<dyn GitPort>,
     gh: &dyn GhPort,
     remover: &dyn RemovalPort,
     theme: &Theme,
@@ -113,13 +117,16 @@ fn views(
     // outlive the picker entirely, so the view that started one is not necessarily the view
     // that is up when it finishes.
     let mut removals = Removals::new(remover);
+    // Kept for the same reason, and with one of its own: walking a working tree to see
+    // whether it is dirty is the one answer here that costs a process per checkout.
+    let mut dirty = Dirty::new(Arc::clone(&git));
     let mut view = start;
     loop {
         match view {
             Entrypoint::Branches => {
                 // No repository in hand is not a failure: the picker opens on its list of
                 // them. It falls back to the panes view only when there are none at all.
-                match branches::run(terminal, herdr, git, gh, &summoned, theme, &mut listings)? {
+                match branches::run(terminal, herdr, &*git, gh, &summoned, theme, &mut listings)? {
                     branches::Exit::Closed => return Ok(()),
                     branches::Exit::ShowPanes => view = Entrypoint::Panes,
                 }
@@ -128,8 +135,9 @@ fn views(
                 match panes::run(
                     terminal,
                     herdr,
-                    git,
+                    &*git,
                     &mut removals,
+                    &mut dirty,
                     summoned.pane.as_deref(),
                     theme,
                 )? {

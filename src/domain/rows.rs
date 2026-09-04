@@ -13,7 +13,7 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 use crate::domain::model::{PaneNode, Tree};
-use crate::port::AgentStatus;
+use crate::port::{AgentStatus, Track};
 
 /// Which node of the tree a row stands for. Indices point into [`Tree`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +57,16 @@ pub struct Row {
     /// takes the place of the `no pane` note, since it is the more urgent fact about the
     /// same row — see `docs/adr/0014-removing-outlives-the-picker.md`.
     pub is_removing: bool,
+    /// A checkout holding uncommitted changes or untracked files. False also means "not
+    /// asked yet" and "asked, and git would not say": the answer costs a process per
+    /// checkout and arrives after the first frame, and a marker that is wrong for a moment
+    /// is worse than one that is late.
+    pub is_dirty: bool,
+    /// A checkout git declined to answer for. Kept apart from clean because they are not
+    /// the same claim — see `domain::rows::marks`.
+    pub is_unreadable: bool,
+    /// What git said about this checkout's branch against its upstream.
+    pub track: Option<Track>,
     /// The row the session is currently on, marked with a caret in the gutter.
     pub is_current: bool,
     /// Whether this row matched the active filter, as opposed to being kept as ancestor
@@ -82,6 +92,77 @@ impl Row {
             RowRef::Worktree(..) => self.is_idle,
             RowRef::Repo(_) | RowRef::UngroupedRepo => false,
         }
+    }
+}
+
+/// A checkout holding uncommitted changes or untracked files, with the gap that precedes it.
+const DIRTY: &str = "  \u{2731}";
+/// A checkout git would not answer for. The same width as [`DIRTY`] and mutually exclusive
+/// with it — a working tree is dirty, clean, or unread — so it costs the row nothing extra.
+const UNREADABLE: &str = "  ?";
+/// git cannot find the ref this branch tracks. A word rather than a glyph: it is the one of
+/// these that says a branch is finished with, and it is worth being unmissable.
+const GONE: &str = "gone";
+
+/// What a row says about itself between its label and its `no pane` note.
+///
+/// Two spaces before each, the same gap the note uses. Everything is optional and most rows
+/// have none of it, which is why these ride beside the label rather than in a column of
+/// their own: a column that is blank on most rows is a permanent gap between the name and
+/// the path.
+///
+/// Dirty comes first because it is the one that stops a checkout being removable.
+pub fn marks(row: &Row) -> String {
+    let mut out = String::new();
+    if row.is_dirty {
+        out.push_str(DIRTY);
+    } else if row.is_unreadable {
+        out.push_str(UNREADABLE);
+    }
+    out.push_str(&track_mark(row.track));
+    out
+}
+
+/// How much room a row's marks are allowed to take without moving the meta column.
+///
+/// The marker for what a `git status` said is counted whether it is showing or not — and
+/// `✱` and `?` are the same width, so one reserve serves both. It appears a beat after the
+/// first frame, with the list already on screen, and the meta column is a maximum over every
+/// row: measuring only what is showing would jump every path in the list sideways once,
+/// including the paths of rows in repositories that have not changed at all. Three reserved
+/// columns are the price of that not happening.
+///
+/// Ahead, behind and `gone` are measured exactly, because they are known before the first
+/// frame and cannot change without a reload — which redraws the whole list anyway.
+pub fn marks_reserve(row: &Row) -> usize {
+    if !row.reference.is_worktree() {
+        return 0;
+    }
+    DIRTY.chars().count() + track_mark(row.track).chars().count()
+}
+
+/// Where the branch stands against its upstream, with the gap that precedes it.
+fn track_mark(track: Option<Track>) -> String {
+    match track {
+        Some(Track::Gone) => format!("  {GONE}"),
+        // A divergence git reports as level with its upstream is one git does not report at
+        // all. `port::Track` documents that, but public `u32` fields cannot enforce it, and
+        // a bare gap with no arrows after it would take room on the row to say nothing.
+        Some(Track::Divergence {
+            ahead: 0,
+            behind: 0,
+        }) => String::new(),
+        Some(Track::Divergence { ahead, behind }) => {
+            let mut out = String::from("  ");
+            if ahead > 0 {
+                out.push_str(&format!("\u{2191}{ahead}"));
+            }
+            if behind > 0 {
+                out.push_str(&format!("\u{2193}{behind}"));
+            }
+            out
+        }
+        None => String::new(),
     }
 }
 
@@ -153,6 +234,11 @@ pub struct ViewOptions {
     /// for the same reason `home` is: which processes are running is not something this
     /// module is allowed to find out for itself.
     pub removing: Vec<String>,
+    /// Checkout paths git has said are holding uncommitted work. Only the ones that are:
+    /// clean and not-yet-asked are the same answer here, because they draw the same.
+    pub dirty: Vec<String>,
+    /// Checkout paths git would not answer for at all, which is neither of those.
+    pub unreadable: Vec<String>,
 }
 
 impl ViewOptions {
@@ -258,6 +344,15 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                         .removing
                         .iter()
                         .any(|path| path == &worktree.checkout_path),
+                    is_dirty: options
+                        .dirty
+                        .iter()
+                        .any(|path| path == &worktree.checkout_path),
+                    is_unreadable: options
+                        .unreadable
+                        .iter()
+                        .any(|path| path == &worktree.checkout_path),
+                    track: worktree.track,
                     is_current: false,
                     matched: worktree_matches,
                 }];
@@ -289,6 +384,9 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
             status: repo_status,
             is_idle: false,
             is_removing: false,
+            is_dirty: false,
+            is_unreadable: false,
+            track: None,
             is_current: panes.iter().any(|pane| pane.focused),
             matched: repo_matches,
         }];
@@ -328,6 +426,9 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                 status: aggregate(tree.ungrouped.iter().map(|pane| pane.agent_status)),
                 is_idle: false,
                 is_removing: false,
+                is_dirty: false,
+                is_unreadable: false,
+                track: None,
                 is_current: tree.ungrouped.iter().any(|pane| pane.focused),
                 matched: true,
             });
@@ -350,6 +451,9 @@ fn pane_row(reference: RowRef, depth: u8, pane: &PaneNode, matched: bool) -> Row
         status: pane.agent_status,
         is_idle: false,
         is_removing: false,
+        is_dirty: false,
+        is_unreadable: false,
+        track: None,
         is_current: pane.focused,
         matched,
     }
@@ -584,6 +688,7 @@ mod tests {
             checkout_path: format!("/wt/{}", branch.replace('/', "-")),
             is_primary: branch == "main",
             open_workspace_id: panes.first().map(|p| p.workspace_id.clone()),
+            track: None,
             panes,
         }
     }
@@ -708,6 +813,145 @@ mod tests {
         assert!(find(&rows, "fix/crash").is_idle);
         assert_eq!(find(&rows, "fix/crash").meta, "/wt/fix-crash");
         assert!(!find(&rows, "main").is_idle);
+    }
+
+    fn marks_for(is_dirty: bool, track: Option<Track>) -> String {
+        let mut tree = tree();
+        tree.repos[0].worktrees[2].track = track;
+        let options = ViewOptions {
+            dirty: if is_dirty {
+                vec!["/wt/fix-crash".into()]
+            } else {
+                Vec::new()
+            },
+            ..Default::default()
+        };
+        marks(find(&flatten(&tree, &options), "fix/crash"))
+    }
+
+    #[test]
+    fn a_checkout_with_nothing_to_report_says_nothing() {
+        assert_eq!(marks_for(false, None), "");
+    }
+
+    #[test]
+    fn a_divergence_of_nothing_takes_no_room_on_the_row() {
+        // git never prints it — it prints nothing for a branch level with its upstream —
+        // but the type permits it, and a bare gap with no arrows after it would reserve
+        // columns to say nothing at all.
+        assert_eq!(
+            marks_for(
+                false,
+                Some(Track::Divergence {
+                    ahead: 0,
+                    behind: 0
+                })
+            ),
+            ""
+        );
+    }
+
+    #[test]
+    fn the_room_kept_for_the_marks_does_not_depend_on_the_dirty_answer() {
+        // Which is what stops every path in the list moving sideways when a `git status`
+        // finally answers.
+        let mut tree = tree();
+        tree.repos[0].worktrees[2].track = Some(Track::Gone);
+        let clean = flatten(&tree, &ViewOptions::default());
+        let dirty = flatten(
+            &tree,
+            &ViewOptions {
+                dirty: vec!["/wt/fix-crash".into()],
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            marks_reserve(find(&clean, "fix/crash")),
+            marks_reserve(find(&dirty, "fix/crash"))
+        );
+        assert_eq!(
+            marks_reserve(find(&clean, "me/app (3)")),
+            0,
+            "a repository heading has no checkout to say anything about"
+        );
+    }
+
+    #[test]
+    fn each_thing_a_checkout_can_be_reads_on_its_own() {
+        assert_eq!(marks_for(true, None), "  \u{2731}");
+        assert_eq!(
+            marks_for(
+                false,
+                Some(Track::Divergence {
+                    ahead: 2,
+                    behind: 0
+                })
+            ),
+            "  \u{2191}2"
+        );
+        assert_eq!(
+            marks_for(
+                false,
+                Some(Track::Divergence {
+                    ahead: 0,
+                    behind: 1
+                })
+            ),
+            "  \u{2193}1"
+        );
+        assert_eq!(
+            marks_for(
+                false,
+                Some(Track::Divergence {
+                    ahead: 2,
+                    behind: 1
+                })
+            ),
+            "  \u{2191}2\u{2193}1",
+            "one gap, not two: they are one answer"
+        );
+        assert_eq!(marks_for(false, Some(Track::Gone)), "  gone");
+    }
+
+    #[test]
+    fn a_dirty_checkout_whose_upstream_is_gone_says_both() {
+        // Which is the pair that decides whether a checkout can be swept: gone says it is
+        // finished with, and dirty says it cannot go anyway.
+        assert_eq!(marks_for(true, Some(Track::Gone)), "  \u{2731}  gone");
+    }
+
+    #[test]
+    fn a_checkout_holding_uncommitted_work_is_marked_as_such() {
+        let options = ViewOptions {
+            dirty: vec!["/wt/fix-crash".into()],
+            ..Default::default()
+        };
+        let rows = flatten(&tree(), &options);
+        assert!(find(&rows, "fix/crash").is_dirty);
+        assert!(!find(&rows, "feat/login").is_dirty);
+    }
+
+    #[test]
+    fn a_checkout_whose_answer_has_not_arrived_is_drawn_without_a_marker() {
+        // Asking whether a checkout is dirty is a process per checkout, so the answers
+        // arrive after the first frame. Not yet known and known-clean draw the same, on
+        // purpose: the alternative is a marker that is wrong for a moment.
+        let rows = flatten(&tree(), &ViewOptions::default());
+        assert!(!find(&rows, "fix/crash").is_dirty);
+    }
+
+    #[test]
+    fn a_checkout_carries_what_git_said_about_its_branch() {
+        let mut tree = tree();
+        tree.repos[0].worktrees[2].track = Some(Track::Gone);
+        let rows = flatten(&tree, &ViewOptions::default());
+        assert_eq!(find(&rows, "fix/crash").track, Some(Track::Gone));
+        assert_eq!(find(&rows, "feat/login").track, None);
+        assert_eq!(
+            find(&rows, "me/app (3)").track,
+            None,
+            "a repository heading has no branch of its own"
+        );
     }
 
     #[test]

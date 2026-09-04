@@ -16,9 +16,44 @@ use crate::port::{GitPort, HerdrPort, Snapshot};
 pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapshot, Tree)> {
     let snapshot = herdr.snapshot()?;
     let placements = resolve_placements(&snapshot, git);
-    let repos = collect_repos(herdr, git, &placements);
+    let mut repos = collect_repos(herdr, git, &placements);
+    read_refs(git, &mut repos);
     let tree = tree::build(&snapshot, &repos, &placements);
     Ok((snapshot, tree))
+}
+
+/// Read every repository's refs, all at once.
+///
+/// One `for-each-ref` per repository, which is where ahead/behind and `gone` come from. They
+/// ride on the format string of a call that has to be made anyway rather than on a
+/// `rev-list --count` per branch, which is what makes one process per repository the whole
+/// cost of them.
+///
+/// In front of the first frame on purpose: unlike whether a checkout is dirty, these are
+/// known the moment git answers, so there is nothing to be gained by drawing the list
+/// without them first.
+///
+/// A repository git could not answer for simply carries no markers.
+fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
+    // No chunking: repositories are however many the user has panes open in, which is a
+    // handful — unlike working directories, where every pane can have its own.
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = repos
+            .iter()
+            .map(|repo| {
+                let repo_root = repo.repo_root.clone();
+                scope.spawn(move || git.local_refs(&repo_root).unwrap_or_default())
+            })
+            .collect();
+        for (repo, handle) in repos.iter_mut().zip(handles) {
+            // `join` fails for one reason: the thread panicked. In the shipped binary that
+            // is unreachable — `panic = "abort"` in the release profile ends the process
+            // before this line — so what is chosen here only applies to a debug build,
+            // where ratatui's hook has already restored the terminal and the picker would
+            // carry on drawing onto it either way. That repository's markers are missing.
+            repo.refs = handle.join().unwrap_or_default();
+        }
+    });
 }
 
 /// Work out which repository and checkout each pane sits in.
@@ -159,6 +194,7 @@ fn collect_repos(
                 repo_root,
                 display_name,
                 worktrees: listed.worktrees,
+                refs: Vec::new(),
             })
         })
         .collect()

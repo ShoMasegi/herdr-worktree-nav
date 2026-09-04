@@ -4,7 +4,7 @@ use std::process::{Command, Output, Stdio};
 
 use anyhow::{bail, Context, Result};
 
-use crate::port::{GitPort, GitRef, RefKind, RepoIdentity};
+use crate::port::{GitPort, GitRef, RefKind, RepoIdentity, Track};
 
 /// git's catch-all exit code for a fatal error. It says almost nothing on its own: a path
 /// that is not a repository and a fetch that could not reach the remote both exit 128, so
@@ -49,6 +49,36 @@ impl GitCli {
         Self::run(dir, args)?
             .with_context(|| format!("{dir} is not a git repository, but was expected to be"))
     }
+}
+
+/// Read a `:track` field — `%(upstream:track)` or `%(push:track)`, which share a grammar:
+/// `[gone]`, `[ahead 2]`, `[behind 1]`, `[ahead 2, behind 1]`, or nothing at all for a branch
+/// level with what it is being compared against, or with nothing to compare against.
+///
+/// What `[gone]` *means* differs between the two, which is why the caller and not this
+/// function decides whether to believe it.
+///
+/// Anything unrecognised is `None` rather than a guess. A marker that is wrong is worse than
+/// no marker, because the whole point of these is to answer "which of these is behind"
+/// without leaving the picker to check.
+fn parse_track(field: &str) -> Option<Track> {
+    let inside = field.trim().strip_prefix('[')?.strip_suffix(']')?;
+    if inside == "gone" {
+        return Some(Track::Gone);
+    }
+    let mut ahead = 0;
+    let mut behind = 0;
+    for part in inside.split(", ") {
+        match part.split_once(' ') {
+            Some(("ahead", count)) => ahead = count.parse().ok()?,
+            Some(("behind", count)) => behind = count.parse().ok()?,
+            _ => return None,
+        }
+    }
+    if ahead == 0 && behind == 0 {
+        return None;
+    }
+    Some(Track::Divergence { ahead, behind })
 }
 
 /// Extract `owner/repo` from any GitHub remote URL form:
@@ -110,11 +140,20 @@ impl GitPort for GitCli {
     fn local_refs(&self, repo_root: &str) -> Result<Vec<GitRef>> {
         // The full refname, not `refname:short`: a local branch called `feat/login` and a
         // remote ref printed as `origin/main` are indistinguishable once shortened.
+        //
+        // Everything in one format string. Not because the extra fields are free —
+        // `:track` costs git an ahead/behind walk per ref — but because they arrive in the
+        // one process that was being started anyway. Asking separately would be a
+        // `rev-list --count` per branch and a `worktree list` on top.
+        //
+        // The subject goes last because it is the field most likely to contain a tab. A
+        // checkout path could too, which would mis-split the line; nothing here can prevent
+        // that, and a path with a tab in it would be the least of that user's problems.
         let out = GitCli::run_in_repo(
             repo_root,
             &[
                 "for-each-ref",
-                "--format=%(refname)%09%(committerdate:unix)%09%(contents:subject)",
+                "--format=%(refname)%09%(committerdate:unix)%09%(upstream:track)%09%(push:track)%09%(worktreepath)%09%(contents:subject)",
                 "refs/heads",
                 "refs/remotes",
             ],
@@ -122,10 +161,28 @@ impl GitPort for GitCli {
 
         let mut refs = Vec::new();
         for line in out.lines() {
-            let mut parts = line.splitn(3, '\t');
+            let mut parts = line.splitn(6, '\t');
             let (Some(refname), Some(date)) = (parts.next(), parts.next()) else {
                 continue;
             };
+            // A branch with no upstream configured but a push destination still has
+            // somewhere to be ahead of, and `push:track` is where git says so.
+            //
+            // It may not say `gone`, though. Under `push.default = current` or `matching`,
+            // the push destination of a branch nobody has pushed yet resolves to a ref that
+            // has never existed, and git reports that as `[gone]` — the opposite of what
+            // this marker means, on the branches where being wrong matters most:
+            // `docs/adr/0011-what-may-be-swept.md` makes `gone` the signal a sweep marks a
+            // branch for deletion on, and an unpushed branch is the one kind that exists
+            // nowhere else.
+            let upstream = parts.next().unwrap_or_default();
+            let push = parts.next().unwrap_or_default();
+            let track = parse_track(upstream)
+                .or_else(|| parse_track(push).filter(|track| *track != Track::Gone));
+            let worktree_path = parts
+                .next()
+                .map(str::to_string)
+                .filter(|path| !path.is_empty());
             let subject = parts.next().map(str::to_string).filter(|s| !s.is_empty());
 
             let (name, kind) = if let Some(branch) = refname.strip_prefix("refs/heads/") {
@@ -153,6 +210,8 @@ impl GitPort for GitCli {
                 kind,
                 committed_at: date.parse().ok(),
                 subject,
+                track,
+                worktree_path,
             });
         }
         Ok(refs)
@@ -195,6 +254,24 @@ impl GitPort for GitCli {
         Ok(())
     }
 
+    fn is_dirty(&self, checkout_path: &str) -> Result<bool> {
+        // `--no-optional-locks` because of where this runs: on every checkout at once, in
+        // the background, in the very working trees the session's agents are committing in.
+        // Plain `git status` refreshes the index as a side effect and takes `index.lock` to
+        // do it — git's own documentation offers this flag to turn that off — and a picker
+        // that only looks at a repository has no business making somebody's `git commit`
+        // fail.
+        //
+        // Untracked files count, because they count to `git worktree remove`: the marker has
+        // to mean the same thing there as it does on `Shift-D`, or it is telling the user
+        // something they cannot act on.
+        let status = GitCli::run_in_repo(
+            checkout_path,
+            &["--no-optional-locks", "status", "--porcelain"],
+        )?;
+        Ok(!status.trim().is_empty())
+    }
+
     fn head_ref(&self, repo_root: &str) -> Result<String> {
         let head = GitCli::run_in_repo(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
         let head = head.trim();
@@ -210,7 +287,52 @@ impl GitPort for GitCli {
 
 #[cfg(test)]
 mod tests {
-    use super::github_slug_from_url;
+    use super::{github_slug_from_url, parse_track};
+    use crate::port::Track;
+
+    #[test]
+    fn reads_every_shape_git_prints_for_upstream_track() {
+        assert_eq!(parse_track("[gone]"), Some(Track::Gone));
+        assert_eq!(
+            parse_track("[ahead 2]"),
+            Some(Track::Divergence {
+                ahead: 2,
+                behind: 0
+            })
+        );
+        assert_eq!(
+            parse_track("[behind 1]"),
+            Some(Track::Divergence {
+                ahead: 0,
+                behind: 1
+            })
+        );
+        assert_eq!(
+            parse_track("[ahead 2, behind 1]"),
+            Some(Track::Divergence {
+                ahead: 2,
+                behind: 1
+            })
+        );
+    }
+
+    #[test]
+    fn a_branch_with_nothing_to_report_gets_no_marker() {
+        // Level with its upstream, and no upstream at all, both print nothing — and both
+        // mean there is nothing to draw.
+        assert_eq!(parse_track(""), None);
+        assert_eq!(parse_track("   "), None);
+    }
+
+    #[test]
+    fn anything_unrecognised_is_no_marker_rather_than_a_guess() {
+        // A marker that is wrong is worse than none: these exist so the user does not have
+        // to leave the picker to check.
+        assert_eq!(parse_track("[ahead many]"), None);
+        assert_eq!(parse_track("[sideways 2]"), None);
+        assert_eq!(parse_track("gone"), None);
+        assert_eq!(parse_track("[ahead 0]"), None);
+    }
 
     #[test]
     fn extracts_the_slug_from_every_github_remote_form() {

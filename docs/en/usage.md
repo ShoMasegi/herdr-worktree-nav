@@ -120,11 +120,11 @@ to the keys above, `Esc` abandons it, and `Ctrl-U` empties it without leaving se
 
 ```
  ◆ ● ShoMasegi/herdr-worktree-nav (2)
-   └── ● main                       ~/Workspace/herdr-worktree-nav
- ◆    ├── ● claude                  w7:p2
-      └── · shell                   w7:p3
-   └── · fix/crash  no pane         ~/.herdr/worktrees/herdr-worktree-nav/fix-crash
-                                    ↑ four columns past the longest label
+   └── ● main  ↑2↓1                    ~/Workspace/herdr-worktree-nav
+ ◆    ├── ● claude                     w7:p2
+      └── · shell                      w7:p3
+   └── · fix/crash  ✱  gone  no pane   ~/.herdr/worktrees/herdr-worktree-nav/fix-crash
+                                       ↑ four columns past the longest label
 ```
 
 Left to right: a gutter, the tree, a status glyph, the label, and a meta column.
@@ -146,6 +146,53 @@ Left to right: a gutter, the tree, a status glyph, the label, and a meta column.
   says which tree the checkout is in and the tail says which checkout.
 - A checkout with nothing running in it is marked `no pane` beside its name, because its
   meta column is taken by the path.
+
+### What a checkout is in the middle of
+
+Between the branch name and the `no pane` note, a checkout says what state it is in. Most
+have none of this, which is why it rides beside the name rather than in a column of its own:
+a column that is blank on most rows is a permanent gap between the name and the path.
+
+| | |
+| --- | --- |
+| `✱` | the working tree has uncommitted changes or untracked files |
+| `?` | git would not read this working tree, so nothing is claimed about it |
+| `↑2↓1` | two commits its upstream does not have, one it does not have |
+| `gone` | git cannot find the ref this branch tracks |
+
+`✱` is the one that stops `Shift-D` finishing: git refuses to remove a checkout holding work
+nobody has committed, and this is that refusal in advance — the picker will still let you
+ask, and git's answer comes back as a notification. `gone` means git
+cannot find the ref the branch tracks; usually that is a merged pull request whose head
+GitHub deleted and an `f` fetch in the branches view then pruned, but an upstream you have
+never fetched reads the same, because to git it is the same.
+
+Ahead, behind and `gone` come out of the same `git for-each-ref` the picker already runs, so
+they are there in the first frame. Whether a working tree is dirty is not: git has to walk
+the whole tree to know, once per checkout, so those are asked in the background and each row
+is filled in as its answer lands. Until one does, the row says nothing rather than guessing,
+and the prompt line carries a spinner so a list that is still filling in does not read as one
+that found nothing.
+
+The room for a `✱` is kept from the first frame whether or not one turns up, so an answer
+landing never moves the paths beside it. Three columns is the price of a list that does not
+shift while you are reading it.
+
+When git will not answer at all, the row says `?` rather than nothing:
+
+```
+   └── · fix/crash  ?  no pane        ~/.herdr/worktrees/app/fix-crash
+```
+
+An unread working tree is the absence of an answer, not the answer `clean`, and without the
+marker such a row is indistinguishable from one that was answered for. Both shapes of failure
+need it: a `safe.directory` refusal, or a `git` that is not on the path herdr launched the
+plugin with, fails the same way for every checkout at once — while a worktree whose directory
+has gone out from under git fails for exactly one, on a list where every other row is fine.
+It takes the room already kept for `✱`, so nothing moves.
+
+`r` asks again. It is the only thing that does: the answers are otherwise kept for as long as
+the picker is open, `Tab` to the branches view and back included.
 
 The breadcrumb under the list carries the whole path for the row under the cursor, which is
 where an elided one can be read in full.
@@ -342,6 +389,15 @@ plugin writes nothing to disk.
 | `· local` | a local branch, no worktree | cuts a worktree from it |
 | `↓ remote` | on the remote, never fetched | fetches it, then cuts from `origin/<branch>` |
 | `+ create` | nothing yet — you typed it | creates it from `HEAD`, then cuts |
+
+A branch can also be `gone`, which is not a state of its own but a note beside one:
+`checked out gone`, `local gone`. It means git cannot find the ref the branch tracks —
+usually a merged pull request whose head GitHub deleted, noticed by a pruning fetch. The
+branch and its checkout are still here; what they were tracking is not.
+
+A branch you have simply never pushed is not `gone`. It has nothing to track, which is a
+different thing from tracking something that has gone, and the picker will not confuse the
+two.
 
 `running` skips the destination step. You already have that work open; being asked where to
 put a second copy of it would be the wrong question.

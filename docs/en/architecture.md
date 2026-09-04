@@ -101,7 +101,13 @@ herdr api snapshot ─┬─▶ workspaces (some carry .worktree: repo_key, repo
                                 ▼
                     worktree.list per repository
                                 ▼
+                    for-each-ref per repository ─▶ ahead/behind, gone, which
+                                ▼                  checkout has each branch
                           domain::tree::build
+                                │
+                                ▼
+                    git --no-optional-locks status --porcelain per checkout,
+                    eight at a time, on threads that outlive the view that started them
 ```
 
 Two shortcuts keep it instant. Working directories are resolved once each rather than once
@@ -112,6 +118,18 @@ that checkout, since a pane is free to `cd` into a sibling repository.
 Panes are matched to worktrees by checkout path, never by `open_workspace_id`. A worktree
 whose pane has been moved elsewhere reports `open_workspace_id: None` while a pane is
 demonstrably working in it.
+
+What each checkout is in the middle of arrives in two speeds, and the split is the whole
+design. Ahead, behind and `gone` are fields on a `for-each-ref` that is being run anyway —
+one process per repository rather than a `rev-list --count` per branch — so they are on
+screen in the first frame. Whether a working tree is dirty is a walk
+of that tree, once per checkout, so it is asked behind the first frame and each row is filled
+in as its answer lands. A checkout with no answer yet carries no marker rather than a wrong
+one, and the answers are kept for the life of the picker — which is why they are owned by the
+view switch and not by the panes view. The room a `✱` would take is kept from the first
+frame, so an answer arriving never moves the paths beside it; `r` throws every answer away
+and asks again, and an answer from before that is dropped rather than mistaken for a fresh
+one.
 
 ## Opening a branch
 

@@ -9,7 +9,7 @@ use std::path::Path;
 use std::process::Command;
 
 use herdr_worktree_nav::adapter::GitCli;
-use herdr_worktree_nav::port::{GitPort, RefKind};
+use herdr_worktree_nav::port::{GitPort, RefKind, Track};
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) {
@@ -34,6 +34,10 @@ fn repository() -> TempDir {
     git(path, &["init", "--initial-branch=main"]);
     git(path, &["config", "user.email", "test@example.com"]);
     git(path, &["config", "user.name", "Test"]);
+    // Pinned, not inherited. `%(push:track)` answers a different question under each
+    // `push.default`, so a test that leaves it to the machine's global config is testing
+    // the machine — see `a_branch_nobody_has_pushed_is_never_gone`.
+    git(path, &["config", "push.default", "simple"]);
     std::fs::write(path.join("README.md"), "hello\n").unwrap();
     git(path, &["add", "."]);
     git(path, &["commit", "-m", "first"]);
@@ -399,4 +403,189 @@ fn head_ref_names_the_branch_and_falls_back_to_a_commit_when_detached() {
         "\"HEAD\" is not something a worktree can be based on"
     );
     assert_eq!(detached.len(), 40, "a full commit id: {detached}");
+}
+
+/// A repository with an `origin` that is a real bare repository on disk, so upstream
+/// tracking is exercised without a network.
+fn with_origin() -> (TempDir, TempDir) {
+    let repo = repository();
+    let remote = tempfile::tempdir().unwrap();
+    git(remote.path(), &["init", "--bare", "--initial-branch=main"]);
+    git(
+        repo.path(),
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
+    git(repo.path(), &["push", "-q", "-u", "origin", "main"]);
+    (repo, remote)
+}
+
+fn track_of(refs: &[herdr_worktree_nav::port::GitRef], name: &str) -> Option<Track> {
+    refs.iter()
+        .find(|r| r.kind == RefKind::Local && r.name == name)
+        .unwrap_or_else(|| panic!("no local ref {name}"))
+        .track
+}
+
+#[test]
+fn a_branch_level_with_its_upstream_has_nothing_to_report() {
+    let (repo, _remote) = with_origin();
+    let refs = GitCli.local_refs(&path_str(repo.path())).unwrap();
+    assert_eq!(track_of(&refs, "main"), None);
+    // Never pushed, so it has no upstream at all — also nothing to say, and in particular
+    // not "gone".
+    assert_eq!(track_of(&refs, "feat/login"), None);
+}
+
+#[test]
+fn ahead_and_behind_come_out_of_the_ref_walk() {
+    let (repo, remote) = with_origin();
+    // One commit here that origin does not have.
+    std::fs::write(repo.path().join("local.txt"), "local\n").unwrap();
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-q", "-m", "local only"]);
+    assert_eq!(
+        track_of(&GitCli.local_refs(&path_str(repo.path())).unwrap(), "main"),
+        Some(Track::Divergence {
+            ahead: 1,
+            behind: 0
+        })
+    );
+
+    // And one on origin that this repository does not have, made through a second clone so
+    // the first one is genuinely behind.
+    let other = tempfile::tempdir().unwrap();
+    let other = other.path().join("clone");
+    git(
+        Path::new("/"),
+        &[
+            "clone",
+            "-q",
+            remote.path().to_str().unwrap(),
+            other.to_str().unwrap(),
+        ],
+    );
+    git(&other, &["config", "user.email", "test@example.com"]);
+    git(&other, &["config", "user.name", "Test"]);
+    std::fs::write(other.join("theirs.txt"), "theirs\n").unwrap();
+    git(&other, &["add", "."]);
+    git(&other, &["commit", "-q", "-m", "theirs"]);
+    git(&other, &["push", "-q", "origin", "main"]);
+
+    git(repo.path(), &["fetch", "-q", "origin"]);
+    assert_eq!(
+        track_of(&GitCli.local_refs(&path_str(repo.path())).unwrap(), "main"),
+        Some(Track::Divergence {
+            ahead: 1,
+            behind: 1
+        })
+    );
+}
+
+#[test]
+fn a_branch_nobody_has_pushed_is_never_gone() {
+    // Under `push.default = current` the push destination of a never-pushed branch is a ref
+    // that has never existed, and git reports that as `[gone]` in `%(push:track)`. Believing
+    // it would put the finished-with marker on the newest branch in the repository — and on
+    // exactly the branches a sweep could not undo deleting, since they exist nowhere else.
+    let (repo, _remote) = with_origin();
+    git(repo.path(), &["config", "push.default", "current"]);
+
+    let refs = GitCli.local_refs(&path_str(repo.path())).unwrap();
+    assert_eq!(track_of(&refs, "feat/login"), None);
+}
+
+#[test]
+fn an_upstream_deleted_on_the_remote_reads_as_gone() {
+    // The ordinary end of a branch whose pull request was merged: GitHub deletes the head,
+    // a pruning fetch drops the remote-tracking ref, and git starts calling it gone. It is
+    // the marker the sweep will be built on.
+    let (repo, remote) = with_origin();
+    git(repo.path(), &["push", "-q", "-u", "origin", "feat/login"]);
+    git(remote.path(), &["branch", "-D", "feat/login"]);
+    git(repo.path(), &["fetch", "-q", "--prune", "origin"]);
+
+    let refs = GitCli.local_refs(&path_str(repo.path())).unwrap();
+    assert_eq!(track_of(&refs, "feat/login"), Some(Track::Gone));
+    assert_eq!(track_of(&refs, "main"), None, "only the deleted one");
+}
+
+#[test]
+fn a_branch_says_which_checkout_has_it() {
+    // This is what ties a branch to a row in the panes view without assuming that two
+    // things named `feat/login` are the same one.
+    let repo = repository();
+    let root = path_str(repo.path());
+    let worktree = repo.path().join("wt");
+    git(
+        repo.path(),
+        &["worktree", "add", worktree.to_str().unwrap(), "feat/login"],
+    );
+
+    let refs = GitCli.local_refs(&root).unwrap();
+    let checked_out = |name: &str| {
+        refs.iter()
+            .find(|r| r.kind == RefKind::Local && r.name == name)
+            .unwrap()
+            .worktree_path
+            .clone()
+    };
+    assert_eq!(checked_out("main").as_deref(), Some(root.as_str()));
+    assert_eq!(
+        checked_out("feat/login").map(|p| path_str(Path::new(&p))),
+        Some(path_str(&worktree))
+    );
+}
+
+#[test]
+fn a_checkout_git_will_not_look_at_is_an_error_rather_than_a_clean_one() {
+    // The whole `Unreadable` state upstream of this rests on the refusal arriving as an
+    // `Err`. If it were ever softened into empty output, every checkout would be recorded
+    // as clean and nothing above would notice.
+    let empty = tempfile::tempdir().unwrap();
+    assert!(GitCli.is_dirty(&path_str(empty.path())).is_err());
+}
+
+#[test]
+fn a_branch_with_no_upstream_is_still_measured_against_where_it_would_push() {
+    // Which is what `%(push:track)` is in the format string for. Pushed without `-u`, so
+    // there is no upstream to compare against and `%(upstream:track)` says nothing.
+    let (repo, _remote) = with_origin();
+    git(repo.path(), &["config", "push.default", "current"]);
+    git(repo.path(), &["push", "-q", "origin", "feat/login"]);
+    std::fs::write(repo.path().join("more.txt"), "more\n").unwrap();
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-q", "-m", "one more"]);
+    git(repo.path(), &["branch", "-f", "feat/login", "HEAD"]);
+
+    assert_eq!(
+        track_of(
+            &GitCli.local_refs(&path_str(repo.path())).unwrap(),
+            "feat/login"
+        ),
+        Some(Track::Divergence {
+            ahead: 1,
+            behind: 0
+        })
+    );
+}
+
+#[test]
+fn dirty_means_what_worktree_remove_means_by_it() {
+    let repo = repository();
+    let root = path_str(repo.path());
+    assert!(
+        !GitCli.is_dirty(&root).unwrap(),
+        "a fresh checkout is clean"
+    );
+
+    // An untracked file counts, because it counts to `git worktree remove` — the marker has
+    // to mean the same thing there as it does on `Shift-D`.
+    std::fs::write(repo.path().join("scratch.txt"), "notes\n").unwrap();
+    assert!(GitCli.is_dirty(&root).unwrap(), "untracked files count");
+
+    std::fs::remove_file(repo.path().join("scratch.txt")).unwrap();
+    assert!(!GitCli.is_dirty(&root).unwrap());
+
+    std::fs::write(repo.path().join("README.md"), "changed\n").unwrap();
+    assert!(GitCli.is_dirty(&root).unwrap(), "and so do modified ones");
 }

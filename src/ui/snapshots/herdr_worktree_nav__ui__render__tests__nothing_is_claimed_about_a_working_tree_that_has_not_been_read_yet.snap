@@ -2,7 +2,7 @@
 source: src/ui/render.rs
 expression: "screen(&state, 92, 18)"
 ---
-" / search panes                                                                     5 panes "
+" / search panes  ⠋ reading working trees…                                           5 panes "
 "────────────────────────────────────────────────────────────────────────────────────────────"
 " ◆ ● me/app (3)                                                                             "
 "   ├── ● main                     /wt/main                                                  "
@@ -10,7 +10,7 @@ expression: "screen(&state, 92, 18)"
 "   │  └── · shell                 w1:p2                                                     "
 "   ├── ○ feat/login               /wt/feat-login                                            "
 "   │  └── ○ codex                 w2:p1                                                     "
-"   └── · fix/crash  deleting ⠋    /wt/fix-crash                                             "
+"   └── · fix/crash  no pane       /wt/fix-crash                                             "
 "                                                                                            "
 "   ● me/site (1)                                                                            "
 "   └── ● develop                  /wt/develop                                               "

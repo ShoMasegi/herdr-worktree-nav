@@ -19,7 +19,7 @@ use crate::domain::model::RepoNode;
 use crate::domain::order::Order;
 use crate::domain::preview::{Preview, PreviewPane};
 use crate::domain::resolve::{BranchEntry, BranchState};
-use crate::domain::rows::{abbreviate, DisplayLine, Row};
+use crate::domain::rows::{abbreviate, marks, marks_reserve, DisplayLine, Row};
 use crate::port::LayoutRect;
 use crate::ui::branches::{Activity, BranchesState, Step};
 use crate::ui::diagram::{Fit, Frame as DiagramFrame};
@@ -58,7 +58,17 @@ fn meta_column(rows: &[Row], width: u16) -> usize {
 }
 
 /// How many columns a row's label region occupies: the gutter, the tree, the status glyph,
-/// the label itself, and the note on a checkout with nothing running in it.
+/// the label itself, the room kept for what the checkout says about itself, and the note on
+/// one with nothing running in it.
+///
+/// The rule behind which of those are counted here: **the meta column is a maximum over
+/// every row, so nothing that can appear while the picker is up may make a row wider than it
+/// was measured.** `domain::rows::marks_reserve` therefore keeps room for the `✱` whether or
+/// not it is showing — `✱` and `?` are the same width, so one reserve serves both. The
+/// `deleting` note is the deliberate exception: it is wider than the `no pane` note it
+/// replaces — by three columns on the idle row it is normally drawn on — and is left out,
+/// because it appears on a keypress on one row and those columns come out of that row's own
+/// label rather than out of everyone else's alignment.
 fn label_end(row: &Row) -> usize {
     // Mirrors `tree_prefix`, whose glyphs carry their own trailing space.
     let tree = if row.reference.is_group() || row.depth == 0 {
@@ -71,6 +81,7 @@ fn label_end(row: &Row) -> usize {
         + tree
         + 2
         + row.label.chars().count()
+        + marks_reserve(row)
         + if row.is_idle { IDLE_NOTE.len() } else { 0 }
 }
 
@@ -82,12 +93,8 @@ const IDLE_NOTE: &str = "  no pane";
 /// see. The spinner glyph follows.
 const REMOVING_NOTE: &str = "  deleting ";
 
-/// How wide the note actually drawn on a row is.
-///
-/// The `deleting` note is the wider of the two, and it is deliberately not counted by
-/// `label_end`: the meta column is computed over every row, so measuring it there would
-/// shunt every path in the list sideways the moment somebody pressed `y`. Left out, the
-/// three columns come out of that one row's label instead, and the column does not move.
+/// How wide the note actually drawn on a row is — as opposed to how wide `label_end`
+/// measured it, which is where the reasoning about the two lives.
 fn note_width(row: &Row) -> usize {
     if row.is_removing {
         // The spinner glyph follows the note.
@@ -211,6 +218,19 @@ fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'stat
     }
     if state.is_filtering() {
         spans.push(Span::styled("\u{2588}", theme.dim()));
+    }
+    // Whether a checkout is holding uncommitted work is a walk of its whole working tree,
+    // one per checkout, so the answers land after the first frame. The spinner says the
+    // list is still filling in rather than finished and empty-handed — the same thing the
+    // branches view does while it waits on a remote.
+    //
+    // A checkout git would not answer for says so on its own row rather than here — see
+    // `domain::rows::marks`, and `docs/adr/0011-what-may-be-swept.md`, which puts the
+    // unknown on the row it belongs to for the same reason.
+    if state.is_waiting() {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(spinner(state.frame()), theme.dim()));
+        spans.push(Span::styled(" reading working trees\u{2026}", theme.dim()));
     }
 
     let count = format!("{} panes", state.pane_count());
@@ -453,14 +473,18 @@ fn render_row(
     let tree_style = if selected { base } else { theme.tree() };
     let quiet = if selected { base } else { theme.dim() };
 
+    // What the checkout itself is: uncommitted work, and where it stands against its
+    // upstream. Measured and drawn from the same string, so the two cannot drift.
+    let marks = marks(row);
     let used = gutter.chars().count() + prefix.chars().count() + glyph.chars().count() + 1;
-    let note = note_width(row);
+    // Everything drawn between the label and the meta column.
+    let after_label = note_width(row) + marks.chars().count();
     // A row with nothing in the meta column may use the whole line for its label; one with
     // something has to stop short of the column so the two do not collide.
     let label_budget = if row.meta.is_empty() {
-        (rect.width as usize).saturating_sub(used + note)
+        (rect.width as usize).saturating_sub(used + after_label)
     } else {
-        meta_column.saturating_sub(META_GAP + used + note)
+        meta_column.saturating_sub(META_GAP + used + after_label)
     };
 
     let mut spans = vec![
@@ -470,6 +494,10 @@ fn render_row(
         Span::raw(" "),
         Span::styled(truncate(&row.label, label_budget), label_style),
     ];
+    // Beside the name rather than in a column, because most rows have none of it.
+    if !marks.is_empty() {
+        spans.push(Span::styled(marks, quiet));
+    }
     // The meta column is taken by the checkout path, so a checkout with nothing running in
     // it says so beside its name instead — and one that is going says that, which is the
     // more urgent thing to know about the same row.
@@ -663,7 +691,10 @@ const HELP_BRANCH_SEARCH: &[&str] = &[
 /// Widest branch name to give a column to. One very long name must not squeeze out the
 /// state and the pull request beside it.
 const MAX_BRANCH_COLUMN: usize = 40;
-/// Fits "checked out", the longest state word.
+/// Fits "checked out", the longest state word, and is a floor rather than a fixed width:
+/// `gone` goes inside this column so that what follows — the pull request, or the commit
+/// subject — stays lined up down the list, and a list with nothing gone in it reads exactly
+/// as it did before `gone` existed.
 const STATE_COLUMN: usize = 12;
 
 /// Widest repository name to give a column to, for the same reason as the branch column.
@@ -1045,6 +1076,15 @@ fn render_branch_rows(frame: &mut Frame, state: &BranchesState, theme: &Theme, a
         .max()
         .unwrap_or(0)
         .min(MAX_BRANCH_COLUMN);
+    // The longest state actually in this list, plus the space that keeps it off whatever
+    // follows, and never narrower than the floor. Only a branch whose upstream is gone
+    // needs more than the floor, so only the lists that have one pay for it.
+    let state_column = rows
+        .iter()
+        .map(|entry| branch_state_label(entry).chars().count() + 1)
+        .max()
+        .unwrap_or(0)
+        .max(STATE_COLUMN);
 
     let viewport = area.height as usize;
     let scroll = scroll_offset(state.cursor(), rows.len(), viewport);
@@ -1074,7 +1114,7 @@ fn render_branch_rows(frame: &mut Frame, state: &BranchesState, theme: &Theme, a
             ),
             Span::raw("  "),
             Span::styled(
-                pad(branch_state_label(entry), STATE_COLUMN),
+                pad(&branch_state_label(entry), state_column),
                 if selected { base } else { theme.dim() },
             ),
         ];
@@ -1352,13 +1392,20 @@ fn branch_glyph(entry: &BranchEntry, theme: &Theme) -> (&'static str, Style) {
     }
 }
 
-fn branch_state_label(entry: &BranchEntry) -> &'static str {
-    match entry.state {
+fn branch_state_label(entry: &BranchEntry) -> String {
+    let state = match entry.state {
         BranchState::LivePane { .. } => "running",
         BranchState::IdleWorktree { .. } => "checked out",
         BranchState::LocalRef => "local",
         BranchState::RemoteOnly => "remote",
         BranchState::New => "create",
+    };
+    // What the branch is, and then whether git can still find what it tracks. The second is
+    // not a state of its own: a branch whose upstream is gone is still checked out, or still
+    // running, and saying only `gone` would drop the half that says where it is.
+    match entry.upstream_gone {
+        true => format!("{state} gone"),
+        false => state.to_string(),
     }
 }
 
@@ -1381,7 +1428,7 @@ mod tests {
     use crate::domain::dest::Destination;
     use crate::domain::model::{PaneNode, RepoNode, Tree, WorktreeNode};
     use crate::domain::progress::Stage;
-    use crate::port::{AgentStatus, GitRef, PullRequest, RefKind, SplitDirection};
+    use crate::port::{AgentStatus, GitRef, PullRequest, RefKind, SplitDirection, Track};
     use crate::ui::branches::BranchData;
 
     fn theme() -> Theme {
@@ -1406,6 +1453,7 @@ mod tests {
             checkout_path: format!("/wt/{}", branch.replace('/', "-")),
             is_primary: primary,
             open_workspace_id: panes.first().map(|p| p.workspace_id.clone()),
+            track: None,
             panes,
         }
     }
@@ -1466,6 +1514,47 @@ mod tests {
         // Tall enough for the whole list, including the panes that are in no repository:
         // they are a section of it like any other.
         insta::assert_snapshot!(screen(&PanesState::new(tree(), None), 92, 18));
+    }
+
+    #[test]
+    fn every_checkout_says_what_state_it_is_in() {
+        // The four answers, on four checkouts: ahead and behind its upstream, an upstream
+        // that is gone, uncommitted work, and a checkout with nothing to report at all.
+        let mut tree = tree();
+        tree.repos[0].worktrees[0].track = Some(Track::Divergence {
+            ahead: 2,
+            behind: 1,
+        });
+        tree.repos[0].worktrees[1].track = Some(Track::Gone);
+        tree.repos[0].worktrees[2].track = Some(Track::Divergence {
+            ahead: 0,
+            behind: 3,
+        });
+        let mut state = PanesState::new(tree, None);
+        state.set_dirty(vec!["/wt/feat-login".into(), "/wt/fix-crash".into()]);
+        insta::assert_snapshot!(screen(&state, 92, 18));
+    }
+
+    #[test]
+    fn nothing_is_claimed_about_a_working_tree_that_has_not_been_read_yet() {
+        // Asking costs a process per checkout, so the answers land after the first frame.
+        // Until one does, the row says nothing about uncommitted work — and the prompt line
+        // says the list is still filling in rather than finished and empty-handed.
+        let mut state = PanesState::new(tree(), None);
+        state.set_waiting(true);
+        insta::assert_snapshot!(screen(&state, 92, 18));
+    }
+
+    #[test]
+    fn a_working_tree_git_would_not_answer_for_says_so_on_its_own_row() {
+        // Rows with no marker would otherwise read as clean working trees, which is a claim
+        // rather than the absence of one. On the row rather than in a count, because a
+        // count says how many and never which — and one prunable worktree is enough to
+        // produce one, alongside rows that were answered for perfectly well.
+        let mut state = PanesState::new(tree(), None);
+        state.set_dirty(vec!["/wt/feat-login".into()]);
+        state.set_unreadable(vec!["/wt/fix-crash".into()]);
+        insta::assert_snapshot!(screen(&state, 92, 18));
     }
 
     #[test]
@@ -1671,8 +1760,9 @@ mod tests {
     #[test]
     fn the_meta_column_sits_just_past_the_longest_label_that_has_one() {
         let state = PanesState::new(tree(), None);
-        // `fix/crash` plus its "no pane" note is the longest row that has a path, at 27.
-        assert_eq!(meta_column(state.rows(), 92), 27 + META_GAP);
+        // `fix/crash`, its "no pane" note, and the three columns kept for a `✱` that has
+        // not arrived yet: 30. Nothing else in this tree has anything to line up with.
+        assert_eq!(meta_column(state.rows(), 92), 30 + META_GAP);
     }
 
     #[test]
@@ -1683,6 +1773,16 @@ mod tests {
         let mut state = PanesState::new(tree(), None);
         let before = meta_column(state.rows(), 92);
         state.set_removing(vec!["/wt/fix-crash".into()]);
+        assert_eq!(meta_column(state.rows(), 92), before);
+    }
+
+    #[test]
+    fn an_answer_about_uncommitted_work_does_not_move_the_meta_column_either() {
+        // The same rule, and the case it was written for: these answers arrive a beat after
+        // the first frame, with the list already on screen and being read.
+        let mut state = PanesState::new(tree(), None);
+        let before = meta_column(state.rows(), 92);
+        state.set_dirty(vec!["/wt/fix-crash".into(), "/wt/main".into()]);
         assert_eq!(meta_column(state.rows(), 92), before);
     }
 
@@ -1713,6 +1813,8 @@ mod tests {
             kind: RefKind::Local,
             committed_at: Some(at),
             subject: Some(format!("latest work on {name}")),
+            track: None,
+            worktree_path: None,
         }
     }
 
@@ -1860,6 +1962,21 @@ mod tests {
     #[test]
     fn draws_the_repositories_the_session_has_open() {
         insta::assert_snapshot!(branches_screen(&branches_picker(), 92, 12));
+    }
+
+    #[test]
+    fn a_branch_whose_upstream_is_gone_says_so_beside_what_it_is() {
+        // The ordinary end of a merged branch: GitHub deleted the head, a pruning fetch
+        // noticed, and the local branch and its checkout are all that is left. `gone` goes
+        // inside the state column, which widens for this list and no other, so the subjects
+        // beside it stay lined up.
+        let mut state = branches_picker();
+        state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let mut data = branch_data();
+        data.local_refs[1].track = Some(Track::Gone);
+        data.local_refs[3].track = Some(Track::Gone);
+        state.set_data(data);
+        insta::assert_snapshot!(branches_screen(&state, 92, 12));
     }
 
     #[test]

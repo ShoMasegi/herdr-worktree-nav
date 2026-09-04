@@ -168,6 +168,32 @@ pub struct GitRef {
     /// Committer date, for ordering most-recent-first. `None` when unknown.
     pub committed_at: Option<i64>,
     pub subject: Option<String>,
+    /// Where this branch stands against the upstream it tracks — or, for a branch with no
+    /// upstream configured, against where it would push. `None` when it is level with
+    /// whichever of those it was measured against, and when there is neither.
+    pub track: Option<Track>,
+    /// The checkout that currently has this branch, when one does. git answers this in the
+    /// same breath as everything else here, which is what ties a branch to a checkout
+    /// without having to assume that two things named `feat/login` are the same one.
+    pub worktree_path: Option<String>,
+}
+
+/// What git says about a branch's position relative to the upstream it tracks.
+///
+/// Read out of `%(upstream:track)`, or `%(push:track)` for a branch with no upstream
+/// configured, both of which the one `for-each-ref` this plugin already runs prints
+/// alongside everything else it is being asked for. The alternative is a `rev-list --count`
+/// per branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Track {
+    /// git could not find the ref this branch tracks. Usually that is a merged pull request
+    /// whose head GitHub deleted and a pruning fetch then dropped, which is what makes it
+    /// worth showing — but a never-fetched upstream and a hand-pruned `refs/remotes` read
+    /// the same, because to git they are the same: the ref is not there.
+    Gone,
+    /// Commits on one side the other does not have. At least one of the two is non-zero:
+    /// git prints nothing at all for a branch level with its upstream.
+    Divergence { ahead: u32, behind: u32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,8 +215,11 @@ pub struct RepoIdentity {
     pub branch: Option<String>,
 }
 
-/// `Sync` because pane working directories are resolved from several threads at once.
-pub trait GitPort: Sync {
+/// `Sync` because pane working directories are resolved from several threads at once, and
+/// `Send` because the port is shared into detached threads through an `Arc` — which requires
+/// both. It is detached rather than scoped because asking whether a checkout is dirty
+/// outlives the view that asked: those answers are wanted on both sides of a `Tab`.
+pub trait GitPort: Send + Sync {
     /// Resolve which repository and branch a directory belongs to. `Ok(None)` when the path
     /// is not inside a work tree — that is an ordinary answer, not an error.
     fn identify(&self, cwd: &str) -> Result<Option<RepoIdentity>>;
@@ -215,6 +244,15 @@ pub trait GitPort: Sync {
     /// is left alone, and git refuses when the checkout has uncommitted work — neither of
     /// which this plugin overrides.
     fn remove_worktree(&self, repo_root: &str, checkout_path: &str) -> Result<()>;
+
+    /// Whether this checkout is holding work that is not committed: modified tracked files,
+    /// or untracked ones. The same question `git worktree remove` asks before it refuses,
+    /// which is why untracked files count.
+    ///
+    /// One process per checkout, and the only thing here that cannot be folded into an
+    /// existing call — so it is asked in the background rather than in front of the first
+    /// frame.
+    fn is_dirty(&self, checkout_path: &str) -> Result<bool>;
 
     /// Current `HEAD` of `repo_root`, used as the base for a brand new branch.
     fn head_ref(&self, repo_root: &str) -> Result<String>;

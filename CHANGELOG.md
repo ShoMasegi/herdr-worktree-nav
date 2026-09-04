@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Every checkout says what state it is in**, beside its branch name in the panes view:
+  `✱` for a working tree holding uncommitted changes or untracked files, `↑2↓1` for how far
+  it has drifted from its upstream, `gone` when git cannot find the ref it tracks, and `?`
+  when git would not read the working tree at all. `gone` reads in the branches view too,
+  beside what the branch is — `checked out gone`, `local gone`.
+- Ahead, behind and `gone` are fields on the `git for-each-ref` the picker already runs, so
+  they are on screen in the first frame and cost no extra process. Whether a working tree is
+  dirty cannot be: git has to walk the tree, once per checkout, so those are asked in the
+  background eight at a time and each row fills in as its answer lands. A checkout that has
+  not answered yet carries no marker rather than a wrong one, and the prompt line turns a
+  spinner so a list that is still filling in does not read as one that found nothing. `r`
+  asks again; otherwise the answers are kept for as long as the picker is open. The room a
+  `✱` would take is kept from the first frame, so an answer arriving never moves the paths
+  beside it — and `?` takes the same room, so a working tree git would not read says so
+  rather than passing for a clean one.
+
 ### Changed
 
 - **`Shift-D` no longer holds the picker while it deletes.** `git worktree remove` walks a
