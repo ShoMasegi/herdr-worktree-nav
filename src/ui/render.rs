@@ -15,12 +15,12 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::domain::model::RepoNode;
+use crate::domain::model::{PaneNode, RepoNode};
 use crate::domain::order::Order;
 use crate::domain::preview::{Preview, PreviewPane};
 use crate::domain::resolve::{BranchEntry, BranchState};
-use crate::domain::rows::{abbreviate, marks, marks_reserve, DisplayLine, Row, UNNAMED_PANE};
-use crate::port::{AgentStatus, LayoutRect};
+use crate::domain::rows::{self, abbreviate, marks, marks_reserve, DisplayLine, Row, UNNAMED_PANE};
+use crate::port::LayoutRect;
 use crate::ui::branches::{Activity, BranchesState, Step};
 use crate::ui::diagram::{Fit, Frame as DiagramFrame};
 use crate::ui::state::{PanesState, Removal};
@@ -284,13 +284,14 @@ fn render_removal(
 ) {
     const TITLE: &str = "Delete this checkout?";
     const CLOSING: &str = "  these panes close:";
+
     const KEYS_Y: &str = "y delete";
     const KEYS_REST: &str = "     any other key cancels";
 
     let path = abbreviate(&removal.checkout_path, home);
     // Uncommitted work is git's to protect and it does. What a working agent has in flight
-    // has no other safety net, so the question names every pane that stops — in the same
-    // columns the list behind the box uses, so the two read as the same thing.
+    // has no other safety net, so the question names every pane that stops, in the words the
+    // list behind the box uses for the same panes.
     let name_column = removal
         .panes
         .iter()
@@ -306,7 +307,7 @@ fn render_removal(
     let state_column = removal
         .panes
         .iter()
-        .map(|pane| agent_state(pane.agent_status).chars().count())
+        .map(|pane| agent_state(pane).chars().count())
         .max()
         .unwrap_or(0);
     let closing: Vec<String> = removal
@@ -319,7 +320,7 @@ fn render_removal(
                     pane.display_name.as_deref().unwrap_or(UNNAMED_PANE),
                     name_column
                 ),
-                pad(agent_state(pane.agent_status), state_column),
+                pad(agent_state(pane), state_column),
                 pane.pane_id
             )
         })
@@ -378,8 +379,10 @@ fn render_removal(
             panes.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled(glyph, glyph_style),
+                // The gutter and the glyph take three of the columns the border and its
+                // padding leave; the elision budget is what is left of them.
                 Span::styled(
-                    middle_elide(text, inner_width.saturating_sub(3)),
+                    middle_elide(text, inner_width.saturating_sub(1)),
                     theme.dim(),
                 ),
             ]));
@@ -387,9 +390,20 @@ fn render_removal(
     }
 
     // Shrink by dropping the air first and the detail second, so a short pane still gets a
-    // question rather than a broken box. The panes outlast the path on the way down: a path
-    // can be read from the breadcrumb behind the box, and what is about to stop cannot be
-    // read anywhere.
+    // question rather than a broken box. What is about to stop outlasts everything but the
+    // question itself: a branch and a path can be read from the breadcrumb behind the box,
+    // and the panes cannot be read anywhere. They outlast the path by one rung and the
+    // branch by two, and when even a line each will not fit their number outlasts their
+    // names — a box that asks to close panes without saying that it will is not a question
+    // anybody can answer. Below that there is no box at all rather than a lie.
+    // What is left of the list when one line each will not fit.
+    let summary = Line::from(Span::styled(
+        match removal.panes.len() {
+            1 => "  1 pane closes".to_string(),
+            many => format!("  {many} panes close"),
+        },
+        theme.dim(),
+    ));
     let spaced = match panes.is_empty() {
         true => vec![blank.clone()],
         false => [vec![blank.clone()], panes.clone(), vec![blank.clone()]].concat(),
@@ -408,15 +422,20 @@ fn render_removal(
         ]
         .concat(),
         [vec![title.clone(), branch], panes, vec![keys.clone()]].concat(),
-        vec![title, keys],
+        match removal.panes.is_empty() {
+            true => vec![title, keys],
+            false => vec![title, summary, keys],
+        },
     ];
-    let lines = candidates
+    // Nothing fits: no box. There is no rung below the last one that would not turn the
+    // question into a lie, and a checkout with panes has one line more to find than one
+    // without.
+    let Some(lines) = candidates
         .into_iter()
         .find(|lines| lines.len() + 2 <= body.height as usize)
-        .unwrap_or_default();
-    if lines.is_empty() {
+    else {
         return;
-    }
+    };
     let height = (lines.len() + 2) as u16;
     if width < 8 {
         return;
@@ -1496,16 +1515,11 @@ fn branch_state_label(entry: &BranchEntry) -> String {
     }
 }
 
-/// What an agent is doing, as a word. Empty for a pane with no agent: the glyph beside it
-/// already says there is nothing to report, and a column of `unknown` would be noise.
-fn agent_state(status: AgentStatus) -> &'static str {
-    match status {
-        AgentStatus::Working => "working",
-        AgentStatus::Idle => "idle",
-        AgentStatus::Blocked => "blocked",
-        AgentStatus::Done => "done",
-        AgentStatus::Unknown => "",
-    }
+/// What an agent is doing, in the words the list behind the box uses. Empty for a pane with
+/// no agent: the glyph beside it already says there is nothing to report, and a column of
+/// `unknown` would be noise.
+fn agent_state(pane: &PaneNode) -> &'static str {
+    rows::status_label(pane.agent_status).unwrap_or("")
 }
 
 /// Right-pad to `width` characters so a column lines up.
@@ -1656,6 +1670,7 @@ mod tests {
             .panes
             .push(pane("w2:p2", None, AgentStatus::Unknown, false));
         let mut state = PanesState::new(tree, None);
+        state.set_answered(vec!["/wt/feat-login".into()]);
         // Onto `codex`, the first pane running in the `feat/login` checkout.
         for _ in 0..2 {
             press(&mut state, KeyCode::Char('j'));
@@ -1667,8 +1682,23 @@ mod tests {
     #[test]
     fn a_short_pane_keeps_what_stops_and_gives_up_the_path() {
         // The path can be read from the breadcrumb behind the box. What is about to stop
-        // cannot be read anywhere else.
+        // cannot be read anywhere else, so it is the last thing to go.
         let mut state = PanesState::new(tree(), None);
+        state.set_answered(vec!["/wt/feat-login".into()]);
+        for _ in 0..2 {
+            press(&mut state, KeyCode::Char('j'));
+        }
+        press(&mut state, KeyCode::Char('D'));
+        insta::assert_snapshot!(screen(&state, 92, 11));
+    }
+
+    #[test]
+    fn a_pane_too_short_for_the_names_still_says_how_many_stop() {
+        // The rung below the list. A box that asked to close panes without saying that it
+        // will is not a question anybody can answer, so the number outlives the names — and
+        // below this there is no box at all rather than a lie.
+        let mut state = PanesState::new(tree(), None);
+        state.set_answered(vec!["/wt/feat-login".into()]);
         for _ in 0..2 {
             press(&mut state, KeyCode::Char('j'));
         }

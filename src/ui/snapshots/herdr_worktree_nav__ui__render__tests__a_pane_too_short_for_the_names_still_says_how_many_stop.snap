@@ -1,0 +1,13 @@
+---
+source: src/ui/render.rs
+expression: "screen(&state, 92, 9)"
+---
+" / search panes                                                                     5 panes "
+"────────────────────────────────────────────────────────────────────────────────────────────"
+"   │  └── · shell         ┌──────────────────────────────────────┐                         │"
+"   ├── ○ feat/login       │ Delete this checkout?                │                         █"
+"   │  └── ○ codex         │   1 pane closes                      │                         │"
+"   └── · fix/crash  no pan│   y delete     any other key cancels │                         │"
+"                          └──────────────────────────────────────┘                         │"
+" me/app · feat/login · w2:p1 · idle · /wt/feat-login ───────────────────────────────────────"
+" y delete  any other key cancels                                                            "
