@@ -59,8 +59,10 @@ pub fn run(
         if dirty.drain() {
             state.set_dirty(dirty.paths());
         }
-        let waiting = !removals.is_empty() || dirty.is_waiting();
-        state.set_waiting(dirty.is_waiting());
+        let reading_working_trees = dirty.is_waiting();
+        state.set_waiting(reading_working_trees);
+        state.set_unreadable(dirty.unreadable());
+        let waiting = !removals.is_empty() || reading_working_trees;
         if waiting && last_tick.elapsed() >= TICK {
             state.tick();
             last_tick = std::time::Instant::now();
@@ -98,8 +100,10 @@ pub fn run(
         };
         match state.handle_key(key) {
             Action::Consumed | Action::Ignored => {}
-            Action::Reload => {
-                if let Ok((_, tree)) = collect::collect_tree(herdr, git) {
+            // `r` is the only thing that asks about the working trees again, so a reload
+            // that quietly does nothing is a reload the user reads as "still dirty, then".
+            Action::Reload => match collect::collect_tree(herdr, git) {
+                Ok((_, tree)) => {
                     state.replace_tree(tree);
                     // Reload means reload: whether a checkout is dirty is a fact about a
                     // working tree the user has been editing since it was last asked.
@@ -107,7 +111,8 @@ pub fn run(
                     dirty.ask(state.tree());
                     state.set_dirty(dirty.paths());
                 }
-            }
+                Err(error) => state.set_message(format!("{error:#}")),
+            },
             // Deleting is housekeeping, and housekeeping comes in batches: the picker stays
             // open on the list the deletion is changing rather than closing over it — and
             // the deletion itself goes to a process of its own, so that neither the loop

@@ -58,7 +58,16 @@ fn meta_column(rows: &[Row], width: u16) -> usize {
 }
 
 /// How many columns a row's label region occupies: the gutter, the tree, the status glyph,
-/// the label itself, and the note on a checkout with nothing running in it.
+/// the label itself, the room kept for what the checkout says about itself, and the note on
+/// one with nothing running in it.
+///
+/// The rule behind which of those are counted here: **the meta column is a maximum over
+/// every row, so nothing that can appear while the picker is up may make a row wider than it
+/// was measured.** `domain::rows::marks_reserve` therefore keeps room for the `✱` whether or
+/// not it is showing. The `deleting` note is the deliberate exception: it is three columns
+/// wider than the `no pane` note it replaces and is left out, because it appears on a
+/// keypress on one row and those columns come out of that row's own label rather than out of
+/// everyone else's alignment.
 fn label_end(row: &Row) -> usize {
     // Mirrors `tree_prefix`, whose glyphs carry their own trailing space.
     let tree = if row.reference.is_group() || row.depth == 0 {
@@ -83,15 +92,8 @@ const IDLE_NOTE: &str = "  no pane";
 /// see. The spinner glyph follows.
 const REMOVING_NOTE: &str = "  deleting ";
 
-/// How wide the note actually drawn on a row is.
-///
-/// The rule behind every width here: **the meta column is a maximum over every row, so
-/// nothing that can appear while the picker is up may make a row wider than it was
-/// measured.** `domain::rows::marks_reserve` keeps room for the `✱` whether or not it is
-/// showing, so the column does not move when a `git status` answers. The `deleting` note is
-/// the other direction — it is three columns wider than the `no pane` note it replaces, and
-/// it is deliberately *not* reserved, because it appears on a keypress on one row and the
-/// three columns come out of that row's own label rather than out of everyone's alignment.
+/// How wide the note actually drawn on a row is — as opposed to how wide `label_end`
+/// measured it, which is where the reasoning about the two lives.
 fn note_width(row: &Row) -> usize {
     if row.is_removing {
         // The spinner glyph follows the note.
@@ -220,10 +222,23 @@ fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'stat
     // one per checkout, so the answers land after the first frame. The spinner says the
     // list is still filling in rather than finished and empty-handed — the same thing the
     // branches view does while it waits on a remote.
+    //
+    // And when git would not answer, the same place says so. Unmarked rows would otherwise
+    // read as a list of clean working trees, which is a claim rather than the absence of
+    // one — the distinction `docs/adr/0011-what-may-be-swept.md` makes with `PR unknown`.
     if state.is_waiting() {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(spinner(state.frame()), theme.dim()));
         spans.push(Span::styled(" reading working trees\u{2026}", theme.dim()));
+    } else if state.unreadable() > 0 {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            format!(
+                "{} unreadable",
+                count_of(state.unreadable(), "working tree", "working trees")
+            ),
+            Style::default().fg(theme.accent),
+        ));
     }
 
     let count = format!("{} panes", state.pane_count());
@@ -470,13 +485,14 @@ fn render_row(
     // upstream. Measured and drawn from the same string, so the two cannot drift.
     let marks = marks(row);
     let used = gutter.chars().count() + prefix.chars().count() + glyph.chars().count() + 1;
-    let note = note_width(row) + marks.chars().count();
+    // Everything drawn between the label and the meta column.
+    let after_label = note_width(row) + marks.chars().count();
     // A row with nothing in the meta column may use the whole line for its label; one with
     // something has to stop short of the column so the two do not collide.
     let label_budget = if row.meta.is_empty() {
-        (rect.width as usize).saturating_sub(used + note)
+        (rect.width as usize).saturating_sub(used + after_label)
     } else {
-        meta_column.saturating_sub(META_GAP + used + note)
+        meta_column.saturating_sub(META_GAP + used + after_label)
     };
 
     let mut spans = vec![
@@ -1535,6 +1551,16 @@ mod tests {
         // says the list is still filling in rather than finished and empty-handed.
         let mut state = PanesState::new(tree(), None);
         state.set_waiting(true);
+        insta::assert_snapshot!(screen(&state, 92, 18));
+    }
+
+    #[test]
+    fn working_trees_git_would_not_answer_for_are_said_out_loud() {
+        // Where the spinner was, once it has stopped. Rows with no marker would otherwise
+        // read as a list of clean working trees, which is a claim rather than the absence
+        // of one — and a `safe.directory` refusal makes every row look like that at once.
+        let mut state = PanesState::new(tree(), None);
+        state.set_unreadable(2);
         insta::assert_snapshot!(screen(&state, 92, 18));
     }
 

@@ -1,0 +1,22 @@
+---
+source: src/ui/render.rs
+expression: "screen(&state, 92, 18)"
+---
+" / search panes  2 working trees unreadable                                         5 panes "
+"────────────────────────────────────────────────────────────────────────────────────────────"
+" ◆ ● me/app (3)                                                                             "
+"   ├── ● main                     /wt/main                                                  "
+" ◆ │  ├── ● claude                w1:p1                                                     "
+"   │  └── · shell                 w1:p2                                                     "
+"   ├── ○ feat/login               /wt/feat-login                                            "
+"   │  └── ○ codex                 w2:p1                                                     "
+"   └── · fix/crash  no pane       /wt/fix-crash                                             "
+"                                                                                            "
+"   ● me/site (1)                                                                            "
+"   └── ● develop                  /wt/develop                                               "
+"      └── ● claude                w3:p1                                                     "
+"                                                                                            "
+"   · not in any repository (1)                                                              "
+"   └── · shell                    w9:p1                                                     "
+" me/app · main · w1:p1 · working · /wt/main ────────────────────────────────────────────────"
+" ↵ jump  n new  ←→ repo  ⇥ branches  / search  b/w/i/d/a states  shift+d remove  esc close  "

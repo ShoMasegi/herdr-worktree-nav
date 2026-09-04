@@ -21,7 +21,8 @@ All notable changes to this project are documented here. The format follows
   spinner so a list that is still filling in does not read as one that found nothing. `r`
   asks again; otherwise the answers are kept for as long as the picker is open. The room a
   `✱` would take is kept from the first frame, so an answer arriving never moves the paths
-  beside it.
+  beside it. A working tree git would not answer for is said out loud rather than left to
+  look clean, because that refusal fails for every checkout at once.
 
 ### Changed
 

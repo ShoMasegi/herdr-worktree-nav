@@ -20,8 +20,23 @@ use crate::port::GitPort;
 /// working-directory resolution uses, for the same reason.
 const MAX_IN_FLIGHT: usize = 8;
 
-/// One answer, tagged with the round of asking it belongs to.
-type Answer = (u64, String, bool);
+/// One answer, tagged with the round of asking it belongs to. `None` is git declining to
+/// answer at all.
+type Reply = (u64, String, Option<bool>);
+
+/// What is known about one checkout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Answer {
+    /// Asked, nothing back yet.
+    Waiting,
+    Clean,
+    Dirty,
+    /// git could not say. Kept apart from `Clean` because they are not the same claim, and
+    /// the difference is the one `docs/adr/0011-what-may-be-swept.md` insists on: a tool
+    /// that quietly finds less when a dependency is missing is worse than one that says
+    /// which half it is missing.
+    Unreadable,
+}
 
 /// What the picker knows about uncommitted work, and what it is still waiting to hear.
 ///
@@ -29,16 +44,15 @@ type Answer = (u64, String, bool);
 /// picker is up — `Tab` away and back is a frame, not another walk of every working tree.
 pub struct Dirty {
     git: Arc<dyn GitPort>,
-    sender: Sender<Answer>,
-    receiver: Receiver<Answer>,
+    sender: Sender<Reply>,
+    receiver: Receiver<Reply>,
     /// Which round of asking is current. Bumped by [`forget`](Self::forget), because a
     /// `git status` started before it was called is answering about a working tree the user
     /// has since changed — that is the whole reason they pressed the key.
     generation: u64,
-    /// Every checkout asked about in the current round: `None` until git answers, then
-    /// whether it is holding anything. Keeping the clean answers as well as the dirty ones
-    /// is what lets a second answer correct a first.
-    answers: BTreeMap<String, Option<bool>>,
+    /// Every checkout asked about in the current round. Keeping the clean answers as well
+    /// as the dirty ones is what lets a second answer correct a first.
+    answers: BTreeMap<String, Answer>,
     /// Asked for, waiting on a slot.
     queued: VecDeque<String>,
     in_flight: usize,
@@ -63,7 +77,8 @@ impl Dirty {
         for repo in &tree.repos {
             for worktree in &repo.worktrees {
                 if !self.answers.contains_key(&worktree.checkout_path) {
-                    self.answers.insert(worktree.checkout_path.clone(), None);
+                    self.answers
+                        .insert(worktree.checkout_path.clone(), Answer::Waiting);
                     self.queued.push_back(worktree.checkout_path.clone());
                 }
             }
@@ -84,7 +99,9 @@ impl Dirty {
     }
 
     /// Take in whatever has arrived. `true` when the marked set changed and the rows need
-    /// rebuilding.
+    /// rebuilding — which is when a checkout's *membership* of that set changed, not merely
+    /// when an answer arrived. Most answers are clean, and rebuilding for those would be
+    /// work for a list that would come out identical.
     pub fn drain(&mut self) -> bool {
         let mut changed = false;
         while let Ok((generation, checkout_path, dirty)) = self.receiver.try_recv() {
@@ -94,9 +111,14 @@ impl Dirty {
             if generation != self.generation {
                 continue;
             }
+            let answered = match dirty {
+                Some(true) => Answer::Dirty,
+                Some(false) => Answer::Clean,
+                None => Answer::Unreadable,
+            };
             if let Some(answer) = self.answers.get_mut(&checkout_path) {
-                changed |= *answer != Some(dirty);
-                *answer = Some(dirty);
+                changed |= (*answer == Answer::Dirty) != (answered == Answer::Dirty);
+                *answer = answered;
             }
         }
         self.pump();
@@ -109,9 +131,20 @@ impl Dirty {
     pub fn paths(&self) -> Vec<String> {
         self.answers
             .iter()
-            .filter(|(_, answer)| **answer == Some(true))
+            .filter(|(_, answer)| **answer == Answer::Dirty)
             .map(|(checkout_path, _)| checkout_path.clone())
             .collect()
+    }
+
+    /// How many checkouts git would not answer for. Said out loud rather than left to look
+    /// like a clean working tree: a `safe.directory` refusal, or a `git` that is not on the
+    /// path herdr launched this with, fails identically for every checkout at once, and a
+    /// list of unmarked rows would then be a confident claim that nothing is holding work.
+    pub fn unreadable(&self) -> usize {
+        self.answers
+            .values()
+            .filter(|answer| **answer == Answer::Unreadable)
+            .count()
     }
 
     /// Whether any answer is still coming. The loop turns a spinner while this is true.
@@ -134,9 +167,10 @@ impl Dirty {
             // carries on to its own end; it is read-only about anything the user would
             // notice, and `--no-optional-locks` keeps it from touching the index.
             std::thread::spawn(move || {
-                // A checkout git could not answer for is not a checkout with something in
-                // it. No marker beats the wrong marker.
-                let dirty = git.is_dirty(&checkout_path).unwrap_or(false);
+                // A checkout git could not answer for gets no marker — no marker beats the
+                // wrong marker — but it is not recorded as clean, because that is a claim
+                // and this is the absence of one.
+                let dirty = git.is_dirty(&checkout_path).ok();
                 let _ = sender.send((generation, checkout_path, dirty));
             });
         }
@@ -155,7 +189,7 @@ mod tests {
     /// module exists to manage — an answer in flight while the user does something else —
     /// can be opened and closed deliberately.
     struct FakeGit {
-        answered: Mutex<Vec<(String, std::sync::mpsc::Sender<bool>)>>,
+        answered: Mutex<Vec<(String, std::sync::mpsc::Sender<Option<bool>>)>>,
     }
 
     impl FakeGit {
@@ -167,6 +201,15 @@ mod tests {
 
         /// Answer the oldest outstanding call for this checkout.
         fn answer(&self, checkout_path: &str, dirty: bool) {
+            self.reply(checkout_path, Some(dirty));
+        }
+
+        /// Refuse it, the way git refuses a repository it will not touch.
+        fn refuse(&self, checkout_path: &str) {
+            self.reply(checkout_path, None);
+        }
+
+        fn reply(&self, checkout_path: &str, dirty: Option<bool>) {
             let mut waiting = self.answered.lock().unwrap();
             let index = waiting
                 .iter()
@@ -188,7 +231,12 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((checkout_path.to_string(), reply));
-            Ok(wait.recv().unwrap_or(false))
+            match wait.recv() {
+                Ok(Some(dirty)) => Ok(dirty),
+                // What a `safe.directory` refusal looks like from here.
+                Ok(None) => anyhow::bail!("dubious ownership in repository at {checkout_path}"),
+                Err(_) => Ok(false),
+            }
         }
 
         fn identify(&self, _cwd: &str) -> Result<Option<RepoIdentity>> {
@@ -239,15 +287,32 @@ mod tests {
         }
     }
 
-    /// Wait for the worker threads to have asked, since they run on their own clock.
-    fn until_asked(git: &FakeGit, count: usize) {
+    /// Spin until `ready`, or fail the test. The workers run on their own clock, so there
+    /// is nothing to join on and nothing to block for.
+    fn until(what: &str, mut ready: impl FnMut() -> bool) {
         for _ in 0..2000 {
-            if git.outstanding() >= count {
+            if ready() {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        panic!("expected {count} checkouts to be asked about");
+        panic!("{what}");
+    }
+
+    /// Wait for the worker threads to have asked.
+    fn until_asked(git: &FakeGit, count: usize) {
+        until(
+            &format!("expected {count} checkouts to be asked about"),
+            || git.outstanding() >= count,
+        );
+    }
+
+    /// Drain until nothing is outstanding.
+    fn until_answered(dirty: &mut Dirty) {
+        until("answers never arrived", || {
+            dirty.drain();
+            !dirty.is_waiting()
+        });
     }
 
     #[test]
@@ -267,15 +332,14 @@ mod tests {
         dirty.ask(&tree);
         until_asked(&git, 2);
 
-        // The stale answer lands first, and says what was true before the reload.
+        // The stale answer lands first, and says what was true before the reload. Waiting
+        // for it to have been taken in — a finished thread pays its slot back — rather than
+        // for the picker to settle, which it cannot until the fresh answer arrives too.
         git.answer("/wt/a", true);
-        for _ in 0..200 {
+        until("the stale answer never arrived", || {
             dirty.drain();
-            if !dirty.is_waiting() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
+            dirty.in_flight == 1
+        });
         assert!(
             dirty.paths().is_empty(),
             "the answer belonged to a question that was withdrawn"
@@ -284,18 +348,6 @@ mod tests {
         git.answer("/wt/a", false);
         until_answered(&mut dirty);
         assert!(dirty.paths().is_empty(), "and the fresh answer is clean");
-    }
-
-    /// Drain until nothing is outstanding.
-    fn until_answered(dirty: &mut Dirty) {
-        for _ in 0..2000 {
-            dirty.drain();
-            if !dirty.is_waiting() {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        panic!("answers never arrived");
     }
 
     #[test]
@@ -347,6 +399,26 @@ mod tests {
     }
 
     #[test]
+    fn a_checkout_git_would_not_answer_for_is_not_recorded_as_clean() {
+        // The failure this is really about is the correlated one: `safe.directory`, or a
+        // `git` that is not on the path herdr launched the plugin with, refuses every
+        // checkout at once. An unmarked list would then be a confident claim that nothing
+        // anywhere is holding uncommitted work.
+        let git = FakeGit::new();
+        let mut dirty = Dirty::new(git.clone());
+        let tree = tree(&["/wt/a", "/wt/b"]);
+
+        dirty.ask(&tree);
+        until_asked(&git, 2);
+        git.refuse("/wt/a");
+        git.answer("/wt/b", false);
+        until_answered(&mut dirty);
+
+        assert!(dirty.paths().is_empty(), "neither is marked");
+        assert_eq!(dirty.unreadable(), 1, "but only one of them is clean");
+    }
+
+    #[test]
     fn no_more_than_eight_working_trees_are_walked_at_once() {
         // A user with forty worktrees is the reason: forty `git status` processes at once
         // is a laptop that stops for a moment.
@@ -364,13 +436,10 @@ mod tests {
             git.answer(path, false);
         }
         // The next slots open on the drain, which is where the loop takes answers in.
-        for _ in 0..2000 {
+        until("slots never came free", || {
             dirty.drain();
-            if git.outstanding() >= MAX_IN_FLIGHT {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
+            git.outstanding() >= MAX_IN_FLIGHT
+        });
         assert_eq!(
             git.outstanding(),
             MAX_IN_FLIGHT,

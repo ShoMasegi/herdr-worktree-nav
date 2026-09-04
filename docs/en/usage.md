@@ -176,6 +176,17 @@ The room for a `✱` is kept from the first frame whether or not one turns up, s
 landing never moves the paths beside it. Three columns is the price of a list that does not
 shift while you are reading it.
 
+When git will not answer at all — a `safe.directory` refusal, or a `git` that is not on the
+path herdr launched the plugin with — the prompt line says so where the spinner was:
+
+```
+ / search panes  2 working trees unreadable                                          5 panes
+```
+
+That refusal fails the same way for every checkout at once, so without it a list of unmarked
+rows would be a confident claim that nothing anywhere is holding uncommitted work. An unread
+working tree is the absence of an answer, not the answer `clean`.
+
 `r` asks again. It is the only thing that does: the answers are otherwise kept for as long as
 the picker is open, `Tab` to the branches view and back included.
 

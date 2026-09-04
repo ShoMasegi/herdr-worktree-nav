@@ -62,6 +62,8 @@ pub struct PanesState {
     tick: usize,
     /// Whether an answer is still on its way, which the prompt line says with a spinner.
     waiting: bool,
+    /// How many working trees git declined to answer for.
+    unreadable: usize,
 }
 
 /// A checkout the user has asked to delete, held until they say yes.
@@ -90,6 +92,7 @@ impl PanesState {
             message: None,
             tick: 0,
             waiting: false,
+            unreadable: 0,
         };
         state.rebuild(None);
         state
@@ -112,10 +115,11 @@ impl PanesState {
             return;
         }
         self.options.dirty = paths;
-        let at = self.cursor;
+        // The cursor is not touched at all, which says the promise above more strongly than
+        // clamping it would: `dirty` feeds nothing but `Row::is_dirty`, so the row list that
+        // comes back has the same length and the same order it went in with.
         self.rows = rows::flatten(&self.tree, &self.options);
         self.lines = rows::display_lines(&self.rows);
-        self.cursor = at.min(self.lines.len().saturating_sub(1));
     }
 
     /// Whether something is still being waited for, which the prompt line turns a spinner
@@ -126,6 +130,16 @@ impl PanesState {
 
     pub fn is_waiting(&self) -> bool {
         self.waiting
+    }
+
+    /// How many working trees git would not answer for. Drawn where the spinner was, so a
+    /// list of unmarked rows is never a silent claim that every one of them is clean.
+    pub fn set_unreadable(&mut self, count: usize) {
+        self.unreadable = count;
+    }
+
+    pub fn unreadable(&self) -> usize {
+        self.unreadable
     }
 
     /// Say which checkouts are being removed, so their rows can say so and stop being
