@@ -537,6 +537,39 @@ fn a_branch_says_which_checkout_has_it() {
 }
 
 #[test]
+fn a_checkout_git_will_not_look_at_is_an_error_rather_than_a_clean_one() {
+    // The whole `Unreadable` state upstream of this rests on the refusal arriving as an
+    // `Err`. If it were ever softened into empty output, every checkout would be recorded
+    // as clean and nothing above would notice.
+    let empty = tempfile::tempdir().unwrap();
+    assert!(GitCli.is_dirty(&path_str(empty.path())).is_err());
+}
+
+#[test]
+fn a_branch_with_no_upstream_is_still_measured_against_where_it_would_push() {
+    // Which is what `%(push:track)` is in the format string for. Pushed without `-u`, so
+    // there is no upstream to compare against and `%(upstream:track)` says nothing.
+    let (repo, _remote) = with_origin();
+    git(repo.path(), &["config", "push.default", "current"]);
+    git(repo.path(), &["push", "-q", "origin", "feat/login"]);
+    std::fs::write(repo.path().join("more.txt"), "more\n").unwrap();
+    git(repo.path(), &["add", "."]);
+    git(repo.path(), &["commit", "-q", "-m", "one more"]);
+    git(repo.path(), &["branch", "-f", "feat/login", "HEAD"]);
+
+    assert_eq!(
+        track_of(
+            &GitCli.local_refs(&path_str(repo.path())).unwrap(),
+            "feat/login"
+        ),
+        Some(Track::Divergence {
+            ahead: 1,
+            behind: 0
+        })
+    );
+}
+
+#[test]
 fn dirty_means_what_worktree_remove_means_by_it() {
     let repo = repository();
     let root = path_str(repo.path());
