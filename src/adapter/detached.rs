@@ -24,6 +24,7 @@ impl RemovalPort for DetachedRemovals {
         repo_root: &str,
         checkout_path: &str,
         label: &str,
+        panes_closed: usize,
     ) -> Result<Box<dyn RunningRemoval>> {
         // This binary rather than `git` directly: the child has to reach herdr to report
         // itself, and doing that through the same ports the picker uses is what keeps the
@@ -37,6 +38,7 @@ impl RemovalPort for DetachedRemovals {
             .arg(repo_root)
             .arg(checkout_path)
             .arg(label)
+            .arg(panes_closed.to_string())
             .stdin(Stdio::null())
             // The report line comes back this way while the picker is still up to read it.
             .stdout(Stdio::piped())

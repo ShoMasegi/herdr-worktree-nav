@@ -45,7 +45,15 @@ pub fn parse_report(line: &str) -> Option<RemovalOutcome> {
 /// It names the branch rather than the plugin, because the branch is what the reader was
 /// waiting on. The path goes in the body: it is what actually went, and it is what tells two
 /// checkouts of the same branch name apart.
-pub fn notification(label: &str, checkout_path: &str, outcome: &RemovalOutcome) -> Notification {
+///
+/// `panes_closed` is how many panes were stopped to get this far, and it appears only when
+/// the removal was then refused — see [`refusal`].
+pub fn notification(
+    label: &str,
+    checkout_path: &str,
+    outcome: &RemovalOutcome,
+    panes_closed: usize,
+) -> Notification {
     match outcome {
         RemovalOutcome::Removed => Notification {
             title: format!("removed {label}"),
@@ -56,10 +64,24 @@ pub fn notification(label: &str, checkout_path: &str, outcome: &RemovalOutcome) 
         RemovalOutcome::Refused(reason) => Notification {
             title: format!("could not remove {label}"),
             // git's words, not a summary of them: they say what would have been lost.
-            body: Some(reason.clone()),
+            body: Some(refusal(reason, panes_closed)),
             // The one that has to reach someone who is no longer looking.
             sound: NotificationSound::Request,
         },
+    }
+}
+
+/// git's refusal, and what it cost to reach it.
+///
+/// A removal that stopped panes and then failed is the one failure that is not "nothing
+/// happened": the panes are gone and the checkout is not. Saying only what git said would
+/// leave the reader to work that out from an empty tab. Nothing is added when the removal
+/// worked — the panes were named in the question, and the checkout going is the answer.
+fn refusal(reason: &str, panes_closed: usize) -> String {
+    match panes_closed {
+        0 => reason.to_string(),
+        1 => format!("{reason} — its 1 pane was closed first"),
+        many => format!("{reason} — its {many} panes were closed first"),
     }
 }
 
@@ -67,11 +89,14 @@ pub fn notification(label: &str, checkout_path: &str, outcome: &RemovalOutcome) 
 ///
 /// Nothing on success: the row leaving the list is the report, and repeating it there would
 /// only say twice what the toast has already said once.
-pub fn message(label: &str, outcome: &RemovalOutcome) -> Option<String> {
+pub fn message(label: &str, outcome: &RemovalOutcome, panes_closed: usize) -> Option<String> {
     match outcome {
         RemovalOutcome::Removed => None,
         // Several removals can be in flight at once, so the reason has to name its own.
-        RemovalOutcome::Refused(reason) => Some(format!("could not remove {label}: {reason}")),
+        RemovalOutcome::Refused(reason) => Some(format!(
+            "could not remove {label}: {}",
+            refusal(reason, panes_closed)
+        )),
     }
 }
 
@@ -119,11 +144,56 @@ mod tests {
     }
 
     #[test]
+    fn a_refusal_after_panes_were_closed_says_that_they_were() {
+        // The one case where a failure is not simply "nothing happened": the panes are
+        // already gone by the time git speaks, and a report that only quoted git would
+        // leave the user to work that out from an empty tab.
+        let notification = notification(
+            "fix/crash",
+            "~/.herdr/worktrees/app/fix-crash",
+            &RemovalOutcome::Refused(REFUSAL.to_string()),
+            2,
+        );
+        assert_eq!(
+            notification.body.as_deref(),
+            Some(format!("{REFUSAL} — its 2 panes were closed first").as_str())
+        );
+        assert_eq!(
+            message(
+                "fix/crash",
+                &RemovalOutcome::Refused(REFUSAL.to_string()),
+                1
+            ),
+            Some(format!(
+                "could not remove fix/crash: {REFUSAL} — its 1 pane was closed first"
+            ))
+        );
+    }
+
+    #[test]
+    fn a_removal_that_worked_does_not_dwell_on_the_panes() {
+        // They were listed in the question and the checkout is gone; saying it again is
+        // saying twice what the row leaving the list already said once.
+        let notification = notification(
+            "fix/crash",
+            "~/.herdr/worktrees/app/fix-crash",
+            &RemovalOutcome::Removed,
+            2,
+        );
+        assert_eq!(
+            notification.body.as_deref(),
+            Some("~/.herdr/worktrees/app/fix-crash")
+        );
+        assert_eq!(message("fix/crash", &RemovalOutcome::Removed, 2), None);
+    }
+
+    #[test]
     fn the_toast_names_the_branch_and_points_at_the_path() {
         let notification = notification(
             "fix/crash",
             "~/.herdr/worktrees/app/fix-crash",
             &RemovalOutcome::Removed,
+            0,
         );
         assert_eq!(notification.title, "removed fix/crash");
         assert_eq!(
@@ -143,6 +213,7 @@ mod tests {
             "fix/crash",
             "~/.herdr/worktrees/app/fix-crash",
             &RemovalOutcome::Refused(REFUSAL.to_string()),
+            0,
         );
         assert_eq!(notification.title, "could not remove fix/crash");
         assert_eq!(
@@ -155,14 +226,18 @@ mod tests {
 
     #[test]
     fn the_picker_says_nothing_when_the_row_simply_leaves() {
-        assert_eq!(message("fix/crash", &RemovalOutcome::Removed), None);
+        assert_eq!(message("fix/crash", &RemovalOutcome::Removed, 0), None);
     }
 
     #[test]
     fn the_picker_repeats_the_refusal_and_says_which_checkout_it_was_about() {
         // Several removals can be in flight at once, so the reason has to name its own.
         assert_eq!(
-            message("fix/crash", &RemovalOutcome::Refused(REFUSAL.to_string())),
+            message(
+                "fix/crash",
+                &RemovalOutcome::Refused(REFUSAL.to_string()),
+                0
+            ),
             Some(format!("could not remove fix/crash: {REFUSAL}"))
         );
     }

@@ -221,7 +221,9 @@ impl StateFilter {
 
 /// Shown when a pane has no agent and no terminal title, which is what a plain shell looks
 /// like in a herdr snapshot.
-const UNNAMED_PANE: &str = "shell";
+/// What a pane with no agent and no usable title is called. Public because the removal
+/// question lists the panes that stop, and they have to read the same there as in the list.
+pub const UNNAMED_PANE: &str = "shell";
 
 #[derive(Debug, Clone, Default)]
 pub struct ViewOptions {

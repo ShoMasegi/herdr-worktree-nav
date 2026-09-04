@@ -47,6 +47,10 @@ fn run() -> Result<()> {
                 &repo_root,
                 &checkout_path,
                 &label,
+                // How many panes the picker stopped to get here, for the one report that
+                // has to say more than what git said. Absent means none, so running this
+                // by hand stays three arguments.
+                args.next().and_then(|n| n.parse().ok()).unwrap_or(0),
             ),
             _ => bail!("`remove` needs a repository root, a checkout path, and a branch name"),
         },
@@ -66,7 +70,7 @@ herdr-worktree-nav — navigate herdr panes by repo and worktree
   herdr-worktree-nav action <action-id>   open the picker for a plugin action (herdr calls this)
   herdr-worktree-nav pane <entrypoint>    run the picker itself (herdr calls this)
   herdr-worktree-nav dump                 print what the plugin currently sees, for troubleshooting
-  herdr-worktree-nav remove <repo-root> <checkout-path> <branch>
+  herdr-worktree-nav remove <repo-root> <checkout-path> <branch> [panes-closed]
                                           remove one checkout and say so (the picker calls this)";
 
 fn pane(start: Entrypoint) -> Result<()> {

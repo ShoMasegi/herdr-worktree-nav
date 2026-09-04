@@ -17,11 +17,15 @@ struct InFlight {
     checkout_path: String,
     /// The branch, which is what a refusal names.
     label: String,
+    /// How many panes were stopped before this started, which a refusal has to mention.
+    panes_closed: usize,
 }
 
 /// A removal that has reported back.
 pub struct Finished {
     pub label: String,
+    /// What was stopped to get here. A refusal after this is not "nothing happened".
+    pub panes_closed: usize,
     /// `Err` when the process ended without saying anything readable. The toast, if there
     /// was one, has already been shown by then — this is only what this side knows.
     pub outcome: Result<RemovalOutcome>,
@@ -54,8 +58,16 @@ impl<'a> Removals<'a> {
     /// Start removing a checkout. Returns once the process is running, which is the point:
     /// the wait happens on a thread of its own so the picker keeps drawing and keeps
     /// reading keys.
-    pub fn start(&mut self, repo_root: &str, checkout_path: &str, label: &str) -> Result<()> {
-        let running = self.port.start(repo_root, checkout_path, label)?;
+    pub fn start(
+        &mut self,
+        repo_root: &str,
+        checkout_path: &str,
+        label: &str,
+        panes_closed: usize,
+    ) -> Result<()> {
+        let running = self
+            .port
+            .start(repo_root, checkout_path, label, panes_closed)?;
         let sender = self.sender.clone();
         let path = checkout_path.to_string();
         // Not joined anywhere. Leaving the picker ends this thread with the process, and the
@@ -67,6 +79,7 @@ impl<'a> Removals<'a> {
         self.in_flight.push(InFlight {
             checkout_path: checkout_path.to_string(),
             label: label.to_string(),
+            panes_closed,
         });
         Ok(())
     }
@@ -88,17 +101,24 @@ impl<'a> Removals<'a> {
     /// The next removal to have reported back, if any. Never blocks.
     pub fn finished(&mut self) -> Option<Finished> {
         let (checkout_path, outcome) = self.receiver.try_recv().ok()?;
-        let label = match self
+        let (label, panes_closed) = match self
             .in_flight
             .iter()
             .position(|removal| removal.checkout_path == checkout_path)
         {
-            Some(index) => self.in_flight.remove(index).label,
+            Some(index) => {
+                let removal = self.in_flight.remove(index);
+                (removal.label, removal.panes_closed)
+            }
             // Cannot happen: nothing sends without having been pushed first. The path is a
             // usable name for it either way, and dropping the answer would leave a spinner
             // turning over a removal that has finished.
-            None => checkout_path,
+            None => (checkout_path, 0),
         };
-        Some(Finished { label, outcome })
+        Some(Finished {
+            label,
+            panes_closed,
+            outcome,
+        })
     }
 }

@@ -15,6 +15,11 @@ use crate::port::{GitPort, HerdrPort, RemovalOutcome};
 /// Remove one checkout, tell the user, and tell whoever started this if they are still
 /// listening.
 ///
+/// `panes_closed` is what the picker stopped to get here. It is passed in rather than
+/// worked out because the picker is the only thing that knows which panes belonged to the
+/// checkout — that grouping is the whole of the panes view — and because by the time this
+/// runs they are already gone.
+///
 /// git declining is an outcome rather than a failure — a checkout with uncommitted work is
 /// exactly what it is meant to protect — so this returns `Ok` either way and the answer
 /// travels in the report instead of in an exit code.
@@ -24,6 +29,7 @@ pub fn run(
     repo_root: &str,
     checkout_path: &str,
     label: &str,
+    panes_closed: usize,
 ) -> Result<()> {
     let outcome = match git.remove_worktree(repo_root, checkout_path) {
         Ok(()) => RemovalOutcome::Removed,
@@ -35,7 +41,12 @@ pub fn run(
     // have closed, and a pipe with no reader left is what that looks like from this side.
     // herdr declining to show it is herdr's answer to give, so it is not retried or
     // reported anywhere else.
-    let _ = herdr.notify(&removal::notification(label, checkout_path, &outcome));
+    let _ = herdr.notify(&removal::notification(
+        label,
+        checkout_path,
+        &outcome,
+        panes_closed,
+    ));
 
     let _ = writeln!(std::io::stdout(), "{}", removal::report_line(&outcome));
     Ok(())

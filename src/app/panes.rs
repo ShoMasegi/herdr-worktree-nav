@@ -78,7 +78,9 @@ pub fn run(
                 Ok(outcome) => {
                     // Nothing to say when it worked: the row leaving the list is the report,
                     // and the toast has already said it to whoever was not looking.
-                    if let Some(message) = removal::message(&finished.label, &outcome) {
+                    if let Some(message) =
+                        removal::message(&finished.label, &outcome, finished.panes_closed)
+                    {
                         state.set_message(message);
                     }
                     // Errors here are not fatal: the picker keeps showing what it had.
@@ -123,11 +125,31 @@ pub fn run(
                 repo_root,
                 checkout_path,
                 label,
-            } => match removals.start(&repo_root, &checkout_path, &label) {
-                // The row says what is happening to it; there is nothing to add here.
-                Ok(()) => state.set_removing(removals.paths()),
-                Err(error) => state.set_message(format!("{error:#}")),
-            },
+                panes,
+            } => {
+                // The panes first, and here rather than in the process that does the
+                // removal: the picker is the only thing that knows which panes belong to a
+                // checkout, since that grouping is the whole of the panes view. herdr
+                // closes a tab and a workspace that end up empty, so nothing is left
+                // behind. See `docs/adr/0010-closing-the-panes-first.md`.
+                //
+                // A pane that will not close stops the whole thing. Removing a checkout
+                // out from under half its panes is worse than not removing it.
+                match panes.iter().try_for_each(|pane| herdr.pane_close(pane)) {
+                    Ok(()) => match removals.start(&repo_root, &checkout_path, &label, panes.len())
+                    {
+                        // The row says what is happening to it; nothing to add here.
+                        Ok(()) => state.set_removing(removals.paths()),
+                        Err(error) => state.set_message(format!("{error:#}")),
+                    },
+                    Err(error) => state.set_message(format!("{error:#}")),
+                }
+                // The panes that did close are gone from the session either way.
+                if let Ok((_, tree)) = collect::collect_tree(herdr, git) {
+                    state.replace_tree(tree);
+                    dirty.ask(state.tree());
+                }
+            }
             action => break action,
         }
     };

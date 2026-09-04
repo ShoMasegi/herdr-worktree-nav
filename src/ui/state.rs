@@ -5,7 +5,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::domain::model::Tree;
+use crate::domain::model::{PaneNode, Tree};
 use crate::domain::rows::{self, DisplayLine, Row, RowRef, StateFilter, ViewOptions};
 
 /// What the event loop should do about a key. Anything that touches herdr is returned
@@ -34,12 +34,17 @@ pub enum Action {
     ShowBranches {
         repo_root: Option<String>,
     },
-    /// Delete a checkout that has nothing running in it. The only thing this plugin does
-    /// that cannot be undone by doing it again the other way.
+    /// Delete a checkout. The only thing this plugin does that cannot be undone by doing it
+    /// again the other way.
+    ///
+    /// `panes` are closed first, in the order given. A checkout with panes in it is the
+    /// ordinary end state of a finished worktree, not an unusual one — see
+    /// `docs/adr/0010-closing-the-panes-first.md`.
     RemoveWorktree {
         repo_root: String,
         checkout_path: String,
         label: String,
+        panes: Vec<String>,
     },
     Reload,
 }
@@ -71,6 +76,10 @@ pub struct Removal {
     pub checkout_path: String,
     /// The branch name, for the question and for saying what went.
     pub label: String,
+    /// The panes that stop if this goes ahead, in the order the tree lists them. Named in
+    /// the question because uncommitted work is git's to protect and this is not: whatever
+    /// a working agent has in flight has no other safety net.
+    pub panes: Vec<PaneNode>,
 }
 
 impl PanesState {
@@ -362,24 +371,34 @@ impl PanesState {
     /// saying so.
     fn ask_to_remove(&mut self) -> Action {
         let Some((r, w)) = self.selected_worktree() else {
-            self.message = Some("select a checkout with nothing running in it".into());
+            self.message = Some("select a checkout, or a pane in one".into());
             return Action::Consumed;
         };
         let repo = &self.tree.repos[r];
         let worktree = &repo.worktrees[w];
-        if !worktree.is_idle() {
-            self.message = Some("something is running in that checkout".into());
-            return Action::Consumed;
-        }
         if worktree.is_primary {
             // git cannot remove the main working tree, and it is not a worktree anyway.
             self.message = Some("that is the repository itself, not a worktree".into());
             return Action::Consumed;
         }
+        // The refusals below are only reached by a checkout with panes in it, and that is
+        // the whole reason they exist: for an empty one there is nothing to lose by letting
+        // git answer for itself, but here the panes are gone by the time it speaks.
+        if !worktree.is_idle() {
+            if self.options.dirty.contains(&worktree.checkout_path) {
+                self.message = Some("that checkout is holding work nobody has committed".into());
+                return Action::Consumed;
+            }
+            if self.options.unreadable.contains(&worktree.checkout_path) {
+                self.message = Some("git would not read that working tree".into());
+                return Action::Consumed;
+            }
+        }
         self.pending_removal = Some(Removal {
             repo_root: repo.repo_root.clone(),
             checkout_path: worktree.checkout_path.clone(),
             label: worktree.label().to_string(),
+            panes: worktree.panes.clone(),
         });
         Action::Consumed
     }
@@ -431,6 +450,7 @@ impl PanesState {
                     repo_root: removal.repo_root,
                     checkout_path: removal.checkout_path,
                     label: removal.label,
+                    panes: removal.panes.into_iter().map(|pane| pane.pane_id).collect(),
                 },
                 // Anything else is a no. Taking the removal above is what makes that true
                 // of keys nobody thought of as well as of the ones they did.
@@ -792,6 +812,7 @@ mod tests {
                 repo_root: "/src/app".into(),
                 checkout_path: "/wt/app/fix-crash".into(),
                 label: "fix/crash".into(),
+                panes: Vec::new(),
             }
         );
         assert!(
@@ -852,6 +873,67 @@ mod tests {
             assert_eq!(state.handle_key(key(code)), Action::Consumed, "{code:?}");
             assert!(state.pending_removal().is_none(), "{code:?}");
         }
+    }
+
+    #[test]
+    fn shift_d_on_a_pane_offers_to_delete_the_checkout_it_is_in() {
+        // A finished worktree has panes in it — that is its ordinary end state, not an
+        // unusual one. The cursor cannot land on a checkout that has panes (its panes are
+        // the answer to where to go), so the key has to mean this from the pane row.
+        let mut state = state();
+        select(&mut state, "codex");
+        assert_eq!(state.handle_key(key(KeyCode::Char('D'))), Action::Consumed);
+
+        let asked = state.pending_removal().expect("a question should be up");
+        assert_eq!(asked.label, "feat/login");
+        let closing: Vec<&str> = asked
+            .panes
+            .iter()
+            .map(|pane| pane.pane_id.as_str())
+            .collect();
+        assert_eq!(closing, ["w2:p1"], "and it names what stops");
+    }
+
+    #[test]
+    fn a_checkout_with_panes_is_refused_before_the_question_when_it_is_holding_work() {
+        // The refusal exists here and not on an empty checkout because of what is at stake:
+        // for an empty one git can answer for itself, but here the panes would already be
+        // closed by the time it did.
+        let mut state = state();
+        state.set_dirty(vec!["/wt/app/feat-login".into()]);
+        select(&mut state, "codex");
+        assert_eq!(state.handle_key(key(KeyCode::Char('D'))), Action::Consumed);
+        assert!(state.pending_removal().is_none());
+        assert_eq!(
+            state.message(),
+            Some("that checkout is holding work nobody has committed")
+        );
+    }
+
+    #[test]
+    fn a_checkout_with_panes_is_refused_when_git_would_not_read_it() {
+        // Which is not the same as reading it and finding nothing: without an answer there
+        // is no protection to offer, and the panes would go on the strength of a guess.
+        let mut state = state();
+        state.set_unreadable(vec!["/wt/app/feat-login".into()]);
+        select(&mut state, "codex");
+        state.handle_key(key(KeyCode::Char('D')));
+        assert!(state.pending_removal().is_none());
+        assert_eq!(
+            state.message(),
+            Some("git would not read that working tree")
+        );
+    }
+
+    #[test]
+    fn an_empty_checkout_holding_work_is_still_offered_and_left_to_git() {
+        // Nothing is at stake before the question here, and git's refusal is the answer
+        // rather than an obstacle — it says what would have been lost.
+        let mut state = state();
+        state.set_dirty(vec!["/wt/app/fix-crash".into()]);
+        select(&mut state, "fix/crash");
+        state.handle_key(key(KeyCode::Char('D')));
+        assert!(state.pending_removal().is_some());
     }
 
     #[test]

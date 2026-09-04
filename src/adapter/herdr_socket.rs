@@ -176,6 +176,11 @@ impl HerdrPort for SocketHerdr {
         )
     }
 
+    fn pane_close(&self, pane_id: &str) -> Result<()> {
+        self.call("pane.close", json!({ "pane_id": pane_id }))?;
+        Ok(())
+    }
+
     fn pane_move(&self, pane_id: &str, dest: &PaneDestination, focus: bool) -> Result<()> {
         let destination = match dest {
             PaneDestination::Tab {

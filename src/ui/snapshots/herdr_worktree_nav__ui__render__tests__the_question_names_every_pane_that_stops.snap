@@ -1,0 +1,22 @@
+---
+source: src/ui/render.rs
+expression: "screen(&state, 92, 18)"
+---
+" / search panes                                                                     6 panes "
+"────────────────────────────────────────────────────────────────────────────────────────────"
+" ◆ ● me/app (4)                                                                            █"
+"   ├── ● main             ┌──────────────────────────────────────┐                         █"
+" ◆ │  ├── ● claude        │ Delete this checkout?                │                         █"
+"   │  └── · shell         │                                      │                         █"
+"   ├── ○ feat/login       │   feat/login                         │                         █"
+"   │  ├── ○ codex         │   /wt/feat-login                     │                         █"
+"   │  └── · shell         │                                      │                         █"
+"   └── · fix/crash  no pan│   these panes close:                 │                         █"
+"                          │   ○ codex  idle   w2:p1              │                         █"
+"   ● me/site (1)          │   · shell         w2:p2              │                         █"
+"   └── ● develop          │                                      │                         █"
+"      └── ● claude        │   y delete     any other key cancels │                         █"
+"                          └──────────────────────────────────────┘                         █"
+"   · not in any repository (1)                                                             │"
+" me/app · feat/login · w2:p1 · idle · /wt/feat-login ───────────────────────────────────────"
+" y delete  any other key cancels                                                            "

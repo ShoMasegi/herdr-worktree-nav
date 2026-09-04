@@ -19,8 +19,8 @@ use crate::domain::model::RepoNode;
 use crate::domain::order::Order;
 use crate::domain::preview::{Preview, PreviewPane};
 use crate::domain::resolve::{BranchEntry, BranchState};
-use crate::domain::rows::{abbreviate, marks, marks_reserve, DisplayLine, Row};
-use crate::port::LayoutRect;
+use crate::domain::rows::{abbreviate, marks, marks_reserve, DisplayLine, Row, UNNAMED_PANE};
+use crate::port::{AgentStatus, LayoutRect};
 use crate::ui::branches::{Activity, BranchesState, Step};
 use crate::ui::diagram::{Fit, Frame as DiagramFrame};
 use crate::ui::state::{PanesState, Removal};
@@ -283,16 +283,61 @@ fn render_removal(
     body: Rect,
 ) {
     const TITLE: &str = "Delete this checkout?";
+    const CLOSING: &str = "  these panes close:";
     const KEYS_Y: &str = "y delete";
     const KEYS_REST: &str = "     any other key cancels";
 
     let path = abbreviate(&removal.checkout_path, home);
+    // Uncommitted work is git's to protect and it does. What a working agent has in flight
+    // has no other safety net, so the question names every pane that stops — in the same
+    // columns the list behind the box uses, so the two read as the same thing.
+    let name_column = removal
+        .panes
+        .iter()
+        .map(|pane| {
+            pane.display_name
+                .as_deref()
+                .unwrap_or(UNNAMED_PANE)
+                .chars()
+                .count()
+        })
+        .max()
+        .unwrap_or(0);
+    let state_column = removal
+        .panes
+        .iter()
+        .map(|pane| agent_state(pane.agent_status).chars().count())
+        .max()
+        .unwrap_or(0);
+    let closing: Vec<String> = removal
+        .panes
+        .iter()
+        .map(|pane| {
+            format!(
+                " {}  {}   {}",
+                pad(
+                    pane.display_name.as_deref().unwrap_or(UNNAMED_PANE),
+                    name_column
+                ),
+                pad(agent_state(pane.agent_status), state_column),
+                pane.pane_id
+            )
+        })
+        .collect();
     let widest = [
         TITLE.chars().count(),
         KEYS_Y.chars().count() + KEYS_REST.chars().count(),
     ]
     .into_iter()
     .chain([removal.label.chars().count() + 2, path.chars().count() + 2])
+    .chain(closing.iter().map(|line| line.chars().count() + 3))
+    .chain(
+        removal
+            .panes
+            .is_empty()
+            .then_some(0)
+            .or(Some(CLOSING.len())),
+    )
     .max()
     .unwrap_or(0);
     // Two columns of border and two of padding on each side, and a ceiling: a worktree path
@@ -323,15 +368,57 @@ fn render_removal(
         Span::styled(KEYS_REST, theme.dim()),
     ]);
 
+    // The panes, each with the glyph its row carries, so the one that is working is as
+    // obvious here as it is in the list behind the box.
+    let mut panes: Vec<Line> = Vec::new();
+    if !removal.panes.is_empty() {
+        panes.push(Line::from(Span::styled(CLOSING, theme.dim())));
+        for (pane, text) in removal.panes.iter().zip(&closing) {
+            let (glyph, glyph_style) = theme.status_glyph(pane.agent_status);
+            panes.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(glyph, glyph_style),
+                Span::styled(
+                    middle_elide(text, inner_width.saturating_sub(3)),
+                    theme.dim(),
+                ),
+            ]));
+        }
+    }
+
     // Shrink by dropping the air first and the detail second, so a short pane still gets a
-    // question rather than a broken box.
-    let lines: Vec<Line> = match body.height {
-        8.. => vec![title, blank.clone(), branch, path, blank, keys],
-        6..=7 => vec![title, branch, path, keys],
-        _ => vec![title, keys],
+    // question rather than a broken box. The panes outlast the path on the way down: a path
+    // can be read from the breadcrumb behind the box, and what is about to stop cannot be
+    // read anywhere.
+    let spaced = match panes.is_empty() {
+        true => vec![blank.clone()],
+        false => [vec![blank.clone()], panes.clone(), vec![blank.clone()]].concat(),
     };
+    let candidates = [
+        [
+            vec![title.clone(), blank.clone(), branch.clone(), path.clone()],
+            spaced,
+            vec![keys.clone()],
+        ]
+        .concat(),
+        [
+            vec![title.clone(), branch.clone(), path],
+            panes.clone(),
+            vec![keys.clone()],
+        ]
+        .concat(),
+        [vec![title.clone(), branch], panes, vec![keys.clone()]].concat(),
+        vec![title, keys],
+    ];
+    let lines = candidates
+        .into_iter()
+        .find(|lines| lines.len() + 2 <= body.height as usize)
+        .unwrap_or_default();
+    if lines.is_empty() {
+        return;
+    }
     let height = (lines.len() + 2) as u16;
-    if width < 8 || height > body.height {
+    if width < 8 {
         return;
     }
 
@@ -1409,6 +1496,18 @@ fn branch_state_label(entry: &BranchEntry) -> String {
     }
 }
 
+/// What an agent is doing, as a word. Empty for a pane with no agent: the glyph beside it
+/// already says there is nothing to report, and a column of `unknown` would be noise.
+fn agent_state(status: AgentStatus) -> &'static str {
+    match status {
+        AgentStatus::Working => "working",
+        AgentStatus::Idle => "idle",
+        AgentStatus::Blocked => "blocked",
+        AgentStatus::Done => "done",
+        AgentStatus::Unknown => "",
+    }
+}
+
 /// Right-pad to `width` characters so a column lines up.
 fn pad(text: &str, width: usize) -> String {
     let len = text.chars().count();
@@ -1543,6 +1642,38 @@ mod tests {
         let mut state = PanesState::new(tree(), None);
         state.set_waiting(true);
         insta::assert_snapshot!(screen(&state, 92, 18));
+    }
+
+    #[test]
+    fn the_question_names_every_pane_that_stops() {
+        // A finished worktree has panes in it, so this is the ordinary shape of the
+        // question rather than an unusual one. Uncommitted work is git's to protect and it
+        // does; what a working agent has in flight has no other safety net than this list.
+        let mut tree = tree();
+        // A second pane in the same checkout, with no agent in it: the columns have to line
+        // up, and a pane with nothing to report says nothing rather than `unknown`.
+        tree.repos[0].worktrees[1]
+            .panes
+            .push(pane("w2:p2", None, AgentStatus::Unknown, false));
+        let mut state = PanesState::new(tree, None);
+        // Onto `codex`, the first pane running in the `feat/login` checkout.
+        for _ in 0..2 {
+            press(&mut state, KeyCode::Char('j'));
+        }
+        press(&mut state, KeyCode::Char('D'));
+        insta::assert_snapshot!(screen(&state, 92, 18));
+    }
+
+    #[test]
+    fn a_short_pane_keeps_what_stops_and_gives_up_the_path() {
+        // The path can be read from the breadcrumb behind the box. What is about to stop
+        // cannot be read anywhere else.
+        let mut state = PanesState::new(tree(), None);
+        for _ in 0..2 {
+            press(&mut state, KeyCode::Char('j'));
+        }
+        press(&mut state, KeyCode::Char('D'));
+        insta::assert_snapshot!(screen(&state, 92, 9));
     }
 
     #[test]
