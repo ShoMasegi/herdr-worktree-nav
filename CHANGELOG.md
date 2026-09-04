@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **`Shift-D` deletes a checkout that has panes in it**, which is what a finished worktree
+  usually looks like. It closes every pane in the checkout first — wherever you moved them,
+  across tabs and spaces — and then removes it. The key means this from a pane row too, since
+  the cursor does not stop on a checkout that has panes. The question names every pane that
+  stops: git protects uncommitted work and does not protect what a working agent has in
+  flight. A checkout holding uncommitted work, or one git would not read, is refused before
+  the question rather than after its panes have gone — on an empty checkout git still answers
+  for itself. See [ADR 0010](docs/adr/0010-closing-the-panes-first.md).
+
 - **Every checkout says what state it is in**, beside its branch name in the panes view:
   `✱` for a working tree holding uncommitted changes or untracked files, `↑2↓1` for how far
   it has drifted from its upstream, `gone` when git cannot find the ref it tracks, and `?`
