@@ -47,6 +47,8 @@ pub fn run(
     // still going, and a working tree walked once does not need walking again.
     dirty.ask(state.tree());
     state.set_dirty(dirty.paths());
+    state.set_unreadable(dirty.unreadable());
+    state.set_answered(dirty.answered());
     state.set_removing(removals.paths());
     if let Some(pane_id) = initial_pane {
         state.focus_pane(pane_id);

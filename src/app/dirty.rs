@@ -182,6 +182,19 @@ impl Dirty {
             .collect()
     }
 
+    /// Every checkout git has answered for, whatever it said.
+    ///
+    /// The picker needs this and not just the dirty ones, because "nobody has asked yet" and
+    /// "asked, and it is clean" are different facts and only one of them is a licence to
+    /// close somebody's panes — see `ui::state::PanesState::ask_to_remove`.
+    pub fn answered(&self) -> Vec<String> {
+        self.answers
+            .iter()
+            .filter(|(_, answer)| **answer != Answer::Waiting)
+            .map(|(checkout_path, _)| checkout_path.clone())
+            .collect()
+    }
+
     /// Whether any answer is still coming. The loop turns a spinner while this is true.
     pub fn is_waiting(&self) -> bool {
         self.in_flight > 0 || !self.queued.is_empty()
@@ -447,6 +460,11 @@ mod tests {
         git.answer("/wt/b", false);
         until_answered(&mut dirty);
 
+        assert_eq!(
+            dirty.answered(),
+            vec!["/wt/a".to_string(), "/wt/b".to_string()],
+            "both have been asked and both have answered"
+        );
         assert!(dirty.paths().is_empty(), "neither is marked dirty");
         assert_eq!(
             dirty.unreadable(),
@@ -465,6 +483,10 @@ mod tests {
         let tree = tree(&["/wt/a", "/wt/b", "/wt/c"]);
         dirty.ask(&tree);
         until_asked(&git, 3);
+        assert!(
+            dirty.answered().is_empty(),
+            "asked is not answered, and only the second is a licence to act"
+        );
 
         git.answer("/wt/a", false);
         until("the clean answer never arrived", || {
