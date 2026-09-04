@@ -58,9 +58,13 @@ pub struct Row {
     /// same row — see `docs/adr/0014-removing-outlives-the-picker.md`.
     pub is_removing: bool,
     /// A checkout holding uncommitted changes or untracked files. False also means "not
-    /// asked yet": the answer costs a process per checkout and arrives after the first
-    /// frame, and a marker that is wrong for a moment is worse than one that is late.
+    /// asked yet" and "asked, and git would not say": the answer costs a process per
+    /// checkout and arrives after the first frame, and a marker that is wrong for a moment
+    /// is worse than one that is late.
     pub is_dirty: bool,
+    /// A checkout git declined to answer for. Kept apart from clean because they are not
+    /// the same claim — see `domain::rows::marks`.
+    pub is_unreadable: bool,
     /// What git said about this checkout's branch against its upstream.
     pub track: Option<Track>,
     /// The row the session is currently on, marked with a caret in the gutter.
@@ -93,8 +97,11 @@ impl Row {
 
 /// A checkout holding uncommitted changes or untracked files, with the gap that precedes it.
 const DIRTY: &str = "  \u{2731}";
-/// An upstream that is no longer on the remote. A word rather than a glyph: it is the one
-/// of these that says a branch is finished with, and it is worth being unmissable.
+/// A checkout git would not answer for. The same width as [`DIRTY`] and mutually exclusive
+/// with it — a working tree is dirty, clean, or unread — so it costs the row nothing extra.
+const UNREADABLE: &str = "  ?";
+/// git cannot find the ref this branch tracks. A word rather than a glyph: it is the one of
+/// these that says a branch is finished with, and it is worth being unmissable.
 const GONE: &str = "gone";
 
 /// What a row says about itself between its label and its `no pane` note.
@@ -109,6 +116,8 @@ pub fn marks(row: &Row) -> String {
     let mut out = String::new();
     if row.is_dirty {
         out.push_str(DIRTY);
+    } else if row.is_unreadable {
+        out.push_str(UNREADABLE);
     }
     out.push_str(&track_mark(row.track));
     out
@@ -116,11 +125,12 @@ pub fn marks(row: &Row) -> String {
 
 /// How much room a row's marks are allowed to take without moving the meta column.
 ///
-/// The dirty marker is counted whether it is showing or not. It appears when a `git status`
-/// answers — a beat after the first frame, with the list already on screen — and the meta
-/// column is a maximum over every row, so measuring only what is showing would jump every
-/// path in the list sideways once, including the paths of rows in repositories that have not
-/// changed at all. Three reserved columns are the price of that not happening.
+/// The marker for what a `git status` said is counted whether it is showing or not — and
+/// `✱` and `?` are the same width, so one reserve serves both. It appears a beat after the
+/// first frame, with the list already on screen, and the meta column is a maximum over every
+/// row: measuring only what is showing would jump every path in the list sideways once,
+/// including the paths of rows in repositories that have not changed at all. Three reserved
+/// columns are the price of that not happening.
 ///
 /// Ahead, behind and `gone` are measured exactly, because they are known before the first
 /// frame and cannot change without a reload — which redraws the whole list anyway.
@@ -136,8 +146,8 @@ fn track_mark(track: Option<Track>) -> String {
     match track {
         Some(Track::Gone) => format!("  {GONE}"),
         // A divergence git reports as level with its upstream is one git does not report at
-        // all, but nothing in the type says so — and a bare gap with no arrows after it
-        // would take room on the row to say nothing.
+        // all. `port::Track` documents that, but public `u32` fields cannot enforce it, and
+        // a bare gap with no arrows after it would take room on the row to say nothing.
         Some(Track::Divergence {
             ahead: 0,
             behind: 0,
@@ -227,6 +237,8 @@ pub struct ViewOptions {
     /// Checkout paths git has said are holding uncommitted work. Only the ones that are:
     /// clean and not-yet-asked are the same answer here, because they draw the same.
     pub dirty: Vec<String>,
+    /// Checkout paths git would not answer for at all, which is neither of those.
+    pub unreadable: Vec<String>,
 }
 
 impl ViewOptions {
@@ -336,6 +348,10 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                         .dirty
                         .iter()
                         .any(|path| path == &worktree.checkout_path),
+                    is_unreadable: options
+                        .unreadable
+                        .iter()
+                        .any(|path| path == &worktree.checkout_path),
                     track: worktree.track,
                     is_current: false,
                     matched: worktree_matches,
@@ -369,6 +385,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
             is_idle: false,
             is_removing: false,
             is_dirty: false,
+            is_unreadable: false,
             track: None,
             is_current: panes.iter().any(|pane| pane.focused),
             matched: repo_matches,
@@ -410,6 +427,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                 is_idle: false,
                 is_removing: false,
                 is_dirty: false,
+                is_unreadable: false,
                 track: None,
                 is_current: tree.ungrouped.iter().any(|pane| pane.focused),
                 matched: true,
@@ -434,6 +452,7 @@ fn pane_row(reference: RowRef, depth: u8, pane: &PaneNode, matched: bool) -> Row
         is_idle: false,
         is_removing: false,
         is_dirty: false,
+        is_unreadable: false,
         track: None,
         is_current: pane.focused,
         matched,

@@ -64,10 +64,11 @@ fn meta_column(rows: &[Row], width: u16) -> usize {
 /// The rule behind which of those are counted here: **the meta column is a maximum over
 /// every row, so nothing that can appear while the picker is up may make a row wider than it
 /// was measured.** `domain::rows::marks_reserve` therefore keeps room for the `✱` whether or
-/// not it is showing. The `deleting` note is the deliberate exception: it is three columns
-/// wider than the `no pane` note it replaces and is left out, because it appears on a
-/// keypress on one row and those columns come out of that row's own label rather than out of
-/// everyone else's alignment.
+/// not it is showing — `✱` and `?` are the same width, so one reserve serves both. The
+/// `deleting` note is the deliberate exception: it is wider than the `no pane` note it
+/// replaces — by three columns on the idle row it is normally drawn on — and is left out,
+/// because it appears on a keypress on one row and those columns come out of that row's own
+/// label rather than out of everyone else's alignment.
 fn label_end(row: &Row) -> usize {
     // Mirrors `tree_prefix`, whose glyphs carry their own trailing space.
     let tree = if row.reference.is_group() || row.depth == 0 {
@@ -223,22 +224,13 @@ fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'stat
     // list is still filling in rather than finished and empty-handed — the same thing the
     // branches view does while it waits on a remote.
     //
-    // And when git would not answer, the same place says so. Unmarked rows would otherwise
-    // read as a list of clean working trees, which is a claim rather than the absence of
-    // one — the distinction `docs/adr/0011-what-may-be-swept.md` makes with `PR unknown`.
+    // A checkout git would not answer for says so on its own row rather than here — see
+    // `domain::rows::marks`, and `docs/adr/0011-what-may-be-swept.md`, which puts the
+    // unknown on the row it belongs to for the same reason.
     if state.is_waiting() {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(spinner(state.frame()), theme.dim()));
         spans.push(Span::styled(" reading working trees\u{2026}", theme.dim()));
-    } else if state.unreadable() > 0 {
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(
-            format!(
-                "{} unreadable",
-                count_of(state.unreadable(), "working tree", "working trees")
-            ),
-            Style::default().fg(theme.accent),
-        ));
     }
 
     let count = format!("{} panes", state.pane_count());
@@ -1408,10 +1400,9 @@ fn branch_state_label(entry: &BranchEntry) -> String {
         BranchState::RemoteOnly => "remote",
         BranchState::New => "create",
     };
-    // What the branch is, and then whether the remote still has what it was tracking. The
-    // second is not a state of its own: a branch whose upstream is gone is still checked
-    // out, or still running, and saying only `gone` would drop the half that says where it
-    // is.
+    // What the branch is, and then whether git can still find what it tracks. The second is
+    // not a state of its own: a branch whose upstream is gone is still checked out, or still
+    // running, and saying only `gone` would drop the half that says where it is.
     match entry.upstream_gone {
         true => format!("{state} gone"),
         false => state.to_string(),
@@ -1555,12 +1546,14 @@ mod tests {
     }
 
     #[test]
-    fn working_trees_git_would_not_answer_for_are_said_out_loud() {
-        // Where the spinner was, once it has stopped. Rows with no marker would otherwise
-        // read as a list of clean working trees, which is a claim rather than the absence
-        // of one — and a `safe.directory` refusal makes every row look like that at once.
+    fn a_working_tree_git_would_not_answer_for_says_so_on_its_own_row() {
+        // Rows with no marker would otherwise read as clean working trees, which is a claim
+        // rather than the absence of one. On the row rather than in a count, because a
+        // count says how many and never which — and one prunable worktree is enough to
+        // produce one, alongside rows that were answered for perfectly well.
         let mut state = PanesState::new(tree(), None);
-        state.set_unreadable(2);
+        state.set_dirty(vec!["/wt/feat-login".into()]);
+        state.set_unreadable(vec!["/wt/fix-crash".into()]);
         insta::assert_snapshot!(screen(&state, 92, 18));
     }
 

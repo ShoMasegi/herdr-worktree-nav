@@ -2,14 +2,15 @@
 //!
 //! The one answer in the panes view that cannot ride on a call already being made: git has
 //! to walk a working tree to know it, once per checkout. So it is asked behind the first
-//! frame and each row is filled in as its answer lands — the shape
-//! `docs/adr/0009-the-picker-owns-the-terminal.md` established for the remote listing, and
-//! for the same two reasons: a picker that waits for git is a picker that looks broken, and
-//! an answer that cost a round of processes should survive `Tab` rather than be asked again.
+//! frame and each row is filled in as its answer lands, for the reason
+//! `docs/adr/0007-stay-up-while-working.md` gives — a picker that waits for git is a picker
+//! that looks broken — and it is owned by the view switch rather than by the view, for the
+//! reason `docs/adr/0009-the-picker-owns-the-terminal.md` gives about the remote listing: an
+//! answer that cost a round of processes should survive `Tab` rather than be asked again.
 //!
 //! A checkout that has not answered yet is drawn with no marker rather than with a guess.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 
@@ -23,6 +24,16 @@ const MAX_IN_FLIGHT: usize = 8;
 /// One answer, tagged with the round of asking it belongs to. `None` is git declining to
 /// answer at all.
 type Reply = (u64, String, Option<bool>);
+
+/// What a row draws for an answer, which is the only difference worth rebuilding the list
+/// for. Two of the four states draw nothing, and the commonest transition of all — a
+/// checkout nobody has asked about turning out to be clean — is between them.
+fn drawn(answer: Answer) -> Option<Answer> {
+    match answer {
+        Answer::Waiting | Answer::Clean => None,
+        marked => Some(marked),
+    }
+}
 
 /// What is known about one checkout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,8 +83,25 @@ impl Dirty {
         }
     }
 
-    /// Ask about every checkout in the tree that has not been asked about yet.
+    /// Ask about every checkout in the tree that has not been asked about yet, and forget
+    /// the ones that have left it.
+    ///
+    /// Forgetting matters because this is kept for the life of the picker: without it a
+    /// session's worth of deleted checkouts accumulates, and every one of them is an answer
+    /// about a working tree that is no longer there.
     pub fn ask(&mut self, tree: &Tree) {
+        let listed: BTreeSet<&str> = tree
+            .repos
+            .iter()
+            .flat_map(|repo| &repo.worktrees)
+            .map(|worktree| worktree.checkout_path.as_str())
+            .collect();
+        self.answers
+            .retain(|path, _| listed.contains(path.as_str()));
+        self.queued.retain(|path| listed.contains(path.as_str()));
+
+        // In tree order rather than in the set's, so the walk fills the list in from the
+        // top — which is where the reader is.
         for repo in &tree.repos {
             for worktree in &repo.worktrees {
                 if !self.answers.contains_key(&worktree.checkout_path) {
@@ -86,22 +114,27 @@ impl Dirty {
         self.pump();
     }
 
-    /// Throw away every answer and every question. The caller asks again; what it gets back
-    /// is about the working trees as they are now.
+    /// Throw every answer away and ask again. What comes back is about the working trees as
+    /// they are now, which is what `r` means about a tree the user has been editing since.
     ///
     /// Threads already running are left alone — there is no way to call one back — but their
     /// answers belong to the round this ends, and [`drain`](Self::drain) drops them on that
-    /// basis rather than on whether the checkout is still listed.
-    pub fn forget(&mut self) {
+    /// basis rather than on whether the checkout is still listed. Asking is not separable
+    /// from forgetting: a `Dirty` that had forgotten and not yet asked would sit with its
+    /// spinner turning over a list it will never say anything about.
+    pub fn reask(&mut self, tree: &Tree) {
         self.generation += 1;
         self.answers.clear();
         self.queued.clear();
+        self.ask(tree);
     }
 
-    /// Take in whatever has arrived. `true` when the marked set changed and the rows need
-    /// rebuilding — which is when a checkout's *membership* of that set changed, not merely
-    /// when an answer arrived. Most answers are clean, and rebuilding for those would be
-    /// work for a list that would come out identical.
+    /// Take in whatever has arrived, and start whatever the freed slots allow. `true` when
+    /// a row's markers changed and the list needs rebuilding — not merely when an answer
+    /// arrived, since most of them are clean and would rebuild an identical list.
+    ///
+    /// This is also the pump, so a view that stops draining stops the walk: with more
+    /// checkouts than `MAX_IN_FLIGHT`, the remainder waits for the panes view to come back.
     pub fn drain(&mut self) -> bool {
         let mut changed = false;
         while let Ok((generation, checkout_path, dirty)) = self.receiver.try_recv() {
@@ -117,7 +150,7 @@ impl Dirty {
                 None => Answer::Unreadable,
             };
             if let Some(answer) = self.answers.get_mut(&checkout_path) {
-                changed |= (*answer == Answer::Dirty) != (answered == Answer::Dirty);
+                changed |= drawn(*answer) != drawn(answered);
                 *answer = answered;
             }
         }
@@ -136,15 +169,17 @@ impl Dirty {
             .collect()
     }
 
-    /// How many checkouts git would not answer for. Said out loud rather than left to look
-    /// like a clean working tree: a `safe.directory` refusal, or a `git` that is not on the
-    /// path herdr launched this with, fails identically for every checkout at once, and a
-    /// list of unmarked rows would then be a confident claim that nothing is holding work.
-    pub fn unreadable(&self) -> usize {
+    /// The checkouts git would not answer for. Said on their own rows rather than left to
+    /// look like clean working trees — the distinction
+    /// `docs/adr/0011-what-may-be-swept.md` draws with `PR unknown`, and it matters in both
+    /// directions: a `safe.directory` refusal fails identically for every checkout at once,
+    /// while a worktree whose directory has gone fails for exactly one.
+    pub fn unreadable(&self) -> Vec<String> {
         self.answers
-            .values()
-            .filter(|answer| **answer == Answer::Unreadable)
-            .count()
+            .iter()
+            .filter(|(_, answer)| **answer == Answer::Unreadable)
+            .map(|(checkout_path, _)| checkout_path.clone())
+            .collect()
     }
 
     /// Whether any answer is still coming. The loop turns a spinner while this is true.
@@ -328,8 +363,7 @@ mod tests {
         dirty.ask(&tree);
         until_asked(&git, 1);
 
-        dirty.forget();
-        dirty.ask(&tree);
+        dirty.reask(&tree);
         until_asked(&git, 2);
 
         // The stale answer lands first, and says what was true before the reload. Waiting
@@ -364,8 +398,7 @@ mod tests {
         until_answered(&mut dirty);
         assert_eq!(dirty.paths(), vec!["/wt/a".to_string()]);
 
-        dirty.forget();
-        dirty.ask(&tree);
+        dirty.reask(&tree);
         until_asked(&git, 1);
         git.answer("/wt/a", false);
         until_answered(&mut dirty);
@@ -414,8 +447,93 @@ mod tests {
         git.answer("/wt/b", false);
         until_answered(&mut dirty);
 
-        assert!(dirty.paths().is_empty(), "neither is marked");
-        assert_eq!(dirty.unreadable(), 1, "but only one of them is clean");
+        assert!(dirty.paths().is_empty(), "neither is marked dirty");
+        assert_eq!(
+            dirty.unreadable(),
+            vec!["/wt/a".to_string()],
+            "but only one of them is being called clean"
+        );
+    }
+
+    #[test]
+    fn only_an_answer_that_changes_what_a_row_draws_asks_for_a_redraw() {
+        // Most checkouts are clean, and a checkout nobody had asked about turning out to be
+        // clean draws exactly what it drew before: nothing. Rebuilding the list for those
+        // is work for a list that comes out identical.
+        let git = FakeGit::new();
+        let mut dirty = Dirty::new(git.clone());
+        let tree = tree(&["/wt/a", "/wt/b", "/wt/c"]);
+        dirty.ask(&tree);
+        until_asked(&git, 3);
+
+        git.answer("/wt/a", false);
+        until("the clean answer never arrived", || {
+            let changed = dirty.drain();
+            assert!(!changed, "nothing to redraw for a clean working tree");
+            dirty.in_flight == 2
+        });
+
+        git.answer("/wt/b", true);
+        until("the dirty answer never arrived", || {
+            dirty.drain() || {
+                assert_eq!(dirty.in_flight, 2, "still waiting on it");
+                false
+            }
+        });
+
+        git.refuse("/wt/c");
+        until("the refusal never arrived", || dirty.drain());
+    }
+
+    #[test]
+    fn a_refusal_from_a_withdrawn_round_does_not_keep_a_row_marked() {
+        // The scenario the whole state exists for: git is misconfigured, every checkout
+        // refuses, the user fixes it and presses `r`. The refusals still in flight are
+        // answers to a question that has been withdrawn.
+        let git = FakeGit::new();
+        let mut dirty = Dirty::new(git.clone());
+        let tree = tree(&["/wt/a"]);
+
+        dirty.ask(&tree);
+        until_asked(&git, 1);
+        dirty.reask(&tree);
+        until_asked(&git, 2);
+
+        git.refuse("/wt/a");
+        until("the stale refusal never arrived", || {
+            dirty.drain();
+            dirty.in_flight == 1
+        });
+        assert!(dirty.unreadable().is_empty(), "it was withdrawn");
+
+        git.answer("/wt/a", false);
+        until_answered(&mut dirty);
+        assert!(dirty.unreadable().is_empty());
+        assert!(dirty.paths().is_empty());
+    }
+
+    #[test]
+    fn a_checkout_that_has_left_the_tree_is_forgotten() {
+        // Kept for the life of the picker, so without this a session's worth of deleted
+        // checkouts accumulates — and every one is an answer about a working tree that is
+        // no longer there.
+        let git = FakeGit::new();
+        let mut dirty = Dirty::new(git.clone());
+
+        dirty.ask(&tree(&["/wt/a", "/wt/b"]));
+        until_asked(&git, 2);
+        git.refuse("/wt/a");
+        git.answer("/wt/b", true);
+        until_answered(&mut dirty);
+        assert_eq!(dirty.unreadable(), vec!["/wt/a".to_string()]);
+        assert_eq!(dirty.paths(), vec!["/wt/b".to_string()]);
+
+        // `/wt/a` is deleted; the picker collects the tree again and asks about what is
+        // left.
+        dirty.ask(&tree(&["/wt/b"]));
+        assert!(dirty.unreadable().is_empty());
+        assert_eq!(dirty.paths(), vec!["/wt/b".to_string()]);
+        assert_eq!(git.outstanding(), 0, "and nothing is asked twice");
     }
 
     #[test]
@@ -429,12 +547,14 @@ mod tests {
 
         dirty.ask(&tree(&borrowed));
         until_asked(&git, MAX_IN_FLIGHT);
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        // `pump` spawns on this thread and nothing has drained, so this is the whole
+        // population rather than a snapshot of a moving one.
         assert_eq!(git.outstanding(), MAX_IN_FLIGHT);
 
         for path in paths.iter().take(MAX_IN_FLIGHT) {
             git.answer(path, false);
         }
+
         // The next slots open on the drain, which is where the loop takes answers in.
         until("slots never came free", || {
             dirty.drain();

@@ -62,8 +62,6 @@ pub struct PanesState {
     tick: usize,
     /// Whether an answer is still on its way, which the prompt line says with a spinner.
     waiting: bool,
-    /// How many working trees git declined to answer for.
-    unreadable: usize,
 }
 
 /// A checkout the user has asked to delete, held until they say yes.
@@ -92,7 +90,6 @@ impl PanesState {
             message: None,
             tick: 0,
             waiting: false,
-            unreadable: 0,
         };
         state.rebuild(None);
         state
@@ -132,14 +129,15 @@ impl PanesState {
         self.waiting
     }
 
-    /// How many working trees git would not answer for. Drawn where the spinner was, so a
-    /// list of unmarked rows is never a silent claim that every one of them is clean.
-    pub fn set_unreadable(&mut self, count: usize) {
-        self.unreadable = count;
-    }
-
-    pub fn unreadable(&self) -> usize {
-        self.unreadable
+    /// Say which checkouts git would not answer for, so their rows can say it themselves. A
+    /// row with no marker is then the absence of a claim rather than a claim of clean.
+    pub fn set_unreadable(&mut self, paths: Vec<String>) {
+        if self.options.unreadable == paths {
+            return;
+        }
+        self.options.unreadable = paths;
+        self.rows = rows::flatten(&self.tree, &self.options);
+        self.lines = rows::display_lines(&self.rows);
     }
 
     /// Say which checkouts are being removed, so their rows can say so and stop being

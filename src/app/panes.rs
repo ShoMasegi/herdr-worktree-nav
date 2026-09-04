@@ -58,6 +58,7 @@ pub fn run(
     let outcome = loop {
         if dirty.drain() {
             state.set_dirty(dirty.paths());
+            state.set_unreadable(dirty.unreadable());
         }
         let reading_working_trees = dirty.is_waiting();
         state.set_waiting(reading_working_trees);
@@ -107,9 +108,9 @@ pub fn run(
                     state.replace_tree(tree);
                     // Reload means reload: whether a checkout is dirty is a fact about a
                     // working tree the user has been editing since it was last asked.
-                    dirty.forget();
-                    dirty.ask(state.tree());
+                    dirty.reask(state.tree());
                     state.set_dirty(dirty.paths());
+                    state.set_unreadable(dirty.unreadable());
                 }
                 Err(error) => state.set_message(format!("{error:#}")),
             },
