@@ -12,8 +12,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::domain::model::{Tree, WorkingTree};
-use crate::port::{PullRequestOutcome, SettledPullRequest, Track};
+use crate::domain::model::{RepoNode, Tree, WorkingTree};
+use crate::port::{PullRequestOutcome, SettledPullRequests, Track};
 
 /// Why a checkout is offered for deletion. Shown beside the mark, because a mark whose
 /// reason is invisible is one the user either trusts blindly or clears wholesale.
@@ -99,14 +99,31 @@ impl Candidate {
     }
 }
 
+/// Which repository a `gh` answer is about.
+///
+/// A newtype rather than a `String` because `RepoNode` carries two of those side by side —
+/// `repo_key` (`/src/app/.git`) and `repo_root` (`/src/app`) — and a map keyed by the wrong
+/// one silently answers nothing for every checkout in the tree: no marks, no `Unjudged`, no
+/// error, nothing on screen. [`RepoRoot::of`] is the only way to make one, so there is
+/// nothing to pick wrongly.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RepoRoot(String);
+
+impl RepoRoot {
+    pub fn of(repo: &RepoNode) -> Self {
+        RepoRoot(repo.repo_root.clone())
+    }
+}
+
 /// Everything a sweep decides on that is not in the tree.
 pub struct Facts<'a> {
     /// What git said about each working tree, by checkout path. Absent is "not asked yet",
     /// which is not clean — see `domain::model::WorkingTree`.
     pub working_trees: &'a BTreeMap<String, WorkingTree>,
     /// What `gh` said, by repository root. `None` for a repository `gh` could not be asked
-    /// about; a repository absent from the map has not been asked.
-    pub settled: &'a BTreeMap<String, Option<Vec<SettledPullRequest>>>,
+    /// about — the reason belongs on the prompt line, not in a decision — and a repository
+    /// absent from the map has not been asked at all.
+    pub settled: &'a BTreeMap<RepoRoot, Option<SettledPullRequests>>,
     /// Checkout paths whose removal is already running.
     pub removing: &'a [String],
 }
@@ -115,7 +132,7 @@ pub struct Facts<'a> {
 pub fn candidates(tree: &Tree, facts: &Facts) -> BTreeMap<String, Candidate> {
     let mut out = BTreeMap::new();
     for repo in &tree.repos {
-        let settled = facts.settled.get(&repo.repo_root);
+        let settled = facts.settled.get(&RepoRoot::of(repo));
         for worktree in &repo.worktrees {
             let path = &worktree.checkout_path;
             out.insert(path.clone(), judge(worktree, settled, facts));
@@ -126,7 +143,7 @@ pub fn candidates(tree: &Tree, facts: &Facts) -> BTreeMap<String, Candidate> {
 
 fn judge(
     worktree: &crate::domain::model::WorktreeNode,
-    settled: Option<&Option<Vec<SettledPullRequest>>>,
+    settled: Option<&Option<SettledPullRequests>>,
     facts: &Facts,
 ) -> Candidate {
     // The refusals come first and in this order because they are about the checkout rather
@@ -155,27 +172,48 @@ fn judge(
         return Candidate::Offered(Reason::Gone);
     }
 
-    match settled {
-        // Asked, and it answered. A pull request for this branch that is finished with is
-        // the second way in; anything else is simply not a candidate.
-        Some(Some(pull_requests)) => {
-            let found = worktree
-                .branch
-                .as_ref()
-                .and_then(|branch| pull_requests.iter().find(|pr| &pr.head_ref == branch));
-            match found {
-                Some(pull_request) if clean => Candidate::Offered(Reason::PullRequest {
-                    number: pull_request.number,
-                    outcome: pull_request.outcome,
-                }),
-                _ => Candidate::Available,
-            }
-        }
-        // Asked, and it could not answer. Only worth saying on a row the answer could have
-        // changed: one already refused, or already offered by git, or that git would refuse
-        // anyway, is not a row a pull request was going to decide.
-        Some(None) if clean && worktree.branch.is_some() => Candidate::Unjudged,
-        _ => Candidate::Available,
+    // Below here `gh` is the only thing left that could say anything, so a row it could not
+    // reach is `Unjudged` rather than `Available` — but only where its answer would have
+    // changed the outcome. A row already refused, already offered by git, or that git would
+    // refuse anyway was never a row a pull request was going to decide.
+    let could_have_decided = clean && worktree.branch.is_some();
+    let Some(settled) = settled else {
+        // Nobody has asked yet. Not the same as asking and getting nothing, but there is
+        // nothing to say about it either: an answer is still coming.
+        return Candidate::Available;
+    };
+    let Some(settled) = settled else {
+        return unjudged_if(could_have_decided);
+    };
+
+    let found = worktree.branch.as_ref().and_then(|branch| {
+        settled.pull_requests.iter().find(|pull_request| {
+            // Exactly this branch, on this repository. `head_ref` is a name on whichever
+            // repository the pull request came from, so a contributor's merged `patch-1`
+            // says nothing at all about a local checkout of the same name — and matching it
+            // would delete work on the strength of a coincidence. `gh` may only widen a
+            // sweep, and a wrong mark is not a widening.
+            !pull_request.from_a_fork && &pull_request.head_ref == branch
+        })
+    });
+    match found {
+        Some(pull_request) if clean => Candidate::Offered(Reason::PullRequest {
+            number: pull_request.number,
+            outcome: pull_request.outcome,
+        }),
+        // Not found in a list that is all of them is an answer: there is no pull request for
+        // this branch. Not found in a truncated one is not — the window `gh` was given may
+        // simply not reach back far enough, and saying "nothing to sweep" on the strength of
+        // that is the confident wrong claim this whole distinction exists to prevent.
+        _ => unjudged_if(could_have_decided && !settled.complete),
+    }
+}
+
+fn unjudged_if(unseen: bool) -> Candidate {
+    if unseen {
+        Candidate::Unjudged
+    } else {
+        Candidate::Available
     }
 }
 
@@ -183,7 +221,7 @@ fn judge(
 mod tests {
     use super::*;
     use crate::domain::model::{PaneNode, RepoNode, WorktreeNode};
-    use crate::port::AgentStatus;
+    use crate::port::{AgentStatus, SettledPullRequest};
 
     fn worktree(branch: &str, path: &str) -> WorktreeNode {
         WorktreeNode {
@@ -196,13 +234,21 @@ mod tests {
         }
     }
 
+    /// The one repository these mostly work with, so the key and the tree cannot drift.
+    fn only_repo() -> RepoNode {
+        RepoNode {
+            repo_key: "/src/app/.git".into(),
+            repo_root: "/src/app".into(),
+            display_name: "me/app".into(),
+            worktrees: Vec::new(),
+        }
+    }
+
     fn tree_of(worktrees: Vec<WorktreeNode>) -> Tree {
         Tree {
             repos: vec![RepoNode {
-                repo_key: "/src/app/.git".into(),
-                repo_root: "/src/app".into(),
-                display_name: "me/app".into(),
                 worktrees,
+                ..only_repo()
             }],
             ungrouped: Vec::new(),
         }
@@ -217,15 +263,34 @@ mod tests {
 
     fn asked(
         pull_requests: Vec<SettledPullRequest>,
-    ) -> BTreeMap<String, Option<Vec<SettledPullRequest>>> {
-        BTreeMap::from([("/src/app".to_string(), Some(pull_requests))])
+    ) -> BTreeMap<RepoRoot, Option<SettledPullRequests>> {
+        told(pull_requests, true)
+    }
+
+    /// What `gh` said, and whether it was all of it.
+    fn told(
+        pull_requests: Vec<SettledPullRequest>,
+        complete: bool,
+    ) -> BTreeMap<RepoRoot, Option<SettledPullRequests>> {
+        BTreeMap::from([(
+            RepoRoot::of(&only_repo()),
+            Some(SettledPullRequests {
+                pull_requests,
+                complete,
+            }),
+        )])
     }
 
     fn merged(number: u64, head_ref: &str) -> SettledPullRequest {
+        settled(number, head_ref, PullRequestOutcome::Merged)
+    }
+
+    fn settled(number: u64, head_ref: &str, outcome: PullRequestOutcome) -> SettledPullRequest {
         SettledPullRequest {
             number,
             head_ref: head_ref.to_string(),
-            outcome: PullRequestOutcome::Merged,
+            from_a_fork: false,
+            outcome,
         }
     }
 
@@ -236,7 +301,7 @@ mod tests {
     /// The everything-is-fine case: one clean checkout, nothing running, nobody asked `gh`.
     fn facts<'a>(
         working_trees: &'a BTreeMap<String, WorkingTree>,
-        settled: &'a BTreeMap<String, Option<Vec<SettledPullRequest>>>,
+        settled: &'a BTreeMap<RepoRoot, Option<SettledPullRequests>>,
     ) -> Facts<'a> {
         Facts {
             working_trees,
@@ -376,7 +441,7 @@ mod tests {
             focused: false,
         }];
         let trees = clean(&["/wt/feat-login", "/wt/fix-crash", "/wt/tidy"]);
-        let unavailable = BTreeMap::from([("/src/app".to_string(), None)]);
+        let unavailable = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
 
         let judged = judged(
             &tree_of(vec![judgeable, already, running]),
@@ -406,12 +471,179 @@ mod tests {
         );
         assert_eq!(answered["/wt/feat-login"], Candidate::Available);
 
-        let unavailable = BTreeMap::from([("/src/app".to_string(), None)]);
+        let unavailable = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
         let could_not = judged(
             &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
             &facts(&trees, &unavailable),
         );
         assert_eq!(could_not["/wt/feat-login"], Candidate::Unjudged);
+    }
+
+    #[test]
+    fn a_branch_beyond_the_window_gh_was_given_is_not_called_finished_with() {
+        // `gh` answers newest first and says nothing when it truncates, so "not in this
+        // list" from a full window is not "no pull request". Reading it as one would tell
+        // the user there is nothing to sweep on the strength of a page size.
+        let trees = clean(&["/wt/feat-login"]);
+        let truncated = told(vec![merged(1, "some/other")], false);
+        let partial = judged(
+            &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
+            &facts(&trees, &truncated),
+        );
+        assert_eq!(partial["/wt/feat-login"], Candidate::Unjudged);
+
+        // And the same list, known to be all of them, is an answer.
+        let whole = told(vec![merged(1, "some/other")], true);
+        let complete = judged(
+            &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
+            &facts(&trees, &whole),
+        );
+        assert_eq!(complete["/wt/feat-login"], Candidate::Available);
+    }
+
+    #[test]
+    fn a_branch_found_in_a_truncated_window_is_still_an_answer() {
+        // Truncation only casts doubt on absence. A pull request that *is* there was seen.
+        let trees = clean(&["/wt/feat-login"]);
+        let truncated = told(vec![merged(4, "feat/login")], false);
+        let judged = judged(
+            &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
+            &facts(&trees, &truncated),
+        );
+        assert_eq!(
+            judged["/wt/feat-login"],
+            Candidate::Offered(Reason::PullRequest {
+                number: 4,
+                outcome: PullRequestOutcome::Merged,
+            })
+        );
+    }
+
+    #[test]
+    fn a_repository_nobody_has_asked_gh_about_yet_is_not_reported_as_unseen() {
+        // An answer is still on its way. Saying "PR unknown" here would put a permanent
+        // word on a temporary state, which is the mistake the working-tree walk already
+        // avoids by drawing no marker until it knows.
+        let trees = clean(&["/wt/feat-login"]);
+        let none = BTreeMap::new();
+        let judged = judged(
+            &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
+            &facts(&trees, &none),
+        );
+        assert_eq!(judged["/wt/feat-login"], Candidate::Available);
+    }
+
+    #[test]
+    fn a_pull_request_that_was_closed_is_not_reported_as_one_that_landed() {
+        // The two outcomes read very differently to whoever is deciding. "PR #4 merged"
+        // says the work is in; "PR #4 closed" says it was abandoned. Getting it the wrong
+        // way round tells someone their work landed as they delete the only copy of it.
+        let trees = clean(&["/wt/feat-login"]);
+        let abandoned = asked(vec![settled(4, "feat/login", PullRequestOutcome::Closed)]);
+        let judged = judged(
+            &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
+            &facts(&trees, &abandoned),
+        );
+        assert_eq!(judged["/wt/feat-login"].label_for_test(), "PR #4 closed");
+    }
+
+    #[test]
+    fn one_repositorys_pull_requests_never_judge_anothers_checkouts() {
+        // `feat/login` in two repositories is ordinary, and only one of them was asked
+        // about. Answering for both would offer to delete a checkout on the strength of a
+        // merge that happened somewhere else entirely.
+        let tree = Tree {
+            repos: vec![
+                RepoNode {
+                    worktrees: vec![worktree("feat/login", "/wt/app-login")],
+                    ..only_repo()
+                },
+                RepoNode {
+                    repo_key: "/src/site/.git".into(),
+                    repo_root: "/src/site".into(),
+                    display_name: "me/site".into(),
+                    worktrees: vec![worktree("feat/login", "/wt/site-login")],
+                },
+            ],
+            ungrouped: Vec::new(),
+        };
+        let trees = clean(&["/wt/app-login", "/wt/site-login"]);
+        let judged = candidates(&tree, &facts(&trees, &asked(vec![merged(1, "feat/login")])));
+        assert!(judged["/wt/app-login"].is_offered(), "its own repository");
+        assert_eq!(
+            judged["/wt/site-login"],
+            Candidate::Available,
+            "nobody asked gh about that repository at all"
+        );
+    }
+
+    #[test]
+    fn a_pull_request_offers_only_the_branch_it_was_actually_for() {
+        // Not one whose name it merely contains. `login` and `feat/login` are two branches.
+        let trees = clean(&["/wt/login"]);
+        let judged = judged(
+            &tree_of(vec![worktree("login", "/wt/login")]),
+            &facts(&trees, &asked(vec![merged(5, "feat/login")])),
+        );
+        assert_eq!(judged["/wt/login"], Candidate::Available);
+    }
+
+    #[test]
+    fn a_branch_of_the_same_name_on_somebody_elses_fork_is_not_this_one() {
+        // `gh` reports a fork's branch by its bare name, so a merged drive-by `patch-1`
+        // arrives looking exactly like the local `patch-1` somebody is working on. On a
+        // repository that takes contributions this is the everyday collision, and offering
+        // it would be `gh` producing a wrong mark rather than widening a set.
+        let trees = clean(&["/wt/patch-1"]);
+        let from_a_fork = asked(vec![SettledPullRequest {
+            number: 42,
+            head_ref: "patch-1".to_string(),
+            from_a_fork: true,
+            outcome: PullRequestOutcome::Merged,
+        }]);
+        let judged = judged(
+            &tree_of(vec![worktree("patch-1", "/wt/patch-1")]),
+            &facts(&trees, &from_a_fork),
+        );
+        assert_eq!(judged["/wt/patch-1"], Candidate::Available);
+    }
+
+    #[test]
+    fn a_row_git_would_refuse_anyway_is_not_called_unjudged() {
+        // `gh` failing is only worth saying where its answer could have changed something.
+        // A working tree holding work was never going to be offered whatever GitHub said.
+        let dirty = BTreeMap::from([("/wt/feat-login".to_string(), WorkingTree::Dirty)]);
+        let unavailable = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
+        let judged = judged(
+            &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
+            &facts(&dirty, &unavailable),
+        );
+        assert_eq!(judged["/wt/feat-login"], Candidate::Available);
+    }
+
+    #[test]
+    fn what_the_sweep_marks_and_what_the_user_may_mark_are_different_questions() {
+        assert!(Candidate::Offered(Reason::Gone).is_offered());
+        for own in [Candidate::Unjudged, Candidate::Available] {
+            assert!(!own.is_offered(), "{own:?} is not marked for the user");
+            assert!(own.is_markable(), "{own:?} is still the user's to mark");
+        }
+        for refusal in [Refusal::Primary, Refusal::Running, Refusal::Removing] {
+            let refused = Candidate::Refused(refusal);
+            assert!(!refused.is_offered());
+            assert!(
+                !refused.is_markable(),
+                "{refusal:?} is nobody's to overrule"
+            );
+        }
+    }
+
+    #[test]
+    fn every_refusal_says_which_one_it_is() {
+        // A row that simply cannot be marked, with no word for why, reads as a bug.
+        assert_eq!(Refusal::Primary.label(), "the repository itself");
+        assert_eq!(Refusal::Running.label(), "panes are running in it");
+        assert_eq!(Refusal::Removing.label(), "already being removed");
     }
 
     #[test]
