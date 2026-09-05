@@ -15,6 +15,52 @@ pub struct RepoNode {
     pub worktrees: Vec<WorktreeNode>,
 }
 
+/// What git said about a checkout's working tree.
+///
+/// Three answers, not a boolean, because a sweep decides on the difference. "Not dirty" is
+/// what a boolean gives, and it is the wrong fact to delete a checkout on: it also means
+/// "nobody has asked yet" and "git would not say". `Option<WorkingTree>` is the whole
+/// picture, with `None` for a checkout still being walked —
+/// `docs/adr/0011-what-may-be-swept.md` is where the distinction stops being cosmetic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkingTree {
+    /// Nothing modified and nothing untracked. The only one of these a sweep may act on.
+    Clean,
+    /// Modified tracked files, or untracked ones. The same question `git worktree remove`
+    /// asks before it refuses.
+    Dirty,
+    /// git declined. Not the same claim as clean — and the one answer of the three that is
+    /// about the tooling rather than the work. Nothing here tells its shapes apart: a
+    /// `safe.directory` refusal fails identically for every checkout at once and a worktree
+    /// whose directory has gone fails for exactly one, and both arrive as this. Whether that
+    /// is worth a fourth variant is a question for whoever first has to explain one to a
+    /// user.
+    Unreadable,
+}
+
+impl WorkingTree {
+    /// Whether this is a working tree with nothing in it to lose.
+    pub fn is_clean(self) -> bool {
+        self == WorkingTree::Clean
+    }
+
+    /// Whether a row shows a mark for this. Clean draws nothing, and so does a checkout
+    /// nobody has answered for yet — which is why the commonest transition of all does not
+    /// rebuild the list.
+    ///
+    /// Spelled out rather than written as `!= Clean`, which is the same thing today and
+    /// would go on compiling as an answer that draws nothing was added. This has to track
+    /// `domain::rows::marks`. The compiler will make whoever adds a variant *visit* both,
+    /// which `!= Clean` would not — it cannot make them agree, so the two still have to be
+    /// read together.
+    pub fn is_drawn(self) -> bool {
+        match self {
+            WorkingTree::Clean => false,
+            WorkingTree::Dirty | WorkingTree::Unreadable => true,
+        }
+    }
+}
+
 /// One checkout of a repository: the primary one, or a linked worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeNode {

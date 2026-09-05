@@ -254,7 +254,10 @@ pub trait GitPort: Send + Sync {
     fn identify(&self, cwd: &str) -> Result<Option<RepoIdentity>>;
 
     /// `owner/repo` when `origin` points at GitHub, otherwise `None`.
-    fn github_slug(&self, repo_root: &str) -> Result<Option<String>>;
+    ///
+    /// The only source of a [`Slug`] in this crate, which is what makes the two `gh` calls
+    /// unable to be asked about a directory.
+    fn github_slug(&self, repo_root: &str) -> Result<Option<Slug>>;
 
     /// Local and already-fetched remote branches. Cheap and offline.
     fn local_refs(&self, repo_root: &str) -> Result<Vec<GitRef>>;
@@ -296,10 +299,179 @@ pub struct PullRequest {
     pub is_draft: bool,
 }
 
+/// What became of a pull request, once it is no longer open.
+///
+/// There is no `Open`, because `gh` may only *widen* a sweep and an open pull request never
+/// widens one — `docs/adr/0011-what-may-be-swept.md`.
+///
+/// That is not the same as an open pull request being irrelevant, and the difference is a
+/// known limit rather than a solved problem. A branch reused after an earlier pull request
+/// was closed still has a settled one against it, and nothing here can tell that apart from
+/// a branch that is finished with. ADR 0011 draws the same line for the neighbouring case of
+/// a pull request that was reopened: "that is enough to offer a mark. It is not enough to
+/// pass a `-D`." Reuse is not reopening, and the ADR does not name it — but it is the same
+/// trade, and the same answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PullRequestOutcome {
+    Merged,
+    Closed,
+}
+
+/// A pull request that is done with, and the branch it was for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettledPullRequest {
+    pub number: u64,
+    /// The branch name on whichever repository the pull request came *from*, which for a
+    /// fork is not this one — see [`from_a_fork`](SettledPullRequest::from_a_fork).
+    pub head_ref: String,
+    /// Whether the branch lives on somebody else's fork. A drive-by `patch-1` arrives here
+    /// as the bare name `patch-1`, so on a repository that takes contributions the name
+    /// alone says nothing about the local checkout that happens to share it — and `patch-1`,
+    /// `main` and `fix/typo` are exactly the names that collide.
+    pub from_a_fork: bool,
+    pub outcome: PullRequestOutcome,
+}
+
+/// What `gh` said about one repository's finished pull requests.
+///
+/// Whether the list is all of them is a way of building it rather than a field beside it, so
+/// there is no flag that can go stale against the list it describes. It does not stop a
+/// caller naming the wrong variant — both are `pub` — only the drift. A vector that came back
+/// truncated and a flag saying it did not is exactly the value that makes a sweep quietly
+/// find less with nothing on screen saying so —
+/// ADR 0011 does not mention truncation, but the principle it does state covers it: a tool
+/// that finds less when it could not look is worse than one that says which half it missed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettledPullRequests {
+    /// Every finished pull request this repository has. A branch absent from it has none.
+    ///
+    /// This repository's, which for a clone of a fork is not where its pull requests live —
+    /// those are settled on the parent. So a fork sweeps fewer rows than the repository it
+    /// came from while saying `All` about it, which is the one place this type is confident
+    /// and narrow at once. Answering for the parent as well is not done here.
+    All(Vec<SettledPullRequest>),
+    /// As many as `gh` was asked for, and it gave back that many — so there may be more
+    /// behind them and there is no way to tell. `gh` answers newest first and says nothing
+    /// when it truncates, so a full window is the only evidence there is.
+    ///
+    /// Also how a state this does not know is reported. Dropping the entry is right — an
+    /// unknown state is no reason to delete anything — but calling the rest the whole answer
+    /// would turn "there is something here I could not read" into "there is nothing here".
+    Window(Vec<SettledPullRequest>),
+}
+
+impl SettledPullRequests {
+    /// The pull requests, whichever way the list arrived.
+    ///
+    /// Data, not a decision. What a branch's *absence* from this means is the whole
+    /// difference between the two variants, so anything acting on a miss matches on the
+    /// variant rather than reaching for the list — see `domain::sweep`, which is where that
+    /// reasoning lives.
+    pub fn pull_requests(&self) -> &[SettledPullRequest] {
+        match self {
+            SettledPullRequests::All(list) | SettledPullRequests::Window(list) => list,
+        }
+    }
+}
+
+/// `owner/repo` on GitHub — the only thing `gh` can be asked about.
+///
+/// A newtype rather than a `String` because both `gh` calls in this crate take one, and a
+/// checkout path has now been passed to one of them twice. It does not fail loudly: `gh`
+/// given a directory picks a base repository out of that checkout's remotes, and for a fork
+/// that is the *parent*. Zero exit, somebody else's pull requests, nothing on screen. The
+/// second time, a whole commit went into testing the function around the call site and the
+/// call site itself still compiled with the bug in it.
+///
+/// So the fix is not another test. Outside this module [`Slug::owner_repo`] is the only way
+/// to make one, and a repository root is not two names — `gh.pull_requests(&repo_root)` no
+/// longer builds.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Slug(String);
+
+impl Slug {
+    /// Two names GitHub knows, from a remote URL that had them side by side.
+    ///
+    /// Takes them apart rather than whole so that a path — which arrives as one string —
+    /// cannot be mistaken for one. Neither may be empty and neither may carry a `/`: those
+    /// are what a path split badly looks like, and `gh` would reject the result anyway,
+    /// having asked for `[HOST/]OWNER/REPO` and been given something else.
+    pub fn owner_repo(owner: &str, repo: &str) -> Option<Self> {
+        if owner.is_empty() || repo.is_empty() || owner.contains('/') || repo.contains('/') {
+            return None;
+        }
+        Some(Slug(format!("{owner}/{repo}")))
+    }
+
+    /// What `gh` is given after `-R`.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// `Sync` because the pull request lookup runs on a background thread while the picker
 /// is already on screen.
 pub trait GhPort: Sync {
     /// Open pull requests for the repository, or an empty list when `gh` is missing or
     /// unauthenticated. This layer is decoration: it must never fail the picker.
-    fn pull_requests(&self, repo_root: &str) -> Vec<PullRequest>;
+    /// A repository GitHub has never heard of has no [`Slug`] and cannot be asked, which is
+    /// the right answer rather than a missing one. The type is why a checkout path cannot be
+    /// passed here — see [`Slug`] for the two times one was.
+    fn pull_requests(&self, slug: &Slug) -> Vec<PullRequest>;
+
+    /// Pull requests that have been merged or closed, for deciding what a sweep may offer.
+    ///
+    /// `Err` — not an empty list — when nothing usable came back, carrying what went wrong
+    /// so the picker can say which half of the sweep it could not look at. That covers `gh`
+    /// not being run at all, `gh` refusing, and `gh` answering in a shape this cannot read:
+    /// deliberately one answer, because all three mean the same thing to a sweep, which is
+    /// that it did not get to look. An empty `Ok` is "asked, and nothing here is finished
+    /// with", which is the different answer this exists to keep apart.
+    /// [`pull_requests`](GhPort::pull_requests) conflates those two on purpose, because
+    /// ADR 0003's promise is that a missing `gh` costs nothing there. Here it costs
+    /// something: ADR 0011 says a degraded `gh` must be *visible*, since a sweep that
+    /// quietly offers fewer rows is worse than one that says which half it could not judge.
+    ///
+    /// `Err` is still never a reason to fail the picker. It is a sentence to show, not a
+    /// question to give up on.
+    ///
+    /// Heavier than `pull_requests` — a wider window over a state nobody has asked about
+    /// before — so it is called when a sweep is entered rather than when the picker opens.
+    fn settled_pull_requests(&self, slug: &Slug) -> Result<SettledPullRequests, String>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Slug;
+
+    #[test]
+    fn a_repository_root_is_not_two_names() {
+        // The accident this type exists to stop, in the shape it would actually arrive in:
+        // somebody has a path and wants a slug out of it. Splitting an absolute path on the
+        // first `/` gives an empty owner; splitting it anywhere else leaves a `/` in one
+        // half. `gh` asked for `[HOST/]OWNER/REPO` and would reject either, but it rejects
+        // them at a subprocess boundary with a non-zero exit that the branches view throws
+        // away — which is how this went unnoticed twice.
+        let root = "/src/app";
+        let (owner, repo) = root.split_once('/').expect("an absolute path has one");
+        assert_eq!(Slug::owner_repo(owner, repo), None, "{owner:?} / {repo:?}");
+        assert_eq!(Slug::owner_repo("/src", "app"), None, "a path in the owner");
+        assert_eq!(
+            Slug::owner_repo("me", "app/deeper"),
+            None,
+            "and in the repo"
+        );
+        assert_eq!(Slug::owner_repo("me", ""), None, "half a name is not one");
+        assert_eq!(Slug::owner_repo("", "app"), None, "either half");
+    }
+
+    #[test]
+    fn two_names_github_would_know_make_the_argument_gh_is_given() {
+        let slug = Slug::owner_repo("ShoMasegi", "herdr-worktree-nav");
+        assert_eq!(
+            slug.as_ref().map(Slug::as_str),
+            Some("ShoMasegi/herdr-worktree-nav"),
+            "one `/`, put there by this rather than found in the input"
+        );
+    }
 }

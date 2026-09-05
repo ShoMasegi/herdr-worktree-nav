@@ -47,6 +47,7 @@ src/
 | `domain::preview` | pane が着地した後、行き先の tab はどう見えるか |
 | `domain::progress` | ブランチを開く処理は今どの段階で、まだ中断できるか |
 | `domain::removal` | どのチェックアウトを削除するのか、そして終わった削除は何を、誰に向かって言うのか |
+| `domain::sweep` | 一括削除はどのチェックアウトを、どんな理由で提示してよいのか、そしてどれは判断できなかったのか |
 | `domain::chrome` | herdr はどの accent と状態グリフに設定されているか |
 
 ## herdr との通信
@@ -142,4 +143,5 @@ Shift-D, y ─▶ setsid herdr-worktree-nav remove …  ─┬─▶ git worktre
 | `ui` の状態 | キー処理は状態 → アクションの純粋な写像なので、キーマップを直接テスト |
 | `ui` の描画 | `TestBackend` + `insta` による描画バッファのスナップショット |
 | `adapter` の git | `tempfile::TempDir` に実リポジトリを作成 |
+| `adapter` の gh | CI では `gh` を一度も起動しないため、各呼び出しを「組み立てるコマンド」と「読む答え」に分割し、両方をプロセス無しでテストする — 不正な引数列が緑のスイートを素通りして2度出荷されたため。テストが届かないのは `.output()` とその周りのリダイレクトだけ: `Command` は `stderr` の getter を持たないので、`null` に送っても（refusal のたびに gh 自身の言葉が失われるのに）何も落ちない。ここはテストが `PATH` に置いた `gh` が要る |
 | `adapter` の herdr | CI ではテスト不可（サーバーが無い）。手動確認手順は[トラブルシューティング](troubleshooting.md)を参照 |

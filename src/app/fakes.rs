@@ -40,8 +40,14 @@ pub fn until(what: &str, mut ready: impl FnMut() -> bool) {
 ///
 /// A method this does not need is `unreachable!()`, and that is a rule rather than an
 /// oversight: the tests that share this rely on an unexpected call failing. A module that
-/// needs one of them adds a fake of its own — filling one in here would quietly weaken
-/// every test already using it, and none of them would fail to say so.
+/// needs one of them adds a fake of its own — filling one in with an *answer* would quietly
+/// weaken every test already using it, and none of them would fail to say so.
+///
+/// `snapshot` is the exception, and it is an exception because it refuses rather than
+/// answers. A caller that reaches it still fails; it just fails in a shape a test can assert
+/// on instead of a panic, which is what makes "the panes closed and the list could not be
+/// read again" reachable at all. The `Ok` half of that arm still needs a fake that can
+/// describe a tree, and no test here has one — see issue #18.
 #[derive(Default)]
 pub struct Recorder {
     did: Mutex<Vec<String>>,
@@ -76,8 +82,12 @@ impl HerdrPort for Recorder {
         Ok(())
     }
 
+    /// A herdr that will not describe itself. Refusing rather than panicking on purpose:
+    /// what a caller does when the panes have closed and the list cannot be read again is a
+    /// decision worth pinning, and a panic is not something a test can assert the outcome
+    /// of. See the note on the struct.
     fn snapshot(&self) -> Result<Snapshot> {
-        unreachable!("only pane_close is asked of Recorder's HerdrPort")
+        Err(anyhow::anyhow!("herdr is not answering"))
     }
     fn worktree_list(&self, _cwd: &str) -> Result<WorktreeList> {
         unreachable!("only pane_close is asked of Recorder's HerdrPort")

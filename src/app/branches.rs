@@ -155,7 +155,7 @@ pub fn run(
                             repo_root: root.clone(),
                         },
                     });
-                    let pull_requests = gh.pull_requests(&root);
+                    let pull_requests = annotations(git, gh, &root);
                     let _ = sender.send(Update::PullRequests {
                         repo_root: root,
                         pull_requests,
@@ -366,6 +366,23 @@ fn answer(update: Update) -> listing::Answer {
     }
 }
 
+/// The pull requests to annotate a repository's branches with, or none.
+///
+/// Out of the loop so a test can reach it: `run` needs a terminal, and what this gets wrong
+/// is invisible from outside. `gh` has to be asked by *name* — given only a directory it
+/// answers about whatever base repository it picks out of the remotes, and for a fork that is
+/// the parent, with a zero exit and nothing to say so.
+///
+/// No slug, no question. A repository GitHub has never heard of has no name to ask about, and
+/// git failing to say is the same silence from here; both cost nothing but the annotation,
+/// which is what `docs/adr/0003-git-first-gh-optional.md` promises.
+fn annotations(git: &dyn GitPort, gh: &dyn GhPort, repo_root: &str) -> Vec<PullRequest> {
+    match git.github_slug(repo_root) {
+        Ok(Some(slug)) => gh.pull_requests(&slug),
+        _ => Vec::new(),
+    }
+}
+
 /// A repository herdr has no worktree record for. Its branches are still listable.
 fn bare(repo_root: &str) -> RepoNode {
     let repo_root = normalize_path(repo_root);
@@ -496,7 +513,88 @@ fn open_existing(herdr: &dyn HerdrPort, repo_root: &str, checkout_path: &str) ->
 
 #[cfg(test)]
 mod tests {
-    use super::bare;
+    use super::*;
+    use std::sync::Mutex;
+
+    use crate::port::Slug;
+
+    /// A git that knows one repository by name, or refuses to say.
+    struct Origin(std::result::Result<Option<Slug>, ()>);
+
+    impl GitPort for Origin {
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
+            match &self.0 {
+                Ok(slug) => Ok(slug.clone()),
+                Err(()) => Err(anyhow!("fatal: not a git repository")),
+            }
+        }
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn local_refs(&self, _repo_root: &str) -> Result<Vec<GitRef>> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn head_ref(&self, _repo_root: &str) -> Result<String> {
+            unreachable!("only github_slug is asked of this port")
+        }
+    }
+
+    /// A `gh` that answers nothing and remembers what it was asked about. The first fake of
+    /// this port in the repository — its absence is why a `gh` command that could never run
+    /// shipped, and shipped again after the first fix.
+    #[derive(Default)]
+    struct Asked(Mutex<Vec<String>>);
+
+    impl GhPort for Asked {
+        fn pull_requests(&self, slug: &Slug) -> Vec<PullRequest> {
+            self.0.lock().unwrap().push(slug.as_str().to_string());
+            Vec::new()
+        }
+        fn settled_pull_requests(
+            &self,
+            _slug: &Slug,
+        ) -> std::result::Result<crate::port::SettledPullRequests, String> {
+            unreachable!("the branches view does not sweep")
+        }
+    }
+
+    #[test]
+    fn gh_is_asked_by_name_and_never_by_directory() {
+        // `gh` given a directory answers about whatever base repository it picks out of the
+        // remotes — the parent, for a fork. That is not a failure it reports; it is another
+        // repository's pull requests, arriving with a zero exit.
+        let gh = Asked::default();
+        assert!(
+            annotations(&Origin(Ok(Slug::owner_repo("me", "app"))), &gh, "/src/app").is_empty()
+        );
+        assert_eq!(gh.0.lock().unwrap().as_slice(), ["me/app"]);
+    }
+
+    #[test]
+    fn a_repository_github_has_never_heard_of_is_not_asked_about_at_all() {
+        // And neither is one git would not answer for. Both cost the annotation and nothing
+        // else, which is ADR 0003's promise — what neither may cost is a wrong answer.
+        for slug in [Ok(None), Err(())] {
+            let gh = Asked::default();
+            assert!(annotations(&Origin(slug), &gh, "/src/app").is_empty());
+            assert!(gh.0.lock().unwrap().is_empty(), "gh was asked anyway");
+        }
+    }
 
     #[test]
     fn a_repository_herdr_has_no_record_of_is_named_after_its_directory() {

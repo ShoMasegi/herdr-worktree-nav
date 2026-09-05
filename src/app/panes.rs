@@ -44,14 +44,12 @@ pub fn run(
     let (_, tree) = collect::collect_tree(herdr, git)?;
     let mut state = PanesState::new(tree, home_dir());
     // Both outlive this view: a removal started before a trip through the branches view is
-    // still going, and a working tree walked once does not need walking again. These two
-    // have to be seeded because `show_answers` only refreshes them when `drain` reports a
-    // change, and coming back to a view where nothing has moved reports none. `set_answered`
-    // and `set_waiting` need no seeding — `show_answers` sets those every frame, and the
-    // first one runs before the first draw.
+    // still going, and a working tree walked once does not need walking again. Only
+    // `set_removing` has to be seeded, because `show_answers` never touches it — the
+    // removals are not its to know about. `set_working_trees` and `set_waiting` need no
+    // seeding: `show_answers` sets both every frame, and the first frame runs before the
+    // first draw.
     dirty.ask(state.tree());
-    state.set_dirty(dirty.paths());
-    state.set_unreadable(dirty.unreadable());
     state.set_removing(removals.paths());
     if let Some(pane_id) = initial_pane {
         state.focus_pane(pane_id);
@@ -121,8 +119,7 @@ pub fn run(
                     // Reload means reload: whether a checkout is dirty is a fact about a
                     // working tree the user has been editing since it was last asked.
                     dirty.reask(state.tree());
-                    state.set_dirty(dirty.paths());
-                    state.set_unreadable(dirty.unreadable());
+                    state.set_working_trees(dirty.answers());
                 }
                 Err(error) => state.set_message(format!("{error:#}")),
             },
@@ -141,15 +138,6 @@ pub fn run(
     perform(herdr, outcome)
 }
 
-/// Tell the state what the working-tree walk has said since the last frame, and answer
-/// whether any of it is still coming.
-///
-/// Split out of the loop because everything the loop does is otherwise untestable — it needs
-/// a terminal and a keyboard — and this is the part with consequences. `set_answered` in
-/// particular has to run every frame and not only when a marker moved: a clean answer moves
-/// none, and it is exactly the answer that turns a refusal into an offer. Left out, every
-/// checkout with panes in it answers "still reading that working tree" for the life of the
-/// picker, and nothing on screen or in the suite says why.
 /// Carry out a removal the user has said yes to, and put what happened on the screen.
 ///
 /// Out of the loop for the reason `show_answers` is: `run` needs a terminal and a keyboard,
@@ -194,14 +182,23 @@ fn start_removal(
     }
 }
 
+/// Tell the state what the working-tree walk has said since the last frame, and answer
+/// whether any of it is still coming.
+///
+/// Split out of the loop because everything the loop does is otherwise untestable — it needs
+/// a terminal and a keyboard — and this is the part with consequences. `set_working_trees` in
+/// particular has to run every frame and not only when a marker moved: a clean answer moves
+/// none, and it is exactly the answer that turns a refusal into an offer. Left out, every
+/// checkout with panes in it answers "still reading that working tree" for the life of the
+/// picker, and nothing on screen or in the suite says why.
 fn show_answers(state: &mut PanesState, dirty: &mut Dirty) -> bool {
-    if dirty.drain() {
-        state.set_dirty(dirty.paths());
-        state.set_unreadable(dirty.unreadable());
-    }
+    dirty.drain();
+    // Unconditionally, and not only when a marker moved: `PanesState` keeps every answer and
+    // decides for itself what is worth redrawing. What is *known* about a working tree and
+    // what is *drawn* about it are different questions, and a removal turns on the first.
+    state.set_working_trees(dirty.answers());
     let reading = dirty.is_waiting();
     state.set_waiting(reading);
-    state.set_answered(dirty.answered());
     reading
 }
 
@@ -268,7 +265,7 @@ mod tests {
         fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
             unreachable!()
         }
-        fn github_slug(&self, _repo_root: &str) -> Result<Option<String>> {
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<crate::port::Slug>> {
             unreachable!()
         }
         fn local_refs(&self, _repo_root: &str) -> Result<Vec<crate::port::GitRef>> {
@@ -326,7 +323,7 @@ mod tests {
 
     #[test]
     fn the_loop_hands_on_a_dirty_answer_too_or_nothing_is_ever_protected() {
-        // The negative twin of the test below, and the one with teeth. `set_answered` alone
+        // The negative twin of the test below, and the one with teeth. A `Clean` answer alone
         // is what clears "still reading"; the dirty answer is what the refusal is made of.
         // Hand on the first without the second and `Shift-D` walks straight into the
         // confirmation box for a checkout full of working agents. `y` then closes every one
@@ -418,6 +415,40 @@ mod tests {
             )
         );
         assert!(!state.rows().iter().any(|row| row.is_removing));
+    }
+
+    #[test]
+    fn panes_that_have_certainly_closed_are_not_left_on_screen_without_a_word() {
+        // The branch the other two never enter: both use a checkout with no panes, so the
+        // guard's direction is pinned and its body is not. Here the panes did close, so the
+        // list on screen is known wrong rather than merely stale — and when it cannot be
+        // read again, saying nothing leaves rows for panes that have stopped, with the
+        // cursor able to jump to them.
+        let recorder = Recorder::default();
+        let port = Started(&recorder);
+        let mut removals = Removals::new(&port);
+        let mut state = PanesState::new(one_pane_tree(), None);
+        let mut dirty = Dirty::new(std::sync::Arc::new(Answers(Some(false))));
+        let removal = only_removal(&state);
+
+        start_removal(
+            &mut state,
+            &mut dirty,
+            &mut removals,
+            &recorder,
+            &Answers(Some(false)),
+            &removal,
+        );
+
+        assert_eq!(
+            state.message(),
+            Some("the panes closed, but the list could not be read again: herdr is not answering"),
+            "the removal started; it is the list that could not be caught up"
+        );
+        assert!(
+            state.rows().iter().any(|row| row.is_removing),
+            "and the removal is still shown as going, because it is"
+        );
     }
 
     #[test]

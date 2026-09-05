@@ -153,7 +153,7 @@ mod tests {
         fn identify(&self, _cwd: &str) -> Result<Option<RepoIdentity>> {
             unreachable!()
         }
-        fn github_slug(&self, _repo_root: &str) -> Result<Option<String>> {
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<crate::port::Slug>> {
             unreachable!()
         }
         fn local_refs(&self, _repo_root: &str) -> Result<Vec<GitRef>> {

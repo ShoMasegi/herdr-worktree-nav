@@ -12,7 +12,9 @@
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
-use crate::domain::model::{PaneNode, Tree};
+use std::collections::BTreeMap;
+
+use crate::domain::model::{PaneNode, Tree, WorkingTree};
 use crate::port::{AgentStatus, Track};
 
 /// Which node of the tree a row stands for. Indices point into [`Tree`].
@@ -57,14 +59,22 @@ pub struct Row {
     /// takes the place of the `no pane` note, since it is the more urgent fact about the
     /// same row — see `docs/adr/0014-removing-outlives-the-picker.md`.
     pub is_removing: bool,
-    /// A checkout holding uncommitted changes or untracked files. False also means "not
-    /// asked yet" and "asked, and git would not say": the answer costs a process per
-    /// checkout and arrives after the first frame, and a marker that is wrong for a moment
-    /// is worse than one that is late.
-    pub is_dirty: bool,
-    /// A checkout git declined to answer for. Kept apart from clean because they are not
-    /// the same claim — see `domain::rows::marks`.
-    pub is_unreadable: bool,
+    /// What git said about this checkout's working tree, and `None` while nobody has been
+    /// told. The answer costs a process per checkout and arrives after the first frame, so
+    /// `None` is the ordinary state of the first frame — and a marker that is wrong for a
+    /// moment is worse than one that is late.
+    ///
+    /// Only `marks` reads this — a rule rather than an invariant, since the field is `pub`.
+    /// In a live `PanesState` it lags on purpose: `set_working_trees` does not rebuild the
+    /// list for an answer no row would draw, so a checkout that has just answered `Clean`
+    /// keeps the `None` it was flattened with until something else rebuilds. A reload does;
+    /// so does another checkout answering something a row *does* draw; so does
+    /// `set_removing`, but only when the removing set actually changes, which with no
+    /// removal running is never. The two render identically, which is what makes the elision
+    /// sound. What it is not is a fact about
+    /// the checkout: `Some(Clean)` and `None` here are the same row drawn at two different
+    /// moments, and telling the two apart is `ViewOptions::working_trees`' job.
+    pub working_tree: Option<WorkingTree>,
     /// What git said about this checkout's branch against its upstream.
     pub track: Option<Track>,
     /// The row the session is currently on, marked with a caret in the gutter.
@@ -114,10 +124,12 @@ const GONE: &str = "gone";
 /// Dirty comes first because it is the one that stops a checkout being removable.
 pub fn marks(row: &Row) -> String {
     let mut out = String::new();
-    if row.is_dirty {
-        out.push_str(DIRTY);
-    } else if row.is_unreadable {
-        out.push_str(UNREADABLE);
+    match row.working_tree {
+        Some(WorkingTree::Dirty) => out.push_str(DIRTY),
+        Some(WorkingTree::Unreadable) => out.push_str(UNREADABLE),
+        // Clean and not-yet-answered both draw nothing, for different reasons: one has
+        // nothing to report and the other has nothing to report *yet*.
+        Some(WorkingTree::Clean) | None => {}
     }
     out.push_str(&track_mark(row.track));
     out
@@ -222,11 +234,10 @@ pub struct ViewOptions {
     /// for the same reason `home` is: which processes are running is not something this
     /// module is allowed to find out for itself.
     pub removing: Vec<String>,
-    /// Checkout paths git has said are holding uncommitted work. Only the ones that are:
-    /// clean and not-yet-asked are the same answer here, because they draw the same.
-    pub dirty: Vec<String>,
-    /// Checkout paths git would not answer for at all, which is neither of those.
-    pub unreadable: Vec<String>,
+    /// What git has said about each working tree so far. A checkout that has not answered
+    /// is absent, which is a different fact from `Clean` and decides different things — see
+    /// `domain::model::WorkingTree`.
+    pub working_trees: BTreeMap<String, WorkingTree>,
 }
 
 impl ViewOptions {
@@ -332,14 +343,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                         .removing
                         .iter()
                         .any(|path| path == &worktree.checkout_path),
-                    is_dirty: options
-                        .dirty
-                        .iter()
-                        .any(|path| path == &worktree.checkout_path),
-                    is_unreadable: options
-                        .unreadable
-                        .iter()
-                        .any(|path| path == &worktree.checkout_path),
+                    working_tree: options.working_trees.get(&worktree.checkout_path).copied(),
                     track: worktree.track,
                     is_current: false,
                     matched: worktree_matches,
@@ -372,8 +376,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
             status: repo_status,
             is_idle: false,
             is_removing: false,
-            is_dirty: false,
-            is_unreadable: false,
+            working_tree: None,
             track: None,
             is_current: panes.iter().any(|pane| pane.focused),
             matched: repo_matches,
@@ -414,8 +417,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                 status: aggregate(tree.ungrouped.iter().map(|pane| pane.agent_status)),
                 is_idle: false,
                 is_removing: false,
-                is_dirty: false,
-                is_unreadable: false,
+                working_tree: None,
                 track: None,
                 is_current: tree.ungrouped.iter().any(|pane| pane.focused),
                 matched: true,
@@ -439,8 +441,7 @@ fn pane_row(reference: RowRef, depth: u8, pane: &PaneNode, matched: bool) -> Row
         status: pane.agent_status,
         is_idle: false,
         is_removing: false,
-        is_dirty: false,
-        is_unreadable: false,
+        working_tree: None,
         track: None,
         is_current: pane.focused,
         matched,
@@ -804,15 +805,21 @@ mod tests {
         assert!(!find(&rows, "main").is_idle);
     }
 
-    fn marks_for(is_dirty: bool, track: Option<Track>) -> String {
+    /// The answers map with one checkout given an answer, which is all these need.
+    fn answered(working_tree: WorkingTree) -> BTreeMap<String, WorkingTree> {
+        BTreeMap::from([("/wt/fix-crash".to_string(), working_tree)])
+    }
+
+    /// `None` is a checkout nobody has answered for, which is a third thing and not a
+    /// synonym for clean. The bool this replaced could not say which of the two it was
+    /// exercising, because the old `Row` could not hold the difference either: one `false`
+    /// stood for both. So the behaviour was pinned and the *state* was not, and the arm that
+    /// now says `Clean` had nothing naming it.
+    fn marks_for(working_tree: Option<WorkingTree>, track: Option<Track>) -> String {
         let mut tree = tree();
         tree.repos[0].worktrees[2].track = track;
         let options = ViewOptions {
-            dirty: if is_dirty {
-                vec!["/wt/fix-crash".into()]
-            } else {
-                Vec::new()
-            },
+            working_trees: working_tree.map(answered).unwrap_or_default(),
             ..Default::default()
         };
         marks(find(&flatten(&tree, &options), "fix/crash"))
@@ -820,7 +827,20 @@ mod tests {
 
     #[test]
     fn a_checkout_with_nothing_to_report_says_nothing() {
-        assert_eq!(marks_for(false, None), "");
+        assert_eq!(marks_for(None, None), "", "nobody has answered for it");
+        assert_eq!(
+            marks_for(Some(WorkingTree::Clean), None),
+            "",
+            "and git answered and had nothing to report — the same absence of a marker for \
+             two different reasons, which is the whole of why the list is not rebuilt when \
+             one becomes the other"
+        );
+    }
+
+    #[test]
+    fn every_answer_a_working_tree_can_give_reads_on_its_own() {
+        assert_eq!(marks_for(Some(WorkingTree::Dirty), None), "  ✱");
+        assert_eq!(marks_for(Some(WorkingTree::Unreadable), None), "  ?");
     }
 
     #[test]
@@ -833,7 +853,7 @@ mod tests {
         let dirty = flatten(
             &tree,
             &ViewOptions {
-                dirty: vec!["/wt/fix-crash".into()],
+                working_trees: answered(WorkingTree::Dirty),
                 ..Default::default()
             },
         );
@@ -850,18 +870,18 @@ mod tests {
 
     #[test]
     fn each_thing_a_checkout_can_be_reads_on_its_own() {
-        assert_eq!(marks_for(true, None), "  \u{2731}");
+        assert_eq!(marks_for(Some(WorkingTree::Dirty), None), "  \u{2731}");
         assert_eq!(
-            marks_for(false, Some(Track::Ahead(NonZeroU32::new(2).unwrap()))),
+            marks_for(None, Some(Track::Ahead(NonZeroU32::new(2).unwrap()))),
             "  \u{2191}2"
         );
         assert_eq!(
-            marks_for(false, Some(Track::Behind(NonZeroU32::new(1).unwrap()))),
+            marks_for(None, Some(Track::Behind(NonZeroU32::new(1).unwrap()))),
             "  \u{2193}1"
         );
         assert_eq!(
             marks_for(
-                false,
+                None,
                 Some(Track::Diverged {
                     ahead: NonZeroU32::new(2).unwrap(),
                     behind: NonZeroU32::new(1).unwrap()
@@ -870,25 +890,35 @@ mod tests {
             "  \u{2191}2\u{2193}1",
             "one gap, not two: they are one answer"
         );
-        assert_eq!(marks_for(false, Some(Track::Gone)), "  gone");
+        assert_eq!(marks_for(None, Some(Track::Gone)), "  gone");
     }
 
     #[test]
     fn a_dirty_checkout_whose_upstream_is_gone_says_both() {
         // Which is the pair that decides whether a checkout can be swept: gone says it is
         // finished with, and dirty says it cannot go anyway.
-        assert_eq!(marks_for(true, Some(Track::Gone)), "  \u{2731}  gone");
+        assert_eq!(
+            marks_for(Some(WorkingTree::Dirty), Some(Track::Gone)),
+            "  \u{2731}  gone"
+        );
     }
 
     #[test]
     fn a_checkout_holding_uncommitted_work_is_marked_as_such() {
         let options = ViewOptions {
-            dirty: vec!["/wt/fix-crash".into()],
+            working_trees: answered(WorkingTree::Dirty),
             ..Default::default()
         };
         let rows = flatten(&tree(), &options);
-        assert!(find(&rows, "fix/crash").is_dirty);
-        assert!(!find(&rows, "feat/login").is_dirty);
+        assert_eq!(
+            find(&rows, "fix/crash").working_tree,
+            Some(WorkingTree::Dirty)
+        );
+        assert_eq!(
+            find(&rows, "feat/login").working_tree,
+            None,
+            "nobody asked about that one"
+        );
     }
 
     #[test]
@@ -897,7 +927,8 @@ mod tests {
         // arrive after the first frame. Not yet known and known-clean draw the same, on
         // purpose: the alternative is a marker that is wrong for a moment.
         let rows = flatten(&tree(), &ViewOptions::default());
-        assert!(!find(&rows, "fix/crash").is_dirty);
+        assert_eq!(find(&rows, "fix/crash").working_tree, None);
+        assert_eq!(marks(find(&rows, "fix/crash")), "", "and so draws nothing");
     }
 
     #[test]

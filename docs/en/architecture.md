@@ -57,6 +57,7 @@ goes are all pure functions over plain data.
 | `domain::preview` | what will the destination tab look like once the pane lands in it? |
 | `domain::progress` | what step is opening a branch on, and can it still be abandoned? |
 | `domain::removal` | which checkout is being removed, and what does the finished removal say, and to whom? |
+| `domain::sweep` | which checkouts may a sweep offer to delete, why, and which could it not judge? |
 | `domain::chrome` | what accent and status glyphs is herdr configured for? |
 
 ## Talking to herdr
@@ -206,4 +207,5 @@ getting wrong lives.
 | `ui` state | key handling is a pure state → action mapping, so the keymap is covered directly |
 | `ui` drawing | `TestBackend` + `insta` snapshots of the rendered buffer |
 | `adapter` git | real repositories in a `tempfile::TempDir` |
+| `adapter` gh | nothing in CI runs `gh`, so each call is split into the command it builds and the answer it reads, and both halves are tested with no process at all — twice a malformed argument list shipped past a green suite. What no test reaches is `.output()` and the redirections around it: `Command` has no getter for `stderr`, so sending it to `null` — which would cost the user gh's own words on every refusal — needs a `gh` on `PATH` that a test put there. |
 | `adapter` herdr | not testable in CI — there is no server. See [Troubleshooting](troubleshooting.md) for the manual checklist. |

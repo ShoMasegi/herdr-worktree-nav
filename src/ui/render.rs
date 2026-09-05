@@ -1542,6 +1542,17 @@ fn pad(text: &str, width: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::domain::model::WorkingTree;
+    use std::collections::BTreeMap;
+
+    /// The answers map, spelled out per checkout. These tests care which of the four shapes
+    /// a checkout is in, which is the thing the map made sayable.
+    fn answers(pairs: &[(&str, WorkingTree)]) -> BTreeMap<String, WorkingTree> {
+        pairs
+            .iter()
+            .map(|(path, answer)| ((*path).to_string(), *answer))
+            .collect()
+    }
     use super::*;
     use ratatui::backend::TestBackend;
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -1654,7 +1665,10 @@ mod tests {
         tree.repos[0].worktrees[1].track = Some(Track::Gone);
         tree.repos[0].worktrees[2].track = Some(Track::Behind(NonZeroU32::new(3).unwrap()));
         let mut state = PanesState::new(tree, None);
-        state.set_dirty(vec!["/wt/feat-login".into(), "/wt/fix-crash".into()]);
+        state.set_working_trees(answers(&[
+            ("/wt/feat-login", WorkingTree::Dirty),
+            ("/wt/fix-crash", WorkingTree::Dirty),
+        ]));
         insta::assert_snapshot!(screen(&state, 92, 18));
     }
 
@@ -1680,7 +1694,7 @@ mod tests {
             .panes
             .push(pane("w2:p2", None, AgentStatus::Unknown, false));
         let mut state = PanesState::new(tree, None);
-        state.set_answered(vec!["/wt/feat-login".into()]);
+        state.set_working_trees(answers(&[("/wt/feat-login", WorkingTree::Clean)]));
         // Onto `codex`, the first pane running in the `feat/login` checkout.
         for _ in 0..2 {
             press(&mut state, KeyCode::Char('j'));
@@ -1694,7 +1708,7 @@ mod tests {
         // The path can be read from the breadcrumb behind the box. What is about to stop
         // cannot be read anywhere else, so it is the last thing to go.
         let mut state = PanesState::new(tree(), None);
-        state.set_answered(vec!["/wt/feat-login".into()]);
+        state.set_working_trees(answers(&[("/wt/feat-login", WorkingTree::Clean)]));
         for _ in 0..2 {
             press(&mut state, KeyCode::Char('j'));
         }
@@ -1709,7 +1723,7 @@ mod tests {
         // back — otherwise `y` would be armed over a box nobody ever saw, and the key hint
         // at the bottom names the keys, never what they answer.
         let mut state = PanesState::new(tree(), None);
-        state.set_answered(vec!["/wt/feat-login".into()]);
+        state.set_working_trees(answers(&[("/wt/feat-login", WorkingTree::Clean)]));
         for _ in 0..2 {
             press(&mut state, KeyCode::Char('j'));
         }
@@ -1746,7 +1760,7 @@ mod tests {
         // two lines, the same as a checkout with no panes gets, so there is no height at
         // which `y` is armed over a box that never said panes would close.
         let mut state = PanesState::new(tree(), None);
-        state.set_answered(vec!["/wt/feat-login".into()]);
+        state.set_working_trees(answers(&[("/wt/feat-login", WorkingTree::Clean)]));
         for _ in 0..2 {
             press(&mut state, KeyCode::Char('j'));
         }
@@ -1761,8 +1775,10 @@ mod tests {
         // count says how many and never which — and one prunable worktree is enough to
         // produce one, alongside rows that were answered for perfectly well.
         let mut state = PanesState::new(tree(), None);
-        state.set_dirty(vec!["/wt/feat-login".into()]);
-        state.set_unreadable(vec!["/wt/fix-crash".into()]);
+        state.set_working_trees(answers(&[
+            ("/wt/feat-login", WorkingTree::Dirty),
+            ("/wt/fix-crash", WorkingTree::Unreadable),
+        ]));
         insta::assert_snapshot!(screen(&state, 92, 18));
     }
 
@@ -1995,7 +2011,10 @@ mod tests {
         // the first frame, with the list already on screen and being read.
         let mut state = PanesState::new(tree(), None);
         let before = meta_column(state.rows(), 92);
-        state.set_dirty(vec!["/wt/fix-crash".into(), "/wt/main".into()]);
+        state.set_working_trees(answers(&[
+            ("/wt/fix-crash", WorkingTree::Dirty),
+            ("/wt/main", WorkingTree::Dirty),
+        ]));
         assert_eq!(meta_column(state.rows(), 92), before);
     }
 
