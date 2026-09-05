@@ -213,8 +213,12 @@ pub enum Track {
     /// worth showing — but a never-fetched upstream and a hand-pruned `refs/remotes` read
     /// the same, because to git they are the same: the ref is not there.
     Gone,
+    /// Commits on this branch that the ref it tracks does not have.
     Ahead(NonZeroU32),
+    /// Commits on the ref this branch tracks that the branch does not have.
     Behind(NonZeroU32),
+    /// Commits each side has that the other does not. Both counts, because which one is
+    /// larger is not the question — that the two have parted at all is.
     Diverged {
         ahead: NonZeroU32,
         behind: NonZeroU32,

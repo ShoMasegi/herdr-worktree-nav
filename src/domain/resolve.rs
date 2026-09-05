@@ -48,6 +48,15 @@ pub struct BranchEntry {
     /// projection anybody can take — see [`BranchEntry::upstream_gone`] — and taking it at
     /// the boundary instead threw away ahead/behind on the way in, so a later reader wanting
     /// what the panes view already shows would have had to rebuild the boundary to get it.
+    ///
+    /// `None` is four different situations and does not tell them apart: the branch is level
+    /// with what it tracks, it tracks nothing at all, git printed something unreadable, or
+    /// the ref walk for that repository failed outright. That is deliberate and it is only
+    /// safe while the drawing is *negative* — all four earn no marker, which is the honest
+    /// rendering of every one of them. A positive marker for this being `None` (a `✓`, an
+    /// "up to date") would say the second case is the first, and so tell every brand-new
+    /// local branch that it is in sync with an upstream it does not have. Tell them apart
+    /// first if that is ever wanted.
     pub track: Option<Track>,
 }
 
