@@ -111,8 +111,20 @@ impl PanesState {
     /// still there.
     pub fn replace_tree(&mut self, tree: Tree) {
         let anchor = self.selected_pane_id().map(str::to_string);
+        let at = self.cursor;
         self.tree = tree;
         self.rebuild(anchor.as_deref());
+        // The pane the cursor was on is gone — it was closed, or its checkout was removed.
+        // Keeping the place beats going back to the top: tidying up comes in batches, and
+        // the next thing to tidy is near the last one, not at the start of the list.
+        //
+        // Only here. `rebuild`'s other callers are the search box, where the list that comes
+        // back has nothing to do with the one that went in and the first match is the place
+        // to be.
+        if anchor.is_none_or(|pane_id| self.line_of_pane(&pane_id).is_none()) {
+            let from = at.min(self.lines.len().saturating_sub(1));
+            self.cursor = rows::next_row(&self.rows, &self.lines, from).unwrap_or(0);
+        }
     }
 
     /// Say which checkouts are holding uncommitted work. Arrives after the first frame, one
@@ -238,6 +250,14 @@ impl PanesState {
         self.options.home.as_deref()
     }
 
+    /// Take back a question that could not be asked. The picker calls this when the pane is
+    /// too small to draw the box: leaving `y` armed over a question nobody saw would be
+    /// asking it without asking it, and the key hint at the bottom says which keys answer,
+    /// never what is being answered.
+    pub fn cancel_removal(&mut self) {
+        self.pending_removal = None;
+    }
+
     /// The removal being asked about, which the picker turns into a dialog.
     pub fn pending_removal(&self) -> Option<&Removal> {
         self.pending_removal.as_ref()
@@ -278,14 +298,9 @@ impl PanesState {
     }
 
     fn rebuild(&mut self, anchor: Option<&str>) {
-        let at = self.cursor;
         self.rows = rows::flatten(&self.tree, &self.options);
         self.lines = rows::display_lines(&self.rows);
-        // From where the cursor was rather than from the top. A reload that lands you back
-        // at the first row is a reload that costs you your place, and the row that just went
-        // is where the next thing to tidy up usually is — tidying comes in batches.
-        let from = at.min(self.lines.len().saturating_sub(1));
-        self.cursor = rows::next_row(&self.rows, &self.lines, from).unwrap_or(0);
+        self.cursor = rows::next_row(&self.rows, &self.lines, 0).unwrap_or(0);
         if let Some(pane_id) = anchor {
             self.focus_pane(pane_id);
         }
@@ -848,6 +863,46 @@ mod tests {
         assert!(
             state.pending_removal().is_none(),
             "the question is answered"
+        );
+    }
+
+    #[test]
+    fn a_reload_that_takes_the_row_away_keeps_the_place_rather_than_the_top() {
+        // The flow this feature is: `Shift-D` on a pane, `y`, the panes close, the tree is
+        // read again — and the pane the cursor was anchored to is one of the ones that went.
+        // Going back to the first row would cost the place on every removal, and tidying up
+        // comes in batches.
+        let mut state = state();
+        select(&mut state, "codex");
+        let before = state.cursor();
+
+        let mut without = state.tree().clone();
+        without.repos[0].worktrees[1].panes.clear();
+        state.replace_tree(without);
+
+        assert_ne!(state.cursor(), 0, "not back at the top");
+        assert!(state.cursor() >= before.saturating_sub(1));
+    }
+
+    #[test]
+    fn a_search_still_lands_on_the_first_match_rather_than_on_an_old_index() {
+        // `rebuild`'s other callers were no part of the change above: the list a query
+        // returns has nothing to do with the one it replaced, so the same numeric index is
+        // not a place kept, it is an arbitrary row.
+        let mut searching = state();
+        select(&mut searching, "zsh");
+        let at = searching.cursor();
+        searching.handle_key(key(KeyCode::Char('/')));
+        searching.handle_key(key(KeyCode::Char('c')));
+        assert_ne!(
+            searching.cursor(),
+            at,
+            "the filtered list is a different list"
+        );
+        assert_eq!(
+            searching.selected().map(|row| row.label.as_str()),
+            Some("claude"),
+            "the first row the cursor can stop on"
         );
     }
 
