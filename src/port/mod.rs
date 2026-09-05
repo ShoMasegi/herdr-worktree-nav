@@ -439,3 +439,39 @@ pub trait GhPort: Sync {
     /// before — so it is called when a sweep is entered rather than when the picker opens.
     fn settled_pull_requests(&self, slug: &Slug) -> Result<SettledPullRequests, String>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Slug;
+
+    #[test]
+    fn a_repository_root_is_not_two_names() {
+        // The accident this type exists to stop, in the shape it would actually arrive in:
+        // somebody has a path and wants a slug out of it. Splitting an absolute path on the
+        // first `/` gives an empty owner; splitting it anywhere else leaves a `/` in one
+        // half. `gh` asked for `[HOST/]OWNER/REPO` and would reject either, but it rejects
+        // them at a subprocess boundary with a non-zero exit that the branches view throws
+        // away — which is how this went unnoticed twice.
+        let root = "/src/app";
+        let (owner, repo) = root.split_once('/').expect("an absolute path has one");
+        assert_eq!(Slug::owner_repo(owner, repo), None, "{owner:?} / {repo:?}");
+        assert_eq!(Slug::owner_repo("/src", "app"), None, "a path in the owner");
+        assert_eq!(
+            Slug::owner_repo("me", "app/deeper"),
+            None,
+            "and in the repo"
+        );
+        assert_eq!(Slug::owner_repo("me", ""), None, "half a name is not one");
+        assert_eq!(Slug::owner_repo("", "app"), None, "either half");
+    }
+
+    #[test]
+    fn two_names_github_would_know_make_the_argument_gh_is_given() {
+        let slug = Slug::owner_repo("ShoMasegi", "herdr-worktree-nav");
+        assert_eq!(
+            slug.as_ref().map(Slug::as_str),
+            Some("ShoMasegi/herdr-worktree-nav"),
+            "one `/`, put there by this rather than found in the input"
+        );
+    }
+}
