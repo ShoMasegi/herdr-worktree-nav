@@ -220,8 +220,9 @@ impl StateFilter {
 }
 
 /// Shown when a pane has no agent and no terminal title, which is what a plain shell looks
-/// like in a herdr snapshot.
-const UNNAMED_PANE: &str = "shell";
+/// like in a herdr snapshot. Public because the removal question lists the panes that stop,
+/// and they have to be called the same thing there as in the list.
+pub const UNNAMED_PANE: &str = "shell";
 
 #[derive(Debug, Clone, Default)]
 pub struct ViewOptions {

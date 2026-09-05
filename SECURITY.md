@@ -28,10 +28,17 @@ Specifically, herdr-worktree-nav:
   the refs under there whose branch is gone from the remote. Those are a cache of the remote
   and the next fetch rebuilds them.
 - **Deletes a checkout, and only when you say so.** `Shift-D` in the panes view asks before
-  it runs `git worktree remove` on the checkout under the cursor, and only offers it for one
-  with nothing running in it. There is no `--force`: git refuses a checkout holding
-  uncommitted changes or untracked files, and this plugin does not override that. The branch
-  is left alone.
+  it runs `git worktree remove` on the checkout under the cursor — or, on a pane, the
+  checkout that pane is in. There is no `--force`: git
+  refuses a checkout holding uncommitted changes or untracked files, and this plugin does not
+  override that. The branch is left alone.
+- **Closes panes, and says so first.** A checkout with panes in it has them closed before it
+  is removed, which stops whatever was running in them — an agent mid-task included. The
+  question lists every pane that will stop, or, in a pane too short for the list, says how
+  many; a pane too small for even that is told it is too small rather than being left able to
+  answer a question it never saw. A checkout with panes in it is refused before the question —
+  rather than after they have gone — when it is holding uncommitted work, when git would not
+  read its working tree, and while git is still reading it.
 - **That removal outlives the picker.** It runs as a second copy of this binary, in a session
   of its own, so closing the picker does not leave a half-deleted checkout behind. It removes
   the one checkout it was given and then exits; it takes no further instructions and does

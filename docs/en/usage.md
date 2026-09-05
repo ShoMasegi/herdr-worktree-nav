@@ -53,10 +53,10 @@ only make the walk longer. They stay on screen; the arrow keys just pass through
 
 ### Deleting a checkout
 
-`Shift-D` on a `no pane` row offers to remove that worktree. The question comes as a box over
-the list rather than as a line in the search field, because this is the one thing the picker
-does that cannot be undone by doing it again. `y` is the only key that answers it; anything
-else is a no.
+`Shift-D` offers to remove the checkout under the cursor — or, on a pane, the checkout that
+pane is in. The question comes as a box over the list rather than as a line in the search
+field, because this is the one thing the picker does that cannot be undone by doing it again.
+`y` is the only key that answers it; anything else is a no.
 
 ```
    └── · fix/crash  no pane    ~/.herdr/worktrees/app/fix-crash
@@ -81,9 +81,49 @@ rebuilt by making it again, and a branch that was never pushed is not. There is 
 so git refuses a checkout with uncommitted changes or untracked files in it and says so; that
 refusal is the feature rather than an obstacle.
 
-Two things are refused before the question is even asked: a pane, or a checkout with panes in
-it, because nothing there is safe to delete; and the repository's own checkout, because git
-cannot remove a main working tree and it is not a worktree anyway.
+A finished worktree usually has panes in it — that is its ordinary end state — so `Shift-D`
+closes them and then removes the checkout. They can be anywhere: this plugin moves a
+worktree's pane wherever you asked for it, across tabs and spaces, and all of them stop. The
+question names each one:
+
+```
+        ┌──────────────────────────────────────┐
+        │ Delete this checkout?                │
+        │                                      │
+        │   fix/crash                          │
+        │   ~/.herdr/worktrees/app/fix-crash   │
+        │                                      │
+        │   these panes close:                 │
+        │   ● claude  working   w2:p1          │
+        │   · shell             w2:p2          │
+        │                                      │
+        │   y delete     any other key cancels │
+        └──────────────────────────────────────┘
+```
+
+Still one key. git protects uncommitted work and does not protect what a working agent has in
+flight, and that list is the only safety net there is for it — which is why the panes outlast
+the path when the box has to shrink, and why a pane too short even for a line each says
+`2 panes close` rather than dropping them. A question that did not say panes would close
+would not be one you could answer.
+
+If the list moves under an open question — another removal finishing is the ordinary way —
+the question is withdrawn rather than answered against a list you were not shown. Ask it
+again of the list you can now see.
+
+The cursor does not stop on a checkout that has panes, because the panes listed under it are
+the answer to where to go. Ask from the pane instead: `Shift-D` there is about the checkout it
+is in, and the box names it before you answer.
+
+Some things are refused before the question is even asked: a checkout whose removal is
+already running; the repository's own checkout,
+because git cannot remove a main working tree and it is not a worktree anyway; and a checkout
+with panes in it whose working tree is holding uncommitted work, or that git would not read,
+or that it has not finished reading yet. That second refusal exists only where there are panes
+at stake: on an empty checkout git can answer for itself, but here the panes would already be
+closed by the time it did — and "nobody has asked yet" is not the same answer as "clean",
+which is why pressing `Shift-D` in the first moments after the picker opens asks you to try
+again rather than guessing.
 
 `y` comes straight back. The removal runs somewhere else — git has to walk a whole working
 tree before it can delete it, which is seconds on a repository of any size — and the row
@@ -104,10 +144,15 @@ However it ends, herdr says so:
 | removed | `removed fix/crash`, with the path underneath and no sound |
 | refused | `could not remove fix/crash`, with git's own words underneath, and a sound |
 
+A refusal that came after panes were closed says so — `… — its 2 panes were closed first` —
+because that is the one failure that is not "nothing happened".
+
 That notification is the report, because it is the one that still arrives when the picker has
-gone. If yours are turned off you will not see it, and nothing is lost: a removal that was
-refused leaves the checkout exactly where it was, so the row is there next time and
-`Shift-D` on it will give you git's reason again. With the picker still up, a refusal is on
+gone. If yours are turned off you will not see it, and most of it is not lost: a removal that
+was refused leaves the checkout exactly where it was, so the row is there next time and
+`Shift-D` on it will give you git's reason again. The one part that cannot come back that way
+is the clause about panes — next time there are none to close, so there is nothing for it to
+say. With the picker still up, a refusal is on
 the prompt line as well.
 
 `b`/`w`/`i`/`d` replace the search box with a state chip. Pressing the same one again clears

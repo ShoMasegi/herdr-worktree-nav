@@ -47,6 +47,8 @@ pub fn run(
     // still going, and a working tree walked once does not need walking again.
     dirty.ask(state.tree());
     state.set_dirty(dirty.paths());
+    state.set_unreadable(dirty.unreadable());
+    state.set_answered(dirty.answered());
     state.set_removing(removals.paths());
     if let Some(pane_id) = initial_pane {
         state.focus_pane(pane_id);
@@ -56,19 +58,20 @@ pub fn run(
     // user types nor stalls while they hold a key down.
     let mut last_tick = std::time::Instant::now();
     let outcome = loop {
-        if dirty.drain() {
-            state.set_dirty(dirty.paths());
-            state.set_unreadable(dirty.unreadable());
-        }
-        let reading_working_trees = dirty.is_waiting();
-        state.set_waiting(reading_working_trees);
-        state.set_unreadable(dirty.unreadable());
+        let reading_working_trees = show_answers(&mut state, dirty);
         let waiting = !removals.is_empty() || reading_working_trees;
         if waiting && last_tick.elapsed() >= TICK {
             state.tick();
             last_tick = std::time::Instant::now();
         }
-        terminal.draw(|frame| render::draw(frame, &state, theme, Mode::Panes))?;
+        let mut asked = true;
+        terminal.draw(|frame| asked = render::draw(frame, &state, theme, Mode::Panes))?;
+        if !asked {
+            // The pane is too small to put the question in. Taking it back is the only
+            // honest answer: the alternative is `y` armed over a box nobody ever saw.
+            state.cancel_removal();
+            state.set_message("this pane is too small to ask that safely".into());
+        }
 
         // Whatever has reported back — including from before the last trip to the branches
         // view, since the removals outlive both views and the picker itself.
@@ -78,7 +81,9 @@ pub fn run(
                 Ok(outcome) => {
                     // Nothing to say when it worked: the row leaving the list is the report,
                     // and the toast has already said it to whoever was not looking.
-                    if let Some(message) = removal::message(&finished.label, &outcome) {
+                    if let Some(message) =
+                        removal::message(&finished.label, &outcome, finished.panes_closed)
+                    {
                         state.set_message(message);
                     }
                     // Errors here are not fatal: the picker keeps showing what it had.
@@ -87,7 +92,11 @@ pub fn run(
                         dirty.ask(state.tree());
                     }
                 }
-                Err(error) => state.set_message(format!("{error:#}")),
+                // The panes are gone by now either way, so the report says so.
+                Err(error) => state.set_message(removal::refusal(
+                    &format!("{error:#}"),
+                    finished.panes_closed,
+                )),
             }
         }
 
@@ -123,16 +132,105 @@ pub fn run(
                 repo_root,
                 checkout_path,
                 label,
-            } => match removals.start(&repo_root, &checkout_path, &label) {
-                // The row says what is happening to it; there is nothing to add here.
-                Ok(()) => state.set_removing(removals.paths()),
-                Err(error) => state.set_message(format!("{error:#}")),
-            },
+                panes,
+            } => {
+                match close_then_remove(herdr, removals, &repo_root, &checkout_path, &label, &panes)
+                {
+                    Ok(()) => {
+                        // The row says what is happening to it; nothing to add here.
+                        state.set_removing(removals.paths());
+                        // And only here: the panes are gone, so the list is known wrong
+                        // rather than merely possibly stale. An empty checkout's removal
+                        // changes nothing on screen yet and leaves the cursor where it was,
+                        // which is where the next thing to tidy up usually is.
+                        if !panes.is_empty() {
+                            match collect::collect_tree(herdr, git) {
+                                Ok((_, tree)) => {
+                                    state.replace_tree(tree);
+                                    dirty.ask(state.tree());
+                                }
+                                // Not fatal, but not silent either: rows for panes that
+                                // have certainly stopped are on screen until this works.
+                                Err(error) => state.set_message(format!(
+                                    "the panes closed, but the list could not be read \
+                                     again: {error:#}"
+                                )),
+                            }
+                        }
+                    }
+                    // Nothing else is said or done. This is the account of what happened,
+                    // and a failed re-read would overwrite it with a sentence about panes
+                    // that may not have closed at all.
+                    Err(message) => state.set_message(message),
+                }
+            }
             action => break action,
         }
     };
 
     perform(herdr, outcome)
+}
+
+/// Tell the state what the working-tree walk has said since the last frame, and answer
+/// whether any of it is still coming.
+///
+/// Split out of the loop because everything the loop does is otherwise untestable — it needs
+/// a terminal and a keyboard — and this is the part with consequences. `set_answered` in
+/// particular has to run every frame and not only when a marker moved: a clean answer moves
+/// none, and it is exactly the answer that turns a refusal into an offer. Left out, every
+/// checkout with panes in it answers "still reading that working tree" for the life of the
+/// picker, and nothing on screen or in the suite says why.
+fn show_answers(state: &mut PanesState, dirty: &mut Dirty) -> bool {
+    if dirty.drain() {
+        state.set_dirty(dirty.paths());
+        state.set_unreadable(dirty.unreadable());
+    }
+    let reading = dirty.is_waiting();
+    state.set_waiting(reading);
+    state.set_answered(dirty.answered());
+    reading
+}
+
+/// Close every pane in a checkout and then start removing it, stopping at the first thing
+/// that fails. `Err` is what to tell the user, already in words.
+///
+/// The panes are closed here rather than in the process that carries out the removal because
+/// by the time that runs they are gone: the grouping it could rebuild for itself would be a
+/// grouping with nothing in it. herdr collapses a tab and a workspace that end up empty,
+/// which is what lets this leave no residue — measured against 0.7.4. See
+/// `docs/adr/0010-closing-the-panes-first.md`.
+///
+/// A pane that will not close stops the whole thing: a checkout removed out from under half
+/// its panes is worse than one not removed. How far it got is what the message is for — the
+/// panes that did close are gone, and nothing else on screen will say so.
+fn close_then_remove(
+    herdr: &dyn HerdrPort,
+    removals: &mut Removals,
+    repo_root: &str,
+    checkout_path: &str,
+    label: &str,
+    panes: &[String],
+) -> Result<(), String> {
+    for (closed, pane_id) in panes.iter().enumerate() {
+        if let Err(error) = herdr.pane_close(pane_id) {
+            return Err(removal::interrupted(
+                pane_id,
+                &format!("{error:#}"),
+                closed,
+                panes.len(),
+            ));
+        }
+    }
+    // Every pane is gone by now, so a failure here is the same shape as a git refusal and
+    // gets the same clause: the worst version of it, in fact, since none of them survived.
+    removals
+        .start(repo_root, checkout_path, label, panes.len())
+        .map_err(|error| {
+            format!(
+                "could not start removing {label}: {}",
+                removal::refusal(&format!("{error:#}"), panes.len())
+            )
+        })
 }
 
 fn perform(herdr: &dyn HerdrPort, action: Action) -> Result<Exit> {
@@ -173,5 +271,291 @@ fn perform(herdr: &dyn HerdrPort, action: Action) -> Result<Exit> {
         Action::Consumed | Action::Ignored | Action::Reload | Action::RemoveWorktree { .. } => {
             Ok(Exit::Closed)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::port::{
+        Notification, Pane, PaneDestination, PluginPaneOpen, RemovalOutcome, RemovalPort,
+        RunningRemoval, Snapshot, WorktreeCreate, WorktreeList, WorktreeOpened,
+    };
+    use crate::ui::state::PanesState;
+    use anyhow::{anyhow, Result};
+    use std::sync::Mutex;
+
+    /// Records the order it was asked to do things in, and can be told to refuse one pane.
+    /// The ordering is the whole of `docs/adr/0010-closing-the-panes-first.md` and there is
+    /// nowhere else it can be checked: the picker's loop needs a terminal and a keyboard.
+    #[derive(Default)]
+    struct Recorder {
+        did: Mutex<Vec<String>>,
+        refuse: Option<String>,
+    }
+
+    impl Recorder {
+        fn refusing(pane_id: &str) -> Self {
+            Self {
+                refuse: Some(pane_id.to_string()),
+                ..Self::default()
+            }
+        }
+
+        fn did(&self) -> Vec<String> {
+            self.did.lock().unwrap().clone()
+        }
+    }
+
+    impl HerdrPort for Recorder {
+        fn pane_close(&self, pane_id: &str) -> Result<()> {
+            if self.refuse.as_deref() == Some(pane_id) {
+                return Err(anyhow!(
+                    "herdr rejected pane.close: no such pane (not_found)"
+                ));
+            }
+            self.did.lock().unwrap().push(format!("close {pane_id}"));
+            Ok(())
+        }
+
+        fn snapshot(&self) -> Result<Snapshot> {
+            unreachable!("only pane_close is asked of this port")
+        }
+        fn worktree_list(&self, _cwd: &str) -> Result<WorktreeList> {
+            unreachable!()
+        }
+        fn worktree_create(&self, _req: &WorktreeCreate) -> Result<WorktreeOpened> {
+            unreachable!()
+        }
+        fn worktree_open(&self, _req: &WorktreeOpen) -> Result<WorktreeOpened> {
+            unreachable!()
+        }
+        fn pane_focus(&self, _pane_id: &str) -> Result<()> {
+            unreachable!()
+        }
+        fn pane_split(&self, _req: &PaneSplit) -> Result<Pane> {
+            unreachable!()
+        }
+        fn pane_move(&self, _p: &str, _d: &PaneDestination, _f: bool) -> Result<()> {
+            unreachable!()
+        }
+        fn workspace_focus(&self, _workspace_id: &str) -> Result<()> {
+            unreachable!()
+        }
+        fn tab_focus(&self, _tab_id: &str) -> Result<()> {
+            unreachable!()
+        }
+        fn plugin_pane_open(
+            &self,
+            _req: &PluginPaneOpen,
+        ) -> Result<Option<crate::port::OpenRefusal>> {
+            unreachable!()
+        }
+        fn notify(&self, _notification: &Notification) -> Result<()> {
+            unreachable!()
+        }
+    }
+
+    /// Starts nothing; it only says that it was asked, into the same log the closes go to.
+    struct Started<'a>(&'a Recorder);
+
+    struct Done;
+
+    impl RunningRemoval for Done {
+        fn wait(self: Box<Self>) -> Result<RemovalOutcome> {
+            Ok(RemovalOutcome::Removed)
+        }
+    }
+
+    impl RemovalPort for Started<'_> {
+        fn start(
+            &self,
+            _repo_root: &str,
+            checkout_path: &str,
+            _label: &str,
+            panes_closed: usize,
+        ) -> Result<Box<dyn RunningRemoval>> {
+            self.0
+                .did
+                .lock()
+                .unwrap()
+                .push(format!("start {checkout_path} after {panes_closed}"));
+            Ok(Box::new(Done))
+        }
+    }
+
+    /// Answers every working tree at once and calls it clean, which is what makes the
+    /// difference between "asked" and "answered" observable in one drain.
+    struct Clean;
+
+    impl GitPort for Clean {
+        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
+            Ok(false)
+        }
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            unreachable!()
+        }
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<String>> {
+            unreachable!()
+        }
+        fn local_refs(&self, _repo_root: &str) -> Result<Vec<crate::port::GitRef>> {
+            unreachable!()
+        }
+        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
+            unreachable!()
+        }
+        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!()
+        }
+        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
+            unreachable!()
+        }
+        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!()
+        }
+        fn head_ref(&self, _repo_root: &str) -> Result<String> {
+            unreachable!()
+        }
+    }
+
+    fn one_pane_tree() -> crate::domain::model::Tree {
+        use crate::domain::model::{PaneNode, RepoNode, Tree, WorktreeNode};
+        Tree {
+            repos: vec![RepoNode {
+                repo_key: "/src/app/.git".into(),
+                repo_root: "/src/app".into(),
+                display_name: "me/app".into(),
+                worktrees: vec![WorktreeNode {
+                    branch: Some("feat/login".into()),
+                    checkout_path: "/wt/feat-login".into(),
+                    is_primary: false,
+                    open_workspace_id: Some("w2".into()),
+                    track: None,
+                    panes: vec![PaneNode {
+                        pane_id: "w2:p1".into(),
+                        workspace_id: "w2".into(),
+                        tab_id: "w2:t1".into(),
+                        display_name: Some("codex".into()),
+                        agent_status: crate::port::AgentStatus::Idle,
+                        focused: false,
+                    }],
+                }],
+            }],
+            ungrouped: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_loop_hands_on_what_the_walk_answered_or_nothing_can_be_deleted() {
+        // The wiring that shipped dead once, and would ship dead again silently: with the
+        // answers never handed on, every checkout with panes says "still reading that
+        // working tree" for the life of the picker and the feature is unreachable.
+        let mut state = PanesState::new(one_pane_tree(), None);
+        let mut dirty = Dirty::new(std::sync::Arc::new(Clean));
+        dirty.ask(state.tree());
+
+        for _ in 0..2000 {
+            if !show_answers(&mut state, &mut dirty) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+
+        // The cursor starts on the only pane there is.
+        state.handle_key(ratatui::crossterm::event::KeyEvent::new(
+            ratatui::crossterm::event::KeyCode::Char('D'),
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        ));
+        assert!(
+            state.pending_removal().is_some(),
+            "the walk answered, so the question can be asked: {:?}",
+            state.message()
+        );
+    }
+
+    fn ids(panes: &[&str]) -> Vec<String> {
+        panes.iter().map(|id| (*id).to_string()).collect()
+    }
+
+    #[test]
+    fn every_pane_closes_before_the_removal_starts_and_in_the_order_given() {
+        // The order is the safety rule: `git worktree remove` walking a working tree that
+        // still has agents writing into it is what closing first exists to prevent.
+        let recorder = Recorder::default();
+        let port = Started(&recorder);
+        let mut removals = Removals::new(&port);
+
+        let told = close_then_remove(
+            &recorder,
+            &mut removals,
+            "/src/app",
+            "/wt/feat-login",
+            "feat/login",
+            &ids(&["w2:p1", "w2:p2", "w9:p3"]),
+        );
+
+        assert_eq!(told, Ok(()));
+        assert_eq!(
+            recorder.did(),
+            [
+                "close w2:p1",
+                "close w2:p2",
+                "close w9:p3",
+                "start /wt/feat-login after 3",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_pane_that_will_not_close_stops_the_removal_and_says_how_far_it_got() {
+        // Half the panes gone and the checkout still standing is not "nothing happened",
+        // and herdr's bare refusal does not say which of the two the reader is looking at.
+        let recorder = Recorder::refusing("w2:p2");
+        let port = Started(&recorder);
+        let mut removals = Removals::new(&port);
+
+        let told = close_then_remove(
+            &recorder,
+            &mut removals,
+            "/src/app",
+            "/wt/feat-login",
+            "feat/login",
+            &ids(&["w2:p1", "w2:p2", "w9:p3"]),
+        );
+
+        assert_eq!(
+            told,
+            Err(
+                "could not close w2:p2: herdr rejected pane.close: no such pane (not_found) \
+                 — 1 of its 3 panes was closed first, and the checkout was not removed"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            recorder.did(),
+            ["close w2:p1"],
+            "it stopped there, and started nothing"
+        );
+        assert!(removals.is_empty());
+    }
+
+    #[test]
+    fn a_checkout_with_no_panes_starts_its_removal_straight_away() {
+        let recorder = Recorder::default();
+        let port = Started(&recorder);
+        let mut removals = Removals::new(&port);
+
+        assert_eq!(
+            close_then_remove(
+                &recorder,
+                &mut removals,
+                "/src/app",
+                "/wt/fix-crash",
+                "fix/crash",
+                &[],
+            ),
+            Ok(())
+        );
+        assert_eq!(recorder.did(), ["start /wt/fix-crash after 0"]);
     }
 }

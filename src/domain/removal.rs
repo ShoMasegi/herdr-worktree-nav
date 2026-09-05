@@ -45,7 +45,15 @@ pub fn parse_report(line: &str) -> Option<RemovalOutcome> {
 /// It names the branch rather than the plugin, because the branch is what the reader was
 /// waiting on. The path goes in the body: it is what actually went, and it is what tells two
 /// checkouts of the same branch name apart.
-pub fn notification(label: &str, checkout_path: &str, outcome: &RemovalOutcome) -> Notification {
+///
+/// `panes_closed` is how many panes were stopped to get this far, and it appears only when
+/// the removal was then refused — see `refusal`.
+pub fn notification(
+    label: &str,
+    checkout_path: &str,
+    outcome: &RemovalOutcome,
+    panes_closed: usize,
+) -> Notification {
     match outcome {
         RemovalOutcome::Removed => Notification {
             title: format!("removed {label}"),
@@ -55,23 +63,58 @@ pub fn notification(label: &str, checkout_path: &str, outcome: &RemovalOutcome) 
         },
         RemovalOutcome::Refused(reason) => Notification {
             title: format!("could not remove {label}"),
-            // git's words, not a summary of them: they say what would have been lost.
-            body: Some(reason.clone()),
+            // git's words, and what it cost to reach them. Not a summary of what git said:
+            // the reason it gave is what says what would have been lost.
+            body: Some(refusal(reason, panes_closed)),
             // The one that has to reach someone who is no longer looking.
             sound: NotificationSound::Request,
         },
     }
 }
 
+/// A refusal, and what it cost to reach it.
+///
+/// A removal that stopped panes and then failed is the one failure that is not "nothing
+/// happened": the panes are gone and the checkout is not. Saying only what git said would
+/// leave the reader to reconcile it with work that has stopped for no visible reason —
+/// herdr collapses the emptied tab, so there is not even an empty one left to explain it.
+/// Nothing is added when the removal worked: the panes were named in the question, and the
+/// checkout going is the answer.
+pub fn refusal(reason: &str, panes_closed: usize) -> String {
+    match panes_closed {
+        0 => reason.to_string(),
+        1 => format!("{reason} — its 1 pane was closed first"),
+        many => format!("{reason} — its {many} panes were closed first"),
+    }
+}
+
+/// What the picker says when closing the panes stopped partway.
+///
+/// The same rule as `refusal`, for the failure that happens one step earlier: the panes that
+/// were reached are gone, the checkout is untouched, and the removal never started. herdr's
+/// own words alone would leave the reader with work that has stopped and no account of why.
+pub fn interrupted(pane_id: &str, reason: &str, closed: usize, total: usize) -> String {
+    let so_far = match (closed, total) {
+        (0, 1) => "its 1 pane was not closed".to_string(),
+        (0, total) => format!("none of its {total} panes were closed"),
+        (1, total) => format!("1 of its {total} panes was closed first"),
+        (many, total) => format!("{many} of its {total} panes were closed first"),
+    };
+    format!("could not close {pane_id}: {reason} — {so_far}, and the checkout was not removed")
+}
+
 /// What the picker puts on its prompt line, when it is still up to read the answer.
 ///
 /// Nothing on success: the row leaving the list is the report, and repeating it there would
 /// only say twice what the toast has already said once.
-pub fn message(label: &str, outcome: &RemovalOutcome) -> Option<String> {
+pub fn message(label: &str, outcome: &RemovalOutcome, panes_closed: usize) -> Option<String> {
     match outcome {
         RemovalOutcome::Removed => None,
         // Several removals can be in flight at once, so the reason has to name its own.
-        RemovalOutcome::Refused(reason) => Some(format!("could not remove {label}: {reason}")),
+        RemovalOutcome::Refused(reason) => Some(format!(
+            "could not remove {label}: {}",
+            refusal(reason, panes_closed)
+        )),
     }
 }
 
@@ -119,11 +162,87 @@ mod tests {
     }
 
     #[test]
+    fn a_refusal_after_panes_were_closed_says_that_they_were() {
+        // The one case where a failure is not simply "nothing happened": the panes are
+        // already gone by the time git speaks, and a report that only quoted git would
+        // leave the user to work that out from an empty tab.
+        let notification = notification(
+            "fix/crash",
+            "~/.herdr/worktrees/app/fix-crash",
+            &RemovalOutcome::Refused(REFUSAL.to_string()),
+            2,
+        );
+        assert_eq!(
+            notification.body.as_deref(),
+            Some(format!("{REFUSAL} — its 2 panes were closed first").as_str())
+        );
+        assert_eq!(
+            message(
+                "fix/crash",
+                &RemovalOutcome::Refused(REFUSAL.to_string()),
+                1
+            ),
+            Some(format!(
+                "could not remove fix/crash: {REFUSAL} — its 1 pane was closed first"
+            ))
+        );
+    }
+
+    #[test]
+    fn a_close_that_stopped_partway_says_how_far_it_got() {
+        // The other half of the same rule: panes are gone, the checkout is not, and the
+        // reader would otherwise have herdr's bare refusal and an emptied tab to reconcile.
+        assert_eq!(
+            interrupted(
+                "w1:p3",
+                "herdr rejected pane.close: no such pane (not_found)",
+                1,
+                3
+            ),
+            "could not close w1:p3: herdr rejected pane.close: no such pane (not_found) \
+             — 1 of its 3 panes was closed first, and the checkout was not removed"
+        );
+        assert_eq!(
+            interrupted("w1:p1", "gone", 0, 2),
+            "could not close w1:p1: gone — none of its 2 panes were closed, and the \
+             checkout was not removed"
+        );
+        assert_eq!(
+            interrupted("w1:p1", "gone", 0, 1),
+            "could not close w1:p1: gone — its 1 pane was not closed, and the checkout \
+             was not removed"
+        );
+        assert_eq!(
+            interrupted("w1:p3", "gone", 2, 3),
+            "could not close w1:p3: gone — 2 of its 3 panes were closed first, and the \
+             checkout was not removed"
+        );
+    }
+
+    #[test]
+    fn a_removal_that_worked_does_not_dwell_on_the_panes() {
+        // They were listed in the question and the checkout is gone; saying it again is
+        // saying twice what the row leaving the list already said once.
+        let notification = notification(
+            "fix/crash",
+            "~/.herdr/worktrees/app/fix-crash",
+            &RemovalOutcome::Removed,
+            2,
+        );
+        assert_eq!(
+            notification.body.as_deref(),
+            Some("~/.herdr/worktrees/app/fix-crash")
+        );
+        assert_eq!(message("fix/crash", &RemovalOutcome::Removed, 2), None);
+    }
+
+    #[test]
     fn the_toast_names_the_branch_and_points_at_the_path() {
         let notification = notification(
             "fix/crash",
             "~/.herdr/worktrees/app/fix-crash",
             &RemovalOutcome::Removed,
+            0,
         );
         assert_eq!(notification.title, "removed fix/crash");
         assert_eq!(
@@ -143,6 +262,7 @@ mod tests {
             "fix/crash",
             "~/.herdr/worktrees/app/fix-crash",
             &RemovalOutcome::Refused(REFUSAL.to_string()),
+            0,
         );
         assert_eq!(notification.title, "could not remove fix/crash");
         assert_eq!(
@@ -155,14 +275,18 @@ mod tests {
 
     #[test]
     fn the_picker_says_nothing_when_the_row_simply_leaves() {
-        assert_eq!(message("fix/crash", &RemovalOutcome::Removed), None);
+        assert_eq!(message("fix/crash", &RemovalOutcome::Removed, 0), None);
     }
 
     #[test]
     fn the_picker_repeats_the_refusal_and_says_which_checkout_it_was_about() {
         // Several removals can be in flight at once, so the reason has to name its own.
         assert_eq!(
-            message("fix/crash", &RemovalOutcome::Refused(REFUSAL.to_string())),
+            message(
+                "fix/crash",
+                &RemovalOutcome::Refused(REFUSAL.to_string()),
+                0
+            ),
             Some(format!("could not remove fix/crash: {REFUSAL}"))
         );
     }

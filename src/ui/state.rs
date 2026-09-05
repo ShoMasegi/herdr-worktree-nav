@@ -5,7 +5,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::domain::model::Tree;
+use crate::domain::model::{PaneNode, Tree};
 use crate::domain::rows::{self, DisplayLine, Row, RowRef, StateFilter, ViewOptions};
 
 /// What the event loop should do about a key. Anything that touches herdr is returned
@@ -34,12 +34,17 @@ pub enum Action {
     ShowBranches {
         repo_root: Option<String>,
     },
-    /// Delete a checkout that has nothing running in it. The only thing this plugin does
-    /// that cannot be undone by doing it again the other way.
+    /// Delete a checkout. The only thing this plugin does that cannot be undone by doing it
+    /// again the other way.
+    ///
+    /// `panes` are closed first, in the order given. A checkout with panes in it is the
+    /// ordinary end state of a finished worktree, not an unusual one — see
+    /// `docs/adr/0010-closing-the-panes-first.md`.
     RemoveWorktree {
         repo_root: String,
         checkout_path: String,
         label: String,
+        panes: Vec<String>,
     },
     Reload,
 }
@@ -62,6 +67,8 @@ pub struct PanesState {
     tick: usize,
     /// Whether an answer is still on its way, which the prompt line says with a spinner.
     waiting: bool,
+    /// Checkouts git has answered about, dirty or not. Not drawn; see `set_answered`.
+    answered: Vec<String>,
 }
 
 /// A checkout the user has asked to delete, held until they say yes.
@@ -71,6 +78,10 @@ pub struct Removal {
     pub checkout_path: String,
     /// The branch name, for the question and for saying what went.
     pub label: String,
+    /// The panes that stop if this goes ahead, in the order the tree lists them. Named in
+    /// the question because uncommitted work is git's to protect and this is not: whatever
+    /// a working agent has in flight has no other safety net.
+    pub panes: Vec<PaneNode>,
 }
 
 impl PanesState {
@@ -90,6 +101,7 @@ impl PanesState {
             message: None,
             tick: 0,
             waiting: false,
+            answered: Vec::new(),
         };
         state.rebuild(None);
         state
@@ -98,9 +110,29 @@ impl PanesState {
     /// Replace the tree after a reload, keeping the cursor on the same pane when it is
     /// still there.
     pub fn replace_tree(&mut self, tree: Tree) {
+        // A question on screen is about the panes the tree had when it was asked. Another
+        // removal finishing is the ordinary way for that to stop being true — tidying up
+        // comes in batches — and a `y` against a list that has moved on would close panes
+        // nobody was shown, or leave one behind that opened since. So the question goes
+        // back, and the user asks it again of the list they can now see.
+        if self.pending_removal.take().is_some() {
+            self.message = Some("the list changed while that was up — ask again".into());
+        }
         let anchor = self.selected_pane_id().map(str::to_string);
+        let at = self.cursor;
         self.tree = tree;
         self.rebuild(anchor.as_deref());
+        // The pane the cursor was on is gone — it was closed, or its checkout was removed.
+        // Keeping the place beats going back to the top: tidying up comes in batches, and
+        // the next thing to tidy is near the last one, not at the start of the list.
+        //
+        // Only here. `rebuild`'s other callers are the search box, where the list that comes
+        // back has nothing to do with the one that went in and the first match is the place
+        // to be.
+        if anchor.is_none_or(|pane_id| self.line_of_pane(&pane_id).is_none()) {
+            let from = at.min(self.lines.len().saturating_sub(1));
+            self.cursor = rows::next_row(&self.rows, &self.lines, from).unwrap_or(0);
+        }
     }
 
     /// Say which checkouts are holding uncommitted work. Arrives after the first frame, one
@@ -127,6 +159,13 @@ impl PanesState {
 
     pub fn is_waiting(&self) -> bool {
         self.waiting
+    }
+
+    /// Say which checkouts git has answered for at all, whatever it said. Nothing is drawn
+    /// from this: it is what stops "nobody has asked yet" being read as "clean" when the
+    /// question is whether somebody's panes may be closed.
+    pub fn set_answered(&mut self, paths: Vec<String>) {
+        self.answered = paths;
     }
 
     /// Say which checkouts git would not answer for, so their rows can say it themselves. A
@@ -217,6 +256,14 @@ impl PanesState {
     /// Shortens checkout paths to `~`, for anything drawn outside the rows.
     pub fn home(&self) -> Option<&str> {
         self.options.home.as_deref()
+    }
+
+    /// Take back a question that could not be asked. The picker calls this when the pane is
+    /// too small to draw the box: leaving `y` armed over a question nobody saw would be
+    /// asking it without asking it, and the key hint at the bottom says which keys answer,
+    /// never what is being answered.
+    pub fn cancel_removal(&mut self) {
+        self.pending_removal = None;
     }
 
     /// The removal being asked about, which the picker turns into a dialog.
@@ -354,32 +401,57 @@ impl PanesState {
         }
     }
 
-    /// What `Shift-D` means: offer to delete the checkout under the cursor.
+    /// What `Shift-D` means: offer to delete the checkout under the cursor — or, on a pane,
+    /// the checkout that pane is in, which is how a checkout with panes is reached at all,
+    /// since the cursor does not stop on one.
     ///
-    /// Only a checkout with nothing running in it, which is also the only kind the cursor
-    /// stops on besides a pane. The refusals happen here rather than after the question,
-    /// because asking "are you sure?" about something that cannot happen is worse than
-    /// saying so.
+    /// The refusals happen here rather than after the question, because asking "are you
+    /// sure?" about something that cannot happen is worse than saying so — and because for
+    /// a checkout with panes, "after the question" is after they have been closed.
     fn ask_to_remove(&mut self) -> Action {
         let Some((r, w)) = self.selected_worktree() else {
-            self.message = Some("select a checkout with nothing running in it".into());
+            self.message = Some("select a checkout, or a pane in one".into());
             return Action::Consumed;
         };
         let repo = &self.tree.repos[r];
         let worktree = &repo.worktrees[w];
-        if !worktree.is_idle() {
-            self.message = Some("something is running in that checkout".into());
-            return Action::Consumed;
-        }
         if worktree.is_primary {
             // git cannot remove the main working tree, and it is not a worktree anyway.
             self.message = Some("that is the repository itself, not a worktree".into());
             return Action::Consumed;
         }
+        if self.options.removing.contains(&worktree.checkout_path) {
+            // A second one would race the first, and would close panes that the first is
+            // already having removed out from under them.
+            self.message = Some("that checkout is already being removed".into());
+            return Action::Consumed;
+        }
+        // The refusals below are only reached by a checkout with panes in it, and that is
+        // the whole reason they exist: for an empty one there is nothing to lose by letting
+        // git answer for itself, but here the panes are gone by the time it speaks.
+        if !worktree.panes.is_empty() {
+            if self.options.dirty.contains(&worktree.checkout_path) {
+                self.message = Some("that checkout is holding work nobody has committed".into());
+                return Action::Consumed;
+            }
+            if self.options.unreadable.contains(&worktree.checkout_path) {
+                self.message = Some("git would not read that working tree".into());
+                return Action::Consumed;
+            }
+            // Not asked yet is not the same as asked and clean, and only the second is a
+            // licence to close somebody's panes. Walking a working tree takes a moment and
+            // the answers land after the first frame, so this is the ordinary state of the
+            // checkout the picker opens on — the one the cursor is already sitting in.
+            if !self.answered.contains(&worktree.checkout_path) {
+                self.message = Some("still reading that working tree — try again".into());
+                return Action::Consumed;
+            }
+        }
         self.pending_removal = Some(Removal {
             repo_root: repo.repo_root.clone(),
             checkout_path: worktree.checkout_path.clone(),
             label: worktree.label().to_string(),
+            panes: worktree.panes.clone(),
         });
         Action::Consumed
     }
@@ -431,6 +503,7 @@ impl PanesState {
                     repo_root: removal.repo_root,
                     checkout_path: removal.checkout_path,
                     label: removal.label,
+                    panes: removal.panes.into_iter().map(|pane| pane.pane_id).collect(),
                 },
                 // Anything else is a no. Taking the removal above is what makes that true
                 // of keys nobody thought of as well as of the ones they did.
@@ -792,11 +865,81 @@ mod tests {
                 repo_root: "/src/app".into(),
                 checkout_path: "/wt/app/fix-crash".into(),
                 label: "fix/crash".into(),
+                panes: Vec::new(),
             }
         );
         assert!(
             state.pending_removal().is_none(),
             "the question is answered"
+        );
+    }
+
+    #[test]
+    fn a_question_is_taken_back_when_the_list_it_was_about_moves_on() {
+        // The window is real and ordinary: a removal started a moment ago reports back, the
+        // loop reads the tree again, and the panes the question named are no longer what
+        // the checkout has. Answering `y` then closes a list nobody was shown.
+        let mut state = state();
+        state.set_answered(vec!["/wt/app/feat-login".into()]);
+        select(&mut state, "codex");
+        state.handle_key(key(KeyCode::Char('D')));
+        assert!(state.pending_removal().is_some());
+
+        let mut grown = state.tree().clone();
+        grown.repos[0].worktrees[1]
+            .panes
+            .push(pane("w2:p9", "zsh", AgentStatus::Unknown));
+        state.replace_tree(grown);
+
+        assert!(state.pending_removal().is_none());
+        assert_eq!(
+            state.message(),
+            Some("the list changed while that was up — ask again")
+        );
+        assert_eq!(
+            state.handle_key(key(KeyCode::Char('y'))),
+            Action::Ignored,
+            "and the answer to a withdrawn question is no answer at all"
+        );
+    }
+
+    #[test]
+    fn a_reload_that_takes_the_row_away_keeps_the_place_rather_than_the_top() {
+        // The flow this feature is: `Shift-D` on a pane, `y`, the panes close, the tree is
+        // read again — and the pane the cursor was anchored to is one of the ones that went.
+        // Going back to the first row would cost the place on every removal, and tidying up
+        // comes in batches.
+        let mut state = state();
+        select(&mut state, "codex");
+        let before = state.cursor();
+
+        let mut without = state.tree().clone();
+        without.repos[0].worktrees[1].panes.clear();
+        state.replace_tree(without);
+
+        assert_ne!(state.cursor(), 0, "not back at the top");
+        assert!(state.cursor() >= before.saturating_sub(1));
+    }
+
+    #[test]
+    fn a_search_still_lands_on_the_first_match_rather_than_on_an_old_index() {
+        // `rebuild`'s other callers were no part of the change above: the list a query
+        // returns has nothing to do with the one it replaced, so the same numeric index is
+        // not a place kept, it is an arbitrary row.
+        let mut searching = state();
+        select(&mut searching, "zsh");
+        let at = searching.cursor();
+        searching.handle_key(key(KeyCode::Char('/')));
+        searching.handle_key(key(KeyCode::Char('c')));
+        assert_ne!(
+            searching.cursor(),
+            at,
+            "the filtered list is a different list"
+        );
+        assert_eq!(
+            searching.selected().map(|row| row.label.as_str()),
+            Some("claude"),
+            "the first row the cursor can stop on"
         );
     }
 
@@ -855,7 +998,128 @@ mod tests {
     }
 
     #[test]
-    fn there_is_nothing_to_delete_on_a_pane_or_on_the_repository_itself() {
+    fn shift_d_on_a_pane_offers_to_delete_the_checkout_it_is_in() {
+        // A finished worktree has panes in it — that is its ordinary end state, not an
+        // unusual one. The cursor cannot land on a checkout that has panes (its panes are
+        // the answer to where to go), so the key has to mean this from the pane row.
+        let mut state = state();
+        // Two panes, so the assertion below can tell "the checkout's panes" from "the first
+        // pane in the checkout", and can see them reordered.
+        let mut tree = state.tree().clone();
+        tree.repos[0].worktrees[1]
+            .panes
+            .push(pane("w2:p2", "zsh", AgentStatus::Unknown));
+        state.replace_tree(tree);
+        state.set_answered(vec!["/wt/app/feat-login".into()]);
+        select(&mut state, "codex");
+        assert_eq!(state.handle_key(key(KeyCode::Char('D'))), Action::Consumed);
+
+        let asked = state.pending_removal().expect("a question should be up");
+        assert_eq!(asked.label, "feat/login");
+        let closing: Vec<&str> = asked
+            .panes
+            .iter()
+            .map(|pane| pane.pane_id.as_str())
+            .collect();
+        assert_eq!(closing, ["w2:p1", "w2:p2"], "and it names what stops");
+
+        // And `y` carries them through, in the order the question listed them. Without this
+        // the picker could ask about panes it then never closed, and remove the checkout out
+        // from under every one of them.
+        assert_eq!(
+            state.handle_key(key(KeyCode::Char('y'))),
+            Action::RemoveWorktree {
+                repo_root: "/src/app".into(),
+                checkout_path: "/wt/app/feat-login".into(),
+                label: "feat/login".into(),
+                panes: vec!["w2:p1".into(), "w2:p2".into()],
+            }
+        );
+    }
+
+    #[test]
+    fn a_checkout_with_panes_whose_working_tree_has_not_answered_yet_is_refused() {
+        // The state the picker opens in: the walk is behind the first frame, the cursor is
+        // already on the pane the user came from, and nothing has answered. Reading that as
+        // clean would close their panes on a guess — and `r` puts every checkout back into
+        // it, so this is not only a startup window.
+        let mut state = state();
+        select(&mut state, "codex");
+        assert_eq!(state.handle_key(key(KeyCode::Char('D'))), Action::Consumed);
+        assert!(state.pending_removal().is_none());
+        assert_eq!(
+            state.message(),
+            Some("still reading that working tree — try again")
+        );
+
+        // An empty checkout is offered either way: nothing is at stake before the question,
+        // and git answers for itself.
+        select(&mut state, "fix/crash");
+        state.handle_key(key(KeyCode::Char('D')));
+        assert!(state.pending_removal().is_some());
+    }
+
+    #[test]
+    fn a_checkout_already_being_removed_is_not_offered_again() {
+        // The rows of a checkout being removed stop being selectable, but its panes' rows do
+        // not, and a second confirmation would close panes the first is already removing the
+        // ground from under.
+        let mut state = state();
+        state.set_answered(vec!["/wt/app/feat-login".into()]);
+        state.set_removing(vec!["/wt/app/feat-login".into()]);
+        select(&mut state, "codex");
+        state.handle_key(key(KeyCode::Char('D')));
+        assert!(state.pending_removal().is_none());
+        assert_eq!(
+            state.message(),
+            Some("that checkout is already being removed")
+        );
+    }
+
+    #[test]
+    fn a_checkout_with_panes_is_refused_before_the_question_when_it_is_holding_work() {
+        // The refusal exists here and not on an empty checkout because of what is at stake:
+        // for an empty one git can answer for itself, but here the panes would already be
+        // closed by the time it did.
+        let mut state = state();
+        state.set_dirty(vec!["/wt/app/feat-login".into()]);
+        select(&mut state, "codex");
+        assert_eq!(state.handle_key(key(KeyCode::Char('D'))), Action::Consumed);
+        assert!(state.pending_removal().is_none());
+        assert_eq!(
+            state.message(),
+            Some("that checkout is holding work nobody has committed")
+        );
+    }
+
+    #[test]
+    fn a_checkout_with_panes_is_refused_when_git_would_not_read_it() {
+        // Which is not the same as reading it and finding nothing: without an answer there
+        // is no protection to offer, and the panes would go on the strength of a guess.
+        let mut state = state();
+        state.set_unreadable(vec!["/wt/app/feat-login".into()]);
+        select(&mut state, "codex");
+        state.handle_key(key(KeyCode::Char('D')));
+        assert!(state.pending_removal().is_none());
+        assert_eq!(
+            state.message(),
+            Some("git would not read that working tree")
+        );
+    }
+
+    #[test]
+    fn an_empty_checkout_holding_work_is_still_offered_and_left_to_git() {
+        // Nothing is at stake before the question here, and git's refusal is the answer
+        // rather than an obstacle — it says what would have been lost.
+        let mut state = state();
+        state.set_dirty(vec!["/wt/app/fix-crash".into()]);
+        select(&mut state, "fix/crash");
+        state.handle_key(key(KeyCode::Char('D')));
+        assert!(state.pending_removal().is_some());
+    }
+
+    #[test]
+    fn the_repositorys_own_checkout_is_never_offered() {
         let mut on_a_pane = state();
         select(&mut on_a_pane, "claude");
         assert_eq!(

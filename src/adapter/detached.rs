@@ -24,6 +24,7 @@ impl RemovalPort for DetachedRemovals {
         repo_root: &str,
         checkout_path: &str,
         label: &str,
+        panes_closed: usize,
     ) -> Result<Box<dyn RunningRemoval>> {
         // This binary rather than `git` directly: the child has to reach herdr to report
         // itself, and doing that through the same ports the picker uses is what keeps the
@@ -33,10 +34,7 @@ impl RemovalPort for DetachedRemovals {
 
         let mut command = Command::new(exe);
         command
-            .arg("remove")
-            .arg(repo_root)
-            .arg(checkout_path)
-            .arg(label)
+            .args(arguments(repo_root, checkout_path, label, panes_closed))
             .stdin(Stdio::null())
             // The report line comes back this way while the picker is still up to read it.
             .stdout(Stdio::piped())
@@ -62,6 +60,25 @@ impl RemovalPort for DetachedRemovals {
             label: label.to_string(),
         }))
     }
+}
+
+/// What the child is told, in the order `app::remove::Args::read` expects to read it.
+///
+/// Split out because it is one half of a wire format: the other half parses it, in another
+/// module, in another process. Kept together only by a test that runs one into the other.
+fn arguments(
+    repo_root: &str,
+    checkout_path: &str,
+    label: &str,
+    panes_closed: usize,
+) -> [String; 5] {
+    [
+        "remove".to_string(),
+        repo_root.to_string(),
+        checkout_path.to_string(),
+        label.to_string(),
+        panes_closed.to_string(),
+    ]
 }
 
 struct Detached {
@@ -91,5 +108,32 @@ impl RunningRemoval for Detached {
             true => anyhow!("the removal of {label} ended without saying what happened"),
             false => anyhow!("the removal of {label} ended without saying what happened: {said}"),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::arguments;
+    use crate::app::remove::Args;
+
+    #[test]
+    fn what_is_written_on_the_command_line_is_what_the_child_reads_off_it() {
+        // The two halves of this are in different modules and, at the moment that matters,
+        // in different processes. Nothing but this test stops one of them gaining an
+        // argument the other does not know about — and the whole of what would go missing
+        // is the clause that tells somebody who closed the picker what closing cost them.
+        let written = arguments("/src/app", "/wt/feat-login", "feat/login", 2);
+        assert_eq!(written[0], "remove", "the mode comes first");
+
+        let read = Args::read(&mut written[1..].iter().cloned()).expect("its own output");
+        assert_eq!(
+            read,
+            Args {
+                repo_root: "/src/app".into(),
+                checkout_path: "/wt/feat-login".into(),
+                label: "feat/login".into(),
+                panes_closed: 2,
+            }
+        );
     }
 }

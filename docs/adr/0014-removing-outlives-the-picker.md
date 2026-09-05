@@ -38,8 +38,9 @@ anyone. One reporter that always speaks beats two that each assume the other did
 
 - removed: `removed <branch>`, the path in the body, and no sound. Tidying up is done often;
   a chime for every checkout that goes is noise.
-- refused: `could not remove <branch>`, git's own words in the body, and the sound. This is
-  the one that has to reach someone who has stopped looking.
+- refused: `could not remove <branch>`, git's own words in the body — with what it cost to
+  reach them, once closing panes became part of getting there — and the sound. This is the
+  one that has to reach someone who has stopped looking.
 
 **The picker shows it while it is there, and adds only what the toast cannot.** The row's
 `no pane` becomes `deleting ⠻` and stops being selectable, so the cursor steps over it and a
@@ -52,6 +53,13 @@ is the report.
 Routing around a user who has turned notifications off is overruling them. And the report is
 not actually lost: a refused removal leaves the checkout standing, so the row is there next
 time, and `Shift-D` on it gives git's reason inline.
+
+That last sentence stopped being wholly true when
+[ADR 0010](./0010-closing-the-panes-first.md) was implemented. A refusal that came after the
+panes were closed says so — `— its 2 panes were closed first` — and that clause is the half
+the backstop cannot reproduce: next time, the row has no panes to close, so asking again
+gives git's reason without it. The checkout still being there is still a report; what it has
+stopped being is the whole of one.
 
 **Nothing is queued.** One process per removal, started when the key is pressed. A queue
 would have to be owned by the picker, and a queue owned by something the user is free to

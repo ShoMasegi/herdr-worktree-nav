@@ -15,11 +15,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::domain::model::RepoNode;
+use crate::domain::model::{PaneNode, RepoNode};
 use crate::domain::order::Order;
 use crate::domain::preview::{Preview, PreviewPane};
 use crate::domain::resolve::{BranchEntry, BranchState};
-use crate::domain::rows::{abbreviate, marks, marks_reserve, DisplayLine, Row};
+use crate::domain::rows::{self, abbreviate, marks, marks_reserve, DisplayLine, Row, UNNAMED_PANE};
 use crate::port::LayoutRect;
 use crate::ui::branches::{Activity, BranchesState, Step};
 use crate::ui::diagram::{Fit, Frame as DiagramFrame};
@@ -154,17 +154,20 @@ fn layout(frame: &Frame) -> Option<Panel> {
     })
 }
 
-pub fn draw(frame: &mut Frame, state: &PanesState, theme: &Theme, _mode: Mode) {
+/// `false` when a removal is waiting on an answer and this pane was too small to put the
+/// question in. The loop takes the question back when that happens — see `render_removal`.
+pub fn draw(frame: &mut Frame, state: &PanesState, theme: &Theme, _mode: Mode) -> bool {
     let Some(panel) = layout(frame) else {
-        return;
+        return state.pending_removal().is_none();
     };
 
     frame.render_widget(search_line(state, theme, panel.search.width), panel.search);
     render_rule(frame, panel.rule, theme);
     render_rows(frame, state, theme, panel.body);
-    if let Some(removal) = state.pending_removal() {
-        render_removal(frame, removal, state.home(), theme, panel.body);
-    }
+    let asked = match state.pending_removal() {
+        Some(removal) => render_removal(frame, removal, state.home(), theme, panel.body),
+        None => true,
+    };
     render_detail(frame, &state.detail(), theme, panel.detail);
 
     let variants = match (state.pending_removal().is_some(), state.is_filtering()) {
@@ -173,6 +176,7 @@ pub fn draw(frame: &mut Frame, state: &PanesState, theme: &Theme, _mode: Mode) {
         (false, false) => HELP_PANES,
     };
     frame.render_widget(footer(variants, theme, panel.footer.width), panel.footer);
+    asked
 }
 
 /// `/ query` with the total on the right, or a state chip when one is active.
@@ -275,24 +279,76 @@ fn footer(variants: &[&'static str], theme: &Theme, width: u16) -> Paragraph<'st
 /// A dialog rather than a line in the search field: this is the one thing the picker does
 /// that cannot be undone by doing it again, and it should not look like the place where
 /// ordinary messages go.
+/// `false` when the question could not be drawn at all. The caller must then take the
+/// question back: a picker that leaves `y` armed over a box nobody saw is asking a question
+/// it never put on screen, and the key hint at the bottom is not that question — it says
+/// which keys answer, never what is being answered.
 fn render_removal(
     frame: &mut Frame,
     removal: &Removal,
     home: Option<&str>,
     theme: &Theme,
     body: Rect,
-) {
+) -> bool {
     const TITLE: &str = "Delete this checkout?";
+    const CLOSING: &str = "  these panes close:";
+
     const KEYS_Y: &str = "y delete";
     const KEYS_REST: &str = "     any other key cancels";
 
     let path = abbreviate(&removal.checkout_path, home);
+    // Uncommitted work is git's to protect and it does. What a working agent has in flight
+    // has no other safety net, so the question names every pane that stops, in the words the
+    // list behind the box uses for the same panes.
+    let name_column = removal
+        .panes
+        .iter()
+        .map(|pane| {
+            pane.display_name
+                .as_deref()
+                .unwrap_or(UNNAMED_PANE)
+                .chars()
+                .count()
+        })
+        .max()
+        .unwrap_or(0);
+    let state_column = removal
+        .panes
+        .iter()
+        .map(|pane| agent_state(pane).chars().count())
+        .max()
+        .unwrap_or(0);
+    let closing: Vec<String> = removal
+        .panes
+        .iter()
+        .map(|pane| {
+            format!(
+                " {}  {}   {}",
+                pad(
+                    pane.display_name.as_deref().unwrap_or(UNNAMED_PANE),
+                    name_column
+                ),
+                pad(agent_state(pane), state_column),
+                pane.pane_id
+            )
+        })
+        .collect();
+    // The question that carries the count is the one the smallest box uses, so it has to be
+    // measured even when the list is what ends up being drawn.
+    let counted = match removal.panes.len() {
+        0 => TITLE.to_string(),
+        1 => "Delete this checkout and close 1 pane?".to_string(),
+        many => format!("Delete this checkout and close {many} panes?"),
+    };
     let widest = [
         TITLE.chars().count(),
+        counted.chars().count(),
         KEYS_Y.chars().count() + KEYS_REST.chars().count(),
     ]
     .into_iter()
     .chain([removal.label.chars().count() + 2, path.chars().count() + 2])
+    .chain(closing.iter().map(|line| line.chars().count() + 3))
+    .chain((!closing.is_empty()).then(|| CLOSING.chars().count()))
     .max()
     .unwrap_or(0);
     // Two columns of border and two of padding on each side, and a ceiling: a worktree path
@@ -323,17 +379,72 @@ fn render_removal(
         Span::styled(KEYS_REST, theme.dim()),
     ]);
 
+    // The panes, each with the glyph its row carries, so the one that is working is as
+    // obvious here as it is in the list behind the box.
+    let mut panes: Vec<Line> = Vec::new();
+    if !removal.panes.is_empty() {
+        panes.push(Line::from(Span::styled(CLOSING, theme.dim())));
+        for (pane, text) in removal.panes.iter().zip(&closing) {
+            let (glyph, glyph_style) = theme.status_glyph(pane.agent_status);
+            panes.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(glyph, glyph_style),
+                // One column narrower than the path's budget, which is what the glyph
+                // costs. (`inner_width` is already two narrower than the text area.)
+                Span::styled(
+                    middle_elide(text, inner_width.saturating_sub(1)),
+                    theme.dim(),
+                ),
+            ]));
+        }
+    }
+
     // Shrink by dropping the air first and the detail second, so a short pane still gets a
-    // question rather than a broken box.
-    let lines: Vec<Line> = match body.height {
-        8.. => vec![title, blank.clone(), branch, path, blank, keys],
-        6..=7 => vec![title, branch, path, keys],
-        _ => vec![title, keys],
+    // question rather than a broken box. What is about to stop outlasts everything but the
+    // question itself: a branch and a path can be read from the breadcrumb behind the box,
+    // and the panes cannot be read anywhere. Their names outlast the path by one rung and
+    // go with the branch on the next, and when even a line each will not fit, the question
+    // itself takes over
+    // their number — so the smallest box a checkout with panes can have is exactly as small
+    // as one without, and there is no height at which `y` is armed over a box that never
+    // said panes would close.
+    let counted_line = Line::from(Span::styled(
+        counted.clone(),
+        Style::default().add_modifier(Modifier::BOLD),
+    ));
+    let spaced = match panes.is_empty() {
+        true => vec![blank.clone()],
+        false => [vec![blank.clone()], panes.clone(), vec![blank.clone()]].concat(),
+    };
+    let candidates = [
+        [
+            vec![title.clone(), blank.clone(), branch.clone(), path.clone()],
+            spaced,
+            vec![keys.clone()],
+        ]
+        .concat(),
+        [
+            vec![title.clone(), branch.clone(), path],
+            panes.clone(),
+            vec![keys.clone()],
+        ]
+        .concat(),
+        [vec![title, branch], panes, vec![keys.clone()]].concat(),
+        vec![counted_line, keys],
+    ];
+    // A box too narrow for the question is as bad as no box: `Delete this checkout and close
+    // 2 panes?` clipped to `Delete this checkout` is a complete sentence and a false one.
+    // The caller takes a `false` from here as "this cannot be asked", and cancels.
+    if width < 8 || (width as usize) < counted.chars().count() + 6 {
+        return false;
+    }
+    let Some(lines) = candidates
+        .into_iter()
+        .find(|lines| lines.len() + 2 <= body.height as usize)
+    else {
+        return false;
     };
     let height = (lines.len() + 2) as u16;
-    if width < 8 || height > body.height {
-        return;
-    }
 
     let area = Rect::new(
         body.x + (body.width - width) / 2,
@@ -350,6 +461,7 @@ fn render_removal(
         ),
         area,
     );
+    true
 }
 
 fn render_rows(frame: &mut Frame, state: &PanesState, theme: &Theme, area: Rect) {
@@ -1409,6 +1521,13 @@ fn branch_state_label(entry: &BranchEntry) -> String {
     }
 }
 
+/// What an agent is doing, in the words the list behind the box uses. Empty for a pane with
+/// no agent: the glyph beside it already says there is nothing to report, and a column of
+/// `unknown` would be noise.
+fn agent_state(pane: &PaneNode) -> &'static str {
+    rows::status_label(pane.agent_status).unwrap_or("")
+}
+
 /// Right-pad to `width` characters so a column lines up.
 fn pad(text: &str, width: usize) -> String {
     let len = text.chars().count();
@@ -1504,7 +1623,9 @@ mod tests {
     fn screen(state: &PanesState, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
-            .draw(|frame| draw(frame, state, &theme(), Mode::Panes))
+            .draw(|frame| {
+                draw(frame, state, &theme(), Mode::Panes);
+            })
             .unwrap();
         terminal.backend().to_string()
     }
@@ -1543,6 +1664,92 @@ mod tests {
         let mut state = PanesState::new(tree(), None);
         state.set_waiting(true);
         insta::assert_snapshot!(screen(&state, 92, 18));
+    }
+
+    #[test]
+    fn the_question_names_every_pane_that_stops() {
+        // A finished worktree has panes in it, so this is the ordinary shape of the
+        // question rather than an unusual one. Uncommitted work is git's to protect and it
+        // does; what a working agent has in flight has no other safety net than this list.
+        let mut tree = tree();
+        // A second pane in the same checkout, with no agent in it: the columns have to line
+        // up, and a pane with nothing to report says nothing rather than `unknown`.
+        tree.repos[0].worktrees[1]
+            .panes
+            .push(pane("w2:p2", None, AgentStatus::Unknown, false));
+        let mut state = PanesState::new(tree, None);
+        state.set_answered(vec!["/wt/feat-login".into()]);
+        // Onto `codex`, the first pane running in the `feat/login` checkout.
+        for _ in 0..2 {
+            press(&mut state, KeyCode::Char('j'));
+        }
+        press(&mut state, KeyCode::Char('D'));
+        insta::assert_snapshot!(screen(&state, 92, 18));
+    }
+
+    #[test]
+    fn a_short_pane_keeps_what_stops_and_gives_up_the_path() {
+        // The path can be read from the breadcrumb behind the box. What is about to stop
+        // cannot be read anywhere else, so it is the last thing to go.
+        let mut state = PanesState::new(tree(), None);
+        state.set_answered(vec!["/wt/feat-login".into()]);
+        for _ in 0..2 {
+            press(&mut state, KeyCode::Char('j'));
+        }
+        press(&mut state, KeyCode::Char('D'));
+        insta::assert_snapshot!(screen(&state, 92, 11));
+    }
+
+    #[test]
+    fn a_pane_too_small_for_any_question_asks_none() {
+        // The rung ladder decides what a box says; it cannot decide what the keyboard does
+        // afterwards. So when nothing fits, drawing says so and the loop takes the question
+        // back — otherwise `y` would be armed over a box nobody ever saw, and the key hint
+        // at the bottom names the keys, never what they answer.
+        let mut state = PanesState::new(tree(), None);
+        state.set_answered(vec!["/wt/feat-login".into()]);
+        for _ in 0..2 {
+            press(&mut state, KeyCode::Char('j'));
+        }
+        press(&mut state, KeyCode::Char('D'));
+        assert!(state.pending_removal().is_some());
+
+        // Two lines and a border is the floor, the same one a checkout with no panes has.
+        let mut short = Terminal::new(TestBackend::new(92, 7)).unwrap();
+        short
+            .draw(|frame| {
+                assert!(
+                    !draw(frame, &state, &theme(), Mode::Panes),
+                    "too short for even the question"
+                );
+            })
+            .unwrap();
+
+        // And too narrow, which the height ladder cannot see.
+        let mut narrow = Terminal::new(TestBackend::new(24, 40)).unwrap();
+        narrow
+            .draw(|frame| {
+                assert!(
+                    !draw(frame, &state, &theme(), Mode::Panes),
+                    "`Delete this checkout` clipped out of `… and close 1 pane?` is a \
+                     complete sentence and a false one"
+                );
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_pane_too_short_for_the_names_still_says_how_many_stop() {
+        // The rung below the list, where the question itself takes over the number. It is
+        // two lines, the same as a checkout with no panes gets, so there is no height at
+        // which `y` is armed over a box that never said panes would close.
+        let mut state = PanesState::new(tree(), None);
+        state.set_answered(vec!["/wt/feat-login".into()]);
+        for _ in 0..2 {
+            press(&mut state, KeyCode::Char('j'));
+        }
+        press(&mut state, KeyCode::Char('D'));
+        insta::assert_snapshot!(screen(&state, 92, 9));
     }
 
     #[test]
@@ -1678,7 +1885,9 @@ mod tests {
     fn buffer_of(state: &PanesState, width: u16, height: u16) -> ratatui::buffer::Buffer {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
-            .draw(|frame| draw(frame, state, &theme(), Mode::Panes))
+            .draw(|frame| {
+                draw(frame, state, &theme(), Mode::Panes);
+            })
             .unwrap();
         terminal.backend().buffer().clone()
     }
@@ -1727,7 +1936,9 @@ mod tests {
         let state = PanesState::new(tree(), None);
         let mut terminal = Terminal::new(TestBackend::new(92, 16)).unwrap();
         terminal
-            .draw(|frame| draw(frame, &state, &theme, Mode::Panes))
+            .draw(|frame| {
+                draw(frame, &state, &theme, Mode::Panes);
+            })
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
 

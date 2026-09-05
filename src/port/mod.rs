@@ -107,6 +107,18 @@ pub trait HerdrPort: Sync {
 
     fn pane_split(&self, req: &PaneSplit) -> Result<Pane>;
 
+    /// Make sure this pane is not running, stopping whatever was.
+    ///
+    /// A pane that has already gone is not an error: it is the state this asks for, and it
+    /// arrives on its own whenever a pane's command finishes.
+    ///
+    /// The first call here that takes something out of the session rather than adding to it
+    /// or rearranging it — see `docs/adr/0010-closing-the-panes-first.md`. herdr collapses a
+    /// tab and a workspace that end up empty, which is what lets this leave no residue:
+    /// measured against herdr 0.7.4 by closing the only pane of a fresh workspace, which
+    /// took its tab and its workspace with it and left every other one alone.
+    fn pane_close(&self, pane_id: &str) -> Result<()>;
+
     /// Relocate a pane. herdr closes the tab and workspace the pane leaves behind if they
     /// end up empty, which is what makes the "create then move" flow leave no residue.
     fn pane_move(&self, pane_id: &str, dest: &PaneDestination, focus: bool) -> Result<()>;
@@ -139,12 +151,15 @@ pub trait HerdrPort: Sync {
 /// `docs/adr/0014-removing-outlives-the-picker.md`.
 pub trait RemovalPort {
     /// Start removing `checkout_path`. `label` is the branch, which is what the report
-    /// names — the reader was waiting on a branch, not on a path.
+    /// names — the reader was waiting on a branch, not on a path. `panes_closed` is what was
+    /// stopped to get here: the caller has to say, because by the time this runs the panes
+    /// are gone and there is nothing left to count.
     fn start(
         &self,
         repo_root: &str,
         checkout_path: &str,
         label: &str,
+        panes_closed: usize,
     ) -> Result<Box<dyn RunningRemoval>>;
 }
 

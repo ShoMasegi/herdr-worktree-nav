@@ -40,16 +40,17 @@ fn run() -> Result<()> {
             None => bail!("`pane` needs an entrypoint: `panes` or `branches`"),
         },
         Some("dump") => dump(),
-        Some("remove") => match (args.next(), args.next(), args.next()) {
-            (Some(repo_root), Some(checkout_path), Some(label)) => remove::run(
+        Some("remove") => {
+            let args = remove::Args::read(&mut args)?;
+            remove::run(
                 &SocketHerdr::from_env()?,
                 &GitCli,
-                &repo_root,
-                &checkout_path,
-                &label,
-            ),
-            _ => bail!("`remove` needs a repository root, a checkout path, and a branch name"),
-        },
+                &args.repo_root,
+                &args.checkout_path,
+                &args.label,
+                args.panes_closed,
+            )
+        }
         Some(other) => {
             bail!("unknown command `{other}`. Expected `action`, `pane`, `dump`, or `remove`.")
         }
@@ -66,7 +67,7 @@ herdr-worktree-nav — navigate herdr panes by repo and worktree
   herdr-worktree-nav action <action-id>   open the picker for a plugin action (herdr calls this)
   herdr-worktree-nav pane <entrypoint>    run the picker itself (herdr calls this)
   herdr-worktree-nav dump                 print what the plugin currently sees, for troubleshooting
-  herdr-worktree-nav remove <repo-root> <checkout-path> <branch>
+  herdr-worktree-nav remove <repo-root> <checkout-path> <branch> [panes-closed]
                                           remove one checkout and say so (the picker calls this)";
 
 fn pane(start: Entrypoint) -> Result<()> {

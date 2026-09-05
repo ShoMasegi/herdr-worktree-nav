@@ -132,8 +132,16 @@ through this against a real session.
       closes.
 - [ ] `n` adds a pane to the checkout under the cursor.
 - [ ] `Shift-D` on a `no pane` row asks in a box naming the branch and the path, `y` removes the checkout and leaves the branch, and
-      any other key cancels. It refuses on a pane, on a busy checkout, and on the
-      repository's own checkout; a checkout with uncommitted work refuses with git's reason.
+      any other key cancels. It refuses on the repository's own checkout; a checkout with
+      uncommitted work refuses with git's reason.
+- [ ] `Shift-D` on a pane asks about the checkout that pane is in, and the box lists every
+      pane that will close — including ones you moved into another tab or space. `y` closes
+      all of them and then removes the checkout.
+- [ ] After that, **no empty workspace or tab is left behind**. herdr collapses them —
+      measured against 0.7.4 — and this is the regression check for it, since CI has no
+      server to try it against.
+- [ ] A checkout with panes that is holding uncommitted work is refused *before* the
+      question, so the panes are still there afterwards.
 - [ ] After `y` the picker comes straight back, the row says `deleting` with a turning
       spinner, and the cursor steps over it. The row goes when the removal finishes.
 - [ ] Close the picker immediately after `y` on a large checkout: the removal still
