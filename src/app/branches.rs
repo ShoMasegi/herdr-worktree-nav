@@ -26,7 +26,7 @@ use crate::domain::model::{normalize_path, RepoNode};
 use crate::domain::progress::Stage;
 use crate::domain::resolve::{self, BranchPlan};
 use crate::port::{
-    GhPort, GitPort, GitRef, HerdrPort, Pane, PullRequest, WorktreeCreate, WorktreeOpen,
+    GhPort, GhRepo, GitPort, GitRef, HerdrPort, Pane, PullRequest, WorktreeCreate, WorktreeOpen,
 };
 use crate::ui::branches::{self, BranchAction, BranchData, BranchesState, Choice};
 use crate::ui::render;
@@ -155,7 +155,17 @@ pub fn run(
                             repo_root: root.clone(),
                         },
                     });
-                    let pull_requests = gh.pull_requests(&root);
+                    // A repository GitHub has never heard of has no name to ask about, and
+                    // `gh` given only a directory answers about whatever base repository it
+                    // picks out of the remotes — the parent, for a fork. No slug, no
+                    // question; ADR 0003 says that costs nothing but the annotation.
+                    let pull_requests = match git.github_slug(&root) {
+                        Ok(Some(slug)) => gh.pull_requests(GhRepo {
+                            root: &root,
+                            slug: &slug,
+                        }),
+                        _ => Vec::new(),
+                    };
                     let _ = sender.send(Update::PullRequests {
                         repo_root: root,
                         pull_requests,

@@ -304,9 +304,10 @@ pub struct PullRequest {
 /// That is not the same as an open pull request being irrelevant, and the difference is a
 /// known limit rather than a solved problem. A branch reused after an earlier pull request
 /// was closed still has a settled one against it, and nothing here can tell that apart from
-/// a branch that is finished with. ADR 0011 names this: "the sweep's confidence comes from a
-/// prune that may be stale and a pull request that may have been reopened. That is enough to
-/// offer a mark. It is not enough to pass a `-D`."
+/// a branch that is finished with. ADR 0011 draws the same line for the neighbouring case of
+/// a pull request that was reopened: "that is enough to offer a mark. It is not enough to
+/// pass a `-D`." Reuse is not reopening, and the ADR does not name it — but it is the same
+/// trade, and the same answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PullRequestOutcome {
     Merged,
@@ -329,21 +330,58 @@ pub struct SettledPullRequest {
 }
 
 /// What `gh` said about one repository's finished pull requests.
+///
+/// Whether the list is all of them is not a field beside it but a way of building it, so the
+/// two cannot be set apart. A vector that came back truncated and a flag saying it did not is
+/// exactly the value that makes a sweep quietly find less with nothing on screen saying so —
+/// ADR 0011 does not mention truncation, but the principle it does state covers it: a tool
+/// that finds less when it could not look is worse than one that says which half it missed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SettledPullRequests {
-    pub pull_requests: Vec<SettledPullRequest>,
-    /// Whether these are all of them.
+pub enum SettledPullRequests {
+    /// Every finished pull request this repository has. A branch absent from it has none.
+    All(Vec<SettledPullRequest>),
+    /// As many as `gh` was asked for, and it gave back that many — so there may be more
+    /// behind them and there is no way to tell. `gh` answers newest first and says nothing
+    /// when it truncates, so a full window is the only evidence there is.
     ///
-    /// `gh` answers newest first and says nothing when it truncates, so a branch whose pull
-    /// request fell outside the window is not "no pull request" — it is one this could not
-    /// see. Without this the sweep would read a window it outgrew as a confident answer,
-    /// which is the exact confusion `docs/adr/0011-what-may-be-swept.md` exists to prevent.
-    ///
-    /// Also false when `gh` reported a state this does not know. Dropping such an entry is
-    /// right — an unknown state is no reason to delete anything — but reporting the rest as
-    /// the whole answer would turn "there is something here I could not read" into "there
-    /// is nothing here", which is the one direction that matters.
-    pub complete: bool,
+    /// Also how a state this does not know is reported. Dropping the entry is right — an
+    /// unknown state is no reason to delete anything — but calling the rest the whole answer
+    /// would turn "there is something here I could not read" into "there is nothing here".
+    Window(Vec<SettledPullRequest>),
+}
+
+impl SettledPullRequests {
+    pub fn pull_requests(&self) -> &[SettledPullRequest] {
+        match self {
+            SettledPullRequests::All(all) | SettledPullRequests::Window(all) => all,
+        }
+    }
+
+    /// Whether a branch missing from this is a branch with no pull request, or one this
+    /// could not see.
+    pub fn is_all(&self) -> bool {
+        matches!(self, SettledPullRequests::All(_))
+    }
+}
+
+/// A repository as both git and GitHub know it.
+///
+/// Both halves are needed and neither is optional. `gh` run inside a checkout picks a base
+/// repository out of the remotes, and for a fork it picks the *parent* — so a question asked
+/// with only a directory is answered about somebody else's repository, silently and with a
+/// zero exit. `slug` pins it. `root` still has to be there so `gh` resolves the host and the
+/// credentials from the remote, which matters on GitHub Enterprise.
+///
+/// One value with named fields rather than two `&str` arguments, because two strings in a
+/// row is exactly the shape that gets passed in the wrong order.
+#[derive(Debug, Clone, Copy)]
+pub struct GhRepo<'a> {
+    /// Where the repository is on disk.
+    pub root: &'a str,
+    /// `owner/repo`, from `GitPort::github_slug`. A repository GitHub has never heard of has
+    /// none, and cannot be asked at all — which is the right answer rather than a missing
+    /// one.
+    pub slug: &'a str,
 }
 
 /// `Sync` because the pull request lookup runs on a background thread while the picker
@@ -351,7 +389,7 @@ pub struct SettledPullRequests {
 pub trait GhPort: Sync {
     /// Open pull requests for the repository, or an empty list when `gh` is missing or
     /// unauthenticated. This layer is decoration: it must never fail the picker.
-    fn pull_requests(&self, repo_root: &str) -> Vec<PullRequest>;
+    fn pull_requests(&self, repo: GhRepo) -> Vec<PullRequest>;
 
     /// Pull requests that have been merged or closed, for deciding what a sweep may offer.
     ///
@@ -368,5 +406,5 @@ pub trait GhPort: Sync {
     ///
     /// Heavier than `pull_requests` — a wider window over a state nobody has asked about
     /// before — so it is called when a sweep is entered rather than when the picker opens.
-    fn settled_pull_requests(&self, repo_root: &str) -> Result<SettledPullRequests, String>;
+    fn settled_pull_requests(&self, repo: GhRepo) -> Result<SettledPullRequests, String>;
 }

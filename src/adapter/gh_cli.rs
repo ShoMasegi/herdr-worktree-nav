@@ -15,7 +15,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use crate::port::{
-    GhPort, PullRequest, PullRequestOutcome, SettledPullRequest, SettledPullRequests,
+    GhPort, GhRepo, PullRequest, PullRequestOutcome, SettledPullRequest, SettledPullRequests,
 };
 
 /// More open pull requests than anyone scrolls through in a branch picker.
@@ -29,17 +29,23 @@ const SETTLED_LIMIT: usize = 300;
 /// The arguments that pick out the finished pull requests, as one value so the shape can be
 /// read and tested rather than inferred from a builder.
 ///
-/// Two of these are load-bearing and were both wrong once. There is **no `-R`**: that flag
-/// takes `[HOST/]OWNER/REPO` and rejects a filesystem path outright, so passing `repo_root`
-/// to it made every call fail — `current_dir` is what selects the repository. And the state
-/// is **`closed`, not `all`**: `gh` counts open pull requests against the same window and
-/// this would only throw them away, so asking for everything buys nothing and spends the
-/// window on the answers it is going to discard. `closed` covers merged, which is the case
-/// the sweep is mostly about.
-fn settled_arguments(limit: &str) -> [&str; 8] {
+/// Two of these are load-bearing and both were wrong once.
+///
+/// `-R` takes `[HOST/]OWNER/REPO`, so passing a filesystem path to it failed every call —
+/// but dropping it is not the fix. Without `-R`, `gh` picks a base repository out of the
+/// checkout's remotes, and for a fork that is the *parent*: it answers about a repository
+/// the user does not own, with a zero exit and nothing to say so. The slug is what pins it.
+///
+/// The state is **`closed`, not `all`**: `gh` counts open pull requests against the same
+/// window and this throws them away, so asking for everything spends the window on the
+/// answers it is going to discard. `closed` covers merged, which is the case the sweep is
+/// mostly about.
+fn settled_arguments<'a>(slug: &'a str, limit: &'a str) -> [&'a str; 10] {
     [
         "pr",
         "list",
+        "-R",
+        slug,
         "--state",
         "closed",
         "--limit",
@@ -81,12 +87,55 @@ struct GhPullRequest {
     is_draft: bool,
 }
 
+/// Turn what `gh` printed into what the sweep decides on.
+///
+/// Separate from running the command because this is where everything that can be wrong
+/// lives — whether an answer is the whole answer, and whether a branch name means anything
+/// here — and none of that needs a network, a token, or a `gh` on the machine to test.
+fn read_settled(stdout: &[u8], limit: usize) -> Result<SettledPullRequests, String> {
+    // Output this cannot read is not "nothing is merged" either. It means `gh` is answering
+    // in a shape this does not know, which is the same not-knowing as `gh` being absent.
+    let parsed: Vec<GhSettled> = serde_json::from_slice(stdout)
+        .map_err(|error| format!("gh answered in a shape this does not know: {error}"))?;
+    // `gh` gives no sign that it truncated, so a full window is the only evidence there is
+    // that there may be more behind it.
+    let mut whole = parsed.len() < limit;
+    let mut pull_requests = Vec::with_capacity(parsed.len());
+    for pull_request in parsed {
+        let outcome = match pull_request.state {
+            GhState::Merged => PullRequestOutcome::Merged,
+            GhState::Closed => PullRequestOutcome::Closed,
+            // A state a newer `gh` introduces. Dropping it is right — an unknown state is no
+            // reason to delete anything — but the rest is then not the whole answer, and
+            // saying it was would turn "something here could not be read" into "there is
+            // nothing here".
+            GhState::Other => {
+                whole = false;
+                continue;
+            }
+        };
+        pull_requests.push(SettledPullRequest {
+            number: pull_request.number,
+            head_ref: pull_request.head_ref_name,
+            from_a_fork: pull_request.is_cross_repository,
+            outcome,
+        });
+    }
+    Ok(if whole {
+        SettledPullRequests::All(pull_requests)
+    } else {
+        SettledPullRequests::Window(pull_requests)
+    })
+}
+
 pub struct GhCli;
 
 impl GhPort for GhCli {
-    fn pull_requests(&self, repo_root: &str) -> Vec<PullRequest> {
+    fn pull_requests(&self, repo: GhRepo) -> Vec<PullRequest> {
         let Ok(output) = Command::new("gh")
             .args([
+                "-R",
+                repo.slug,
                 "pr",
                 "list",
                 "--state",
@@ -96,7 +145,7 @@ impl GhPort for GhCli {
                 "--json",
                 "number,title,headRefName,isDraft",
             ])
-            .current_dir(repo_root)
+            .current_dir(repo.root)
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()
@@ -118,11 +167,11 @@ impl GhPort for GhCli {
             .collect()
     }
 
-    fn settled_pull_requests(&self, repo_root: &str) -> Result<SettledPullRequests, String> {
+    fn settled_pull_requests(&self, repo: GhRepo) -> Result<SettledPullRequests, String> {
         let limit = SETTLED_LIMIT.to_string();
         let output = Command::new("gh")
-            .args(settled_arguments(&limit))
-            .current_dir(repo_root)
+            .args(settled_arguments(repo.slug, &limit))
+            .current_dir(repo.root)
             .stdin(Stdio::null())
             .stderr(Stdio::piped())
             .output()
@@ -139,39 +188,7 @@ impl GhPort for GhCli {
                 format!("gh: {first}")
             });
         }
-        // Output this cannot read is not "nothing is merged" either. It means `gh` is
-        // answering in a shape this does not know, which is the same not-knowing as `gh`
-        // being absent.
-        let parsed: Vec<GhSettled> = serde_json::from_slice(&output.stdout)
-            .map_err(|error| format!("gh answered in a shape this does not know: {error}"))?;
-        // `gh` gives no sign that it truncated, so a full window is the only evidence there
-        // is that there may be more behind it.
-        let mut complete = parsed.len() < SETTLED_LIMIT;
-        let mut pull_requests = Vec::with_capacity(parsed.len());
-        for pull_request in parsed {
-            let outcome = match pull_request.state {
-                GhState::Merged => PullRequestOutcome::Merged,
-                GhState::Closed => PullRequestOutcome::Closed,
-                // A state a newer `gh` introduces. Dropping it is right — an unknown state
-                // is no reason to delete anything — but the rest is then not the whole
-                // answer, and saying it was would turn "something here could not be read"
-                // into "there is nothing here".
-                GhState::Other => {
-                    complete = false;
-                    continue;
-                }
-            };
-            pull_requests.push(SettledPullRequest {
-                number: pull_request.number,
-                head_ref: pull_request.head_ref_name,
-                from_a_fork: pull_request.is_cross_repository,
-                outcome,
-            });
-        }
-        Ok(SettledPullRequests {
-            pull_requests,
-            complete,
-        })
+        read_settled(&output.stdout, SETTLED_LIMIT)
     }
 }
 
@@ -183,22 +200,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_repository_is_chosen_by_the_directory_and_never_by_a_flag() {
-        // `gh -R` takes `[HOST/]OWNER/REPO` and rejects a path outright, so a `-R repo_root`
-        // here fails every call on every machine — and the failure is a `Vec::new()` that
-        // reads as "no pull requests" or an `Err` that reads as "your gh is broken". A whole
-        // green suite did not notice, because nothing else in it runs `gh` at all. Pinning
-        // the argument list is the cheapest thing that would have.
-        let arguments = settled_arguments("300");
+    fn the_repository_is_named_rather_than_guessed_from_the_remotes() {
+        // Twice wrong here. `-R` was given a filesystem path, which it rejects outright, so
+        // every call failed on every machine. Dropping the flag fixed that and introduced a
+        // quieter fault: `gh` then picks a base repository out of the remotes, and for a
+        // fork it picks the parent — answering about somebody else's repository with a zero
+        // exit. A whole green suite noticed neither, because nothing else in it runs `gh`.
+        // Pinning the argument list is the cheapest thing that would have.
+        let arguments = settled_arguments("me/app", "300");
         assert!(
-            !arguments.contains(&"-R") && !arguments.contains(&"--repo"),
-            "the repository comes from current_dir: {arguments:?}"
+            arguments.windows(2).any(|pair| pair == ["-R", "me/app"]),
+            "the repository is named, not guessed from the remotes: {arguments:?}"
         );
         assert_eq!(
             arguments,
             [
                 "pr",
                 "list",
+                "-R",
+                "me/app",
                 "--state",
                 "closed",
                 "--limit",
@@ -214,11 +234,115 @@ mod tests {
         // `--state all` returns open pull requests too, counted against the same window and
         // then thrown away here — so a busy repository spends its whole window on the
         // answers this does not want and truncates away the ones it does.
-        let arguments = settled_arguments("300");
+        let arguments = settled_arguments("me/app", "300");
         let state = arguments
             .iter()
             .position(|argument| *argument == "--state")
             .map(|at| arguments[at + 1]);
         assert_eq!(state, Some("closed"));
+    }
+}
+
+#[cfg(test)]
+mod reading {
+    use super::*;
+
+    fn one(number: u64, head_ref: &str, state: &str, cross: bool) -> String {
+        format!(
+            r#"{{"number":{number},"headRefName":"{head_ref}","isCrossRepository":{cross},"state":"{state}"}}"#
+        )
+    }
+
+    fn json(entries: &[String]) -> Vec<u8> {
+        format!("[{}]", entries.join(",")).into_bytes()
+    }
+
+    #[test]
+    fn both_settled_states_come_through_as_themselves() {
+        let read = read_settled(
+            &json(&[
+                one(1, "feat/login", "MERGED", false),
+                one(2, "fix/crash", "CLOSED", false),
+            ]),
+            300,
+        )
+        .unwrap();
+        // Every field, because the row the sweep draws is made of all of them: the wrong
+        // number names the wrong pull request, and an empty head ref matches no branch at
+        // all — which reads as "nothing to sweep here" rather than as a bug.
+        assert_eq!(
+            read.pull_requests(),
+            [
+                SettledPullRequest {
+                    number: 1,
+                    head_ref: "feat/login".into(),
+                    from_a_fork: false,
+                    outcome: PullRequestOutcome::Merged,
+                },
+                SettledPullRequest {
+                    number: 2,
+                    head_ref: "fix/crash".into(),
+                    from_a_fork: false,
+                    outcome: PullRequestOutcome::Closed,
+                },
+            ]
+        );
+        assert!(read.is_all(), "two of a window of three hundred");
+    }
+
+    #[test]
+    fn a_branch_on_somebody_elses_fork_says_so() {
+        let read = read_settled(&json(&[one(1, "patch-1", "MERGED", true)]), 300).unwrap();
+        assert!(read.pull_requests()[0].from_a_fork);
+        assert_eq!(
+            read.pull_requests()[0].head_ref,
+            "patch-1",
+            "and the name is the fork's, which is the whole reason it must be told apart"
+        );
+    }
+
+    #[test]
+    fn a_full_window_is_not_reported_as_the_whole_answer() {
+        // `gh` returns exactly the limit and says nothing about what it cut off, so this is
+        // the only evidence there is. A branch missing from a list that stopped early is
+        // one this could not see, not one with no pull request.
+        let entries: Vec<String> = (0..3)
+            .map(|n| one(n, &format!("feat/{n}"), "MERGED", false))
+            .collect();
+        assert!(!read_settled(&json(&entries), 3).unwrap().is_all());
+        assert!(read_settled(&json(&entries), 4).unwrap().is_all());
+    }
+
+    #[test]
+    fn a_state_this_does_not_know_is_dropped_and_admitted_to() {
+        // Dropping is right — it is no reason to delete anything. Reporting the rest as the
+        // whole answer would turn "something here could not be read" into "there is nothing
+        // here", which is the one direction that matters.
+        let read = read_settled(
+            &json(&[
+                one(1, "feat/login", "MERGED", false),
+                one(2, "feat/next", "SOMETHING_NEWER", false),
+            ]),
+            300,
+        )
+        .unwrap();
+        assert_eq!(
+            read.pull_requests().len(),
+            1,
+            "the unknown one is not guessed at"
+        );
+        assert!(
+            !read.is_all(),
+            "and its absence is not passed off as an answer"
+        );
+    }
+
+    #[test]
+    fn output_this_cannot_read_is_not_an_empty_answer() {
+        assert!(read_settled(b"not json at all", 300).is_err());
+        assert!(
+            read_settled(b"[]", 300).unwrap().pull_requests().is_empty(),
+            "but an empty list is one"
+        );
     }
 }
