@@ -238,11 +238,15 @@ mod tests {
 
     /// Answers every working tree at once and calls it clean, which is what makes the
     /// difference between "asked" and "answered" observable in one drain.
-    struct Clean;
+    /// A git that gives the same answer for every working tree, or the same failure.
+    /// All three matter: clean is what lets a removal through, and dirty and unreadable are
+    /// what the two refusals protecting a working agent are made of.
+    struct Answers(Option<bool>);
 
-    impl GitPort for Clean {
+    impl GitPort for Answers {
         fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
-            Ok(false)
+            self.0
+                .ok_or_else(|| anyhow::anyhow!("fatal: not a git repository"))
         }
         fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
             unreachable!()
@@ -298,12 +302,69 @@ mod tests {
     }
 
     #[test]
+    fn the_loop_hands_on_a_dirty_answer_too_or_nothing_is_ever_protected() {
+        // The negative twin of the test below, and the one with teeth. `set_answered` alone
+        // is what clears "still reading"; the dirty answer is what the refusal is made of.
+        // Hand on the first without the second and `Shift-D` walks straight into the
+        // confirmation box for a checkout full of working agents. `y` then closes every one
+        // of their panes before git refuses to remove the checkout — so git saves the work
+        // and nothing saves the agents.
+        let mut state = PanesState::new(one_pane_tree(), None);
+        let mut dirty = Dirty::new(std::sync::Arc::new(Answers(Some(true))));
+        dirty.ask(state.tree());
+
+        until(
+            "the walk never answered for the only checkout there is",
+            || !show_answers(&mut state, &mut dirty),
+        );
+
+        state.handle_key(ratatui::crossterm::event::KeyEvent::new(
+            ratatui::crossterm::event::KeyCode::Char('D'),
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        ));
+        assert!(
+            state.pending_removal().is_none(),
+            "a checkout holding uncommitted work is not offered"
+        );
+        assert_eq!(
+            state.message(),
+            Some("that checkout is holding work nobody has committed"),
+            "and it says which of the refusals this is"
+        );
+    }
+
+    #[test]
+    fn a_working_tree_git_would_not_read_is_handed_on_as_its_own_refusal() {
+        // Not the same as dirty and not the same as clean. Folded into either, a checkout
+        // git could not answer for is offered for removal on the strength of an answer
+        // nobody gave.
+        let mut state = PanesState::new(one_pane_tree(), None);
+        let mut dirty = Dirty::new(std::sync::Arc::new(Answers(None)));
+        dirty.ask(state.tree());
+
+        until(
+            "the walk never answered for the only checkout there is",
+            || !show_answers(&mut state, &mut dirty),
+        );
+
+        state.handle_key(ratatui::crossterm::event::KeyEvent::new(
+            ratatui::crossterm::event::KeyCode::Char('D'),
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        ));
+        assert!(state.pending_removal().is_none());
+        assert_eq!(
+            state.message(),
+            Some("git would not read that working tree")
+        );
+    }
+
+    #[test]
     fn the_loop_hands_on_what_the_walk_answered_or_nothing_can_be_deleted() {
         // The wiring that shipped dead once, and would ship dead again silently: with the
         // answers never handed on, every checkout with panes says "still reading that
         // working tree" for the life of the picker and the feature is unreachable.
         let mut state = PanesState::new(one_pane_tree(), None);
-        let mut dirty = Dirty::new(std::sync::Arc::new(Clean));
+        let mut dirty = Dirty::new(std::sync::Arc::new(Answers(Some(false))));
         dirty.ask(state.tree());
 
         until(
