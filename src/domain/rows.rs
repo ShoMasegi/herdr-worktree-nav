@@ -63,6 +63,12 @@ pub struct Row {
     /// told. The answer costs a process per checkout and arrives after the first frame, so
     /// `None` is the ordinary state of the first frame — and a marker that is wrong for a
     /// moment is worse than one that is late.
+    ///
+    /// Only `marks` may read this. In a live `PanesState` it never holds `Some(Clean)`:
+    /// `set_working_trees` does not rebuild the list for an answer no row would draw, so a
+    /// clean checkout keeps the `None` it was flattened with. The two render identically,
+    /// which is what makes that sound — and `row.working_tree == Some(WorkingTree::Clean)`
+    /// silently false, which is what makes it a trap for anything else.
     pub working_tree: Option<WorkingTree>,
     /// What git said about this checkout's branch against its upstream.
     pub track: Option<Track>,
@@ -800,9 +806,10 @@ mod tests {
     }
 
     /// `None` is a checkout nobody has answered for, which is a third thing and not a
-    /// synonym for clean. Taking the answer rather than a bool is what lets these say so —
-    /// with a bool the `Clean` arm of `marks` was never reached by any test here, and it
-    /// could be made to draw the "holding uncommitted work" marker without one failing.
+    /// synonym for clean. The bool this replaced could not say which of the two it was
+    /// exercising, because the old `Row` could not hold the difference either: one `false`
+    /// stood for both. So the behaviour was pinned and the *state* was not, and the arm that
+    /// now says `Clean` had nothing naming it.
     fn marks_for(working_tree: Option<WorkingTree>, track: Option<Track>) -> String {
         let mut tree = tree();
         tree.repos[0].worktrees[2].track = track;

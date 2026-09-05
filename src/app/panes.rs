@@ -50,7 +50,6 @@ pub fn run(
     // seeding: `show_answers` sets both every frame, and the first frame runs before the
     // first draw.
     dirty.ask(state.tree());
-    state.set_working_trees(dirty.answers());
     state.set_removing(removals.paths());
     if let Some(pane_id) = initial_pane {
         state.focus_pane(pane_id);

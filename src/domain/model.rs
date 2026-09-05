@@ -47,7 +47,9 @@ impl WorkingTree {
     ///
     /// Spelled out rather than written as `!= Clean`, which is the same thing today and
     /// would go on compiling as an answer that draws nothing was added. This has to track
-    /// `domain::rows::marks`, and the compiler is the only thing that will say so.
+    /// `domain::rows::marks`. The compiler will make whoever adds a variant *visit* both,
+    /// which `!= Clean` would not — it cannot make them agree, so the two still have to be
+    /// read together.
     pub fn is_drawn(self) -> bool {
         match self {
             WorkingTree::Clean => false,

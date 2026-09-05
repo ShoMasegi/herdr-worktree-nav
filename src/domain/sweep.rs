@@ -75,10 +75,14 @@ impl Refusal {
 pub enum Candidate {
     /// Marked when the sweep opens.
     Offered(Reason),
-    /// Nothing found that says it should go — but `gh` could not be asked, and this is a row
-    /// its answer might have changed. The row says so, because a sweep that quietly finds
-    /// less when a dependency is missing is worse than one that says which half it is
-    /// missing.
+    /// Nothing found that says it should go, and `gh`'s answer could not settle it.
+    ///
+    /// Three ways to get here, and only the first is a missing dependency: `gh` could not be
+    /// asked at all; `gh` answered but the window it was given was full, so a branch absent
+    /// from the list may simply be further back than it reached; or `gh` answered and one of
+    /// the entries was in a state this does not know. The row says so in all three, because
+    /// a sweep that quietly finds less when it could not look is worse than one that says
+    /// which half it could not see.
     Unjudged,
     /// Nothing says it should go. `Space` still marks it: disagreeing with the sweep is the
     /// same act as widening it, one row at a time.
@@ -187,7 +191,7 @@ fn judge(
     };
 
     let found = worktree.branch.as_ref().and_then(|branch| {
-        settled.pull_requests.iter().find(|pull_request| {
+        settled.pull_requests().iter().find(|pull_request| {
             // Exactly this branch, on this repository. `head_ref` is a name on whichever
             // repository the pull request came from, so a contributor's merged `patch-1`
             // says nothing at all about a local checkout of the same name — and matching it
@@ -205,7 +209,7 @@ fn judge(
         // this branch. Not found in a truncated one is not — the window `gh` was given may
         // simply not reach back far enough, and saying "nothing to sweep" on the strength of
         // that is the confident wrong claim this whole distinction exists to prevent.
-        _ => unjudged_if(could_have_decided && !settled.complete),
+        _ => unjudged_if(could_have_decided && !settled.is_all()),
     }
 }
 
@@ -274,9 +278,10 @@ mod tests {
     ) -> BTreeMap<RepoRoot, Option<SettledPullRequests>> {
         BTreeMap::from([(
             RepoRoot::of(&only_repo()),
-            Some(SettledPullRequests {
-                pull_requests,
-                complete,
+            Some(if complete {
+                SettledPullRequests::All(pull_requests)
+            } else {
+                SettledPullRequests::Window(pull_requests)
             }),
         )])
     }
@@ -332,6 +337,31 @@ mod tests {
         let none = BTreeMap::new();
         let judged = judged(&tree_of(vec![wt]), &facts(&nothing, &none));
         assert_eq!(judged["/wt/fix-crash"], Candidate::Available);
+    }
+
+    #[test]
+    fn a_working_tree_git_would_not_read_is_never_offered() {
+        // Not the same as reading it and finding nothing. `safe.directory`, or a checkout
+        // whose directory has gone: git said it could not look, and offering on that is
+        // offering to delete whatever was in there on the strength of a failed question.
+        let mut wt = worktree("fix/crash", "/wt/fix-crash");
+        wt.track = Some(Track::Gone);
+        let unreadable = BTreeMap::from([("/wt/fix-crash".to_string(), WorkingTree::Unreadable)]);
+        let none = BTreeMap::new();
+        let judged = judged(&tree_of(vec![wt]), &facts(&unreadable, &none));
+        assert_eq!(judged["/wt/fix-crash"], Candidate::Available);
+    }
+
+    #[test]
+    fn a_detached_checkout_is_not_called_unjudged_when_gh_could_not_be_asked() {
+        // Nothing points at it, so there was never a pull request that could have decided
+        // it. Saying "PR unknown" would blame `gh` for a silence git is responsible for.
+        let mut wt = worktree("feat/login", "/wt/detached");
+        wt.branch = None;
+        let trees = clean(&["/wt/detached"]);
+        let unavailable = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
+        let judged = judged(&tree_of(vec![wt]), &facts(&trees, &unavailable));
+        assert_eq!(judged["/wt/detached"], Candidate::Available);
     }
 
     #[test]
