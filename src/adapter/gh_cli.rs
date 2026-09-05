@@ -41,10 +41,13 @@ const SETTLED_LIMIT: usize = 300;
 /// answers it is going to discard. `closed` covers merged, which is the case the sweep is
 /// mostly about.
 ///
-/// Owned strings and one argument, at the cost of ten allocations per sweep. `--limit` is
-/// read from `SETTLED_LIMIT` here rather than passed in, so it cannot be given a different
-/// window from the one [`settled_answer`] measures truncation against; and one argument of
-/// one type cannot be handed its arguments the wrong way round.
+/// Owned strings and one argument, at the cost of ten allocations per sweep. One argument of
+/// one type cannot be handed its arguments the wrong way round, which is what the two-argument
+/// version could be. `--limit` is read from `SETTLED_LIMIT` here rather than passed in, which
+/// removes the *pair* — but not the second mention of the constant, which is in
+/// [`settled_answer`]. Those two still have to agree and only a test says they do: a window
+/// measured smaller than the one asked for makes every non-empty answer look truncated, and
+/// `domain::sweep` then calls every clean named branch `Unjudged`.
 fn settled_arguments(slug: &Slug) -> [String; 10] {
     [
         "pr".to_string(),
@@ -184,13 +187,43 @@ fn settled_command(slug: &Slug) -> Command {
     command
 }
 
+/// What one run of the decoration query amounts to. `settled_answer`'s twin, and the half of
+/// this adapter that ships today.
+///
+/// Every way this can come back empty means the same thing here — no `gh`, a `gh` that
+/// refused, output in a shape this cannot read — and all three are the annotation costing
+/// nothing, which is ADR 0003's promise. That is the opposite of the sweep's rule and it is
+/// why they are two functions: a sweep must say which half it could not see, and a branch
+/// list must never make the user's `gh` its problem.
+///
+/// Extracted because the argument list is not the only thing here that a green suite proved
+/// nothing about. Dropping the exit check, or asking for fewer `--json` fields, or swapping
+/// two `serde` renames, all left the whole gate green — and the second of those draws every
+/// row's branch and draft flag from the wrong field.
+fn open_answer(output: &Output) -> Vec<PullRequest> {
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let parsed: Vec<GhPullRequest> = serde_json::from_slice(&output.stdout).unwrap_or_default();
+    parsed
+        .into_iter()
+        .map(|pull_request| PullRequest {
+            number: pull_request.number,
+            title: pull_request.title,
+            head_ref: pull_request.head_ref_name,
+            is_draft: pull_request.is_draft,
+        })
+        .collect()
+}
+
 /// What one run of `gh` amounts to: an answer, or a sentence saying why there is not one.
 ///
 /// Separate from starting the process for the same reason [`read_settled`] is separate from
 /// this — everything above `Command::new` can then be tested, and this half decides three
 /// things a green suite otherwise proved nothing about: that a `gh` which exited non-zero is
 /// not read as an answer, that the window truncation is measured against the window that was
-/// asked for, and which of `gh`'s own words the user is shown.
+/// asked for — both directions, since only a *smaller* one does damage — and which of `gh`'s
+/// own words the user is shown.
 fn settled_answer(output: &Output) -> Result<SettledPullRequests, String> {
     if !output.status.success() {
         // `gh`'s own words, because the alternative is a picker that says a sweep could not
@@ -218,19 +251,7 @@ impl GhPort for GhCli {
         let Ok(output) = open_command(slug).output() else {
             return Vec::new();
         };
-        if !output.status.success() {
-            return Vec::new();
-        }
-        let parsed: Vec<GhPullRequest> = serde_json::from_slice(&output.stdout).unwrap_or_default();
-        parsed
-            .into_iter()
-            .map(|pr| PullRequest {
-                number: pr.number,
-                title: pr.title,
-                head_ref: pr.head_ref_name,
-                is_draft: pr.is_draft,
-            })
-            .collect()
+        open_answer(&output)
     }
 
     fn settled_pull_requests(&self, slug: &Slug) -> Result<SettledPullRequests, String> {
@@ -322,6 +343,24 @@ mod tests {
         assert!(
             arguments.windows(2).any(|pair| pair == ["--state", "open"]),
             "and this is the half in flight, not the half the sweep asks about"
+        );
+        // The whole list, for the reason the sweep's is asserted whole: a field dropped from
+        // `--json` costs a column the row draws and nothing else notices. `isDraft` is the
+        // one that dims a row, `headRefName` is what matches it to a branch at all.
+        assert_eq!(
+            arguments,
+            [
+                "-R",
+                "me/app",
+                "pr",
+                "list",
+                "--state",
+                "open",
+                "--limit",
+                LIMIT,
+                "--json",
+                "number,title,headRefName,isDraft",
+            ]
         );
     }
 
@@ -493,6 +532,48 @@ mod answering {
     }
 
     #[test]
+    fn the_decoration_reads_every_field_it_asked_for() {
+        // Nothing else in the suite ever read this method's output. Dropping the exit check,
+        // asking for fewer `--json` fields, or swapping two `serde` renames all left the
+        // whole gate green — and the last of those draws every row's branch name and draft
+        // flag out of the wrong field, on the picker that ships today.
+        let listed = open_answer(&ran(
+            0,
+            r#"[{"number":7,"title":"Add a sweep","headRefName":"feat/sweep","isDraft":true}]"#,
+            "",
+        ));
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].number, 7);
+        assert_eq!(listed[0].title, "Add a sweep");
+        assert_eq!(listed[0].head_ref, "feat/sweep");
+        assert!(
+            listed[0].is_draft,
+            "the flag the row draws its dimming from"
+        );
+    }
+
+    #[test]
+    fn a_gh_that_refused_costs_the_decoration_and_nothing_else() {
+        // The opposite rule to the sweep's, and the reason these are two functions. ADR 0003
+        // says a missing or unhappy `gh` costs the annotation here and nothing more, so all
+        // three ways of coming back empty are the same answer — but the exit check is what
+        // makes the first of them empty rather than whatever a refusal left on stdout.
+        assert!(
+            open_answer(&ran(
+                1,
+                r#"[{"number":7,"title":"t","headRefName":"b","isDraft":false}]"#,
+                ""
+            ))
+            .is_empty(),
+            "a gh that exited non-zero has not answered, whatever is on its stdout"
+        );
+        assert!(
+            open_answer(&ran(0, "not json at all", "")).is_empty(),
+            "and output this cannot read is the same cost"
+        );
+    }
+
+    #[test]
     fn a_gh_that_refused_is_not_read_as_an_answer() {
         // The conflation ADR 0011 exists to prevent, in its cheapest form: `gh` prints
         // nothing to stdout when it refuses, and an empty stdout parses as an empty list —
@@ -520,19 +601,29 @@ mod answering {
     }
 
     #[test]
-    fn the_reason_is_found_past_the_lines_gh_pads_with() {
-        // `gh` leads with its own warnings and blank lines, and the first line being one of
-        // those is exactly when the reason exists and is on the second. Taking the first
-        // line shows the user a blank sentence at the moment there is something to say.
-        let said = settled_answer(&ran(
+    fn the_reason_is_found_past_the_blank_lines_and_no_further() {
+        // Taking the first line outright shows the user a blank sentence at the moment there
+        // is something to say, because `gh` puts a newline of its own ahead of some errors.
+        // Blank is all this skips. A `gh` with an update notice to deliver leads with that,
+        // and then the update notice is what the user is told the sweep failed on — which is
+        // wrong, and is not fixed by guessing at which prefixes are notices. It needs a `gh`
+        // on `PATH` that a test put there, which is the same thing the redirections need;
+        // see `settled_command`.
+        let said = settled_answer(&ran(1, "", "\n  \nGraphQL: Could not resolve\n")).unwrap_err();
+        assert!(
+            said.contains("Could not resolve"),
+            "the first line with anything on it, not the first line: {said}"
+        );
+
+        let notice = settled_answer(&ran(
             1,
             "",
-            "\n  \nWarning: version 2.95.0 is out of date\nGraphQL: Could not resolve\n",
+            "A new release of gh is available\nGraphQL: Could not resolve\n",
         ))
         .unwrap_err();
         assert!(
-            said.contains("version 2.95.0 is out of date"),
-            "the first line with anything on it, not the first line: {said}"
+            notice.contains("A new release of gh is available"),
+            "and it goes no further than blank, which this says rather than hides: {notice}"
         );
     }
 
@@ -561,6 +652,17 @@ mod answering {
         assert!(
             matches!(answer, SettledPullRequests::Window(_)),
             "as many as were asked for is the only evidence gh gives that there may be more"
+        );
+
+        // And the other direction, which is the one that does damage. A window measured
+        // *smaller* than the one asked for makes every non-empty answer look truncated, and
+        // `domain::sweep` calls every clean named branch `Unjudged` — the whole list saying
+        // "could not judge" on a repository where nothing went wrong.
+        let one_short = full[..full.rfind(",{").expect("more than one")].to_string();
+        let answer = settled_answer(&ran(0, &format!("[{one_short}]"), "")).unwrap();
+        assert!(
+            matches!(answer, SettledPullRequests::All(_)),
+            "one fewer than the window is gh saying it reached the end"
         );
     }
 }
