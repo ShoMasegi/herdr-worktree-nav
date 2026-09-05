@@ -26,7 +26,7 @@ use crate::domain::model::{normalize_path, RepoNode};
 use crate::domain::progress::Stage;
 use crate::domain::resolve::{self, BranchPlan};
 use crate::port::{
-    GhPort, GhRepo, GitPort, GitRef, HerdrPort, Pane, PullRequest, WorktreeCreate, WorktreeOpen,
+    GhPort, GitPort, GitRef, HerdrPort, Pane, PullRequest, WorktreeCreate, WorktreeOpen,
 };
 use crate::ui::branches::{self, BranchAction, BranchData, BranchesState, Choice};
 use crate::ui::render;
@@ -155,17 +155,13 @@ pub fn run(
                             repo_root: root.clone(),
                         },
                     });
-                    // No slug, no question. A repository GitHub has never heard of has no
-                    // name to ask about, and git failing to tell us is the same silence from
-                    // here — both cost nothing but the annotation, which is what ADR 0003
-                    // promises. What is not allowed is asking anyway: `gh` given only a
-                    // directory answers about whatever base repository it picks out of the
-                    // remotes, and for a fork that is the parent.
                     let pull_requests = match git.github_slug(&root) {
-                        Ok(Some(slug)) => gh.pull_requests(GhRepo {
-                            root: &root,
-                            slug: &slug,
-                        }),
+                        Ok(Some(slug)) => gh.pull_requests(&slug),
+                        // No slug, no question. A repository GitHub has never heard of has no
+                        // name to ask about, which costs nothing but the annotation — ADR
+                        // 0003. What is not allowed is asking anyway: `gh` given only a
+                        // directory answers about whatever base repository it picks out of
+                        // the remotes, and for a fork that is the parent.
                         _ => Vec::new(),
                     };
                     let _ = sender.send(Update::PullRequests {

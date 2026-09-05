@@ -57,6 +57,7 @@ goes are all pure functions over plain data.
 | `domain::preview` | what will the destination tab look like once the pane lands in it? |
 | `domain::progress` | what step is opening a branch on, and can it still be abandoned? |
 | `domain::removal` | which checkout is being removed, and what does the finished removal say, and to whom? |
+| `domain::sweep` | which checkouts may a sweep offer to delete, why, and which could it not judge? |
 | `domain::chrome` | what accent and status glyphs is herdr configured for? |
 
 ## Talking to herdr

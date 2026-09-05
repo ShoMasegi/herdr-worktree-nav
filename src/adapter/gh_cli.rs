@@ -15,7 +15,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use crate::port::{
-    GhPort, GhRepo, PullRequest, PullRequestOutcome, SettledPullRequest, SettledPullRequests,
+    GhPort, PullRequest, PullRequestOutcome, SettledPullRequest, SettledPullRequests,
 };
 
 /// More open pull requests than anyone scrolls through in a branch picker.
@@ -23,7 +23,7 @@ const LIMIT: &str = "100";
 
 /// A wider window than the open list, because it looks back over everything that has landed
 /// rather than at what is in flight. A repository busier than this is not told "no pull
-/// request" for the branches beyond it — see `SettledPullRequests::complete`.
+/// request" for the branches beyond it — see `SettledPullRequests::Window`.
 const SETTLED_LIMIT: usize = 300;
 
 /// The arguments that pick out the finished pull requests, as one value so the shape can be
@@ -89,9 +89,10 @@ struct GhPullRequest {
 
 /// Turn what `gh` printed into what the sweep decides on.
 ///
-/// Separate from running the command because this is where everything that can be wrong
-/// lives — whether an answer is the whole answer, and whether a branch name means anything
-/// here — and none of that needs a network, a token, or a `gh` on the machine to test.
+/// Separate from running the command so that what `gh` said can be tested without a network,
+/// a token, or a `gh` on the machine — whether an answer is the whole answer, and what each
+/// field means once it is here. What the command *asks* is the other half, and it is where
+/// this call's two shipped bugs both lived: see `settled_arguments`.
 fn read_settled(stdout: &[u8], limit: usize) -> Result<SettledPullRequests, String> {
     // Output this cannot read is not "nothing is merged" either. It means `gh` is answering
     // in a shape this does not know, which is the same not-knowing as `gh` being absent.
@@ -131,11 +132,11 @@ fn read_settled(stdout: &[u8], limit: usize) -> Result<SettledPullRequests, Stri
 pub struct GhCli;
 
 impl GhPort for GhCli {
-    fn pull_requests(&self, repo: GhRepo) -> Vec<PullRequest> {
+    fn pull_requests(&self, slug: &str) -> Vec<PullRequest> {
         let Ok(output) = Command::new("gh")
             .args([
                 "-R",
-                repo.slug,
+                slug,
                 "pr",
                 "list",
                 "--state",
@@ -145,7 +146,6 @@ impl GhPort for GhCli {
                 "--json",
                 "number,title,headRefName,isDraft",
             ])
-            .current_dir(repo.root)
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()
@@ -167,11 +167,10 @@ impl GhPort for GhCli {
             .collect()
     }
 
-    fn settled_pull_requests(&self, repo: GhRepo) -> Result<SettledPullRequests, String> {
+    fn settled_pull_requests(&self, slug: &str) -> Result<SettledPullRequests, String> {
         let limit = SETTLED_LIMIT.to_string();
         let output = Command::new("gh")
-            .args(settled_arguments(repo.slug, &limit))
-            .current_dir(repo.root)
+            .args(settled_arguments(slug, &limit))
             .stdin(Stdio::null())
             .stderr(Stdio::piped())
             .output()

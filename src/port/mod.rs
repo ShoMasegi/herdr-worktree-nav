@@ -356,55 +356,17 @@ pub enum SettledPullRequests {
 }
 
 impl SettledPullRequests {
-    /// This repository's own finished pull request for `head_ref`, if it has one here.
+    /// The pull requests, whichever way the list arrived.
     ///
-    /// Deliberately the only way in. Handing out the list would let a caller act on a *miss*
-    /// without knowing which variant it missed in, and what a miss means is the whole
-    /// difference between the two — so a miss has to be read off the variant.
-    ///
-    /// A branch on somebody else's fork never matches. `head_ref` is a name on whichever
-    /// repository the pull request came from, so a contributor's merged `patch-1` says
-    /// nothing about a local checkout of the same name, and matching it would delete work on
-    /// the strength of a coincidence. `gh` may only widen a sweep, and a wrong mark is not a
-    /// widening.
-    pub fn found(&self, head_ref: &str) -> Option<&SettledPullRequest> {
-        let list = match self {
+    /// Data, not a decision. What a branch's *absence* from this means is the whole
+    /// difference between the two variants, so anything acting on a miss matches on the
+    /// variant rather than reaching for the list — see `domain::sweep`, which is where that
+    /// reasoning lives.
+    pub fn pull_requests(&self) -> &[SettledPullRequest] {
+        match self {
             SettledPullRequests::All(list) | SettledPullRequests::Window(list) => list,
-        };
-        list.iter()
-            .filter(|pull_request| !pull_request.from_a_fork && pull_request.head_ref == head_ref)
-            // A branch can have more than one — closed, then reopened and merged, or a name
-            // used twice — and taking whichever `gh` happened to list first would make the
-            // reason on the row depend on a sort order nothing here pins. Merged wins,
-            // because a branch with a merge behind it has landed whatever else also happened
-            // to it; between two of a kind the later number is the later story.
-            .max_by_key(|pull_request| {
-                (
-                    pull_request.outcome == PullRequestOutcome::Merged,
-                    pull_request.number,
-                )
-            })
+        }
     }
-}
-
-/// A repository as both git and GitHub know it.
-///
-/// Both halves are needed and neither is optional. `gh` run inside a checkout picks a base
-/// repository out of the remotes, and for a fork it picks the *parent* — so a question asked
-/// with only a directory is answered about somebody else's repository, silently and with a
-/// zero exit. `slug` pins it. `root` still has to be there so `gh` resolves the host and the
-/// credentials from the remote, which matters on GitHub Enterprise.
-///
-/// One value with named fields rather than two `&str` arguments, because two strings in a
-/// row is exactly the shape that gets passed in the wrong order.
-#[derive(Debug, Clone, Copy)]
-pub struct GhRepo<'a> {
-    /// Where the repository is on disk.
-    pub root: &'a str,
-    /// `owner/repo`, from `GitPort::github_slug`. A repository GitHub has never heard of has
-    /// none, and cannot be asked at all — which is the right answer rather than a missing
-    /// one.
-    pub slug: &'a str,
 }
 
 /// `Sync` because the pull request lookup runs on a background thread while the picker
@@ -412,7 +374,11 @@ pub struct GhRepo<'a> {
 pub trait GhPort: Sync {
     /// Open pull requests for the repository, or an empty list when `gh` is missing or
     /// unauthenticated. This layer is decoration: it must never fail the picker.
-    fn pull_requests(&self, repo: GhRepo) -> Vec<PullRequest>;
+    /// `slug` is `owner/repo`, from `GitPort::github_slug`. Not a directory: `gh` given only
+    /// a checkout picks a base repository out of its remotes, and for a fork that is the
+    /// *parent*. A repository GitHub has never heard of has no slug and cannot be asked,
+    /// which is the right answer rather than a missing one.
+    fn pull_requests(&self, slug: &str) -> Vec<PullRequest>;
 
     /// Pull requests that have been merged or closed, for deciding what a sweep may offer.
     ///
@@ -429,5 +395,5 @@ pub trait GhPort: Sync {
     ///
     /// Heavier than `pull_requests` — a wider window over a state nobody has asked about
     /// before — so it is called when a sweep is entered rather than when the picker opens.
-    fn settled_pull_requests(&self, repo: GhRepo) -> Result<SettledPullRequests, String>;
+    fn settled_pull_requests(&self, slug: &str) -> Result<SettledPullRequests, String>;
 }

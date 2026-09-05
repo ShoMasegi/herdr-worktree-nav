@@ -64,11 +64,13 @@ pub struct Row {
     /// `None` is the ordinary state of the first frame — and a marker that is wrong for a
     /// moment is worse than one that is late.
     ///
-    /// Only `marks` may read this. In a live `PanesState` it never holds `Some(Clean)`:
+    /// Only `marks` may read this. In a live `PanesState` it lags on purpose:
     /// `set_working_trees` does not rebuild the list for an answer no row would draw, so a
-    /// clean checkout keeps the `None` it was flattened with. The two render identically,
-    /// which is what makes that sound — and `row.working_tree == Some(WorkingTree::Clean)`
-    /// silently false, which is what makes it a trap for anything else.
+    /// checkout that has just answered `Clean` keeps the `None` it was flattened with until
+    /// something else rebuilds — `set_removing` and a reload both do. The two render
+    /// identically, which is what makes the elision sound. What it is not is a fact about
+    /// the checkout: `Some(Clean)` and `None` here are the same row drawn at two different
+    /// moments, and telling the two apart is `ViewOptions::working_trees`' job.
     pub working_tree: Option<WorkingTree>,
     /// What git said about this checkout's branch against its upstream.
     pub track: Option<Track>,

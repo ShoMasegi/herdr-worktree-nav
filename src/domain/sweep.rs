@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 
 use crate::domain::model::{RepoNode, Tree, WorkingTree};
-use crate::port::{PullRequestOutcome, SettledPullRequests, Track};
+use crate::port::{PullRequestOutcome, SettledPullRequest, SettledPullRequests, Track};
 
 /// Why a checkout is offered for deletion. Shown beside the mark, because a mark whose
 /// reason is invisible is one the user either trusts blindly or clears wholesale.
@@ -187,46 +187,68 @@ fn judge(
     // changed the outcome. A row already refused, already offered by git, or that git would
     // refuse anyway was never a row a pull request was going to decide.
     let could_have_decided = clean && worktree.branch.is_some();
-    let Some(settled) = settled else {
+    let settled = match settled {
         // Nobody has asked yet. Not the same as asking and getting nothing, but there is
-        // nothing to say about it either: an answer is still coming.
-        return Candidate::Available;
-    };
-    let Some(settled) = settled else {
-        return unjudged_if(could_have_decided);
+        // nothing to say about it either: an answer is still on its way, and a permanent word
+        // on a temporary state is what the working-tree walk already avoids.
+        None => return Candidate::Available,
+        // Asked, and `gh` could not answer. This is the row that says so.
+        Some(None) if could_have_decided => return Candidate::Unjudged,
+        Some(None) => return Candidate::Available,
+        Some(Some(settled)) => settled,
     };
 
+    // A hit and a miss are answered in the same breath, once per variant, because what a
+    // *miss* means is a fact about the list rather than about the branch. Written any other
+    // way the two meanings can end up in one arm, which is what a flag beside the list
+    // allowed and what this shape does not.
     let found = worktree
         .branch
         .as_ref()
-        .and_then(|branch| settled.found(branch));
-    if let Some(pull_request) = found {
-        if clean {
-            return Candidate::Offered(Reason::PullRequest {
-                number: pull_request.number,
-                outcome: pull_request.outcome,
-            });
-        }
-    }
-    // What a *miss* means is a fact about the list rather than about the branch, so it is
-    // read off the variant. Written this way the two answers cannot end up in the same arm
-    // by accident, which a flag beside the list would have allowed.
-    match settled {
+        .and_then(|branch| finished_with(settled.pull_requests(), branch));
+    match (found, settled) {
+        (Some(pull_request), _) if clean => Candidate::Offered(Reason::PullRequest {
+            number: pull_request.number,
+            outcome: pull_request.outcome,
+        }),
+        // Found, and the working tree has something in it. git would refuse the removal, so
+        // the sweep does not suggest it — the same rule the `gone` path is under.
+        (Some(_), _) => Candidate::Available,
         // Missing from all of them: this branch has no finished pull request.
-        SettledPullRequests::All(_) => Candidate::Available,
+        (None, SettledPullRequests::All(_)) => Candidate::Available,
         // Missing from as many as `gh` was asked for: the window may not reach back far
         // enough, and saying "nothing to sweep" on the strength of a page size is the
         // confident wrong claim this whole distinction exists to prevent.
-        SettledPullRequests::Window(_) => unjudged_if(could_have_decided),
+        (None, SettledPullRequests::Window(_)) if could_have_decided => Candidate::Unjudged,
+        (None, SettledPullRequests::Window(_)) => Candidate::Available,
     }
 }
 
-fn unjudged_if(unseen: bool) -> Candidate {
-    if unseen {
-        Candidate::Unjudged
-    } else {
-        Candidate::Available
-    }
+/// This repository's own finished pull request for `branch`, if it has one here.
+///
+/// A branch on somebody else's fork never matches. `head_ref` is a name on whichever
+/// repository the pull request came from, so a contributor's merged `patch-1` says nothing
+/// about a local checkout of the same name, and matching it would delete work on the strength
+/// of a coincidence. `gh` may only widen a sweep, and a wrong mark is not a widening.
+///
+/// A branch can have more than one — closed, then reopened and merged, or a name used twice —
+/// and taking whichever `gh` happened to list first would make the reason on the row depend
+/// on a sort order nothing here pins. Merged wins, because a branch with a merge behind it
+/// has landed whatever else also happened to it; between two of a kind the later number is
+/// the later story.
+fn finished_with<'a>(
+    pull_requests: &'a [SettledPullRequest],
+    branch: &str,
+) -> Option<&'a SettledPullRequest> {
+    pull_requests
+        .iter()
+        .filter(|pull_request| !pull_request.from_a_fork && pull_request.head_ref == branch)
+        .max_by_key(|pull_request| {
+            (
+                pull_request.outcome == PullRequestOutcome::Merged,
+                pull_request.number,
+            )
+        })
 }
 
 #[cfg(test)]
@@ -624,6 +646,20 @@ mod tests {
             &facts(&trees, &asked(vec![merged(5, "feat/login")])),
         );
         assert_eq!(judged["/wt/login"], Candidate::Available);
+    }
+
+    #[test]
+    fn a_merged_pull_request_does_not_offer_a_checkout_holding_work() {
+        // The twin of the `gone` rule, and the one that was unpinned: a working tree with
+        // something in it is never offered, whatever GitHub says about the branch. git would
+        // refuse the removal anyway — but the sweep's job is not to suggest what git will
+        // refuse, it is to suggest what is finished with.
+        let trees = BTreeMap::from([("/wt/feat-login".to_string(), WorkingTree::Dirty)]);
+        let judged = judged(
+            &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
+            &facts(&trees, &asked(vec![merged(4, "feat/login")])),
+        );
+        assert_eq!(judged["/wt/feat-login"], Candidate::Available);
     }
 
     #[test]
