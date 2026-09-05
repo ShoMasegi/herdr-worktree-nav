@@ -38,8 +38,9 @@ anyone. One reporter that always speaks beats two that each assume the other did
 
 - removed: `removed <branch>`, the path in the body, and no sound. Tidying up is done often;
   a chime for every checkout that goes is noise.
-- refused: `could not remove <branch>`, git's own words in the body, and the sound. This is
-  the one that has to reach someone who has stopped looking.
+- refused: `could not remove <branch>`, git's own words in the body — with what it cost to
+  reach them, once closing panes became part of getting there — and the sound. This is the
+  one that has to reach someone who has stopped looking.
 
 **The picker shows it while it is there, and adds only what the toast cannot.** The row's
 `no pane` becomes `deleting ⠻` and stops being selectable, so the cursor steps over it and a

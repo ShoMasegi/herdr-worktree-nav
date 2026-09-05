@@ -35,9 +35,10 @@ Specifically, herdr-worktree-nav:
 - **Closes panes, and says so first.** A checkout with panes in it has them closed before it
   is removed, which stops whatever was running in them — an agent mid-task included. The
   question lists every pane that will stop, or, in a pane too short for the list, says how
-  many; it is never asked without saying that panes will close. A checkout that is holding
-  uncommitted work, or whose working tree git has not yet been able to read, is refused
-  before the question rather than after its panes have gone.
+  many; a pane too small for even that is told it is too small rather than being left able to
+  answer a question it never saw. A checkout with panes in it is refused before the question —
+  rather than after they have gone — when it is holding uncommitted work, when git would not
+  read its working tree, and while git is still reading it.
 - **That removal outlives the picker.** It runs as a second copy of this binary, in a session
   of its own, so closing the picker does not leave a half-deleted checkout behind. It removes
   the one checkout it was given and then exits; it takes no further instructions and does

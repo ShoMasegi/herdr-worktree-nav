@@ -107,7 +107,10 @@ pub trait HerdrPort: Sync {
 
     fn pane_split(&self, req: &PaneSplit) -> Result<Pane>;
 
-    /// Close one pane, stopping whatever was running in it.
+    /// Make sure this pane is not running, stopping whatever was.
+    ///
+    /// A pane that has already gone is not an error: it is the state this asks for, and it
+    /// arrives on its own whenever a pane's command finishes.
     ///
     /// The first call here that takes something out of the session rather than adding to it
     /// or rearranging it — see `docs/adr/0010-closing-the-panes-first.md`. herdr collapses a

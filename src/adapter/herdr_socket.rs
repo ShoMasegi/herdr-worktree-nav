@@ -177,8 +177,15 @@ impl HerdrPort for SocketHerdr {
     }
 
     fn pane_close(&self, pane_id: &str) -> Result<()> {
-        self.call("pane.close", json!({ "pane_id": pane_id }))?;
-        Ok(())
+        match self.call("pane.close", json!({ "pane_id": pane_id })) {
+            Ok(_) => Ok(()),
+            // A pane that is not there is the state this was asked to bring about. It
+            // happens on its own — a pane whose command finishes closes itself — and
+            // stopping a removal for it would kill the panes before it and then abandon the
+            // checkout because one of them had already gone.
+            Err(error) if error.to_string().contains("pane_not_found") => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     fn pane_move(&self, pane_id: &str, dest: &PaneDestination, focus: bool) -> Result<()> {

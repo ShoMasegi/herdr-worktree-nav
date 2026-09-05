@@ -39,7 +39,10 @@ person has to memorise rather than read.
 
 **A dirty checkout is refused before the question**, alongside the two refusals ADR 0008
 already makes. The picker now knows which checkouts hold uncommitted work, so it can say what
-git would have said instead of closing the panes and finding out afterwards. This matters
+git would have said instead of closing the panes and finding out afterwards. Two more
+refusals follow from the same reasoning once the answer is asynchronous: a checkout git would
+not read, and one it has not finished reading. Not knowing is not a licence — it is the
+absence of one. This matters
 here in a way it does not for an empty checkout: there, a refusal costs nothing; here, the
 panes are already gone by the time git speaks.
 
@@ -71,13 +74,14 @@ before any of this existed. That reason has not changed, and a list you read is 
 **`HerdrPort` gains `pane_close`.** It is the first call this plugin makes that takes
 something out of the session rather than adding to it or rearranging it.
 
-**Closing the panes is not atomic either.** herdr's API closes one pane at a time, which is
-the price of not using `worktree.remove --workspace`: there is no call that takes the set. A
-pane that refuses to close therefore stops the removal with some of its siblings already
-gone. That is the right way round — a checkout removed out from under half its panes is worse
-than one not removed — but it is a state the user has to be told about in so many words,
-because the tab those panes were in has collapsed and there is nothing left on screen to
-explain why their work stopped.
+**Closing the panes is not atomic.** herdr's API closes one pane at a time, which is the
+price of not using `worktree.remove --workspace`: there is no call that takes the set. A pane
+that refuses to close therefore stops the removal with some of its siblings already gone.
+That is the right way round — a checkout removed out from under half its panes is worse than
+one not removed — but it is a state the user has to be told about in so many words, because
+the panes that did close are gone and nothing else on screen will say so. A pane that has
+already gone by itself is not a refusal: it is the state the call asks for, and stopping on
+it would kill the panes before it for nothing.
 
 **The order is panes, then git, and it is not atomic.** The dirty check turns the common
 failure into a refusal instead of a report, but it is a check and not a lock: a file written
@@ -94,7 +98,7 @@ checklist in `docs/en/troubleshooting.md` keeps it as a regression check rather 
 open question.
 
 **`SECURITY.md` changes again.** It says the plugin deletes a checkout you named and nothing
-else. It now also closes panes you named, which stops whatever was running in them.
+else. It now also closes panes it has named to you, which stops whatever was running in them.
 
 **Still no branch deletion, and still no `--force`.** The first is the sweep's business
 ([ADR 0011](./0011-what-may-be-swept.md)); the second is nobody's.

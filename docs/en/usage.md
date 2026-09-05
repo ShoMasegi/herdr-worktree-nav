@@ -111,7 +111,8 @@ The cursor does not stop on a checkout that has panes, because the panes listed 
 the answer to where to go. Ask from the pane instead: `Shift-D` there is about the checkout it
 is in, and the box names it before you answer.
 
-Two things are refused before the question is even asked: the repository's own checkout,
+Some things are refused before the question is even asked: a checkout whose removal is
+already running; the repository's own checkout,
 because git cannot remove a main working tree and it is not a worktree anyway; and a checkout
 with panes in it whose working tree is holding uncommitted work, or that git would not read,
 or that it has not finished reading yet. That second refusal exists only where there are panes
@@ -143,9 +144,11 @@ A refusal that came after panes were closed says so — `… — its 2 panes wer
 because that is the one failure that is not "nothing happened".
 
 That notification is the report, because it is the one that still arrives when the picker has
-gone. If yours are turned off you will not see it, and nothing is lost: a removal that was
-refused leaves the checkout exactly where it was, so the row is there next time and
-`Shift-D` on it will give you git's reason again. With the picker still up, a refusal is on
+gone. If yours are turned off you will not see it, and most of it is not lost: a removal that
+was refused leaves the checkout exactly where it was, so the row is there next time and
+`Shift-D` on it will give you git's reason again. The one part that cannot come back that way
+is the clause about panes — next time there are none to close, so there is nothing for it to
+say. With the picker still up, a refusal is on
 the prompt line as well.
 
 `b`/`w`/`i`/`d` replace the search box with a state chip. Pressing the same one again clears

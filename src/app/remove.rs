@@ -50,3 +50,119 @@ pub fn run(
     let _ = writeln!(std::io::stdout(), "{}", removal::report_line(&outcome));
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::port::{
+        GitRef, Notification, Pane, PaneDestination, PaneSplit, PluginPaneOpen, RepoIdentity,
+        Snapshot, WorktreeCreate, WorktreeList, WorktreeOpen, WorktreeOpened,
+    };
+    use std::sync::Mutex;
+
+    /// Keeps the toast it was asked to show, which is the only report that reaches somebody
+    /// who has closed the picker.
+    #[derive(Default)]
+    struct Shown(Mutex<Vec<Notification>>);
+
+    impl HerdrPort for Shown {
+        fn notify(&self, notification: &Notification) -> Result<()> {
+            self.0.lock().unwrap().push(notification.clone());
+            Ok(())
+        }
+        fn snapshot(&self) -> Result<Snapshot> {
+            unreachable!()
+        }
+        fn worktree_list(&self, _cwd: &str) -> Result<WorktreeList> {
+            unreachable!()
+        }
+        fn worktree_create(&self, _req: &WorktreeCreate) -> Result<WorktreeOpened> {
+            unreachable!()
+        }
+        fn worktree_open(&self, _req: &WorktreeOpen) -> Result<WorktreeOpened> {
+            unreachable!()
+        }
+        fn pane_focus(&self, _pane_id: &str) -> Result<()> {
+            unreachable!()
+        }
+        fn pane_close(&self, _pane_id: &str) -> Result<()> {
+            unreachable!()
+        }
+        fn pane_split(&self, _req: &PaneSplit) -> Result<Pane> {
+            unreachable!()
+        }
+        fn pane_move(&self, _p: &str, _d: &PaneDestination, _f: bool) -> Result<()> {
+            unreachable!()
+        }
+        fn workspace_focus(&self, _workspace_id: &str) -> Result<()> {
+            unreachable!()
+        }
+        fn tab_focus(&self, _tab_id: &str) -> Result<()> {
+            unreachable!()
+        }
+        fn plugin_pane_open(
+            &self,
+            _req: &PluginPaneOpen,
+        ) -> Result<Option<crate::port::OpenRefusal>> {
+            unreachable!()
+        }
+    }
+
+    /// Refuses the removal the way git refuses a checkout with work in it.
+    struct Refuses;
+
+    impl GitPort for Refuses {
+        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            anyhow::bail!("fatal: '/wt/feat-login' contains modified or untracked files")
+        }
+        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
+            unreachable!()
+        }
+        fn identify(&self, _cwd: &str) -> Result<Option<RepoIdentity>> {
+            unreachable!()
+        }
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<String>> {
+            unreachable!()
+        }
+        fn local_refs(&self, _repo_root: &str) -> Result<Vec<GitRef>> {
+            unreachable!()
+        }
+        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
+            unreachable!()
+        }
+        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!()
+        }
+        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
+            unreachable!()
+        }
+        fn head_ref(&self, _repo_root: &str) -> Result<String> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn the_panes_this_closed_reach_the_one_report_a_departed_user_gets() {
+        // The count travels from the picker through argv into this process for one purpose,
+        // and the toast is where it has to arrive: whoever closed the picker has no other
+        // channel, and a refusal that does not mention the panes reads as "nothing
+        // happened" over an emptied tab.
+        let herdr = Shown::default();
+        run(
+            &herdr,
+            &Refuses,
+            "/src/app",
+            "/wt/feat-login",
+            "feat/login",
+            2,
+        )
+        .unwrap();
+
+        let shown = herdr.0.lock().unwrap();
+        let body = shown[0].body.as_deref().expect("a refusal says why");
+        assert!(
+            body.ends_with("— its 2 panes were closed first"),
+            "got {body}"
+        );
+    }
+}

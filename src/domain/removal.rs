@@ -63,7 +63,8 @@ pub fn notification(
         },
         RemovalOutcome::Refused(reason) => Notification {
             title: format!("could not remove {label}"),
-            // git's words, not a summary of them: they say what would have been lost.
+            // git's words, and what it cost to reach them. Not a summary of what git said:
+            // the reason it gave is what says what would have been lost.
             body: Some(refusal(reason, panes_closed)),
             // The one that has to reach someone who is no longer looking.
             sound: NotificationSound::Request,
@@ -71,7 +72,7 @@ pub fn notification(
     }
 }
 
-/// git's refusal, and what it cost to reach it.
+/// A refusal, and what it cost to reach it.
 ///
 /// A removal that stopped panes and then failed is the one failure that is not "nothing
 /// happened": the panes are gone and the checkout is not. Saying only what git said would
@@ -79,7 +80,7 @@ pub fn notification(
 /// herdr collapses the emptied tab, so there is not even an empty one left to explain it.
 /// Nothing is added when the removal worked: the panes were named in the question, and the
 /// checkout going is the answer.
-fn refusal(reason: &str, panes_closed: usize) -> String {
+pub fn refusal(reason: &str, panes_closed: usize) -> String {
     match panes_closed {
         0 => reason.to_string(),
         1 => format!("{reason} — its 1 pane was closed first"),
@@ -89,14 +90,15 @@ fn refusal(reason: &str, panes_closed: usize) -> String {
 
 /// What the picker says when closing the panes stopped partway.
 ///
-/// The same rule as `refusal`, for the failure that happens one step earlier: some panes
-/// are gone, the checkout is untouched, and the removal never started. herdr's own words
-/// alone would leave the reader with work that has stopped and no account of why.
+/// The same rule as `refusal`, for the failure that happens one step earlier: the panes that
+/// were reached are gone, the checkout is untouched, and the removal never started. herdr's
+/// own words alone would leave the reader with work that has stopped and no account of why.
 pub fn interrupted(pane_id: &str, reason: &str, closed: usize, total: usize) -> String {
-    let so_far = match closed {
-        0 => format!("none of its {total} panes were closed"),
-        1 => format!("1 of its {total} panes was closed first"),
-        many => format!("{many} of its {total} panes were closed first"),
+    let so_far = match (closed, total) {
+        (0, 1) => "its 1 pane was not closed".to_string(),
+        (0, total) => format!("none of its {total} panes were closed"),
+        (1, total) => format!("1 of its {total} panes was closed first"),
+        (many, total) => format!("{many} of its {total} panes were closed first"),
     };
     format!("could not close {pane_id}: {reason} — {so_far}, and the checkout was not removed")
 }
@@ -204,6 +206,11 @@ mod tests {
             interrupted("w1:p1", "gone", 0, 2),
             "could not close w1:p1: gone — none of its 2 panes were closed, and the \
              checkout was not removed"
+        );
+        assert_eq!(
+            interrupted("w1:p1", "gone", 0, 1),
+            "could not close w1:p1: gone — its 1 pane was not closed, and the checkout \
+             was not removed"
         );
         assert_eq!(
             interrupted("w1:p3", "gone", 2, 3),
