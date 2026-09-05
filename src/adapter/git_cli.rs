@@ -1,5 +1,6 @@
 //! `GitPort` backed by the `git` command line.
 
+use std::num::NonZeroU32;
 use std::process::{Command, Output, Stdio};
 
 use anyhow::{bail, Context, Result};
@@ -69,15 +70,15 @@ fn parse_track(field: &str) -> Option<Track> {
     let mut ahead = None;
     let mut behind = None;
     for part in inside.split(", ") {
+        // A count this cannot read fails the whole field, the same as a word it does not
+        // know. A zero does not: git prints `[ahead 0]` for nobody, so that side is simply
+        // level, and `NonZeroU32` is what says so instead of a guard further down.
         match part.split_once(' ') {
-            Some(("ahead", count)) => ahead = count.parse().ok(),
-            Some(("behind", count)) => behind = count.parse().ok(),
+            Some(("ahead", count)) => ahead = NonZeroU32::new(count.parse().ok()?),
+            Some(("behind", count)) => behind = NonZeroU32::new(count.parse().ok()?),
             _ => return None,
         }
     }
-    // `NonZeroU32` does the arithmetic that used to be a guard: git prints `[ahead 0]` for
-    // nobody, so a zero here is a field this could not read rather than a divergence of
-    // nothing, and either way there is no variant to put it in.
     match (ahead, behind) {
         (Some(ahead), Some(behind)) => Some(Track::Diverged { ahead, behind }),
         (Some(ahead), None) => Some(Track::Ahead(ahead)),
@@ -322,6 +323,15 @@ mod tests {
         // mean there is nothing to draw.
         assert_eq!(parse_track(""), None);
         assert_eq!(parse_track("   "), None);
+    }
+
+    #[test]
+    fn a_count_that_cannot_be_read_fails_the_whole_field() {
+        // Not just its own half. Believing the side that parsed would put a marker on the
+        // row that is right about one direction and silent about the other, which reads as
+        // a branch that is only ahead — a claim nothing in the input supports.
+        assert_eq!(parse_track("[ahead 2, behind zzz]"), None);
+        assert_eq!(parse_track("[ahead zzz, behind 1]"), None);
     }
 
     #[test]
