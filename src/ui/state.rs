@@ -110,6 +110,14 @@ impl PanesState {
     /// Replace the tree after a reload, keeping the cursor on the same pane when it is
     /// still there.
     pub fn replace_tree(&mut self, tree: Tree) {
+        // A question on screen is about the panes the tree had when it was asked. Another
+        // removal finishing is the ordinary way for that to stop being true — tidying up
+        // comes in batches — and a `y` against a list that has moved on would close panes
+        // nobody was shown, or leave one behind that opened since. So the question goes
+        // back, and the user asks it again of the list they can now see.
+        if self.pending_removal.take().is_some() {
+            self.message = Some("the list changed while that was up — ask again".into());
+        }
         let anchor = self.selected_pane_id().map(str::to_string);
         let at = self.cursor;
         self.tree = tree;
@@ -863,6 +871,35 @@ mod tests {
         assert!(
             state.pending_removal().is_none(),
             "the question is answered"
+        );
+    }
+
+    #[test]
+    fn a_question_is_taken_back_when_the_list_it_was_about_moves_on() {
+        // The window is real and ordinary: a removal started a moment ago reports back, the
+        // loop reads the tree again, and the panes the question named are no longer what
+        // the checkout has. Answering `y` then closes a list nobody was shown.
+        let mut state = state();
+        state.set_answered(vec!["/wt/app/feat-login".into()]);
+        select(&mut state, "codex");
+        state.handle_key(key(KeyCode::Char('D')));
+        assert!(state.pending_removal().is_some());
+
+        let mut grown = state.tree().clone();
+        grown.repos[0].worktrees[1]
+            .panes
+            .push(pane("w2:p9", "zsh", AgentStatus::Unknown));
+        state.replace_tree(grown);
+
+        assert!(state.pending_removal().is_none());
+        assert_eq!(
+            state.message(),
+            Some("the list changed while that was up — ask again")
+        );
+        assert_eq!(
+            state.handle_key(key(KeyCode::Char('y'))),
+            Action::Ignored,
+            "and the answer to a withdrawn question is no answer at all"
         );
     }
 

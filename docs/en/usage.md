@@ -107,6 +107,10 @@ the path when the box has to shrink, and why a pane too short even for a line ea
 `2 panes close` rather than dropping them. A question that did not say panes would close
 would not be one you could answer.
 
+If the list moves under an open question — another removal finishing is the ordinary way —
+the question is withdrawn rather than answered against a list you were not shown. Ask it
+again of the list you can now see.
+
 The cursor does not stop on a checkout that has panes, because the panes listed under it are
 the answer to where to go. Ask from the pane instead: `Shift-D` there is about the checkout it
 is in, and the box names it before you answer.
