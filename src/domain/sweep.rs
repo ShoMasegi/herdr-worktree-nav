@@ -77,12 +77,18 @@ pub enum Candidate {
     Offered(Reason),
     /// Nothing found that says it should go, and `gh`'s answer could not settle it.
     ///
-    /// Three ways to get here, and only the first is a missing dependency: `gh` could not be
-    /// asked at all; `gh` answered but the window it was given was full, so a branch absent
-    /// from the list may simply be further back than it reached; or `gh` answered and one of
-    /// the entries was in a state this does not know. The row says so in all three, because
-    /// a sweep that quietly finds less when it could not look is worse than one that says
-    /// which half it could not see.
+    /// Three ways `gh` fails to settle it, and only the first is a missing dependency: it
+    /// could not be asked at all; it answered but the window it was given was full, so a
+    /// branch absent from the list may simply be further back than it reached; or it
+    /// answered and one of the entries was in a state this does not know. The row says so in
+    /// all three, because a sweep that quietly finds less when it could not look is worse
+    /// than one that says which half it could not see.
+    ///
+    /// That enumeration is about `gh`, and is not the whole of "could not look". git has a
+    /// way to fail too — a ref walk that failed leaves every checkout with `track: None`,
+    /// which is also what a branch level with its upstream has — and no variant here can say
+    /// so, because `Track` has nowhere to put it. See issue #21. Fixing it is a change to
+    /// what a `RepoInput` can carry, and it has to land before a sweep deletes anything.
     Unjudged,
     /// Nothing says it should go. `Space` still marks it: disagreeing with the sweep is the
     /// same act as widening it, one row at a time.
@@ -618,6 +624,50 @@ mod tests {
             &facts(&trees, &asked(vec![merged(5, "feat/login")])),
         );
         assert_eq!(judged["/wt/login"], Candidate::Available);
+    }
+
+    #[test]
+    fn a_branch_that_landed_is_not_reported_by_whichever_pull_request_gh_listed_first() {
+        // Closed, then reopened and merged — or a branch name used twice. `gh` answers
+        // newest first, but nothing here pins that, and the row's reason must not turn on a
+        // sort order. Merged wins: a branch with a merge behind it has landed, whatever else
+        // also happened to it. Getting this the wrong way round tells someone their work was
+        // abandoned as they delete the only copy of it.
+        let trees = clean(&["/wt/feat-login"]);
+        for order in [
+            vec![
+                settled(1, "feat/login", PullRequestOutcome::Closed),
+                settled(2, "feat/login", PullRequestOutcome::Merged),
+            ],
+            vec![
+                settled(2, "feat/login", PullRequestOutcome::Merged),
+                settled(1, "feat/login", PullRequestOutcome::Closed),
+            ],
+        ] {
+            let judged = judged(
+                &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
+                &facts(&trees, &asked(order)),
+            );
+            assert_eq!(judged["/wt/feat-login"].label_for_test(), "PR #2 merged");
+        }
+    }
+
+    #[test]
+    fn two_of_a_kind_are_reported_by_the_later_one() {
+        // Nothing distinguishes them but which came second, and the second is the one whose
+        // story the branch is at the end of.
+        let trees = clean(&["/wt/feat-login"]);
+        let judged = judged(
+            &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
+            &facts(
+                &trees,
+                &asked(vec![
+                    settled(9, "feat/login", PullRequestOutcome::Closed),
+                    settled(3, "feat/login", PullRequestOutcome::Closed),
+                ]),
+            ),
+        );
+        assert_eq!(judged["/wt/feat-login"].label_for_test(), "PR #9 closed");
     }
 
     #[test]

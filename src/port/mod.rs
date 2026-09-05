@@ -339,6 +339,11 @@ pub struct SettledPullRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettledPullRequests {
     /// Every finished pull request this repository has. A branch absent from it has none.
+    ///
+    /// This repository's, which for a clone of a fork is not where its pull requests live —
+    /// those are settled on the parent. So a fork sweeps fewer rows than the repository it
+    /// came from while saying `All` about it, which is the one place this type is confident
+    /// and narrow at once. Answering for the parent as well is not done here.
     All(Vec<SettledPullRequest>),
     /// As many as `gh` was asked for, and it gave back that many — so there may be more
     /// behind them and there is no way to tell. `gh` answers newest first and says nothing
@@ -367,7 +372,18 @@ impl SettledPullRequests {
             SettledPullRequests::All(list) | SettledPullRequests::Window(list) => list,
         };
         list.iter()
-            .find(|pull_request| !pull_request.from_a_fork && pull_request.head_ref == head_ref)
+            .filter(|pull_request| !pull_request.from_a_fork && pull_request.head_ref == head_ref)
+            // A branch can have more than one — closed, then reopened and merged, or a name
+            // used twice — and taking whichever `gh` happened to list first would make the
+            // reason on the row depend on a sort order nothing here pins. Merged wins,
+            // because a branch with a merge behind it has landed whatever else also happened
+            // to it; between two of a kind the later number is the later story.
+            .max_by_key(|pull_request| {
+                (
+                    pull_request.outcome == PullRequestOutcome::Merged,
+                    pull_request.number,
+                )
+            })
     }
 }
 

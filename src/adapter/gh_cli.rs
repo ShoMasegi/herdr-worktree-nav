@@ -178,14 +178,18 @@ impl GhPort for GhCli {
             .map_err(|error| format!("gh could not be run: {error}"))?;
         if !output.status.success() {
             // `gh`'s own words, because the alternative is a picker that says a sweep could
-            // not look and cannot say why. Trimmed to the first line: the rest is usually a
-            // usage dump, and this ends up on one prompt line.
+            // not look and cannot say why. Trimmed to the first line with anything on it —
+            // `gh` prefixes warnings and blank lines of its own, and the first line being one
+            // of those is exactly when the reason exists and is on the second. The rest is
+            // usually a usage dump, and this ends up on one prompt line.
             let said = String::from_utf8_lossy(&output.stderr);
-            let first = said.lines().next().unwrap_or("").trim();
-            return Err(if first.is_empty() {
-                "gh would not answer".to_string()
-            } else {
-                format!("gh: {first}")
+            let reason = said.lines().map(str::trim).find(|line| !line.is_empty());
+            return Err(match reason {
+                // Not "gh: …". The two bugs this call has already had were malformed argv on
+                // this side, and both read to a user as "your gh is broken" — which is the
+                // one thing this cannot tell apart from GitHub saying no.
+                Some(reason) => format!("gh refused the question this asked: {reason}"),
+                None => format!("gh would not answer ({})", output.status),
             });
         }
         read_settled(&output.stdout, SETTLED_LIMIT)
