@@ -298,9 +298,15 @@ pub struct PullRequest {
 
 /// What became of a pull request, once it is no longer open.
 ///
-/// There is no `Open`, and that is the point: a sweep may only be *widened* by a pull request
-/// that is finished with. `docs/adr/0011-what-may-be-swept.md` does not let `gh` clear a mark
-/// git put there, so an open pull request has nothing to say and no variant to say it in.
+/// There is no `Open`, because `gh` may only *widen* a sweep and an open pull request never
+/// widens one — `docs/adr/0011-what-may-be-swept.md`.
+///
+/// That is not the same as an open pull request being irrelevant, and the difference is a
+/// known limit rather than a solved problem. A branch reused after an earlier pull request
+/// was closed still has a settled one against it, and nothing here can tell that apart from
+/// a branch that is finished with. ADR 0011 names this: "the sweep's confidence comes from a
+/// prune that may be stale and a pull request that may have been reopened. That is enough to
+/// offer a mark. It is not enough to pass a `-D`."
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PullRequestOutcome {
     Merged,
@@ -311,8 +317,33 @@ pub enum PullRequestOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettledPullRequest {
     pub number: u64,
+    /// The branch name on whichever repository the pull request came *from*, which for a
+    /// fork is not this one — see [`from_a_fork`](SettledPullRequest::from_a_fork).
     pub head_ref: String,
+    /// Whether the branch lives on somebody else's fork. A drive-by `patch-1` arrives here
+    /// as the bare name `patch-1`, so on a repository that takes contributions the name
+    /// alone says nothing about the local checkout that happens to share it — and `patch-1`,
+    /// `main` and `fix/typo` are exactly the names that collide.
+    pub from_a_fork: bool,
     pub outcome: PullRequestOutcome,
+}
+
+/// What `gh` said about one repository's finished pull requests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettledPullRequests {
+    pub pull_requests: Vec<SettledPullRequest>,
+    /// Whether these are all of them.
+    ///
+    /// `gh` answers newest first and says nothing when it truncates, so a branch whose pull
+    /// request fell outside the window is not "no pull request" — it is one this could not
+    /// see. Without this the sweep would read a window it outgrew as a confident answer,
+    /// which is the exact confusion `docs/adr/0011-what-may-be-swept.md` exists to prevent.
+    ///
+    /// Also false when `gh` reported a state this does not know. Dropping such an entry is
+    /// right — an unknown state is no reason to delete anything — but reporting the rest as
+    /// the whole answer would turn "there is something here I could not read" into "there
+    /// is nothing here", which is the one direction that matters.
+    pub complete: bool,
 }
 
 /// `Sync` because the pull request lookup runs on a background thread while the picker
@@ -324,14 +355,18 @@ pub trait GhPort: Sync {
 
     /// Pull requests that have been merged or closed, for deciding what a sweep may offer.
     ///
-    /// `None` — not an empty list — when `gh` could not be asked at all. The two are the
-    /// same answer to [`pull_requests`](GhPort::pull_requests), where nothing turns on the
-    /// difference and ADR 0003's promise is that a missing `gh` costs nothing. Here it does
-    /// turn on it: ADR 0011 says a degraded `gh` must be *visible*, because a sweep that
-    /// silently offers fewer rows is worse than one that says which half it could not judge.
-    /// `Some(vec![])` is "asked, and nothing here is finished with".
+    /// `Err` — not an empty list — when `gh` could not be asked at all, carrying what went
+    /// wrong so the picker can say which half of the sweep it could not look at. An empty
+    /// `Ok` is "asked, and nothing here is finished with", which is a different answer.
+    /// [`pull_requests`](GhPort::pull_requests) conflates those two on purpose, because
+    /// ADR 0003's promise is that a missing `gh` costs nothing there. Here it costs
+    /// something: ADR 0011 says a degraded `gh` must be *visible*, since a sweep that
+    /// quietly offers fewer rows is worse than one that says which half it could not judge.
     ///
-    /// Heavier than `pull_requests` — it asks about every state — so it is called when a
-    /// sweep is entered rather than when the picker opens.
-    fn settled_pull_requests(&self, repo_root: &str) -> Option<Vec<SettledPullRequest>>;
+    /// `Err` is still never a reason to fail the picker. It is a sentence to show, not a
+    /// question to give up on.
+    ///
+    /// Heavier than `pull_requests` — a wider window over a state nobody has asked about
+    /// before — so it is called when a sweep is entered rather than when the picker opens.
+    fn settled_pull_requests(&self, repo_root: &str) -> Result<SettledPullRequests, String>;
 }
