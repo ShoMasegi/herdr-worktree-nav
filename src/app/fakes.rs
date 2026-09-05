@@ -20,8 +20,11 @@ use crate::port::{
 /// Spin until `ready`, or fail the test.
 ///
 /// The work these tests drive runs on threads of its own, so there is nothing to join on and
-/// nothing to block for. The budget is a thousand times what any of them has been measured to
-/// need, and it is here rather than in each module so that raising it is one edit.
+/// nothing to block for. Two seconds is far longer than any of them needs and short enough
+/// to notice; `what` is what makes the difference between "this hung" and "this machine is
+/// loaded" readable when it does fire. Here rather than in each module so that the budget is
+/// one number — every caller in this layer goes through it, including the ones that are
+/// waiting for a condition to stop holding.
 pub fn until(what: &str, mut ready: impl FnMut() -> bool) {
     for _ in 0..2000 {
         if ready() {

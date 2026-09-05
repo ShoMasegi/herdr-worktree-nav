@@ -44,11 +44,14 @@ pub fn run(
     let (_, tree) = collect::collect_tree(herdr, git)?;
     let mut state = PanesState::new(tree, home_dir());
     // Both outlive this view: a removal started before a trip through the branches view is
-    // still going, and a working tree walked once does not need walking again.
+    // still going, and a working tree walked once does not need walking again. These two
+    // have to be seeded because `show_answers` only refreshes them when `drain` reports a
+    // change, and coming back to a view where nothing has moved reports none. `set_answered`
+    // and `set_waiting` need no seeding — `show_answers` sets those every frame, and the
+    // first one runs before the first draw.
     dirty.ask(state.tree());
     state.set_dirty(dirty.paths());
     state.set_unreadable(dirty.unreadable());
-    state.set_answered(dirty.answered());
     state.set_removing(removals.paths());
     if let Some(pane_id) = initial_pane {
         state.focus_pane(pane_id);
@@ -229,6 +232,7 @@ fn perform(herdr: &dyn HerdrPort, action: Action) -> Result<Exit> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::fakes::until;
     use crate::ui::state::PanesState;
     use anyhow::Result;
 
@@ -302,12 +306,10 @@ mod tests {
         let mut dirty = Dirty::new(std::sync::Arc::new(Clean));
         dirty.ask(state.tree());
 
-        for _ in 0..2000 {
-            if !show_answers(&mut state, &mut dirty) {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
+        until(
+            "the walk never answered for the only checkout there is",
+            || !show_answers(&mut state, &mut dirty),
+        );
 
         // The cursor starts on the only pane there is.
         state.handle_key(ratatui::crossterm::event::KeyEvent::new(

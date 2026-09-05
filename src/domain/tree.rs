@@ -81,13 +81,16 @@ pub fn build(
                 .iter()
                 // A bare repository has no working tree, so no pane can ever sit in it.
                 .filter(|worktree| !worktree.is_bare)
-                .map(|worktree| WorktreeNode {
-                    branch: worktree.branch.clone().filter(|b| !b.is_empty()),
-                    checkout_path: normalize_path(&worktree.path).to_string(),
-                    is_primary: !worktree.is_linked_worktree,
-                    open_workspace_id: worktree.open_workspace_id.clone(),
-                    track: tracks.get(normalize_path(&worktree.path)).copied(),
-                    panes: Vec::new(),
+                .map(|worktree| {
+                    let checkout_path = normalize_path(&worktree.path);
+                    WorktreeNode {
+                        branch: worktree.branch.clone().filter(|b| !b.is_empty()),
+                        checkout_path: checkout_path.to_string(),
+                        is_primary: !worktree.is_linked_worktree,
+                        open_workspace_id: worktree.open_workspace_id.clone(),
+                        track: tracks.get(checkout_path).copied(),
+                        panes: Vec::new(),
+                    }
                 })
                 .collect(),
         })
