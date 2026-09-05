@@ -264,6 +264,56 @@ mod tests {
     }
 
     #[test]
+    fn a_checkout_herdr_did_not_list_still_gets_what_git_said_about_it() {
+        // The path the index-based lookup used to take, and the reason it was replaced: it
+        // reached into `repos` by an index that was only valid because `nodes` happened to
+        // be built from it in order.
+        let mut input = repo(
+            "me/app",
+            "/src/app",
+            vec![worktree("main", "/src/app", false)],
+        );
+        input.refs = vec![
+            local_ref("main", Some("/src/app"), None),
+            local_ref("manual", Some("/elsewhere/manual"), Some(Track::Gone)),
+        ];
+        let tree = build(
+            &snapshot(json!([pane("w1:p1", None)])),
+            &[input],
+            &placements(&[("w1:p1", "/src/app/.git", "/elsewhere/manual")]),
+        );
+        let synthesized = tree.repos[0]
+            .worktrees
+            .iter()
+            .find(|worktree| worktree.checkout_path == "/elsewhere/manual")
+            .expect("herdr did not list it, so the pane's own cwd put it there");
+        assert_eq!(synthesized.track, Some(Track::Gone));
+    }
+
+    #[test]
+    fn one_repositorys_branch_state_never_lands_on_anothers_checkout() {
+        // Two repositories, a branch of the same name in each, and no order between them
+        // that the lookup is allowed to depend on. Checkout paths are absolute, so they are
+        // what tells the two apart.
+        let mut app = repo(
+            "me/app",
+            "/src/app",
+            vec![worktree("main", "/src/app", false)],
+        );
+        app.refs = vec![local_ref("main", Some("/src/app"), Some(Track::Gone))];
+        let mut site = repo(
+            "me/site",
+            "/src/site",
+            vec![worktree("main", "/src/site", false)],
+        );
+        site.refs = vec![local_ref("main", Some("/src/site"), None)];
+
+        let tree = build(&snapshot(json!([])), &[app, site], &HashMap::new());
+        assert_eq!(tree.repos[0].worktrees[0].track, Some(Track::Gone));
+        assert_eq!(tree.repos[1].worktrees[0].track, None, "not the other's");
+    }
+
+    #[test]
     fn the_branch_is_matched_by_the_checkout_git_says_has_it() {
         // Not by name. A ref that is not checked out anywhere says nothing about a checkout
         // that merely shares its name, and a detached checkout has nothing pointing at it —
