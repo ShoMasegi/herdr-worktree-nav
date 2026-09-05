@@ -354,6 +354,7 @@ mod tests {
             "git@github.com:ShoMasegi/herdr-worktree-nav.git",
             "ssh://git@github.com/ShoMasegi/herdr-worktree-nav.git",
             "  https://github.com/ShoMasegi/herdr-worktree-nav.git\n",
+            "https://github.com/ShoMasegi/herdr-worktree-nav/",
         ] {
             assert_eq!(
                 github_slug_from_url(url).as_ref().map(Slug::as_str),

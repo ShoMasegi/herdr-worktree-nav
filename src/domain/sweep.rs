@@ -830,6 +830,32 @@ mod tests {
             },
         );
         assert_eq!(judged["/src/app"], Candidate::Refused(Refusal::Primary));
+
+        // And the pair below it, which asserting only the top of the order leaves free. A
+        // checkout being removed that still has panes in it says "already being removed":
+        // the other way round sends the user back to close panes that a removal already
+        // running is about to take with it, and never says the removal is happening.
+        let mut both = worktree("feat/login", "/wt/feat-login");
+        both.panes = vec![PaneNode {
+            pane_id: "w2:p1".into(),
+            workspace_id: "w2".into(),
+            tab_id: "w2:t1".into(),
+            display_name: None,
+            agent_status: AgentStatus::Idle,
+            focused: false,
+        }];
+        let judged = candidates(
+            &tree_of(vec![both]),
+            &Facts {
+                working_trees: &clean(&["/wt/feat-login"]),
+                settled: &none,
+                removing: &["/wt/feat-login".to_string()],
+            },
+        );
+        assert_eq!(
+            judged["/wt/feat-login"],
+            Candidate::Refused(Refusal::Removing)
+        );
     }
 
     #[test]

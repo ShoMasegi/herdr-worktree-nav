@@ -134,6 +134,56 @@ fn read_settled(stdout: &[u8], limit: usize) -> Result<SettledPullRequests, Stri
     })
 }
 
+/// The decoration query, made but not run. `stderr` goes to `null` rather than being piped
+/// because nothing reads it: ADR 0003 says a missing `gh` costs the annotation and nothing
+/// else here, so there is no sentence to show and no half of the answer to name.
+///
+/// Split out for the reason the sweep's is, one bug earlier: this is where a checkout path
+/// was passed to `-R` first, and it stayed wrong for as long as it did because a picker that
+/// silently draws no annotations looks exactly like a repository with no pull requests.
+fn open_command(slug: &Slug) -> Command {
+    let mut command = Command::new("gh");
+    command
+        .args([
+            "-R",
+            slug.as_str(),
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--limit",
+            LIMIT,
+            "--json",
+            "number,title,headRefName,isDraft",
+        ])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null());
+    command
+}
+
+/// The process, made but not run.
+///
+/// The third thing split out of this call, and for the reason the first two were: what is
+/// left inside `settled_pull_requests` is `.output()` and nothing else. Both bugs this call
+/// has shipped were in what it asked, and what it asks is now pinned — the program and the
+/// argument list are both assertable, and asserted.
+///
+/// The redirections are not. `Command` has getters for the program, the arguments, the
+/// environment and the working directory, and none for `stdin`/`stdout`/`stderr`, so
+/// `.stderr(Stdio::null())` here would go unnoticed by any test that does not start a real
+/// `gh`. What that costs is not nothing: [`settled_answer`] reads `stderr` to find the
+/// sentence the user is shown, so a `stderr` sent to `null` makes every word of it
+/// unreachable and turns every refusal into "gh would not answer". Reaching it needs a `gh`
+/// on `PATH` that a test put there.
+fn settled_command(slug: &Slug) -> Command {
+    let mut command = Command::new("gh");
+    command
+        .args(settled_arguments(slug))
+        .stdin(Stdio::null())
+        .stderr(Stdio::piped());
+    command
+}
+
 /// What one run of `gh` amounts to: an answer, or a sentence saying why there is not one.
 ///
 /// Separate from starting the process for the same reason [`read_settled`] is separate from
@@ -165,23 +215,7 @@ pub struct GhCli;
 
 impl GhPort for GhCli {
     fn pull_requests(&self, slug: &Slug) -> Vec<PullRequest> {
-        let Ok(output) = Command::new("gh")
-            .args([
-                "-R",
-                slug.as_str(),
-                "pr",
-                "list",
-                "--state",
-                "open",
-                "--limit",
-                LIMIT,
-                "--json",
-                "number,title,headRefName,isDraft",
-            ])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-        else {
+        let Ok(output) = open_command(slug).output() else {
             return Vec::new();
         };
         if !output.status.success() {
@@ -200,10 +234,7 @@ impl GhPort for GhCli {
     }
 
     fn settled_pull_requests(&self, slug: &Slug) -> Result<SettledPullRequests, String> {
-        let output = Command::new("gh")
-            .args(settled_arguments(slug))
-            .stdin(Stdio::null())
-            .stderr(Stdio::piped())
+        let output = settled_command(slug)
             .output()
             .map_err(|error| format!("gh could not be run: {error}"))?;
         settled_answer(&output)
@@ -250,6 +281,47 @@ mod tests {
                 "--json",
                 "number,headRefName,isCrossRepository,state",
             ]
+        );
+    }
+
+    #[test]
+    fn what_is_actually_started_is_gh_with_the_arguments_above() {
+        // The list being right has never been the whole of it: twice a correct list sat
+        // beside a call that did not use it. What is left in `settled_pull_requests` after
+        // this is `.output()`, and `stderr` is piped because `settled_answer` reads it — a
+        // `stderr` sent to `null` costs the user gh's own words on every refusal without
+        // failing anything.
+        let command = settled_command(&slug());
+        assert_eq!(command.get_program(), "gh");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            settled_arguments(&slug())
+                .iter()
+                .map(std::ffi::OsStr::new)
+                .collect::<Vec<_>>(),
+            "the arguments this asks for are the arguments it is started with"
+        );
+    }
+
+    #[test]
+    fn the_decoration_query_names_the_repository_too() {
+        // Where the path-for-slug bug was first written. It never failed loudly: `gh` exits
+        // non-zero, `pull_requests` turns that into an empty list by design, and a picker
+        // drawing no annotations looks like a repository with no open pull requests. Nothing
+        // in this module was tested at all until #23, which is why it stayed.
+        let command = open_command(&slug());
+        assert_eq!(command.get_program(), "gh");
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(
+            arguments.windows(2).any(|pair| pair == ["-R", "me/app"]),
+            "the repository is named, not guessed from the remotes: {arguments:?}"
+        );
+        assert!(
+            arguments.windows(2).any(|pair| pair == ["--state", "open"]),
+            "and this is the half in flight, not the half the sweep asks about"
         );
     }
 

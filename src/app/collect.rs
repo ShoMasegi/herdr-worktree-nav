@@ -203,7 +203,148 @@ fn collect_repos(
 
 #[cfg(test)]
 mod tests {
-    use super::is_inside;
+    use std::collections::HashMap;
+
+    use anyhow::Result;
+
+    use super::{collect_repos, is_inside};
+    use crate::domain::tree::PanePlacement;
+    use crate::port::{
+        GitPort, HerdrPort, PaneDestination, PaneSplit, Slug, Snapshot, Worktree, WorktreeCreate,
+        WorktreeList, WorktreeOpen, WorktreeOpened, WorktreeSource,
+    };
+
+    /// A herdr that knows one repository, and a git that may or may not know its name on
+    /// GitHub. Between them they are everything `collect_repos` reads.
+    struct Repository {
+        slug: Result<Option<Slug>, ()>,
+    }
+
+    impl HerdrPort for Repository {
+        fn worktree_list(&self, _cwd: &str) -> Result<WorktreeList> {
+            Ok(WorktreeList {
+                source: WorktreeSource {
+                    repo_key: "/src/app/.git".into(),
+                    // What herdr calls it, which is the directory. The fallback, and the
+                    // thing a slug is supposed to be better than.
+                    repo_name: "app".into(),
+                    repo_root: "/src/app".into(),
+                    source_checkout_path: "/src/app".into(),
+                    source_workspace_id: None,
+                },
+                worktrees: Vec::<Worktree>::new(),
+            })
+        }
+        fn snapshot(&self) -> Result<Snapshot> {
+            unreachable!("only worktree_list is asked of this port")
+        }
+        fn worktree_create(&self, _req: &WorktreeCreate) -> Result<WorktreeOpened> {
+            unreachable!("only worktree_list is asked of this port")
+        }
+        fn worktree_open(&self, _req: &WorktreeOpen) -> Result<WorktreeOpened> {
+            unreachable!("only worktree_list is asked of this port")
+        }
+        fn pane_focus(&self, _pane_id: &str) -> Result<()> {
+            unreachable!("only worktree_list is asked of this port")
+        }
+        fn pane_split(&self, _req: &PaneSplit) -> Result<crate::port::Pane> {
+            unreachable!("only worktree_list is asked of this port")
+        }
+        fn pane_move(&self, _pane: &str, _dest: &PaneDestination, _focus: bool) -> Result<()> {
+            unreachable!("only worktree_list is asked of this port")
+        }
+        fn pane_close(&self, _pane_id: &str) -> Result<()> {
+            unreachable!("only worktree_list is asked of this port")
+        }
+        fn workspace_focus(&self, _workspace_id: &str) -> Result<()> {
+            unreachable!("only worktree_list is asked of this port")
+        }
+        fn tab_focus(&self, _tab_id: &str) -> Result<()> {
+            unreachable!("only worktree_list is asked of this port")
+        }
+        fn plugin_pane_open(
+            &self,
+            _req: &crate::port::PluginPaneOpen,
+        ) -> Result<Option<crate::port::OpenRefusal>> {
+            unreachable!("only worktree_list is asked of this port")
+        }
+        fn notify(&self, _notification: &crate::port::Notification) -> Result<()> {
+            unreachable!("only worktree_list is asked of this port")
+        }
+    }
+
+    impl GitPort for Repository {
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
+            match &self.slug {
+                Ok(slug) => Ok(slug.clone()),
+                Err(()) => Err(anyhow::anyhow!("fatal: not a git repository")),
+            }
+        }
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn local_refs(&self, _repo_root: &str) -> Result<Vec<crate::port::GitRef>> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn head_ref(&self, _repo_root: &str) -> Result<String> {
+            unreachable!("only github_slug is asked of this port")
+        }
+    }
+
+    fn one_pane_in(checkout_path: &str) -> HashMap<String, PanePlacement> {
+        HashMap::from([(
+            "w1:p1".to_string(),
+            PanePlacement {
+                repo_key: "/src/app/.git".to_string(),
+                checkout_path: checkout_path.to_string(),
+            },
+        )])
+    }
+
+    fn named(slug: Result<Option<Slug>, ()>) -> String {
+        let port = Repository { slug };
+        let repos = collect_repos(&port, &port, &one_pane_in("/src/app"));
+        repos
+            .into_iter()
+            .next()
+            .expect("herdr answered for the one repository")
+            .display_name
+    }
+
+    #[test]
+    fn a_repository_is_labelled_by_what_github_calls_it() {
+        // The header row above every repository's worktrees, on every picker open. Nothing
+        // else in the suite reads it, so blanking it here costs nothing that a test notices
+        // and everything that a user does.
+        assert_eq!(
+            named(Ok(Slug::owner_repo("ShoMasegi", "app"))),
+            "ShoMasegi/app"
+        );
+    }
+
+    #[test]
+    fn a_repository_github_does_not_know_keeps_the_name_herdr_gave_it() {
+        // And a git that would not answer is the same case: neither is a reason to show a
+        // path, and neither is a reason to show nothing.
+        for slug in [Ok(None), Err(())] {
+            assert_eq!(named(slug), "app");
+        }
+    }
 
     #[test]
     fn recognises_a_pane_that_is_still_inside_its_workspace_checkout() {
