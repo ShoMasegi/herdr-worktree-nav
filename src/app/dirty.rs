@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 
-use crate::domain::model::Tree;
+use crate::domain::model::{Tree, WorkingTree};
 use crate::port::GitPort;
 
 /// Enough to hide the latency without filling a laptop with git processes. The same cap the
@@ -24,30 +24,6 @@ const MAX_IN_FLIGHT: usize = 8;
 /// One answer, tagged with the round of asking it belongs to. `None` is git declining to
 /// answer at all.
 type Reply = (u64, String, Option<bool>);
-
-/// What a row draws for an answer, which is the only difference worth rebuilding the list
-/// for. Two of the four states draw nothing, and the commonest transition of all — a
-/// checkout nobody has asked about turning out to be clean — is between them.
-fn drawn(answer: Answer) -> Option<Answer> {
-    match answer {
-        Answer::Waiting | Answer::Clean => None,
-        marked => Some(marked),
-    }
-}
-
-/// What is known about one checkout.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Answer {
-    /// Asked, nothing back yet.
-    Waiting,
-    Clean,
-    Dirty,
-    /// git could not say. Kept apart from `Clean` because they are not the same claim, and
-    /// the difference is the one `docs/adr/0011-what-may-be-swept.md` insists on: a tool
-    /// that quietly finds less when a dependency is missing is worse than one that says
-    /// which half it is missing.
-    Unreadable,
-}
 
 /// What the picker knows about uncommitted work, and what it is still waiting to hear.
 ///
@@ -63,7 +39,8 @@ pub struct Dirty {
     generation: u64,
     /// Every checkout asked about in the current round. Keeping the clean answers as well
     /// as the dirty ones is what lets a second answer correct a first.
-    answers: BTreeMap<String, Answer>,
+    /// `None` for a checkout that has been asked and has not answered.
+    answers: BTreeMap<String, Option<WorkingTree>>,
     /// Asked for, waiting on a slot.
     queued: VecDeque<String>,
     in_flight: usize,
@@ -105,8 +82,7 @@ impl Dirty {
         for repo in &tree.repos {
             for worktree in &repo.worktrees {
                 if !self.answers.contains_key(&worktree.checkout_path) {
-                    self.answers
-                        .insert(worktree.checkout_path.clone(), Answer::Waiting);
+                    self.answers.insert(worktree.checkout_path.clone(), None);
                     self.queued.push_back(worktree.checkout_path.clone());
                 }
             }
@@ -129,14 +105,15 @@ impl Dirty {
         self.ask(tree);
     }
 
-    /// Take in whatever has arrived, and start whatever the freed slots allow. `true` when
-    /// a row's markers changed and the list needs rebuilding — not merely when an answer
-    /// arrived, since most of them are clean and would rebuild an identical list.
+    /// Take in whatever has arrived, and start whatever the freed slots allow.
+    ///
+    /// Says nothing about whether anything needs redrawing. Which answers are worth a rebuild
+    /// is a question about rows, and it is asked where the rows are —
+    /// `ui::state::PanesState::set_working_trees`. Here every answer is equal.
     ///
     /// This is also the pump, so a view that stops draining stops the walk: with more
     /// checkouts than `MAX_IN_FLIGHT`, the remainder waits for the panes view to come back.
-    pub fn drain(&mut self) -> bool {
-        let mut changed = false;
+    pub fn drain(&mut self) {
         while let Ok((generation, checkout_path, dirty)) = self.receiver.try_recv() {
             // Counted whatever round it came from: it is a thread that has finished, and
             // the cap and the spinner are both about how many are still running.
@@ -144,54 +121,30 @@ impl Dirty {
             if generation != self.generation {
                 continue;
             }
-            let answered = match dirty {
-                Some(true) => Answer::Dirty,
-                Some(false) => Answer::Clean,
-                None => Answer::Unreadable,
-            };
+            let answered = Some(match dirty {
+                Some(true) => WorkingTree::Dirty,
+                Some(false) => WorkingTree::Clean,
+                None => WorkingTree::Unreadable,
+            });
             if let Some(answer) = self.answers.get_mut(&checkout_path) {
-                changed |= drawn(*answer) != drawn(answered);
                 *answer = answered;
             }
         }
         self.pump();
-        changed
     }
 
-    /// The checkouts known to be holding uncommitted work. In path order, so that a caller
-    /// comparing this against what it drew last does not see the order threads happened to
-    /// finish in as a change.
-    pub fn paths(&self) -> Vec<String> {
-        self.answers
-            .iter()
-            .filter(|(_, answer)| **answer == Answer::Dirty)
-            .map(|(checkout_path, _)| checkout_path.clone())
-            .collect()
-    }
-
-    /// The checkouts git would not answer for. Said on their own rows rather than left to
-    /// look like clean working trees — the distinction
-    /// `docs/adr/0011-what-may-be-swept.md` draws with `PR unknown`, and it matters in both
-    /// directions: a `safe.directory` refusal fails identically for every checkout at once,
-    /// while a worktree whose directory has gone fails for exactly one.
-    pub fn unreadable(&self) -> Vec<String> {
-        self.answers
-            .iter()
-            .filter(|(_, answer)| **answer == Answer::Unreadable)
-            .map(|(checkout_path, _)| checkout_path.clone())
-            .collect()
-    }
-
-    /// Every checkout git has answered for, whatever it said.
+    /// What git has said so far, by checkout. A checkout that has been asked and not yet
+    /// answered is absent rather than present with a guess, so "nobody knows" and "clean"
+    /// stay different facts all the way to the caller — which is what
+    /// `ui::state::PanesState::ask_to_remove` refuses on, and what
+    /// `docs/adr/0011-what-may-be-swept.md` decides on.
     ///
-    /// The picker needs this and not just the dirty ones, because "nobody has asked yet" and
-    /// "asked, and it is clean" are different facts and only one of them is a licence to
-    /// close somebody's panes — see `ui::state::PanesState::ask_to_remove`.
-    pub fn answered(&self) -> Vec<String> {
+    /// In path order, so a caller comparing this against what it drew last does not see the
+    /// order threads happened to finish in as a change.
+    pub fn answers(&self) -> BTreeMap<String, WorkingTree> {
         self.answers
             .iter()
-            .filter(|(_, answer)| **answer != Answer::Waiting)
-            .map(|(checkout_path, _)| checkout_path.clone())
+            .filter_map(|(path, answer)| Some((path.clone(), (*answer)?)))
             .collect()
     }
 
@@ -227,6 +180,29 @@ impl Dirty {
 
 #[cfg(test)]
 mod tests {
+
+    /// The three questions these tests ask of the walk, projected out of the one map it now
+    /// hands back. Kept here rather than on `Dirty` because nothing in the picker wants them
+    /// separately any more — telling them apart at the call site is what this replaced.
+    fn dirty_paths(walk: &Dirty) -> Vec<String> {
+        picked(walk, |answer| answer == WorkingTree::Dirty)
+    }
+
+    fn unreadable(walk: &Dirty) -> Vec<String> {
+        picked(walk, |answer| answer == WorkingTree::Unreadable)
+    }
+
+    fn answered(walk: &Dirty) -> Vec<String> {
+        picked(walk, |_| true)
+    }
+
+    fn picked(walk: &Dirty, keep: impl Fn(WorkingTree) -> bool) -> Vec<String> {
+        walk.answers()
+            .into_iter()
+            .filter(|(_, answer)| keep(*answer))
+            .map(|(path, _)| path)
+            .collect()
+    }
     use super::*;
     use crate::app::fakes::until;
     use crate::domain::model::{RepoNode, WorktreeNode};
@@ -377,13 +353,16 @@ mod tests {
             dirty.in_flight == 1
         });
         assert!(
-            dirty.paths().is_empty(),
+            dirty_paths(&dirty).is_empty(),
             "the answer belonged to a question that was withdrawn"
         );
 
         git.answer("/wt/a", false);
         until_answered(&mut dirty);
-        assert!(dirty.paths().is_empty(), "and the fresh answer is clean");
+        assert!(
+            dirty_paths(&dirty).is_empty(),
+            "and the fresh answer is clean"
+        );
     }
 
     #[test]
@@ -398,13 +377,13 @@ mod tests {
         until_asked(&git, 1);
         git.answer("/wt/a", true);
         until_answered(&mut dirty);
-        assert_eq!(dirty.paths(), vec!["/wt/a".to_string()]);
+        assert_eq!(dirty_paths(&dirty), vec!["/wt/a".to_string()]);
 
         dirty.reask(&tree);
         until_asked(&git, 1);
         git.answer("/wt/a", false);
         until_answered(&mut dirty);
-        assert!(dirty.paths().is_empty());
+        assert!(dirty_paths(&dirty).is_empty());
     }
 
     #[test]
@@ -430,7 +409,7 @@ mod tests {
             0,
             "and not again once they have answered"
         );
-        assert_eq!(dirty.paths(), vec!["/wt/a".to_string()]);
+        assert_eq!(dirty_paths(&dirty), vec!["/wt/a".to_string()]);
     }
 
     #[test]
@@ -450,13 +429,13 @@ mod tests {
         until_answered(&mut dirty);
 
         assert_eq!(
-            dirty.answered(),
+            answered(&dirty),
             vec!["/wt/a".to_string(), "/wt/b".to_string()],
             "both have been asked and both have answered"
         );
-        assert!(dirty.paths().is_empty(), "neither is marked dirty");
+        assert!(dirty_paths(&dirty).is_empty(), "neither is marked dirty");
         assert_eq!(
-            dirty.unreadable(),
+            unreadable(&dirty),
             vec!["/wt/a".to_string()],
             "but only one of them is being called clean"
         );
@@ -473,27 +452,27 @@ mod tests {
         dirty.ask(&tree);
         until_asked(&git, 3);
         assert!(
-            dirty.answered().is_empty(),
+            answered(&dirty).is_empty(),
             "asked is not answered, and only the second is a licence to act"
         );
 
         git.answer("/wt/a", false);
         until("the clean answer never arrived", || {
-            let changed = dirty.drain();
-            assert!(!changed, "nothing to redraw for a clean working tree");
+            dirty.drain();
             dirty.in_flight == 2
         });
 
         git.answer("/wt/b", true);
         until("the dirty answer never arrived", || {
-            dirty.drain() || {
-                assert_eq!(dirty.in_flight, 2, "still waiting on it");
-                false
-            }
+            dirty.drain();
+            dirty.answers().contains_key("/wt/b")
         });
 
         git.refuse("/wt/c");
-        until("the refusal never arrived", || dirty.drain());
+        until("the refusal never arrived", || {
+            dirty.drain();
+            dirty.answers().contains_key("/wt/c")
+        });
     }
 
     #[test]
@@ -515,12 +494,12 @@ mod tests {
             dirty.drain();
             dirty.in_flight == 1
         });
-        assert!(dirty.unreadable().is_empty(), "it was withdrawn");
+        assert!(unreadable(&dirty).is_empty(), "it was withdrawn");
 
         git.answer("/wt/a", false);
         until_answered(&mut dirty);
-        assert!(dirty.unreadable().is_empty());
-        assert!(dirty.paths().is_empty());
+        assert!(unreadable(&dirty).is_empty());
+        assert!(dirty_paths(&dirty).is_empty());
     }
 
     #[test]
@@ -536,14 +515,14 @@ mod tests {
         git.refuse("/wt/a");
         git.answer("/wt/b", true);
         until_answered(&mut dirty);
-        assert_eq!(dirty.unreadable(), vec!["/wt/a".to_string()]);
-        assert_eq!(dirty.paths(), vec!["/wt/b".to_string()]);
+        assert_eq!(unreadable(&dirty), vec!["/wt/a".to_string()]);
+        assert_eq!(dirty_paths(&dirty), vec!["/wt/b".to_string()]);
 
         // `/wt/a` is deleted; the picker collects the tree again and asks about what is
         // left.
         dirty.ask(&tree(&["/wt/b"]));
-        assert!(dirty.unreadable().is_empty());
-        assert_eq!(dirty.paths(), vec!["/wt/b".to_string()]);
+        assert!(unreadable(&dirty).is_empty());
+        assert_eq!(dirty_paths(&dirty), vec!["/wt/b".to_string()]);
         assert_eq!(git.outstanding(), 0, "and nothing is asked twice");
     }
 

@@ -5,7 +5,9 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::domain::model::Tree;
+use std::collections::BTreeMap;
+
+use crate::domain::model::{Tree, WorkingTree};
 use crate::domain::removal::Removal;
 use crate::domain::rows::{self, DisplayLine, Row, RowRef, StateFilter, ViewOptions};
 
@@ -63,8 +65,17 @@ pub struct PanesState {
     tick: usize,
     /// Whether an answer is still on its way, which the prompt line says with a spinner.
     waiting: bool,
-    /// Checkouts git has answered about, dirty or not. Not drawn; see `set_answered`.
-    answered: Vec<String>,
+}
+
+/// The answers a row puts a marker on. Clean and not-yet-answered are both absent here, and
+/// that is the whole point: they render identically, so a list rebuilt on the difference
+/// between them would be an identical list.
+fn marked(answers: &BTreeMap<String, WorkingTree>) -> BTreeMap<&str, WorkingTree> {
+    answers
+        .iter()
+        .filter(|(_, answer)| answer.is_drawn())
+        .map(|(path, answer)| (path.as_str(), *answer))
+        .collect()
 }
 
 impl PanesState {
@@ -84,7 +95,6 @@ impl PanesState {
             message: None,
             tick: 0,
             waiting: false,
-            answered: Vec::new(),
         };
         state.rebuild(None);
         state
@@ -118,20 +128,31 @@ impl PanesState {
         }
     }
 
-    /// Say which checkouts are holding uncommitted work. Arrives after the first frame, one
-    /// answer at a time, so nothing may move under the reader: the cursor stays where it is,
-    /// the row count cannot change, and the meta column is measured with room for these
+    /// Say what git has said about each working tree so far. Arrives after the first frame,
+    /// one answer at a time, so nothing may move under the reader: the cursor stays where it
+    /// is, the row count cannot change, and the meta column is measured with room for these
     /// already kept (`domain::rows::marks_reserve`).
-    pub fn set_dirty(&mut self, paths: Vec<String>) {
-        if self.options.dirty == paths {
+    ///
+    /// One map rather than a list of the dirty ones and a list of who has answered, because
+    /// the difference between "clean" and "not asked" is what decides whether somebody's
+    /// panes may be closed — and two lists let a caller consult one and forget the other.
+    pub fn set_working_trees(&mut self, answers: BTreeMap<String, WorkingTree>) {
+        if self.options.working_trees == answers {
             return;
         }
-        self.options.dirty = paths;
-        // The cursor is not touched at all, which says the promise above more strongly than
-        // clamping it would: `dirty` feeds nothing but `Row::is_dirty`, so the row list that
-        // comes back has the same length and the same order it went in with.
-        self.rows = rows::flatten(&self.tree, &self.options);
-        self.lines = rows::display_lines(&self.rows);
+        // Every answer is kept, and only the ones a row would draw are worth rebuilding the
+        // list for. The commonest transition of all — a checkout nobody has asked about
+        // turning out to be clean — draws the same before and after, and there are as many
+        // of those as there are checkouts.
+        let redraws = marked(&self.options.working_trees) != marked(&answers);
+        self.options.working_trees = answers;
+        if redraws {
+            // The cursor is not touched at all, which says the promise above more strongly
+            // than clamping it would: this feeds nothing but `Row::working_tree`, so the row
+            // list that comes back has the same length and the same order it went in with.
+            self.rows = rows::flatten(&self.tree, &self.options);
+            self.lines = rows::display_lines(&self.rows);
+        }
     }
 
     /// Whether something is still being waited for, which the prompt line turns a spinner
@@ -142,24 +163,6 @@ impl PanesState {
 
     pub fn is_waiting(&self) -> bool {
         self.waiting
-    }
-
-    /// Say which checkouts git has answered for at all, whatever it said. Nothing is drawn
-    /// from this: it is what stops "nobody has asked yet" being read as "clean" when the
-    /// question is whether somebody's panes may be closed.
-    pub fn set_answered(&mut self, paths: Vec<String>) {
-        self.answered = paths;
-    }
-
-    /// Say which checkouts git would not answer for, so their rows can say it themselves. A
-    /// row with no marker is then the absence of a claim rather than a claim of clean.
-    pub fn set_unreadable(&mut self, paths: Vec<String>) {
-        if self.options.unreadable == paths {
-            return;
-        }
-        self.options.unreadable = paths;
-        self.rows = rows::flatten(&self.tree, &self.options);
-        self.lines = rows::display_lines(&self.rows);
     }
 
     /// Say which checkouts are being removed, so their rows can say so and stop being
@@ -413,20 +416,22 @@ impl PanesState {
         // the whole reason they exist: for an empty one there is nothing to lose by letting
         // git answer for itself, but here the panes are gone by the time it speaks.
         if !worktree.panes.is_empty() {
-            if self.options.dirty.contains(&worktree.checkout_path) {
-                self.message = Some("that checkout is holding work nobody has committed".into());
-                return Action::Consumed;
-            }
-            if self.options.unreadable.contains(&worktree.checkout_path) {
-                self.message = Some("git would not read that working tree".into());
-                return Action::Consumed;
-            }
-            // Not asked yet is not the same as asked and clean, and only the second is a
-            // licence to close somebody's panes. Walking a working tree takes a moment and
-            // the answers land after the first frame, so this is the ordinary state of the
-            // checkout the picker opens on — the one the cursor is already sitting in.
-            if !self.answered.contains(&worktree.checkout_path) {
-                self.message = Some("still reading that working tree — try again".into());
+            // One answer with four possible shapes, so none of them can be consulted and the
+            // rest forgotten. `None` is the one that used to need saying twice: not asked
+            // yet is not asked and clean, and only the second is a licence to close
+            // somebody's panes. Walking a working tree takes a moment and the answers land
+            // after the first frame, so `None` is the ordinary state of the checkout the
+            // picker opens on — the one the cursor is already sitting in.
+            let refusal = match self.options.working_trees.get(&worktree.checkout_path) {
+                Some(WorkingTree::Clean) => None,
+                Some(WorkingTree::Dirty) => {
+                    Some("that checkout is holding work nobody has committed")
+                }
+                Some(WorkingTree::Unreadable) => Some("git would not read that working tree"),
+                None => Some("still reading that working tree — try again"),
+            };
+            if let Some(refusal) = refusal {
+                self.message = Some(refusal.into());
                 return Action::Consumed;
             }
         }
@@ -598,6 +603,15 @@ impl PanesState {
 
 #[cfg(test)]
 mod tests {
+
+    /// The answers map, spelled out per checkout. These tests care which of the four shapes
+    /// a checkout is in, which is the thing the map made sayable.
+    fn answers(pairs: &[(&str, WorkingTree)]) -> BTreeMap<String, WorkingTree> {
+        pairs
+            .iter()
+            .map(|(path, answer)| ((*path).to_string(), *answer))
+            .collect()
+    }
     use super::*;
     use crate::domain::model::{PaneNode, RepoNode, WorktreeNode};
     use crate::port::AgentStatus;
@@ -851,7 +865,7 @@ mod tests {
         // loop reads the tree again, and the panes the question named are no longer what
         // the checkout has. Answering `y` then closes a list nobody was shown.
         let mut state = state();
-        state.set_answered(vec!["/wt/app/feat-login".into()]);
+        state.set_working_trees(answers(&[("/wt/app/feat-login", WorkingTree::Clean)]));
         select(&mut state, "codex");
         state.handle_key(key(KeyCode::Char('D')));
         assert!(state.pending_removal().is_some());
@@ -981,7 +995,7 @@ mod tests {
             .panes
             .push(pane("w2:p2", "zsh", AgentStatus::Unknown));
         state.replace_tree(tree);
-        state.set_answered(vec!["/wt/app/feat-login".into()]);
+        state.set_working_trees(answers(&[("/wt/app/feat-login", WorkingTree::Clean)]));
         select(&mut state, "codex");
         assert_eq!(state.handle_key(key(KeyCode::Char('D'))), Action::Consumed);
 
@@ -1024,12 +1038,31 @@ mod tests {
     }
 
     #[test]
+    fn a_clean_answer_is_kept_without_rebuilding_the_list() {
+        // There are as many of these as there are checkouts, and every one of them draws
+        // exactly what a checkout nobody has asked about draws. Rebuilding on them would
+        // rebuild an identical list once per working tree on the machine.
+        let nothing = BTreeMap::new();
+        let clean = answers(&[("/wt/app/feat-login", WorkingTree::Clean)]);
+        assert_eq!(marked(&nothing), marked(&clean), "no marker either way");
+
+        // And the ones that do draw are not folded in with them.
+        for answer in [WorkingTree::Dirty, WorkingTree::Unreadable] {
+            assert_ne!(
+                marked(&nothing),
+                marked(&answers(&[("/wt/app/feat-login", answer)])),
+                "{answer:?} puts a marker on the row"
+            );
+        }
+    }
+
+    #[test]
     fn a_checkout_already_being_removed_is_not_offered_again() {
         // The rows of a checkout being removed stop being selectable, but its panes' rows do
         // not, and a second confirmation would close panes the first is already removing the
         // ground from under.
         let mut state = state();
-        state.set_answered(vec!["/wt/app/feat-login".into()]);
+        state.set_working_trees(answers(&[("/wt/app/feat-login", WorkingTree::Clean)]));
         state.set_removing(vec!["/wt/app/feat-login".into()]);
         select(&mut state, "codex");
         state.handle_key(key(KeyCode::Char('D')));
@@ -1046,7 +1079,7 @@ mod tests {
         // for an empty one git can answer for itself, but here the panes would already be
         // closed by the time it did.
         let mut state = state();
-        state.set_dirty(vec!["/wt/app/feat-login".into()]);
+        state.set_working_trees(answers(&[("/wt/app/feat-login", WorkingTree::Dirty)]));
         select(&mut state, "codex");
         assert_eq!(state.handle_key(key(KeyCode::Char('D'))), Action::Consumed);
         assert!(state.pending_removal().is_none());
@@ -1061,7 +1094,7 @@ mod tests {
         // Which is not the same as reading it and finding nothing: without an answer there
         // is no protection to offer, and the panes would go on the strength of a guess.
         let mut state = state();
-        state.set_unreadable(vec!["/wt/app/feat-login".into()]);
+        state.set_working_trees(answers(&[("/wt/app/feat-login", WorkingTree::Unreadable)]));
         select(&mut state, "codex");
         state.handle_key(key(KeyCode::Char('D')));
         assert!(state.pending_removal().is_none());
@@ -1076,7 +1109,7 @@ mod tests {
         // Nothing is at stake before the question here, and git's refusal is the answer
         // rather than an obstacle — it says what would have been lost.
         let mut state = state();
-        state.set_dirty(vec!["/wt/app/fix-crash".into()]);
+        state.set_working_trees(answers(&[("/wt/app/fix-crash", WorkingTree::Dirty)]));
         select(&mut state, "fix/crash");
         state.handle_key(key(KeyCode::Char('D')));
         assert!(state.pending_removal().is_some());

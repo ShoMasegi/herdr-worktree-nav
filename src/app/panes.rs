@@ -46,12 +46,11 @@ pub fn run(
     // Both outlive this view: a removal started before a trip through the branches view is
     // still going, and a working tree walked once does not need walking again. These two
     // have to be seeded because `show_answers` only refreshes them when `drain` reports a
-    // change, and coming back to a view where nothing has moved reports none. `set_answered`
-    // and `set_waiting` need no seeding — `show_answers` sets those every frame, and the
-    // first one runs before the first draw.
+    // change, and coming back to a view where nothing has moved reports none. `set_waiting`
+    // needs no seeding — `show_answers` sets it every frame, and the first one runs before
+    // the first draw.
     dirty.ask(state.tree());
-    state.set_dirty(dirty.paths());
-    state.set_unreadable(dirty.unreadable());
+    state.set_working_trees(dirty.answers());
     state.set_removing(removals.paths());
     if let Some(pane_id) = initial_pane {
         state.focus_pane(pane_id);
@@ -121,8 +120,7 @@ pub fn run(
                     // Reload means reload: whether a checkout is dirty is a fact about a
                     // working tree the user has been editing since it was last asked.
                     dirty.reask(state.tree());
-                    state.set_dirty(dirty.paths());
-                    state.set_unreadable(dirty.unreadable());
+                    state.set_working_trees(dirty.answers());
                 }
                 Err(error) => state.set_message(format!("{error:#}")),
             },
@@ -195,13 +193,13 @@ fn start_removal(
 }
 
 fn show_answers(state: &mut PanesState, dirty: &mut Dirty) -> bool {
-    if dirty.drain() {
-        state.set_dirty(dirty.paths());
-        state.set_unreadable(dirty.unreadable());
-    }
+    dirty.drain();
+    // Unconditionally, and not only when a marker moved: `PanesState` keeps every answer and
+    // decides for itself what is worth redrawing. What is *known* about a working tree and
+    // what is *drawn* about it are different questions, and a removal turns on the first.
+    state.set_working_trees(dirty.answers());
     let reading = dirty.is_waiting();
     state.set_waiting(reading);
-    state.set_answered(dirty.answered());
     reading
 }
 
