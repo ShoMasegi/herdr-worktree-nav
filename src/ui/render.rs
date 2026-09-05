@@ -297,7 +297,7 @@ fn render_removal(
     const KEYS_Y: &str = "y delete";
     const KEYS_REST: &str = "     any other key cancels";
 
-    let path = abbreviate(&removal.checkout_path, home);
+    let path = abbreviate(removal.checkout_path(), home);
     // Uncommitted work is git's to protect and it does. What a working agent has in flight
     // has no other safety net, so the question names every pane that stops, in the words the
     // list behind the box uses for the same panes.
@@ -347,7 +347,10 @@ fn render_removal(
         KEYS_Y.chars().count() + KEYS_REST.chars().count(),
     ]
     .into_iter()
-    .chain([removal.label.chars().count() + 2, path.chars().count() + 2])
+    .chain([
+        removal.label().chars().count() + 2,
+        path.chars().count() + 2,
+    ])
     .chain(closing.iter().map(|line| line.chars().count() + 3))
     .chain((!closing.is_empty()).then(|| CLOSING.chars().count()))
     .max()
@@ -363,7 +366,7 @@ fn render_removal(
         TITLE,
         Style::default().add_modifier(Modifier::BOLD),
     ));
-    let branch = Line::from(Span::raw(format!("  {}", removal.label)));
+    let branch = Line::from(Span::raw(format!("  {}", removal.label())));
     let inner_width = width.saturating_sub(6) as usize;
     let path = Line::from(Span::styled(
         format!("  {}", middle_elide(&path, inner_width)),

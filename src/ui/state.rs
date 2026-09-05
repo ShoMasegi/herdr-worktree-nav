@@ -828,16 +828,16 @@ mod tests {
         assert_eq!(state.handle_key(key(KeyCode::Char('D'))), Action::Consumed);
 
         let asked = state.pending_removal().expect("a question should be up");
-        assert_eq!(asked.label, "fix/crash");
-        assert_eq!(asked.checkout_path, "/wt/app/fix-crash");
-        assert_eq!(asked.repo_root, "/src/app");
+        assert_eq!(asked.label(), "fix/crash");
+        assert_eq!(asked.checkout_path(), "/wt/app/fix-crash");
+        assert_eq!(asked.repo_root(), "/src/app");
 
         let Action::RemoveWorktree(asked) = state.handle_key(key(KeyCode::Char('y'))) else {
             panic!("`y` is the answer that goes ahead");
         };
-        assert_eq!(asked.repo_root, "/src/app");
-        assert_eq!(asked.checkout_path, "/wt/app/fix-crash");
-        assert_eq!(asked.label, "fix/crash");
+        assert_eq!(asked.repo_root(), "/src/app");
+        assert_eq!(asked.checkout_path(), "/wt/app/fix-crash");
+        assert_eq!(asked.label(), "fix/crash");
         assert!(asked.panes().is_empty(), "there were none to close");
         assert!(
             state.pending_removal().is_none(),
@@ -986,12 +986,9 @@ mod tests {
         assert_eq!(state.handle_key(key(KeyCode::Char('D'))), Action::Consumed);
 
         let asked = state.pending_removal().expect("a question should be up");
-        assert_eq!(asked.label, "feat/login");
-        assert_eq!(
-            asked.pane_ids(),
-            ["w2:p1", "w2:p2"],
-            "and it names what stops"
-        );
+        assert_eq!(asked.label(), "feat/login");
+        let closing: Vec<&str> = asked.panes().iter().map(|p| p.pane_id.as_str()).collect();
+        assert_eq!(closing, ["w2:p1", "w2:p2"], "and it names what stops");
 
         // And `y` carries them through, in the order the question listed them. Without this
         // the picker could ask about panes it then never closed, and remove the checkout out
@@ -999,8 +996,9 @@ mod tests {
         let Action::RemoveWorktree(asked) = state.handle_key(key(KeyCode::Char('y'))) else {
             panic!("`y` is the answer that goes ahead");
         };
-        assert_eq!(asked.checkout_path, "/wt/app/feat-login");
-        assert_eq!(asked.pane_ids(), ["w2:p1", "w2:p2"]);
+        assert_eq!(asked.checkout_path(), "/wt/app/feat-login");
+        let closing: Vec<&str> = asked.panes().iter().map(|p| p.pane_id.as_str()).collect();
+        assert_eq!(closing, ["w2:p1", "w2:p2"]);
     }
 
     #[test]

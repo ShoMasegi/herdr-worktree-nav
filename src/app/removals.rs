@@ -63,8 +63,8 @@ impl<'a> Removals<'a> {
     /// working tree that still has agents writing into it is what
     /// `docs/adr/0010-closing-the-panes-first.md` is about, and an order that holds only
     /// because every caller remembered it is one the next caller breaks in silence. The
-    /// panes come off the `Removal` rather than from an argument, so there is no second list
-    /// to pair with the wrong checkout or to leave empty for a checkout that has panes.
+    /// panes come off the `Removal` rather than from an argument, so the list and the
+    /// checkout arrive together and cannot be paired by hand.
     ///
     /// They are closed here rather than in the process that carries out the removal because
     /// by the time that runs they are gone: the grouping it could rebuild for itself would
@@ -81,7 +81,7 @@ impl<'a> Removals<'a> {
         self.start(removal).map_err(|error| {
             format!(
                 "could not start removing {}: {}",
-                removal.label,
+                removal.label(),
                 removal::refusal(&format!("{error:#}"), removal.panes().len())
             )
         })
@@ -96,7 +96,8 @@ impl<'a> Removals<'a> {
     /// an `Ok`. Anything that does reach here as an `Err` stops the walk.
     fn close_panes(&self, herdr: &dyn HerdrPort, removal: &Removal) -> Result<(), String> {
         let total = removal.panes().len();
-        for (closed, pane_id) in removal.pane_ids().iter().enumerate() {
+        for (closed, pane) in removal.panes().iter().enumerate() {
+            let pane_id = &pane.pane_id;
             if let Err(error) = herdr.pane_close(pane_id) {
                 return Err(removal::interrupted(
                     pane_id,
@@ -112,19 +113,20 @@ impl<'a> Removals<'a> {
     /// Start the removal process. Returns once it is running, which is the point: the wait
     /// happens on a thread of its own so the picker keeps drawing and keeps reading keys.
     ///
-    /// Private, and that is the whole enforcement of ADR 0010's ordering — there is no
-    /// argument to forge and no second entry point to forget the close.
+    /// Private, so nothing outside this module reaches a removal without going through
+    /// `remove` and the close it does first. That is ADR 0010's ordering on the picker's
+    /// side, which is all it can be: the `remove` subcommand in `main` runs `git worktree
+    /// remove` having closed nothing, because by the time it runs the panes are already
+    /// gone. It is the other half of the same ADR, not a hole in this one.
     fn start(&mut self, removal: &Removal) -> Result<()> {
-        let Removal {
-            repo_root,
-            checkout_path,
-            label,
-            ..
-        } = removal;
+        let checkout_path = removal.checkout_path();
         let panes_closed = removal.panes().len();
-        let running = self
-            .port
-            .start(repo_root, checkout_path, label, panes_closed)?;
+        let running = self.port.start(
+            removal.repo_root(),
+            checkout_path,
+            removal.label(),
+            panes_closed,
+        )?;
         let sender = self.sender.clone();
         let path = checkout_path.to_string();
         // Not joined anywhere. Leaving the picker ends this thread with the process, and the
@@ -135,7 +137,7 @@ impl<'a> Removals<'a> {
         });
         self.in_flight.push(InFlight {
             checkout_path: checkout_path.to_string(),
-            label: label.to_string(),
+            label: removal.label().to_string(),
             panes_closed,
         });
         Ok(())
@@ -183,7 +185,7 @@ impl<'a> Removals<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::fakes::{until, Recorder, Started};
+    use crate::app::fakes::{until, Recorder, Refuses, Started};
     use crate::domain::model::{PaneNode, WorktreeNode};
     use crate::port::{AgentStatus, RemovalOutcome, RunningRemoval};
     use std::sync::Mutex;
@@ -314,6 +316,35 @@ mod tests {
             "it stopped there, and started nothing"
         );
         assert!(removals.is_empty());
+    }
+
+    #[test]
+    fn a_removal_that_will_not_start_says_the_panes_are_already_gone() {
+        // The worst way this can end: the closing worked, so nothing is running in the
+        // checkout any more, and the checkout is still there. Saying only that the removal
+        // failed would read as "nothing happened" to someone whose panes just vanished.
+        let recorder = Recorder::default();
+        let mut removals = Removals::new(&Refuses);
+
+        let told = removals.remove(
+            &recorder,
+            &removal("/wt/feat-login", "feat/login", &["w2:p1", "w2:p2", "w9:p3"]),
+        );
+
+        assert_eq!(
+            told,
+            Err(
+                "could not start removing feat/login: could not spawn: no such file or \
+                 directory — its 3 panes were closed first"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            recorder.did(),
+            ["close w2:p1", "close w2:p2", "close w9:p3"],
+            "all of them went first"
+        );
+        assert!(removals.is_empty(), "and nothing is being waited on");
     }
 
     #[test]
