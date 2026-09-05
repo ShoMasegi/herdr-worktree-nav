@@ -8,6 +8,13 @@ status=0
 
 fail() { printf '%s\n' "$*" >&2; status=1; }
 
+# 1a. src/domain depends on nothing above it. The direction is what keeps `domain` testable
+#     without a herdr or a git, and a module that drifts upward compiles perfectly well.
+if grep -rnE 'use crate::(ui|app|adapter)' src/domain/ >/dev/null 2>&1; then
+    fail "src/domain must not depend on a layer above it:"
+    grep -rnE 'use crate::(ui|app|adapter)' src/domain/ >&2
+fi
+
 # 1. src/domain is pure: no processes, no filesystem, no network, no environment, no clock.
 if grep -rnE 'std::(process|fs|net|env)|SystemTime::now|Instant::now' src/domain/ >/dev/null 2>&1; then
     fail "src/domain must stay pure — it reached for the outside world:"

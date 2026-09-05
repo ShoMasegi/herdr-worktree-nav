@@ -44,7 +44,7 @@ src/
 | `domain::dest` | pane はどこに置けて、各選択はどの herdr 呼び出しになるか |
 | `domain::preview` | pane が着地した後、行き先の tab はどう見えるか |
 | `domain::progress` | ブランチを開く処理は今どの段階で、まだ中断できるか |
-| `domain::removal` | 終わった削除は何を、誰に向かって言うのか |
+| `domain::removal` | どのチェックアウトを削除するのか、そして終わった削除は何を、誰に向かって言うのか |
 | `domain::chrome` | herdr はどの accent と状態グリフに設定されているか |
 
 ## herdr との通信

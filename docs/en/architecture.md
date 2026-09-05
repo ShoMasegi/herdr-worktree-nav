@@ -50,7 +50,7 @@ goes are all pure functions over plain data.
 | `domain::dest` | where can a pane go, and what herdr call does each choice mean? |
 | `domain::preview` | what will the destination tab look like once the pane lands in it? |
 | `domain::progress` | what step is opening a branch on, and can it still be abandoned? |
-| `domain::removal` | what does a finished removal say, and to whom? |
+| `domain::removal` | which checkout is being removed, and what does the finished removal say, and to whom? |
 | `domain::chrome` | what accent and status glyphs is herdr configured for? |
 
 ## Talking to herdr
