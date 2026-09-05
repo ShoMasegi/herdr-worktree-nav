@@ -269,6 +269,7 @@ mod tests {
     use super::*;
     use crate::domain::model::{PaneNode, WorktreeNode};
     use crate::port::AgentStatus;
+    use std::num::NonZeroU32;
 
     fn pane(id: &str) -> PaneNode {
         PaneNode {
@@ -333,6 +334,33 @@ mod tests {
         );
         assert!(entry_named(&entries, "fix/crash").upstream_gone());
         assert!(!entry_named(&entries, "feat/search").upstream_gone());
+    }
+
+    #[test]
+    fn a_branch_that_has_merely_moved_is_not_gone() {
+        // `Track` grew from "gone or not" to four states, and `upstream_gone` is the
+        // projection that has to stay narrow. Widened to "git said anything", every branch
+        // that is simply ahead reads as `gone` — and `docs/adr/0011-what-may-be-swept.md`
+        // marks on `gone`, so the sweep would offer to delete the one class of branch whose
+        // commits exist nowhere else.
+        let two = NonZeroU32::new(2).unwrap();
+        let one = NonZeroU32::new(1).unwrap();
+        for track in [
+            Track::Ahead(two),
+            Track::Behind(one),
+            Track::Diverged {
+                ahead: two,
+                behind: one,
+            },
+        ] {
+            let mut local_ref = local("fix/crash", 20);
+            local_ref.track = Some(track);
+            let entries = resolve(&repo(vec![]), &[local_ref], &[], &[]);
+            assert!(
+                !entry_named(&entries, "fix/crash").upstream_gone(),
+                "{track:?} is a branch that moved, not one whose upstream went"
+            );
+        }
     }
 
     fn entry_named<'a>(entries: &'a [BranchEntry], name: &str) -> &'a BranchEntry {
