@@ -188,6 +188,7 @@ fn collect_repos(
                 .github_slug(&repo_root)
                 .ok()
                 .flatten()
+                .map(|slug| slug.as_str().to_string())
                 .unwrap_or_else(|| listed.source.repo_name.clone());
             Some(RepoInput {
                 repo_key: repo_key.to_string(),

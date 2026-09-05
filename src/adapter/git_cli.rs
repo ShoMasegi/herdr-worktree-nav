@@ -5,7 +5,7 @@ use std::process::{Command, Output, Stdio};
 
 use anyhow::{bail, Context, Result};
 
-use crate::port::{GitPort, GitRef, RefKind, RepoIdentity, Track};
+use crate::port::{GitPort, GitRef, RefKind, RepoIdentity, Slug, Track};
 
 /// git's catch-all exit code for a fatal error. It says almost nothing on its own: a path
 /// that is not a repository and a fetch that could not reach the remote both exit 128, so
@@ -92,17 +92,14 @@ fn parse_track(field: &str) -> Option<Track> {
 
 /// Extract `owner/repo` from any GitHub remote URL form:
 /// `https://github.com/o/r.git`, `git@github.com:o/r.git`, `ssh://git@github.com/o/r`.
-fn github_slug_from_url(url: &str) -> Option<String> {
+fn github_slug_from_url(url: &str) -> Option<Slug> {
     let url = url.trim();
     let after_host = url
         .split_once("github.com")
         .map(|(_, rest)| rest.trim_start_matches([':', '/']))?;
     let path = after_host.trim_end_matches('/').trim_end_matches(".git");
     let (owner, repo) = path.split_once('/')?;
-    if owner.is_empty() || repo.is_empty() || repo.contains('/') {
-        return None;
-    }
-    Some(format!("{owner}/{repo}"))
+    Slug::owner_repo(owner, repo)
 }
 
 impl GitPort for GitCli {
@@ -138,7 +135,7 @@ impl GitPort for GitCli {
         }))
     }
 
-    fn github_slug(&self, repo_root: &str) -> Result<Option<String>> {
+    fn github_slug(&self, repo_root: &str) -> Result<Option<Slug>> {
         // A repository with no `origin` is normal, so a failure here is not an error.
         let Ok(Some(url)) = GitCli::run(repo_root, &["remote", "get-url", "origin"]) else {
             return Ok(None);
@@ -296,7 +293,7 @@ impl GitPort for GitCli {
 
 #[cfg(test)]
 mod tests {
-    use super::{github_slug_from_url, parse_track};
+    use super::{github_slug_from_url, parse_track, Slug};
     use crate::port::Track;
     use std::num::NonZeroU32;
 
@@ -359,7 +356,7 @@ mod tests {
             "  https://github.com/ShoMasegi/herdr-worktree-nav.git\n",
         ] {
             assert_eq!(
-                github_slug_from_url(url).as_deref(),
+                github_slug_from_url(url).as_ref().map(Slug::as_str),
                 Some("ShoMasegi/herdr-worktree-nav"),
                 "failed for {url}"
             );

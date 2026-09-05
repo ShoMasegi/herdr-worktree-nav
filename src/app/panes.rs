@@ -138,15 +138,6 @@ pub fn run(
     perform(herdr, outcome)
 }
 
-/// Tell the state what the working-tree walk has said since the last frame, and answer
-/// whether any of it is still coming.
-///
-/// Split out of the loop because everything the loop does is otherwise untestable — it needs
-/// a terminal and a keyboard — and this is the part with consequences. `set_working_trees` in
-/// particular has to run every frame and not only when a marker moved: a clean answer moves
-/// none, and it is exactly the answer that turns a refusal into an offer. Left out, every
-/// checkout with panes in it answers "still reading that working tree" for the life of the
-/// picker, and nothing on screen or in the suite says why.
 /// Carry out a removal the user has said yes to, and put what happened on the screen.
 ///
 /// Out of the loop for the reason `show_answers` is: `run` needs a terminal and a keyboard,
@@ -191,6 +182,15 @@ fn start_removal(
     }
 }
 
+/// Tell the state what the working-tree walk has said since the last frame, and answer
+/// whether any of it is still coming.
+///
+/// Split out of the loop because everything the loop does is otherwise untestable — it needs
+/// a terminal and a keyboard — and this is the part with consequences. `set_working_trees` in
+/// particular has to run every frame and not only when a marker moved: a clean answer moves
+/// none, and it is exactly the answer that turns a refusal into an offer. Left out, every
+/// checkout with panes in it answers "still reading that working tree" for the life of the
+/// picker, and nothing on screen or in the suite says why.
 fn show_answers(state: &mut PanesState, dirty: &mut Dirty) -> bool {
     dirty.drain();
     // Unconditionally, and not only when a marker moved: `PanesState` keeps every answer and
@@ -265,7 +265,7 @@ mod tests {
         fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
             unreachable!()
         }
-        fn github_slug(&self, _repo_root: &str) -> Result<Option<String>> {
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<crate::port::Slug>> {
             unreachable!()
         }
         fn local_refs(&self, _repo_root: &str) -> Result<Vec<crate::port::GitRef>> {
@@ -415,6 +415,40 @@ mod tests {
             )
         );
         assert!(!state.rows().iter().any(|row| row.is_removing));
+    }
+
+    #[test]
+    fn panes_that_have_certainly_closed_are_not_left_on_screen_without_a_word() {
+        // The branch the other two never enter: both use a checkout with no panes, so the
+        // guard's direction is pinned and its body is not. Here the panes did close, so the
+        // list on screen is known wrong rather than merely stale — and when it cannot be
+        // read again, saying nothing leaves rows for panes that have stopped, with the
+        // cursor able to jump to them.
+        let recorder = Recorder::default();
+        let port = Started(&recorder);
+        let mut removals = Removals::new(&port);
+        let mut state = PanesState::new(one_pane_tree(), None);
+        let mut dirty = Dirty::new(std::sync::Arc::new(Answers(Some(false))));
+        let removal = only_removal(&state);
+
+        start_removal(
+            &mut state,
+            &mut dirty,
+            &mut removals,
+            &recorder,
+            &Answers(Some(false)),
+            &removal,
+        );
+
+        assert_eq!(
+            state.message(),
+            Some("the panes closed, but the list could not be read again: herdr is not answering"),
+            "the removal started; it is the list that could not be caught up"
+        );
+        assert!(
+            state.rows().iter().any(|row| row.is_removing),
+            "and the removal is still shown as going, because it is"
+        );
     }
 
     #[test]

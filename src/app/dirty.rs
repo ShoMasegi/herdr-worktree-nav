@@ -138,9 +138,6 @@ impl Dirty {
     /// stay different facts all the way to the caller — which is what
     /// `ui::state::PanesState::ask_to_remove` refuses on, and what
     /// `docs/adr/0011-what-may-be-swept.md` decides on.
-    ///
-    /// In path order, so a caller comparing this against what it drew last does not see the
-    /// order threads happened to finish in as a change.
     pub fn answers(&self) -> BTreeMap<String, WorkingTree> {
         self.answers
             .iter()
@@ -267,7 +264,7 @@ mod tests {
         fn identify(&self, _cwd: &str) -> Result<Option<RepoIdentity>> {
             unreachable!("only is_dirty is asked of this port")
         }
-        fn github_slug(&self, _repo_root: &str) -> Result<Option<String>> {
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<crate::port::Slug>> {
             unreachable!()
         }
         fn local_refs(&self, _repo_root: &str) -> Result<Vec<GitRef>> {
@@ -524,6 +521,32 @@ mod tests {
         assert!(unreadable(&dirty).is_empty());
         assert_eq!(dirty_paths(&dirty), vec!["/wt/b".to_string()]);
         assert_eq!(git.outstanding(), 0, "and nothing is asked twice");
+    }
+
+    #[test]
+    fn a_checkout_that_left_the_tree_mid_walk_does_not_come_back_with_its_answer() {
+        // The generation counter cannot catch this one: the walk was started in the round
+        // that is still current, so its answer is not stale — it is about a checkout that
+        // has since gone. Recording it anyway puts a marker, and a removal refusal, on a
+        // working tree that is no longer there and no longer has a row.
+        let git = FakeGit::new();
+        let mut dirty = Dirty::new(git.clone());
+
+        dirty.ask(&tree(&["/wt/a", "/wt/b"]));
+        until_asked(&git, 2);
+
+        // `/wt/a` is removed while git is still walking it, and the picker asks again about
+        // what is left. The thread for `/wt/a` answers afterwards.
+        dirty.ask(&tree(&["/wt/b"]));
+        git.answer("/wt/a", true);
+        git.answer("/wt/b", true);
+        until_answered(&mut dirty);
+
+        assert_eq!(
+            dirty.answers().keys().collect::<Vec<_>>(),
+            vec!["/wt/b"],
+            "a checkout the tree has forgotten does not come back through the queue"
+        );
     }
 
     #[test]

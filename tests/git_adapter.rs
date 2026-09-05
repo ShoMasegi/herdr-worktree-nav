@@ -10,7 +10,7 @@ use std::path::Path;
 use std::process::Command;
 
 use herdr_worktree_nav::adapter::GitCli;
-use herdr_worktree_nav::port::{GitPort, RefKind, Track};
+use herdr_worktree_nav::port::{GitPort, RefKind, Slug, Track};
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) {
@@ -370,7 +370,11 @@ fn recognises_a_github_origin_and_ignores_anything_else() {
         ],
     );
     assert_eq!(
-        GitCli.github_slug(&root).unwrap().as_deref(),
+        GitCli
+            .github_slug(&root)
+            .unwrap()
+            .as_ref()
+            .map(Slug::as_str),
         Some("ShoMasegi/herdr-worktree-nav")
     );
 

@@ -29,9 +29,12 @@ pub enum WorkingTree {
     /// Modified tracked files, or untracked ones. The same question `git worktree remove`
     /// asks before it refuses.
     Dirty,
-    /// git declined. Not the same claim as clean, and it fails in two shapes worth telling
-    /// apart: a `safe.directory` refusal fails identically for every checkout at once, while
-    /// a worktree whose directory has gone fails for exactly one.
+    /// git declined. Not the same claim as clean — and the one answer of the three that is
+    /// about the tooling rather than the work. Nothing here tells its shapes apart: a
+    /// `safe.directory` refusal fails identically for every checkout at once and a worktree
+    /// whose directory has gone fails for exactly one, and both arrive as this. Whether that
+    /// is worth a fourth variant is a question for whoever first has to explain one to a
+    /// user.
     Unreadable,
 }
 

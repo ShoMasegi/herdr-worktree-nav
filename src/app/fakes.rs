@@ -76,8 +76,12 @@ impl HerdrPort for Recorder {
         Ok(())
     }
 
+    /// A herdr that will not describe itself. The only thing asked of this fake besides
+    /// `pane_close`, and it refuses on purpose: what a caller does when the panes have
+    /// closed and the list cannot be read again is a decision worth pinning, and it is
+    /// unreachable from a test if this panics instead of answering.
     fn snapshot(&self) -> Result<Snapshot> {
-        unreachable!("only pane_close is asked of Recorder's HerdrPort")
+        Err(anyhow::anyhow!("herdr is not answering"))
     }
     fn worktree_list(&self, _cwd: &str) -> Result<WorktreeList> {
         unreachable!("only pane_close is asked of Recorder's HerdrPort")

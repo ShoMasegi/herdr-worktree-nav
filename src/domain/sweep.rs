@@ -22,8 +22,13 @@ pub enum Reason {
     /// git cannot find the ref this branch tracks — the ordinary end of a branch whose pull
     /// request was merged and whose head the remote then deleted.
     Gone,
-    /// The branch's pull request is finished with. Only reached where git had nothing to
-    /// say, since `gh` widens and never overrides.
+    /// The branch's pull request is finished with. Only reached where git did not already
+    /// offer the row itself, since `gh` widens and never overrides — which is narrower than
+    /// "git had nothing to say": `Ahead`, `Behind` and `Diverged` all arrive here, so a
+    /// branch carrying commits its upstream has not got can be offered on a merged pull
+    /// request. ADR 0011 removes the checkout and then runs `git branch -d`, which refuses
+    /// an unmerged branch, so the commits outlive the sweep — but they are not a reason the
+    /// sweep weighs, and this is where they would be weighed.
     PullRequest {
         number: u64,
         outcome: PullRequestOutcome,
@@ -49,8 +54,8 @@ impl Reason {
 /// Why a checkout can never be swept, whatever the user presses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
-    /// The repository's own checkout. `git worktree remove` will not take it, and the branch
-    /// it is on is the one everything else is measured against.
+    /// The repository's own checkout. `git worktree remove` will not take it — `fatal: is a
+    /// main working tree`, whatever the branch or the working tree says.
     Primary,
     /// Panes are running in it. Closing somebody's panes is one deliberate act — see
     /// `docs/adr/0010-closing-the-panes-first.md` — and a batch is not where it belongs.
@@ -114,8 +119,9 @@ impl Candidate {
 /// A newtype rather than a `String` because `RepoNode` carries two of those side by side —
 /// `repo_key` (`/src/app/.git`) and `repo_root` (`/src/app`) — and a map keyed by the wrong
 /// one silently answers nothing for every checkout in the tree: no marks, no `Unjudged`, no
-/// error, nothing on screen. [`RepoRoot::of`] is the only way to make one, so there is
-/// nothing to pick wrongly.
+/// error, nothing on screen. Outside this module [`RepoRoot::of`] is the only way to make
+/// one, so there is nothing for a caller to pick wrongly; inside it the field is in scope,
+/// and what pins the choice is a test rather than the compiler.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RepoRoot(String);
 
@@ -156,9 +162,14 @@ fn judge(
     settled: Option<&Option<SettledPullRequests>>,
     facts: &Facts,
 ) -> Candidate {
-    // The refusals come first and in this order because they are about the checkout rather
-    // than about whether anyone is finished with it: a running pane is a reason not to sweep
-    // a branch whose upstream went, not a tie to be broken afterwards.
+    // The refusals come first because they are about the checkout rather than about whether
+    // anyone is finished with it: a running pane is a reason not to sweep a branch whose
+    // upstream went, not a tie to be broken afterwards.
+    //
+    // Their order among themselves decides only which sentence a checkout that earns two of
+    // them shows, and it runs most permanent first: being the repository itself is not a
+    // state that passes, a removal already going will end, and panes close whenever somebody
+    // closes them. `which_refusal_a_checkout_that_earns_two_of_them_shows` is what says so.
     if worktree.is_primary {
         return Candidate::Refused(Refusal::Primary);
     }
@@ -762,6 +773,72 @@ mod tests {
             &facts(&dirty, &unavailable),
         );
         assert_eq!(judged["/wt/feat-login"], Candidate::Available);
+    }
+
+    #[test]
+    fn a_row_git_would_refuse_anyway_is_not_called_unjudged_by_a_full_window_either() {
+        // The same rule down the other road. `gh` answered — it just may not have reached
+        // back far enough — and the row it did not reach was one no pull request was going
+        // to decide. On a repository with more than a window of closed pull requests this is
+        // every row nobody has answered for yet, which is all of them on the first frame:
+        // `Unjudged` there buries the rows that genuinely could not be judged.
+        let holding_work = judged(
+            &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
+            &facts(
+                &BTreeMap::from([("/wt/feat-login".to_string(), WorkingTree::Dirty)]),
+                &told(vec![merged(4, "something/else")], false),
+            ),
+        );
+        assert_eq!(holding_work["/wt/feat-login"], Candidate::Available);
+
+        let nothing_answered = BTreeMap::new();
+        let unanswered = judged(
+            &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
+            &facts(&nothing_answered, &told(vec![], false)),
+        );
+        assert_eq!(
+            unanswered["/wt/feat-login"],
+            Candidate::Available,
+            "a checkout git has not answered for yet is not a checkout gh failed on"
+        );
+    }
+
+    #[test]
+    fn which_refusal_a_checkout_that_earns_two_of_them_shows() {
+        // Every other test here gives a checkout exactly one refusal, so the order among
+        // them cancels out — and the order is the whole of what `Refusal::label` says. Most
+        // permanent first: the repository itself never stops being that, a removal ends, and
+        // panes close whenever somebody closes them.
+        let mut all_three = worktree("main", "/src/app");
+        all_three.is_primary = true;
+        all_three.panes = vec![PaneNode {
+            pane_id: "w1:p1".into(),
+            workspace_id: "w1".into(),
+            tab_id: "w1:t1".into(),
+            display_name: None,
+            agent_status: AgentStatus::Idle,
+            focused: false,
+        }];
+
+        let none = BTreeMap::new();
+        let judged = candidates(
+            &tree_of(vec![all_three]),
+            &Facts {
+                working_trees: &clean(&["/src/app"]),
+                settled: &none,
+                removing: &["/src/app".to_string()],
+            },
+        );
+        assert_eq!(judged["/src/app"], Candidate::Refused(Refusal::Primary));
+    }
+
+    #[test]
+    fn the_map_is_keyed_by_the_root_and_not_the_directory_beside_it() {
+        // `RepoNode` carries `/src/app/.git` and `/src/app` side by side, and keying on the
+        // wrong one answers nothing for every checkout in the tree: no marks, no `Unjudged`,
+        // no error, nothing on screen. Every other test here builds both sides of the map
+        // with `RepoRoot::of`, so the choice cancels out and only this pins it.
+        assert_eq!(RepoRoot::of(&only_repo()), RepoRoot("/src/app".to_string()));
     }
 
     #[test]

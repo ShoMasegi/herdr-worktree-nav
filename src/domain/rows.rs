@@ -64,11 +64,14 @@ pub struct Row {
     /// `None` is the ordinary state of the first frame — and a marker that is wrong for a
     /// moment is worse than one that is late.
     ///
-    /// Only `marks` may read this. In a live `PanesState` it lags on purpose:
-    /// `set_working_trees` does not rebuild the list for an answer no row would draw, so a
-    /// checkout that has just answered `Clean` keeps the `None` it was flattened with until
-    /// something else rebuilds — `set_removing` and a reload both do. The two render
-    /// identically, which is what makes the elision sound. What it is not is a fact about
+    /// Only `marks` reads this — a rule rather than an invariant, since the field is `pub`.
+    /// In a live `PanesState` it lags on purpose: `set_working_trees` does not rebuild the
+    /// list for an answer no row would draw, so a checkout that has just answered `Clean`
+    /// keeps the `None` it was flattened with until something else rebuilds. A reload does;
+    /// so does another checkout answering something a row *does* draw; so does
+    /// `set_removing`, but only when the removing set actually changes, which with no
+    /// removal running is never. The two render identically, which is what makes the elision
+    /// sound. What it is not is a fact about
     /// the checkout: `Some(Clean)` and `None` here are the same row drawn at two different
     /// moments, and telling the two apart is `ViewOptions::working_trees`' job.
     pub working_tree: Option<WorkingTree>,

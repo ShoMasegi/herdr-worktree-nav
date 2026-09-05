@@ -1056,6 +1056,15 @@ mod tests {
                 "{answer:?} puts a marker on the row"
             );
         }
+
+        // Nor with each other. Keeping only *which* rows draw a marker would let a checkout
+        // go on saying it holds uncommitted work after git has said it cannot read the
+        // working tree at all — the list is not rebuilt, so the row keeps the marker it had.
+        assert_ne!(
+            marked(&answers(&[("/wt/app/feat-login", WorkingTree::Dirty)])),
+            marked(&answers(&[("/wt/app/feat-login", WorkingTree::Unreadable)])),
+            "one marker is not the other"
+        );
     }
 
     #[test]

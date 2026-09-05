@@ -516,11 +516,13 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    /// A git that knows one repository by name, or refuses to say.
-    struct Slug(std::result::Result<Option<String>, ()>);
+    use crate::port::Slug;
 
-    impl GitPort for Slug {
-        fn github_slug(&self, _repo_root: &str) -> Result<Option<String>> {
+    /// A git that knows one repository by name, or refuses to say.
+    struct Origin(std::result::Result<Option<Slug>, ()>);
+
+    impl GitPort for Origin {
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
             match &self.0 {
                 Ok(slug) => Ok(slug.clone()),
                 Err(()) => Err(anyhow!("fatal: not a git repository")),
@@ -559,13 +561,13 @@ mod tests {
     struct Asked(Mutex<Vec<String>>);
 
     impl GhPort for Asked {
-        fn pull_requests(&self, slug: &str) -> Vec<PullRequest> {
-            self.0.lock().unwrap().push(slug.to_string());
+        fn pull_requests(&self, slug: &Slug) -> Vec<PullRequest> {
+            self.0.lock().unwrap().push(slug.as_str().to_string());
             Vec::new()
         }
         fn settled_pull_requests(
             &self,
-            _slug: &str,
+            _slug: &Slug,
         ) -> std::result::Result<crate::port::SettledPullRequests, String> {
             unreachable!("the branches view does not sweep")
         }
@@ -577,7 +579,9 @@ mod tests {
         // remotes — the parent, for a fork. That is not a failure it reports; it is another
         // repository's pull requests, arriving with a zero exit.
         let gh = Asked::default();
-        assert!(annotations(&Slug(Ok(Some("me/app".into()))), &gh, "/src/app").is_empty());
+        assert!(
+            annotations(&Origin(Ok(Slug::owner_repo("me", "app"))), &gh, "/src/app").is_empty()
+        );
         assert_eq!(gh.0.lock().unwrap().as_slice(), ["me/app"]);
     }
 
@@ -587,7 +591,7 @@ mod tests {
         // else, which is ADR 0003's promise — what neither may cost is a wrong answer.
         for slug in [Ok(None), Err(())] {
             let gh = Asked::default();
-            assert!(annotations(&Slug(slug), &gh, "/src/app").is_empty());
+            assert!(annotations(&Origin(slug), &gh, "/src/app").is_empty());
             assert!(gh.0.lock().unwrap().is_empty(), "gh was asked anyway");
         }
     }

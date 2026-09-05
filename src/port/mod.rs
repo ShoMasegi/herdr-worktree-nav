@@ -254,7 +254,10 @@ pub trait GitPort: Send + Sync {
     fn identify(&self, cwd: &str) -> Result<Option<RepoIdentity>>;
 
     /// `owner/repo` when `origin` points at GitHub, otherwise `None`.
-    fn github_slug(&self, repo_root: &str) -> Result<Option<String>>;
+    ///
+    /// The only source of a [`Slug`] in this crate, which is what makes the two `gh` calls
+    /// unable to be asked about a directory.
+    fn github_slug(&self, repo_root: &str) -> Result<Option<Slug>>;
 
     /// Local and already-fetched remote branches. Cheap and offline.
     fn local_refs(&self, repo_root: &str) -> Result<Vec<GitRef>>;
@@ -331,9 +334,11 @@ pub struct SettledPullRequest {
 
 /// What `gh` said about one repository's finished pull requests.
 ///
-/// Whether the list is all of them is not a field beside it but a way of building it, so the
-/// two cannot be set apart. A vector that came back truncated and a flag saying it did not is
-/// exactly the value that makes a sweep quietly find less with nothing on screen saying so —
+/// Whether the list is all of them is a way of building it rather than a field beside it, so
+/// there is no flag that can go stale against the list it describes. It does not stop a
+/// caller naming the wrong variant — both are `pub` — only the drift. A vector that came back
+/// truncated and a flag saying it did not is exactly the value that makes a sweep quietly
+/// find less with nothing on screen saying so —
 /// ADR 0011 does not mention truncation, but the principle it does state covers it: a tool
 /// that finds less when it could not look is worse than one that says which half it missed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -369,22 +374,59 @@ impl SettledPullRequests {
     }
 }
 
+/// `owner/repo` on GitHub — the only thing `gh` can be asked about.
+///
+/// A newtype rather than a `String` because both `gh` calls in this crate take one, and a
+/// checkout path has now been passed to one of them twice. It does not fail loudly: `gh`
+/// given a directory picks a base repository out of that checkout's remotes, and for a fork
+/// that is the *parent*. Zero exit, somebody else's pull requests, nothing on screen. The
+/// second time, a whole commit went into testing the function around the call site and the
+/// call site itself still compiled with the bug in it.
+///
+/// So the fix is not another test. Outside this module [`Slug::owner_repo`] is the only way
+/// to make one, and a repository root is not two names — `gh.pull_requests(&repo_root)` no
+/// longer builds.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Slug(String);
+
+impl Slug {
+    /// Two names GitHub knows, from a remote URL that had them side by side.
+    ///
+    /// Takes them apart rather than whole so that a path — which arrives as one string —
+    /// cannot be mistaken for one. Neither may be empty and neither may carry a `/`: those
+    /// are what a path split badly looks like, and `gh` would reject the result anyway,
+    /// having asked for `[HOST/]OWNER/REPO` and been given something else.
+    pub fn owner_repo(owner: &str, repo: &str) -> Option<Self> {
+        if owner.is_empty() || repo.is_empty() || owner.contains('/') || repo.contains('/') {
+            return None;
+        }
+        Some(Slug(format!("{owner}/{repo}")))
+    }
+
+    /// What `gh` is given after `-R`.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// `Sync` because the pull request lookup runs on a background thread while the picker
 /// is already on screen.
 pub trait GhPort: Sync {
     /// Open pull requests for the repository, or an empty list when `gh` is missing or
     /// unauthenticated. This layer is decoration: it must never fail the picker.
-    /// `slug` is `owner/repo`, from `GitPort::github_slug`. Not a directory: `gh` given only
-    /// a checkout picks a base repository out of its remotes, and for a fork that is the
-    /// *parent*. A repository GitHub has never heard of has no slug and cannot be asked,
-    /// which is the right answer rather than a missing one.
-    fn pull_requests(&self, slug: &str) -> Vec<PullRequest>;
+    /// A repository GitHub has never heard of has no [`Slug`] and cannot be asked, which is
+    /// the right answer rather than a missing one. The type is why a checkout path cannot be
+    /// passed here — see [`Slug`] for the two times one was.
+    fn pull_requests(&self, slug: &Slug) -> Vec<PullRequest>;
 
     /// Pull requests that have been merged or closed, for deciding what a sweep may offer.
     ///
-    /// `Err` — not an empty list — when `gh` could not be asked at all, carrying what went
-    /// wrong so the picker can say which half of the sweep it could not look at. An empty
-    /// `Ok` is "asked, and nothing here is finished with", which is a different answer.
+    /// `Err` — not an empty list — when nothing usable came back, carrying what went wrong
+    /// so the picker can say which half of the sweep it could not look at. That covers `gh`
+    /// not being run at all, `gh` refusing, and `gh` answering in a shape this cannot read:
+    /// deliberately one answer, because all three mean the same thing to a sweep, which is
+    /// that it did not get to look. An empty `Ok` is "asked, and nothing here is finished
+    /// with", which is the different answer this exists to keep apart.
     /// [`pull_requests`](GhPort::pull_requests) conflates those two on purpose, because
     /// ADR 0003's promise is that a missing `gh` costs nothing there. Here it costs
     /// something: ADR 0011 says a degraded `gh` must be *visible*, since a sweep that
@@ -395,5 +437,5 @@ pub trait GhPort: Sync {
     ///
     /// Heavier than `pull_requests` — a wider window over a state nobody has asked about
     /// before — so it is called when a sweep is entered rather than when the picker opens.
-    fn settled_pull_requests(&self, slug: &str) -> Result<SettledPullRequests, String>;
+    fn settled_pull_requests(&self, slug: &Slug) -> Result<SettledPullRequests, String>;
 }

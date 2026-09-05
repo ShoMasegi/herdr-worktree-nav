@@ -9,13 +9,13 @@
 //! it says "could not ask" instead of "nothing to report". See `GhPort::settled_pull_requests`
 //! and `docs/adr/0011-what-may-be-swept.md`.
 
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
 use serde::Deserialize;
 
 use crate::port::{
-    GhPort, PullRequest, PullRequestOutcome, SettledPullRequest, SettledPullRequests,
+    GhPort, PullRequest, PullRequestOutcome, SettledPullRequest, SettledPullRequests, Slug,
 };
 
 /// More open pull requests than anyone scrolls through in a branch picker.
@@ -40,24 +40,29 @@ const SETTLED_LIMIT: usize = 300;
 /// window and this throws them away, so asking for everything spends the window on the
 /// answers it is going to discard. `closed` covers merged, which is the case the sweep is
 /// mostly about.
-fn settled_arguments<'a>(slug: &'a str, limit: &'a str) -> [&'a str; 10] {
+///
+/// Owned strings and one argument, at the cost of ten allocations per sweep. `--limit` is
+/// read from `SETTLED_LIMIT` here rather than passed in, so it cannot be given a different
+/// window from the one [`settled_answer`] measures truncation against; and one argument of
+/// one type cannot be handed its arguments the wrong way round.
+fn settled_arguments(slug: &Slug) -> [String; 10] {
     [
-        "pr",
-        "list",
-        "-R",
-        slug,
-        "--state",
-        "closed",
-        "--limit",
-        limit,
-        "--json",
-        "number,headRefName,isCrossRepository,state",
+        "pr".to_string(),
+        "list".to_string(),
+        "-R".to_string(),
+        slug.as_str().to_string(),
+        "--state".to_string(),
+        "closed".to_string(),
+        "--limit".to_string(),
+        SETTLED_LIMIT.to_string(),
+        "--json".to_string(),
+        "number,headRefName,isCrossRepository,state".to_string(),
     ]
 }
 
 /// What `gh` prints for `--json state`. Anything that is not one of these is a state this
 /// does not know, and an unknown state is not a licence to offer a deletion.
-#[derive(Deserialize, PartialEq)]
+#[derive(Deserialize)]
 enum GhState {
     #[serde(rename = "MERGED")]
     Merged,
@@ -129,14 +134,41 @@ fn read_settled(stdout: &[u8], limit: usize) -> Result<SettledPullRequests, Stri
     })
 }
 
+/// What one run of `gh` amounts to: an answer, or a sentence saying why there is not one.
+///
+/// Separate from starting the process for the same reason [`read_settled`] is separate from
+/// this — everything above `Command::new` can then be tested, and this half decides three
+/// things a green suite otherwise proved nothing about: that a `gh` which exited non-zero is
+/// not read as an answer, that the window truncation is measured against the window that was
+/// asked for, and which of `gh`'s own words the user is shown.
+fn settled_answer(output: &Output) -> Result<SettledPullRequests, String> {
+    if !output.status.success() {
+        // `gh`'s own words, because the alternative is a picker that says a sweep could not
+        // look and cannot say why. Trimmed to the first line with anything on it — `gh`
+        // prefixes warnings and blank lines of its own, and the first line being one of
+        // those is exactly when the reason exists and is on the second. The rest is usually
+        // a usage dump, and this ends up on one prompt line.
+        let said = String::from_utf8_lossy(&output.stderr);
+        let reason = said.lines().map(str::trim).find(|line| !line.is_empty());
+        return Err(match reason {
+            // Not "gh: …". The two bugs this call has already had were malformed argv on
+            // this side, and both read to a user as "your gh is broken" — which is the one
+            // thing this cannot tell apart from GitHub saying no.
+            Some(reason) => format!("gh refused the question this asked: {reason}"),
+            None => format!("gh would not answer ({})", output.status),
+        });
+    }
+    read_settled(&output.stdout, SETTLED_LIMIT)
+}
+
 pub struct GhCli;
 
 impl GhPort for GhCli {
-    fn pull_requests(&self, slug: &str) -> Vec<PullRequest> {
+    fn pull_requests(&self, slug: &Slug) -> Vec<PullRequest> {
         let Ok(output) = Command::new("gh")
             .args([
                 "-R",
-                slug,
+                slug.as_str(),
                 "pr",
                 "list",
                 "--state",
@@ -167,31 +199,14 @@ impl GhPort for GhCli {
             .collect()
     }
 
-    fn settled_pull_requests(&self, slug: &str) -> Result<SettledPullRequests, String> {
-        let limit = SETTLED_LIMIT.to_string();
+    fn settled_pull_requests(&self, slug: &Slug) -> Result<SettledPullRequests, String> {
         let output = Command::new("gh")
-            .args(settled_arguments(slug, &limit))
+            .args(settled_arguments(slug))
             .stdin(Stdio::null())
             .stderr(Stdio::piped())
             .output()
             .map_err(|error| format!("gh could not be run: {error}"))?;
-        if !output.status.success() {
-            // `gh`'s own words, because the alternative is a picker that says a sweep could
-            // not look and cannot say why. Trimmed to the first line with anything on it —
-            // `gh` prefixes warnings and blank lines of its own, and the first line being one
-            // of those is exactly when the reason exists and is on the second. The rest is
-            // usually a usage dump, and this ends up on one prompt line.
-            let said = String::from_utf8_lossy(&output.stderr);
-            let reason = said.lines().map(str::trim).find(|line| !line.is_empty());
-            return Err(match reason {
-                // Not "gh: …". The two bugs this call has already had were malformed argv on
-                // this side, and both read to a user as "your gh is broken" — which is the
-                // one thing this cannot tell apart from GitHub saying no.
-                Some(reason) => format!("gh refused the question this asked: {reason}"),
-                None => format!("gh would not answer ({})", output.status),
-            });
-        }
-        read_settled(&output.stdout, SETTLED_LIMIT)
+        settled_answer(&output)
     }
 }
 
@@ -202,6 +217,10 @@ pub const GH_BUDGET: Duration = Duration::from_secs(5);
 mod tests {
     use super::*;
 
+    fn slug() -> Slug {
+        Slug::owner_repo("me", "app").expect("two names GitHub would know")
+    }
+
     #[test]
     fn the_repository_is_named_rather_than_guessed_from_the_remotes() {
         // Twice wrong here. `-R` was given a filesystem path, which it rejects outright, so
@@ -209,8 +228,10 @@ mod tests {
         // quieter fault: `gh` then picks a base repository out of the remotes, and for a
         // fork it picks the parent — answering about somebody else's repository with a zero
         // exit. A whole green suite noticed neither, because nothing else in it runs `gh`.
-        // Pinning the argument list is the cheapest thing that would have.
-        let arguments = settled_arguments("me/app", "300");
+        // Pinning the argument list is the cheapest thing that would have — and the third
+        // time it shipped, in `app::branches`, the argument list was right and the call site
+        // was not, which is why `Slug` is a type rather than a convention.
+        let arguments = settled_arguments(&slug());
         assert!(
             arguments.windows(2).any(|pair| pair == ["-R", "me/app"]),
             "the repository is named, not guessed from the remotes: {arguments:?}"
@@ -233,15 +254,29 @@ mod tests {
     }
 
     #[test]
+    fn the_window_asked_for_is_the_window_truncation_is_measured_against() {
+        // Two numbers that must agree: what `gh` is told to return, and how many coming back
+        // means there may be more behind them. They agree by being one constant read twice
+        // rather than one value passed twice, so this asserts the reading rather than the
+        // passing — the argument that could have been given the wrong number is gone.
+        let arguments = settled_arguments(&slug());
+        let asked_for = arguments
+            .iter()
+            .position(|argument| argument == "--limit")
+            .map(|at| arguments[at + 1].as_str());
+        assert_eq!(asked_for, Some(SETTLED_LIMIT.to_string().as_str()));
+    }
+
+    #[test]
     fn closed_is_asked_for_rather_than_everything() {
         // `--state all` returns open pull requests too, counted against the same window and
         // then thrown away here — so a busy repository spends its whole window on the
         // answers this does not want and truncates away the ones it does.
-        let arguments = settled_arguments("me/app", "300");
+        let arguments = settled_arguments(&slug());
         let state = arguments
             .iter()
-            .position(|argument| *argument == "--state")
-            .map(|at| arguments[at + 1]);
+            .position(|argument| argument == "--state")
+            .map(|at| arguments[at + 1].as_str());
         assert_eq!(state, Some("closed"));
     }
 }
@@ -359,6 +394,101 @@ mod reading {
         assert!(
             listed(&read_settled(b"[]", 300).unwrap()).is_empty(),
             "but an empty list is one"
+        );
+    }
+}
+
+/// What one run of `gh` amounts to, over an `Output` this makes rather than one `gh` made.
+///
+/// The half of this adapter that had no tests at all. `read_settled` was carefully pinned
+/// and `settled_arguments` exactly so, and between them sat a runner where a `gh` that
+/// exited non-zero could be parsed as an answer, the window could be measured against a
+/// different number from the one asked for, and the sentence shown to the user could be
+/// thrown away — none of it observable, because nothing in the suite runs `gh`.
+#[cfg(test)]
+mod answering {
+    use super::*;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::ExitStatus;
+
+    fn ran(code: i32, stdout: &str, stderr: &str) -> Output {
+        Output {
+            // The raw wait status, which is the exit code shifted up a byte.
+            status: ExitStatus::from_raw(code << 8),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn a_gh_that_refused_is_not_read_as_an_answer() {
+        // The conflation ADR 0011 exists to prevent, in its cheapest form: `gh` prints
+        // nothing to stdout when it refuses, and an empty stdout parses as an empty list —
+        // so reading it anyway turns "could not look" into "nothing is finished with", and
+        // a sweep offers nothing while saying it looked.
+        let refused = settled_answer(&ran(1, "[]", "could not resolve to a Repository\n"));
+        assert!(refused.is_err(), "an exit code is not a shape of answer");
+        assert!(
+            settled_answer(&ran(0, "[]", "")).is_ok(),
+            "and an empty answer from a gh that succeeded still is one"
+        );
+    }
+
+    #[test]
+    fn gh_is_quoted_rather_than_blamed() {
+        let said = settled_answer(&ran(1, "", "unknown flag: --stat\n")).unwrap_err();
+        assert!(
+            said.contains("unknown flag: --stat"),
+            "gh's own words are the only thing that says which half went wrong: {said}"
+        );
+        assert!(
+            !said.starts_with("gh:"),
+            "and the two bugs this call has had were on this side, not gh's: {said}"
+        );
+    }
+
+    #[test]
+    fn the_reason_is_found_past_the_lines_gh_pads_with() {
+        // `gh` leads with its own warnings and blank lines, and the first line being one of
+        // those is exactly when the reason exists and is on the second. Taking the first
+        // line shows the user a blank sentence at the moment there is something to say.
+        let said = settled_answer(&ran(
+            1,
+            "",
+            "\n  \nWarning: version 2.95.0 is out of date\nGraphQL: Could not resolve\n",
+        ))
+        .unwrap_err();
+        assert!(
+            said.contains("version 2.95.0 is out of date"),
+            "the first line with anything on it, not the first line: {said}"
+        );
+    }
+
+    #[test]
+    fn a_gh_that_said_nothing_still_says_which_gh_it_was() {
+        let said = settled_answer(&ran(2, "", "   \n\n")).unwrap_err();
+        assert!(
+            said.contains("gh would not answer"),
+            "an empty stderr is not a reason to show an empty sentence: {said}"
+        );
+    }
+
+    #[test]
+    fn the_window_gh_was_asked_for_is_the_one_a_full_answer_is_measured_against() {
+        // `read_settled`'s truncation rule is tested over a limit a test chose. This is the
+        // limit production passes, and passing a bigger one would mean no answer is ever
+        // `Window` — a busy repository told "no pull request" for every branch past the
+        // window, with nothing on screen saying the window ran out.
+        let full: String = (1..=SETTLED_LIMIT)
+            .map(|number| {
+                format!(r#"{{"number":{number},"headRefName":"b{number}","isCrossRepository":false,"state":"MERGED"}}"#)
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let answer = settled_answer(&ran(0, &format!("[{full}]"), "")).unwrap();
+        assert!(
+            matches!(answer, SettledPullRequests::Window(_)),
+            "as many as were asked for is the only evidence gh gives that there may be more"
         );
     }
 }
