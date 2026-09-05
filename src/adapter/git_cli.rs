@@ -71,8 +71,11 @@ fn parse_track(field: &str) -> Option<Track> {
     let mut behind = None;
     for part in inside.split(", ") {
         // A count this cannot read fails the whole field, the same as a word it does not
-        // know. A zero does not: git prints `[ahead 0]` for nobody, so that side is simply
-        // level, and `NonZeroU32` is what says so instead of a guard further down.
+        // know — including one too large for `u32`. A zero does not: a zero side is a side
+        // that is level, so `[ahead 0, behind 2]` is `Behind(2)` and `[ahead 0]` is no
+        // marker at all. `NonZeroU32` says that instead of a guard further down. (Real git
+        // omits a level side rather than printing a zero, so this is about being right on
+        // input rather than about anything `for-each-ref` produces today.)
         match part.split_once(' ') {
             Some(("ahead", count)) => ahead = NonZeroU32::new(count.parse().ok()?),
             Some(("behind", count)) => behind = NonZeroU32::new(count.parse().ok()?),
@@ -332,6 +335,8 @@ mod tests {
         // a branch that is only ahead — a claim nothing in the input supports.
         assert_eq!(parse_track("[ahead 2, behind zzz]"), None);
         assert_eq!(parse_track("[ahead zzz, behind 1]"), None);
+        // Syntactically a count, still not one this can hold.
+        assert_eq!(parse_track("[ahead 4294967296, behind 2]"), None);
     }
 
     #[test]

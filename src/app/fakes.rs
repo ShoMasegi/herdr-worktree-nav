@@ -3,9 +3,9 @@
 //! Here rather than in one module's `mod tests` because the ordering rule these exist to
 //! pin — panes close, then the removal starts — spans two ports. Both write into one
 //! `Recorder` log, so a test reads a single interleaving rather than two sequences it has
-//! to merge by eye. That is also why the whole vocabulary of that log lives in this file:
-//! `record` is private, so no fake elsewhere can put a line into it that reads like one of
-//! these.
+//! to merge by eye. That is also why both ports live in this file: `record` is private, so
+//! the grammar of that log is owned here — a line can only be put into it by one of the two
+//! ports below, saying one of the two things they say.
 
 use std::sync::Mutex;
 
@@ -74,37 +74,37 @@ impl HerdrPort for Recorder {
     }
 
     fn snapshot(&self) -> Result<Snapshot> {
-        unreachable!("only pane_close is asked of this port")
+        unreachable!("only pane_close is asked of Recorder's HerdrPort")
     }
     fn worktree_list(&self, _cwd: &str) -> Result<WorktreeList> {
-        unreachable!("only pane_close is asked of this port")
+        unreachable!("only pane_close is asked of Recorder's HerdrPort")
     }
     fn worktree_create(&self, _req: &WorktreeCreate) -> Result<WorktreeOpened> {
-        unreachable!("only pane_close is asked of this port")
+        unreachable!("only pane_close is asked of Recorder's HerdrPort")
     }
     fn worktree_open(&self, _req: &WorktreeOpen) -> Result<WorktreeOpened> {
-        unreachable!("only pane_close is asked of this port")
+        unreachable!("only pane_close is asked of Recorder's HerdrPort")
     }
     fn pane_focus(&self, _pane_id: &str) -> Result<()> {
-        unreachable!("only pane_close is asked of this port")
+        unreachable!("only pane_close is asked of Recorder's HerdrPort")
     }
     fn pane_split(&self, _req: &PaneSplit) -> Result<Pane> {
-        unreachable!("only pane_close is asked of this port")
+        unreachable!("only pane_close is asked of Recorder's HerdrPort")
     }
     fn pane_move(&self, _pane: &str, _dest: &PaneDestination, _focus: bool) -> Result<()> {
-        unreachable!("only pane_close is asked of this port")
+        unreachable!("only pane_close is asked of Recorder's HerdrPort")
     }
     fn workspace_focus(&self, _workspace_id: &str) -> Result<()> {
-        unreachable!("only pane_close is asked of this port")
+        unreachable!("only pane_close is asked of Recorder's HerdrPort")
     }
     fn tab_focus(&self, _tab_id: &str) -> Result<()> {
-        unreachable!("only pane_close is asked of this port")
+        unreachable!("only pane_close is asked of Recorder's HerdrPort")
     }
     fn plugin_pane_open(&self, _req: &PluginPaneOpen) -> Result<Option<OpenRefusal>> {
-        unreachable!("only pane_close is asked of this port")
+        unreachable!("only pane_close is asked of Recorder's HerdrPort")
     }
     fn notify(&self, _notification: &Notification) -> Result<()> {
-        unreachable!("only pane_close is asked of this port")
+        unreachable!("only pane_close is asked of Recorder's HerdrPort")
     }
 }
 
@@ -133,5 +133,21 @@ struct Done;
 impl RunningRemoval for Done {
     fn wait(self: Box<Self>) -> Result<RemovalOutcome> {
         Ok(RemovalOutcome::Removed)
+    }
+}
+
+/// A `RemovalPort` that will not start anything. The branch it exercises is the worst one
+/// in `Removals::remove`: every pane is already closed by the time it is reached.
+pub struct Refuses;
+
+impl RemovalPort for Refuses {
+    fn start(
+        &self,
+        _repo_root: &str,
+        _checkout_path: &str,
+        _label: &str,
+        _panes_closed: usize,
+    ) -> Result<Box<dyn RunningRemoval>> {
+        Err(anyhow!("could not spawn: no such file or directory"))
     }
 }

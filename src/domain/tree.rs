@@ -29,10 +29,16 @@ pub struct RepoInput {
 /// detached checkout — nothing points at it, so it is absent and gets no marker — where a
 /// name match would have to guess.
 ///
-/// One map over every repository rather than a scan per checkout: the two callers below used
-/// to reach into `repos` by an index that was only valid because `nodes` happened to be
-/// built from it in order, and a `filter` added to that `map` would have silently attached
-/// one repository's branch state to another's checkouts.
+/// One map over every repository rather than a scan per checkout. The lookup for a checkout
+/// herdr did not list used to reach into `repos` by an index that was only valid because
+/// `nodes` happened to be built from it in order, and a `filter` added to that `map` would
+/// have silently attached one repository's branch state to another's checkouts.
+///
+/// Safe to flatten every repository into one map because the key is a working tree's
+/// absolute path, and a directory is the working tree of at most one repository — so two
+/// repositories cannot offer the same key, and the `collect` below has no duplicate to
+/// silently drop. Both the key and the lookup go through `normalize_path`, which is what
+/// makes that true of the strings rather than only of the directories.
 fn tracks(repos: &[RepoInput]) -> HashMap<&str, Track> {
     repos
         .iter()
