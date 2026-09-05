@@ -228,6 +228,7 @@ impl Dirty {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::fakes::until;
     use crate::domain::model::{RepoNode, WorktreeNode};
     use crate::port::{GitRef, RepoIdentity};
     use anyhow::Result;
@@ -333,18 +334,6 @@ mod tests {
             }],
             ungrouped: Vec::new(),
         }
-    }
-
-    /// Spin until `ready`, or fail the test. The workers run on their own clock, so there
-    /// is nothing to join on and nothing to block for.
-    fn until(what: &str, mut ready: impl FnMut() -> bool) {
-        for _ in 0..2000 {
-            if ready() {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        panic!("{what}");
     }
 
     /// Wait for the worker threads to have asked.

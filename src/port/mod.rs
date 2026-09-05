@@ -6,6 +6,8 @@
 
 pub mod types;
 
+use std::num::NonZeroU32;
+
 use anyhow::Result;
 pub use types::*;
 
@@ -199,6 +201,11 @@ pub struct GitRef {
 /// configured, both of which the one `for-each-ref` this plugin already runs prints
 /// alongside everything else it is being asked for. The alternative is a `rev-list --count`
 /// per branch.
+///
+/// Four variants for the four things git prints. A branch level with what it is measured
+/// against prints nothing at all, so there is no variant for it and no way to build one:
+/// `NonZeroU32` is what makes "at least one side is non-zero" a fact about the type rather
+/// than a sentence in a doc comment that two other modules had to defend against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Track {
     /// git could not find the ref this branch tracks. Usually that is a merged pull request
@@ -206,9 +213,16 @@ pub enum Track {
     /// worth showing — but a never-fetched upstream and a hand-pruned `refs/remotes` read
     /// the same, because to git they are the same: the ref is not there.
     Gone,
-    /// Commits on one side the other does not have. At least one of the two is non-zero:
-    /// git prints nothing at all for a branch level with its upstream.
-    Divergence { ahead: u32, behind: u32 },
+    /// Commits on this branch that the ref it tracks does not have.
+    Ahead(NonZeroU32),
+    /// Commits on the ref this branch tracks that the branch does not have.
+    Behind(NonZeroU32),
+    /// Commits each side has that the other does not. Both counts, because which one is
+    /// larger is not the question — that the two have parted at all is.
+    Diverged {
+        ahead: NonZeroU32,
+        behind: NonZeroU32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

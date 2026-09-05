@@ -145,23 +145,10 @@ pub fn marks_reserve(row: &Row) -> usize {
 fn track_mark(track: Option<Track>) -> String {
     match track {
         Some(Track::Gone) => format!("  {GONE}"),
-        // A divergence git reports as level with its upstream is one git does not report at
-        // all. `port::Track` documents that, but public `u32` fields cannot enforce it, and
-        // a bare gap with no arrows after it would take room on the row to say nothing.
-        Some(Track::Divergence {
-            ahead: 0,
-            behind: 0,
-        }) => String::new(),
-        Some(Track::Divergence { ahead, behind }) => {
-            let mut out = String::from("  ");
-            if ahead > 0 {
-                out.push_str(&format!("\u{2191}{ahead}"));
-            }
-            if behind > 0 {
-                out.push_str(&format!("\u{2193}{behind}"));
-            }
-            out
-        }
+        Some(Track::Ahead(ahead)) => format!("  \u{2191}{ahead}"),
+        Some(Track::Behind(behind)) => format!("  \u{2193}{behind}"),
+        Some(Track::Diverged { ahead, behind }) => format!("  \u{2191}{ahead}\u{2193}{behind}"),
+        // A branch level with what it is measured against, or measured against nothing.
         None => String::new(),
     }
 }
@@ -670,6 +657,7 @@ fn plural(count: usize, noun: &str) -> String {
 mod tests {
     use super::*;
     use crate::domain::model::{RepoNode, WorktreeNode};
+    use std::num::NonZeroU32;
 
     fn pane(id: &str, name: Option<&str>, status: AgentStatus) -> PaneNode {
         let workspace = id.split(':').next().unwrap().to_string();
@@ -836,23 +824,6 @@ mod tests {
     }
 
     #[test]
-    fn a_divergence_of_nothing_takes_no_room_on_the_row() {
-        // git never prints it — it prints nothing for a branch level with its upstream —
-        // but the type permits it, and a bare gap with no arrows after it would reserve
-        // columns to say nothing at all.
-        assert_eq!(
-            marks_for(
-                false,
-                Some(Track::Divergence {
-                    ahead: 0,
-                    behind: 0
-                })
-            ),
-            ""
-        );
-    }
-
-    #[test]
     fn the_room_kept_for_the_marks_does_not_depend_on_the_dirty_answer() {
         // Which is what stops every path in the list moving sideways when a `git status`
         // finally answers.
@@ -881,31 +852,19 @@ mod tests {
     fn each_thing_a_checkout_can_be_reads_on_its_own() {
         assert_eq!(marks_for(true, None), "  \u{2731}");
         assert_eq!(
-            marks_for(
-                false,
-                Some(Track::Divergence {
-                    ahead: 2,
-                    behind: 0
-                })
-            ),
+            marks_for(false, Some(Track::Ahead(NonZeroU32::new(2).unwrap()))),
             "  \u{2191}2"
         );
         assert_eq!(
-            marks_for(
-                false,
-                Some(Track::Divergence {
-                    ahead: 0,
-                    behind: 1
-                })
-            ),
+            marks_for(false, Some(Track::Behind(NonZeroU32::new(1).unwrap()))),
             "  \u{2193}1"
         );
         assert_eq!(
             marks_for(
                 false,
-                Some(Track::Divergence {
-                    ahead: 2,
-                    behind: 1
+                Some(Track::Diverged {
+                    ahead: NonZeroU32::new(2).unwrap(),
+                    behind: NonZeroU32::new(1).unwrap()
                 })
             ),
             "  \u{2191}2\u{2193}1",

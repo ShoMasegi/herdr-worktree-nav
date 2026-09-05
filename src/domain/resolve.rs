@@ -40,10 +40,32 @@ pub struct BranchEntry {
     pub committed_at: Option<i64>,
     /// Decoration only — an open pull request whose head is this branch.
     pub pull_request: Option<PullRequest>,
+    /// Where the branch stands against what it tracks, when git said anything. Only ever set
+    /// from a local ref: a branch that exists nowhere but the remote has nothing to be
+    /// measured against.
+    ///
+    /// The whole value rather than the one bit the branches view draws today. The bit is a
+    /// projection anybody can take — see [`BranchEntry::upstream_gone`] — and taking it at
+    /// the boundary instead threw away ahead/behind on the way in, so a later reader wanting
+    /// what the panes view already shows would have had to rebuild the boundary to get it.
+    ///
+    /// `None` is four different situations and does not tell them apart: the branch is level
+    /// with what it tracks, it tracks nothing at all, git printed something unreadable, or
+    /// the ref walk for that repository failed outright. That is deliberate and it is only
+    /// safe while the drawing is *negative* — all four earn no marker, which is the honest
+    /// rendering of every one of them. A positive marker for this being `None` (a `✓`, an
+    /// "up to date") would say the second case is the first, and so tell every brand-new
+    /// local branch that it is in sync with an upstream it does not have. Tell them apart
+    /// first if that is ever wanted.
+    pub track: Option<Track>,
+}
+
+impl BranchEntry {
     /// git cannot find the ref this branch tracks — the ordinary end of a branch whose pull
-    /// request was merged and whose head the remote then deleted. Only ever set from a local
-    /// ref: a branch that exists nowhere but the remote has nothing to be gone.
-    pub upstream_gone: bool,
+    /// request was merged and whose head the remote then deleted.
+    pub fn upstream_gone(&self) -> bool {
+        self.track == Some(Track::Gone)
+    }
 }
 
 /// The first herdr/git step picking a branch requires. Everything after it — moving the new
@@ -84,12 +106,12 @@ pub fn resolve(
             subject: None,
             committed_at: None,
             pull_request: None,
-            upstream_gone: false,
+            track: None,
         });
         // A local ref beats a remote-only one; a remote ref only fills in missing detail.
         if git_ref.kind == RefKind::Local {
             entry.state = BranchState::LocalRef;
-            entry.upstream_gone = git_ref.track == Some(Track::Gone);
+            entry.track = git_ref.track;
         }
         if entry.committed_at.is_none() || git_ref.kind == RefKind::Local {
             entry.committed_at = git_ref.committed_at.or(entry.committed_at);
@@ -104,7 +126,7 @@ pub fn resolve(
             subject: None,
             committed_at: None,
             pull_request: None,
-            upstream_gone: false,
+            track: None,
         });
     }
 
@@ -120,7 +142,7 @@ pub fn resolve(
             subject: None,
             committed_at: None,
             pull_request: None,
-            upstream_gone: false,
+            track: None,
         });
         entry.state = match worktree.panes.first() {
             Some(pane) => BranchState::LivePane {
@@ -154,7 +176,7 @@ pub fn new_branch(name: &str) -> BranchEntry {
         subject: None,
         committed_at: None,
         pull_request: None,
-        upstream_gone: false,
+        track: None,
     }
 }
 
@@ -247,6 +269,7 @@ mod tests {
     use super::*;
     use crate::domain::model::{PaneNode, WorktreeNode};
     use crate::port::AgentStatus;
+    use std::num::NonZeroU32;
 
     fn pane(id: &str) -> PaneNode {
         PaneNode {
@@ -309,8 +332,35 @@ mod tests {
             &[],
             &[],
         );
-        assert!(entry_named(&entries, "fix/crash").upstream_gone);
-        assert!(!entry_named(&entries, "feat/search").upstream_gone);
+        assert!(entry_named(&entries, "fix/crash").upstream_gone());
+        assert!(!entry_named(&entries, "feat/search").upstream_gone());
+    }
+
+    #[test]
+    fn a_branch_that_has_merely_moved_is_not_gone() {
+        // `Track` grew from "gone or not" to four states, and `upstream_gone` is the
+        // projection that has to stay narrow. Widened to "git said anything", every branch
+        // that is simply ahead reads as `gone` — and `docs/adr/0011-what-may-be-swept.md`
+        // marks on `gone`, so the sweep would offer to delete the one class of branch whose
+        // commits exist nowhere else.
+        let two = NonZeroU32::new(2).unwrap();
+        let one = NonZeroU32::new(1).unwrap();
+        for track in [
+            Track::Ahead(two),
+            Track::Behind(one),
+            Track::Diverged {
+                ahead: two,
+                behind: one,
+            },
+        ] {
+            let mut local_ref = local("fix/crash", 20);
+            local_ref.track = Some(track);
+            let entries = resolve(&repo(vec![]), &[local_ref], &[], &[]);
+            assert!(
+                !entry_named(&entries, "fix/crash").upstream_gone(),
+                "{track:?} is a branch that moved, not one whose upstream went"
+            );
+        }
     }
 
     fn entry_named<'a>(entries: &'a [BranchEntry], name: &str) -> &'a BranchEntry {

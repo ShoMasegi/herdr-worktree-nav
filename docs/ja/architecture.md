@@ -31,7 +31,9 @@ src/
   adapter/     ソケットやプロセスに触れる唯一の場所
 ```
 
-依存の向きは一方向です。`app` と `ui` は `domain` と `port` を使い、`domain` は標準ライブラリと port のデータ型以外を使わず、port を実装するのは `adapter` だけです。これは `scripts/check-invariants.sh` で強制し、CI で実行しています。
+依存の向きは一方向です。`app` と `ui` は `domain` と `port` を使い、`domain` は標準ライブラリと port のデータ型以外を使わず、出荷されるバイナリで port を実装するのは `adapter` だけです。これは `scripts/check-invariants.sh` で強制し、CI で実行しています。
+
+例外は `app::fakes` ひとつです。この層のテストが共有する記録用 port を集めた `#[cfg(test)]` モジュールで、バイナリには入りません。誰かの `mod tests` の中の非公開モジュールではなく名前付きモジュールにしてあるのは、2 つのモジュールが 1 本のログに対して表明できるようにするためです。`docs/adr/0010-closing-the-panes-first.md` の順序規則は 2 つの port にまたがるので、固定するには 2 本の列ではなく 1 本の列が要ります。
 
 狙いは、重要な判断を herdr サーバーや git リポジトリ無しでテストできるようにすることです。ツリーの構築、ブランチが何であるかの判定、pane の行き先の計画は、すべてプレーンなデータ上の純粋関数です。
 
@@ -44,7 +46,7 @@ src/
 | `domain::dest` | pane はどこに置けて、各選択はどの herdr 呼び出しになるか |
 | `domain::preview` | pane が着地した後、行き先の tab はどう見えるか |
 | `domain::progress` | ブランチを開く処理は今どの段階で、まだ中断できるか |
-| `domain::removal` | 終わった削除は何を、誰に向かって言うのか |
+| `domain::removal` | どのチェックアウトを削除するのか、そして終わった削除は何を、誰に向かって言うのか |
 | `domain::chrome` | herdr はどの accent と状態グリフに設定されているか |
 
 ## herdr との通信

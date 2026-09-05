@@ -35,7 +35,13 @@ src/
 
 The dependency rule runs one way: `app` and `ui` use `domain` and `port`; `domain` uses
 nothing but the standard library and the port's data types; only `adapter` implements the
-ports. `scripts/check-invariants.sh` enforces this, and CI runs it.
+ports in the shipped binary. `scripts/check-invariants.sh` enforces this, and CI runs it.
+
+The one exception is `app::fakes`, a `#[cfg(test)]` module of recording ports the tests in
+that layer share. It cannot reach the binary, and it is a named module rather than a private
+one inside somebody's `mod tests` so that two modules can assert against a single log — the
+ordering rule in `docs/adr/0010-closing-the-panes-first.md` spans two ports, so pinning it
+needs one sequence rather than two.
 
 The point is that the interesting decisions are testable without a herdr server or a git
 repository present. Building the tree, deciding what a branch is, and planning where a pane
@@ -50,7 +56,7 @@ goes are all pure functions over plain data.
 | `domain::dest` | where can a pane go, and what herdr call does each choice mean? |
 | `domain::preview` | what will the destination tab look like once the pane lands in it? |
 | `domain::progress` | what step is opening a branch on, and can it still be abandoned? |
-| `domain::removal` | what does a finished removal say, and to whom? |
+| `domain::removal` | which checkout is being removed, and what does the finished removal say, and to whom? |
 | `domain::chrome` | what accent and status glyphs is herdr configured for? |
 
 ## Talking to herdr

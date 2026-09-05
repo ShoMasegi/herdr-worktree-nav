@@ -10,7 +10,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use anyhow::Result;
 
-use crate::port::{RemovalOutcome, RemovalPort};
+use crate::domain::removal::{self, Removal};
+use crate::port::{HerdrPort, RemovalOutcome, RemovalPort};
 
 /// One removal that has been started and has not reported back.
 struct InFlight {
@@ -55,19 +56,77 @@ impl<'a> Removals<'a> {
         }
     }
 
-    /// Start removing a checkout. Returns once the process is running, which is the point:
-    /// the wait happens on a thread of its own so the picker keeps drawing and keeps
-    /// reading keys.
-    pub fn start(
-        &mut self,
-        repo_root: &str,
-        checkout_path: &str,
-        label: &str,
-        panes_closed: usize,
-    ) -> Result<()> {
-        let running = self
-            .port
-            .start(repo_root, checkout_path, label, panes_closed)?;
+    /// Close a checkout's panes and then start removing it, stopping at the first thing that
+    /// fails. `Err` is what to tell the user, already in words.
+    ///
+    /// This is the only way in, and that is the point. `git worktree remove` walking a
+    /// working tree that still has agents writing into it is what
+    /// `docs/adr/0010-closing-the-panes-first.md` is about, and an order that holds only
+    /// because every caller remembered it is one the next caller breaks in silence. The
+    /// panes come off the `Removal` rather than from an argument, so the list and the
+    /// checkout arrive together and cannot be paired by hand.
+    ///
+    /// They are closed here rather than in the process that carries out the removal because
+    /// by the time that runs they are gone: the grouping it could rebuild for itself would
+    /// be a grouping with nothing in it. herdr collapses a tab and a workspace that end up
+    /// empty, which is what lets this leave no residue — measured against 0.7.4.
+    ///
+    /// A pane that will not close stops the whole thing: a checkout removed out from under
+    /// half its panes is worse than one not removed. How far it got is what the message is
+    /// for — the panes that did close are gone, and nothing else on screen will say so.
+    pub fn remove(&mut self, herdr: &dyn HerdrPort, removal: &Removal) -> Result<(), String> {
+        self.close_panes(herdr, removal)?;
+        // Every pane is gone by now, so a failure here is the same shape as a git refusal
+        // and gets the same clause: the worst version of it, in fact, since none survived.
+        self.start(removal).map_err(|error| {
+            format!(
+                "could not start removing {}: {}",
+                removal.label(),
+                removal::refusal(&format!("{error:#}"), removal.panes().len())
+            )
+        })
+    }
+
+    /// Close every pane the removal names, in the order it lists them, stopping at the first
+    /// that refuses. How far it got is in the message, because the panes before the refusal
+    /// are gone and nothing else on screen says so.
+    ///
+    /// A pane that has already gone is not a refusal, but that is not decided here: see
+    /// [`HerdrPort::pane_close`], which is where a pane herdr no longer knows about becomes
+    /// an `Ok`. Anything that does reach here as an `Err` stops the walk.
+    fn close_panes(&self, herdr: &dyn HerdrPort, removal: &Removal) -> Result<(), String> {
+        let total = removal.panes().len();
+        for (closed, pane) in removal.panes().iter().enumerate() {
+            let pane_id = &pane.pane_id;
+            if let Err(error) = herdr.pane_close(pane_id) {
+                return Err(removal::interrupted(
+                    pane_id,
+                    &format!("{error:#}"),
+                    closed,
+                    total,
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Start the removal process. Returns once it is running, which is the point: the wait
+    /// happens on a thread of its own so the picker keeps drawing and keeps reading keys.
+    ///
+    /// Private, so nothing outside this module reaches a removal without going through
+    /// `remove` and the close it does first. That is ADR 0010's ordering on the picker's
+    /// side, which is all it can be: the `remove` subcommand in `main` runs `git worktree
+    /// remove` having closed nothing, because by the time it runs the panes are already
+    /// gone. It is the other half of the same ADR, not a hole in this one.
+    fn start(&mut self, removal: &Removal) -> Result<()> {
+        let checkout_path = removal.checkout_path();
+        let panes_closed = removal.panes().len();
+        let running = self.port.start(
+            removal.repo_root(),
+            checkout_path,
+            removal.label(),
+            panes_closed,
+        )?;
         let sender = self.sender.clone();
         let path = checkout_path.to_string();
         // Not joined anywhere. Leaving the picker ends this thread with the process, and the
@@ -78,7 +137,7 @@ impl<'a> Removals<'a> {
         });
         self.in_flight.push(InFlight {
             checkout_path: checkout_path.to_string(),
-            label: label.to_string(),
+            label: removal.label().to_string(),
             panes_closed,
         });
         Ok(())
@@ -126,7 +185,9 @@ impl<'a> Removals<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::port::{RemovalOutcome, RunningRemoval};
+    use crate::app::fakes::{until, Recorder, Refuses, Started};
+    use crate::domain::model::{PaneNode, WorktreeNode};
+    use crate::port::{AgentStatus, RemovalOutcome, RunningRemoval};
     use std::sync::Mutex;
 
     /// A removal that finishes when the test says so, so two can be made to answer in the
@@ -175,15 +236,128 @@ mod tests {
         }
     }
 
-    /// Spin until `ready`, or fail the test: the waiting happens on threads of its own.
-    fn until(what: &str, mut ready: impl FnMut() -> bool) {
-        for _ in 0..2000 {
-            if ready() {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        panic!("{what}");
+    /// A checkout to remove, named by the panes in it. Built the only way one can be —
+    /// through the checkout — so the pane list is the checkout's own. Nothing here reads a
+    /// pane beyond its id, so the rest is whatever a tree would have put there.
+    fn removal(checkout_path: &str, label: &str, panes: &[&str]) -> Removal {
+        Removal::of(
+            "/src/app",
+            &WorktreeNode {
+                branch: Some(label.to_string()),
+                checkout_path: checkout_path.to_string(),
+                is_primary: false,
+                open_workspace_id: None,
+                track: None,
+                panes: panes
+                    .iter()
+                    .map(|pane_id| PaneNode {
+                        pane_id: (*pane_id).to_string(),
+                        workspace_id: "w1".into(),
+                        tab_id: "t1".into(),
+                        display_name: None,
+                        agent_status: AgentStatus::default(),
+                        focused: false,
+                    })
+                    .collect(),
+            },
+        )
+    }
+
+    #[test]
+    fn every_pane_closes_before_the_removal_starts_and_in_the_order_given() {
+        // The order is the safety rule: `git worktree remove` walking a working tree that
+        // still has agents writing into it is what closing first exists to prevent. Both
+        // fakes write into one log, so the rule is one sequence rather than two.
+        let recorder = Recorder::default();
+        let port = Started(&recorder);
+        let mut removals = Removals::new(&port);
+
+        let told = removals.remove(
+            &recorder,
+            &removal("/wt/feat-login", "feat/login", &["w2:p1", "w2:p2", "w9:p3"]),
+        );
+
+        assert_eq!(told, Ok(()));
+        assert_eq!(
+            recorder.did(),
+            [
+                "close w2:p1",
+                "close w2:p2",
+                "close w9:p3",
+                "start /wt/feat-login after 3",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_pane_that_will_not_close_stops_the_removal_and_says_how_far_it_got() {
+        // Half the panes gone and the checkout still standing is not "nothing happened",
+        // and herdr's bare refusal does not say which of the two the reader is looking at.
+        let recorder = Recorder::refusing("w2:p2");
+        let port = Started(&recorder);
+        let mut removals = Removals::new(&port);
+
+        let told = removals.remove(
+            &recorder,
+            &removal("/wt/feat-login", "feat/login", &["w2:p1", "w2:p2", "w9:p3"]),
+        );
+
+        assert_eq!(
+            told,
+            Err(
+                "could not close w2:p2: herdr rejected pane.close: no such pane (not_found) \
+                 — 1 of its 3 panes was closed first, and the checkout was not removed"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            recorder.did(),
+            ["close w2:p1"],
+            "it stopped there, and started nothing"
+        );
+        assert!(removals.is_empty());
+    }
+
+    #[test]
+    fn a_removal_that_will_not_start_says_the_panes_are_already_gone() {
+        // The worst way this can end: the closing worked, so nothing is running in the
+        // checkout any more, and the checkout is still there. Saying only that the removal
+        // failed would read as "nothing happened" to someone whose panes just vanished.
+        let recorder = Recorder::default();
+        let mut removals = Removals::new(&Refuses);
+
+        let told = removals.remove(
+            &recorder,
+            &removal("/wt/feat-login", "feat/login", &["w2:p1", "w2:p2", "w9:p3"]),
+        );
+
+        assert_eq!(
+            told,
+            Err(
+                "could not start removing feat/login: could not spawn: no such file or \
+                 directory — its 3 panes were closed first"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            recorder.did(),
+            ["close w2:p1", "close w2:p2", "close w9:p3"],
+            "all of them went first"
+        );
+        assert!(removals.is_empty(), "and nothing is being waited on");
+    }
+
+    #[test]
+    fn a_checkout_with_no_panes_starts_its_removal_straight_away() {
+        let recorder = Recorder::default();
+        let port = Started(&recorder);
+        let mut removals = Removals::new(&port);
+
+        assert_eq!(
+            removals.remove(&recorder, &removal("/wt/fix-crash", "fix/crash", &[])),
+            Ok(())
+        );
+        assert_eq!(recorder.did(), ["start /wt/fix-crash after 0"]);
     }
 
     #[test]
@@ -192,9 +366,17 @@ mod tests {
         // started. Getting this wrong names the wrong branch in the refusal and miscounts
         // the panes it closed — both of which read as facts about the wrong checkout.
         let port = FakeRemover::default();
+        let herdr = Recorder::default();
         let mut removals = Removals::new(&port);
-        removals.start("/src/app", "/wt/a", "feat/a", 3).unwrap();
-        removals.start("/src/app", "/wt/b", "feat/b", 1).unwrap();
+        removals
+            .remove(
+                &herdr,
+                &removal("/wt/a", "feat/a", &["w1:p1", "w1:p2", "w1:p3"]),
+            )
+            .unwrap();
+        removals
+            .remove(&herdr, &removal("/wt/b", "feat/b", &["w2:p1"]))
+            .unwrap();
         assert_eq!(removals.paths(), ["/wt/a".to_string(), "/wt/b".to_string()]);
 
         // The second one answers first.

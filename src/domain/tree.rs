@@ -22,22 +22,35 @@ pub struct RepoInput {
     pub refs: Vec<GitRef>,
 }
 
-/// What git said about the branch this checkout has out.
+/// What git said about the branch each checkout has out, by checkout.
 ///
-/// Matched on `%(worktreepath)` rather than on the branch name. git is answering "which
+/// Keyed on `%(worktreepath)` rather than on the branch name. git is answering "which
 /// checkout has this ref", which is the question being asked here, and it is right about a
-/// detached checkout — nothing points at it, so it gets no marker — where a name match would
-/// have to guess.
-fn track_of(refs: &[GitRef], checkout_path: &str) -> Option<Track> {
-    refs.iter()
-        .find(|git_ref| {
-            git_ref.kind == RefKind::Local
-                && git_ref
-                    .worktree_path
-                    .as_deref()
-                    .is_some_and(|path| normalize_path(path) == checkout_path)
-        })?
-        .track
+/// detached checkout — nothing points at it, so it is absent and gets no marker — where a
+/// name match would have to guess.
+///
+/// One map over every repository rather than a scan per checkout. The lookup for a checkout
+/// herdr did not list used to reach into `repos` by an index that was only valid because
+/// `nodes` happened to be built from it in order, and a `filter` added to that `map` would
+/// have silently attached one repository's branch state to another's checkouts.
+///
+/// Safe to flatten every repository into one map because the key is a working tree's
+/// absolute path, and a directory is the working tree of at most one repository — so two
+/// repositories cannot offer the same key, and the `collect` below has no duplicate to
+/// silently drop. Both the key and the lookup go through `normalize_path`, which is what
+/// makes that true of the strings rather than only of the directories.
+fn tracks(repos: &[RepoInput]) -> HashMap<&str, Track> {
+    repos
+        .iter()
+        .flat_map(|repo| &repo.refs)
+        .filter(|git_ref| git_ref.kind == RefKind::Local)
+        .filter_map(|git_ref| {
+            Some((
+                normalize_path(git_ref.worktree_path.as_deref()?),
+                git_ref.track?,
+            ))
+        })
+        .collect()
 }
 
 /// Which repository and checkout a pane's working directory resolved to.
@@ -56,6 +69,7 @@ pub fn build(
     repos: &[RepoInput],
     placements: &HashMap<String, PanePlacement>,
 ) -> Tree {
+    let tracks = tracks(repos);
     let mut nodes: Vec<RepoNode> = repos
         .iter()
         .map(|repo| RepoNode {
@@ -67,13 +81,16 @@ pub fn build(
                 .iter()
                 // A bare repository has no working tree, so no pane can ever sit in it.
                 .filter(|worktree| !worktree.is_bare)
-                .map(|worktree| WorktreeNode {
-                    branch: worktree.branch.clone().filter(|b| !b.is_empty()),
-                    checkout_path: normalize_path(&worktree.path).to_string(),
-                    is_primary: !worktree.is_linked_worktree,
-                    open_workspace_id: worktree.open_workspace_id.clone(),
-                    track: track_of(&repo.refs, normalize_path(&worktree.path)),
-                    panes: Vec::new(),
+                .map(|worktree| {
+                    let checkout_path = normalize_path(&worktree.path);
+                    WorktreeNode {
+                        branch: worktree.branch.clone().filter(|b| !b.is_empty()),
+                        checkout_path: checkout_path.to_string(),
+                        is_primary: !worktree.is_linked_worktree,
+                        open_workspace_id: worktree.open_workspace_id.clone(),
+                        track: tracks.get(checkout_path).copied(),
+                        panes: Vec::new(),
+                    }
                 })
                 .collect(),
         })
@@ -128,9 +145,8 @@ pub fn build(
                     checkout_path: checkout.to_string(),
                     is_primary: false,
                     open_workspace_id: Some(node.workspace_id.clone()),
-                    // git knows about it even where herdr does not, and `nodes` was built
-                    // from `repos` in order, so the refs for this one are at the same index.
-                    track: track_of(&repos[index].refs, checkout),
+                    // git knows about it even where herdr does not.
+                    track: tracks.get(checkout).copied(),
                     panes: vec![node],
                 });
             }
@@ -159,6 +175,7 @@ mod tests {
     use super::*;
     use crate::port::AgentStatus;
     use serde_json::json;
+    use std::num::NonZeroU32;
 
     /// Build a snapshot from the wire shape herdr actually sends, so these tests also
     /// exercise the deserializers.
@@ -236,9 +253,9 @@ mod tests {
             local_ref(
                 "feat/login",
                 Some("/wt/feat-login"),
-                Some(Track::Divergence {
-                    ahead: 2,
-                    behind: 1,
+                Some(Track::Diverged {
+                    ahead: NonZeroU32::new(2).unwrap(),
+                    behind: NonZeroU32::new(1).unwrap(),
                 }),
             ),
         ];
@@ -248,11 +265,61 @@ mod tests {
         assert_eq!(worktrees[0].track, None);
         assert_eq!(
             worktrees[1].track,
-            Some(Track::Divergence {
-                ahead: 2,
-                behind: 1
+            Some(Track::Diverged {
+                ahead: NonZeroU32::new(2).unwrap(),
+                behind: NonZeroU32::new(1).unwrap()
             })
         );
+    }
+
+    #[test]
+    fn a_checkout_herdr_did_not_list_still_gets_what_git_said_about_it() {
+        // The path the index-based lookup used to take, and the reason it was replaced: it
+        // reached into `repos` by an index that was only valid because `nodes` happened to
+        // be built from it in order.
+        let mut input = repo(
+            "me/app",
+            "/src/app",
+            vec![worktree("main", "/src/app", false)],
+        );
+        input.refs = vec![
+            local_ref("main", Some("/src/app"), None),
+            local_ref("manual", Some("/elsewhere/manual"), Some(Track::Gone)),
+        ];
+        let tree = build(
+            &snapshot(json!([pane("w1:p1", None)])),
+            &[input],
+            &placements(&[("w1:p1", "/src/app/.git", "/elsewhere/manual")]),
+        );
+        let synthesized = tree.repos[0]
+            .worktrees
+            .iter()
+            .find(|worktree| worktree.checkout_path == "/elsewhere/manual")
+            .expect("herdr did not list it, so the pane's own cwd put it there");
+        assert_eq!(synthesized.track, Some(Track::Gone));
+    }
+
+    #[test]
+    fn one_repositorys_branch_state_never_lands_on_anothers_checkout() {
+        // Two repositories, a branch of the same name in each, and no order between them
+        // that the lookup is allowed to depend on. Checkout paths are absolute, so they are
+        // what tells the two apart.
+        let mut app = repo(
+            "me/app",
+            "/src/app",
+            vec![worktree("main", "/src/app", false)],
+        );
+        app.refs = vec![local_ref("main", Some("/src/app"), Some(Track::Gone))];
+        let mut site = repo(
+            "me/site",
+            "/src/site",
+            vec![worktree("main", "/src/site", false)],
+        );
+        site.refs = vec![local_ref("main", Some("/src/site"), None)];
+
+        let tree = build(&snapshot(json!([])), &[app, site], &HashMap::new());
+        assert_eq!(tree.repos[0].worktrees[0].track, Some(Track::Gone));
+        assert_eq!(tree.repos[1].worktrees[0].track, None, "not the other's");
     }
 
     #[test]

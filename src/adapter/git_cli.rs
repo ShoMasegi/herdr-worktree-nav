@@ -1,5 +1,6 @@
 //! `GitPort` backed by the `git` command line.
 
+use std::num::NonZeroU32;
 use std::process::{Command, Output, Stdio};
 
 use anyhow::{bail, Context, Result};
@@ -66,19 +67,27 @@ fn parse_track(field: &str) -> Option<Track> {
     if inside == "gone" {
         return Some(Track::Gone);
     }
-    let mut ahead = 0;
-    let mut behind = 0;
+    let mut ahead = None;
+    let mut behind = None;
     for part in inside.split(", ") {
+        // A count this cannot read fails the whole field, the same as a word it does not
+        // know — including one too large for `u32`. A zero does not: a zero side is a side
+        // that is level, so `[ahead 0, behind 2]` is `Behind(2)` and `[ahead 0]` is no
+        // marker at all. `NonZeroU32` says that instead of a guard further down. (Real git
+        // omits a level side rather than printing a zero, so this is about being right on
+        // input rather than about anything `for-each-ref` produces today.)
         match part.split_once(' ') {
-            Some(("ahead", count)) => ahead = count.parse().ok()?,
-            Some(("behind", count)) => behind = count.parse().ok()?,
+            Some(("ahead", count)) => ahead = NonZeroU32::new(count.parse().ok()?),
+            Some(("behind", count)) => behind = NonZeroU32::new(count.parse().ok()?),
             _ => return None,
         }
     }
-    if ahead == 0 && behind == 0 {
-        return None;
+    match (ahead, behind) {
+        (Some(ahead), Some(behind)) => Some(Track::Diverged { ahead, behind }),
+        (Some(ahead), None) => Some(Track::Ahead(ahead)),
+        (None, Some(behind)) => Some(Track::Behind(behind)),
+        (None, None) => None,
     }
-    Some(Track::Divergence { ahead, behind })
 }
 
 /// Extract `owner/repo` from any GitHub remote URL form:
@@ -289,29 +298,24 @@ impl GitPort for GitCli {
 mod tests {
     use super::{github_slug_from_url, parse_track};
     use crate::port::Track;
+    use std::num::NonZeroU32;
 
     #[test]
     fn reads_every_shape_git_prints_for_upstream_track() {
         assert_eq!(parse_track("[gone]"), Some(Track::Gone));
         assert_eq!(
             parse_track("[ahead 2]"),
-            Some(Track::Divergence {
-                ahead: 2,
-                behind: 0
-            })
+            Some(Track::Ahead(NonZeroU32::new(2).unwrap()))
         );
         assert_eq!(
             parse_track("[behind 1]"),
-            Some(Track::Divergence {
-                ahead: 0,
-                behind: 1
-            })
+            Some(Track::Behind(NonZeroU32::new(1).unwrap()))
         );
         assert_eq!(
             parse_track("[ahead 2, behind 1]"),
-            Some(Track::Divergence {
-                ahead: 2,
-                behind: 1
+            Some(Track::Diverged {
+                ahead: NonZeroU32::new(2).unwrap(),
+                behind: NonZeroU32::new(1).unwrap()
             })
         );
     }
@@ -322,6 +326,17 @@ mod tests {
         // mean there is nothing to draw.
         assert_eq!(parse_track(""), None);
         assert_eq!(parse_track("   "), None);
+    }
+
+    #[test]
+    fn a_count_that_cannot_be_read_fails_the_whole_field() {
+        // Not just its own half. Believing the side that parsed would put a marker on the
+        // row that is right about one direction and silent about the other, which reads as
+        // a branch that is only ahead — a claim nothing in the input supports.
+        assert_eq!(parse_track("[ahead 2, behind zzz]"), None);
+        assert_eq!(parse_track("[ahead zzz, behind 1]"), None);
+        // Syntactically a count, still not one this can hold.
+        assert_eq!(parse_track("[ahead 4294967296, behind 2]"), None);
     }
 
     #[test]

@@ -1,12 +1,75 @@
-//! What a finished removal says, and to whom.
+//! A checkout to remove, and what its removal says when it is over.
 //!
 //! A removal runs in a process of its own so that it outlives the picker — see
 //! `docs/adr/0014-removing-outlives-the-picker.md`. That leaves two readers to serve and one
 //! set of words to serve them with. The toast is the report that always happens, because it
 //! is the only one left when the picker has already closed. The prompt line is the extra
 //! the picker adds when it is still up to read the answer.
+//!
+//! [`Removal`] is the other end of the same story: the checkout, and the panes that have to
+//! stop before git walks it. It lives beside the words rather than in the view that asks the
+//! question, because `app` starts the removal and should not reach up into `ui` for the
+//! value describing it.
 
+use crate::domain::model::{PaneNode, WorktreeNode};
 use crate::port::{Notification, NotificationSound, RemovalOutcome};
+
+/// A checkout to remove: what to say about it, and what has to stop first.
+///
+/// One value rather than four arguments travelling together, because two of them must agree.
+/// `app::removals::Removals::remove` closes the panes *this* names and then removes the
+/// checkout *this* names, so a pane list belonging to some other checkout removes a working
+/// tree out from under everything still running in it — the accident
+/// `docs/adr/0010-closing-the-panes-first.md` exists to prevent.
+///
+/// Every field is private and [`Removal::of`] is the only thing that fills them, together,
+/// from one `WorktreeNode`. So the pairing cannot be taken apart afterwards: there is no
+/// shorter list to substitute and no other checkout to repoint at.
+///
+/// What that does *not* reach is a `WorktreeNode` that describes a checkout falsely, since
+/// its own fields are public — but such a node is a lie to the whole tree, and every row,
+/// marker and count drawn from it is wrong long before this type sees it. The one production
+/// caller is `ui::state::PanesState::ask_to_remove`, which builds this from the row under
+/// the cursor; `PanesState::replace_tree` then withdraws the question if the tree changes
+/// while it is up, so a `y` never acts on a list the user was not shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Removal {
+    repo_root: String,
+    checkout_path: String,
+    label: String,
+    panes: Vec<PaneNode>,
+}
+
+impl Removal {
+    /// Everything removing this checkout needs, taken from the checkout itself.
+    pub fn of(repo_root: &str, worktree: &WorktreeNode) -> Self {
+        Self {
+            repo_root: repo_root.to_string(),
+            checkout_path: worktree.checkout_path.clone(),
+            label: worktree.label().to_string(),
+            panes: worktree.panes.clone(),
+        }
+    }
+
+    pub fn repo_root(&self) -> &str {
+        &self.repo_root
+    }
+
+    pub fn checkout_path(&self) -> &str {
+        &self.checkout_path
+    }
+
+    /// The branch name, for the question and for saying what went.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// The panes that stop. Named in the question because uncommitted work is git's to
+    /// protect and this is not: whatever a working agent has in flight has no other net.
+    pub fn panes(&self) -> &[PaneNode] {
+        &self.panes
+    }
+}
 
 /// What a report line starts with when the checkout went.
 const REMOVED: &str = "removed";
