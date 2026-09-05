@@ -654,12 +654,18 @@ mod tests {
         // something in it is never offered, whatever GitHub says about the branch. git would
         // refuse the removal anyway — but the sweep's job is not to suggest what git will
         // refuse, it is to suggest what is finished with.
-        let trees = BTreeMap::from([("/wt/feat-login".to_string(), WorkingTree::Dirty)]);
-        let judged = judged(
-            &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
-            &facts(&trees, &asked(vec![merged(4, "feat/login")])),
-        );
-        assert_eq!(judged["/wt/feat-login"], Candidate::Available);
+        for answer in [WorkingTree::Dirty, WorkingTree::Unreadable] {
+            let trees = BTreeMap::from([("/wt/feat-login".to_string(), answer)]);
+            let judged = judged(
+                &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
+                &facts(&trees, &asked(vec![merged(4, "feat/login")])),
+            );
+            assert_eq!(judged["/wt/feat-login"], Candidate::Available, "{answer:?}");
+            assert!(
+                judged["/wt/feat-login"].is_markable(),
+                "still the user's to mark"
+            );
+        }
     }
 
     #[test]
@@ -686,6 +692,25 @@ mod tests {
             );
             assert_eq!(judged["/wt/feat-login"].label_for_test(), "PR #2 merged");
         }
+    }
+
+    #[test]
+    fn a_merge_wins_over_a_closure_that_came_after_it() {
+        // The half the ordering test cannot see: here the merge is the *older* entry, so
+        // preferring the later number alone would report the closure. The branch landed;
+        // whatever happened to a later pull request for the same name did not unland it.
+        let trees = clean(&["/wt/feat-login"]);
+        let judged = judged(
+            &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
+            &facts(
+                &trees,
+                &asked(vec![
+                    settled(2, "feat/login", PullRequestOutcome::Merged),
+                    settled(9, "feat/login", PullRequestOutcome::Closed),
+                ]),
+            ),
+        );
+        assert_eq!(judged["/wt/feat-login"].label_for_test(), "PR #2 merged");
     }
 
     #[test]
