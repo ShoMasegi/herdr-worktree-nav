@@ -40,21 +40,17 @@ fn run() -> Result<()> {
             None => bail!("`pane` needs an entrypoint: `panes` or `branches`"),
         },
         Some("dump") => dump(),
-        Some("remove") => match (args.next(), args.next(), args.next()) {
-            (Some(repo_root), Some(checkout_path), Some(label)) => remove::run(
+        Some("remove") => {
+            let args = remove::Args::read(&mut args)?;
+            remove::run(
                 &SocketHerdr::from_env()?,
                 &GitCli,
-                &repo_root,
-                &checkout_path,
-                &label,
-                // How many panes the picker stopped to get here, for the one report that
-                // has to say more than what git said. Absent means none, so running this by
-                // hand stays three arguments; unreadable means none too, which understates
-                // rather than invents, and only ever costs the report one clause.
-                args.next().and_then(|n| n.parse().ok()).unwrap_or(0),
-            ),
-            _ => bail!("`remove` needs a repository root, a checkout path, and a branch name"),
-        },
+                &args.repo_root,
+                &args.checkout_path,
+                &args.label,
+                args.panes_closed,
+            )
+        }
         Some(other) => {
             bail!("unknown command `{other}`. Expected `action`, `pane`, `dump`, or `remove`.")
         }

@@ -12,6 +12,38 @@ use anyhow::Result;
 use crate::domain::removal;
 use crate::port::{GitPort, HerdrPort, RemovalOutcome};
 
+/// What the `remove` mode was told to do, read off the command line.
+///
+/// The other half of this wire format is `adapter::detached::arguments`, in another module
+/// and, by the time it is read, in another process. Neither half can see the other, so the
+/// only thing keeping them in step is a test that runs one into the other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Args {
+    pub repo_root: String,
+    pub checkout_path: String,
+    pub label: String,
+    /// How many panes the picker closed to get here. Absent means none, so running this by
+    /// hand stays three arguments; unreadable means none too, which understates rather than
+    /// invents and only ever costs the report one clause.
+    pub panes_closed: usize,
+}
+
+impl Args {
+    pub fn read(args: &mut impl Iterator<Item = String>) -> Result<Self> {
+        let (Some(repo_root), Some(checkout_path), Some(label)) =
+            (args.next(), args.next(), args.next())
+        else {
+            anyhow::bail!("`remove` needs a repository root, a checkout path, and a branch name")
+        };
+        Ok(Self {
+            repo_root,
+            checkout_path,
+            label,
+            panes_closed: args.next().and_then(|n| n.parse().ok()).unwrap_or(0),
+        })
+    }
+}
+
 /// Remove one checkout, tell the user, and tell whoever started this if they are still
 /// listening.
 ///
@@ -139,6 +171,30 @@ mod tests {
         fn head_ref(&self, _repo_root: &str) -> Result<String> {
             unreachable!()
         }
+    }
+
+    #[test]
+    fn running_it_by_hand_stays_three_arguments() {
+        // The count is the picker's to supply; a person typing this has closed nothing.
+        let read = Args::read(
+            &mut ["/src/app", "/wt/x", "fix/crash"]
+                .iter()
+                .map(|a| a.to_string()),
+        )
+        .unwrap();
+        assert_eq!(read.panes_closed, 0);
+
+        // And a fourth argument that is not a number understates rather than invents. It
+        // costs the report one clause and never changes what is removed.
+        let odd = Args::read(
+            &mut ["/src/app", "/wt/x", "fix/crash", "later"]
+                .iter()
+                .map(|a| a.to_string()),
+        )
+        .unwrap();
+        assert_eq!(odd.panes_closed, 0);
+
+        assert!(Args::read(&mut ["/src/app", "/wt/x"].iter().map(|a| a.to_string())).is_err());
     }
 
     #[test]
