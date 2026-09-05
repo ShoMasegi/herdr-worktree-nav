@@ -207,4 +207,5 @@ getting wrong lives.
 | `ui` state | key handling is a pure state → action mapping, so the keymap is covered directly |
 | `ui` drawing | `TestBackend` + `insta` snapshots of the rendered buffer |
 | `adapter` git | real repositories in a `tempfile::TempDir` |
+| `adapter` gh | nothing in CI runs `gh`, so the command is split from what it says: the argument list, the exit status and the JSON are each read by a function a test calls with no process at all. Everything but `Command::new` is covered — twice a malformed argument list shipped past a green suite. |
 | `adapter` herdr | not testable in CI — there is no server. See [Troubleshooting](troubleshooting.md) for the manual checklist. |

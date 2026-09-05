@@ -143,4 +143,5 @@ Shift-D, y ─▶ setsid herdr-worktree-nav remove …  ─┬─▶ git worktre
 | `ui` の状態 | キー処理は状態 → アクションの純粋な写像なので、キーマップを直接テスト |
 | `ui` の描画 | `TestBackend` + `insta` による描画バッファのスナップショット |
 | `adapter` の git | `tempfile::TempDir` に実リポジトリを作成 |
+| `adapter` の gh | CI では `gh` を一度も起動しないため、コマンドと「その結果が何を意味するか」を分離した。引数列・終了ステータス・JSON はそれぞれプロセス無しでテストから呼べる関数が読む。`Command::new` 以外はすべて覆われている — 不正な引数列が緑のスイートを素通りして2度出荷されたため |
 | `adapter` の herdr | CI ではテスト不可（サーバーが無い）。手動確認手順は[トラブルシューティング](troubleshooting.md)を参照 |

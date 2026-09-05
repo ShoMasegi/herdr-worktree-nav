@@ -72,9 +72,8 @@ requests; the sweep asks about branches whose pull request is closed. `gh pr lis
 closed` is the heavier call — `closed` rather than `all` because `gh` counts the open ones
 against the same window and the sweep then discards them, so asking for everything spends the
 window on answers it does not want. It is made when the sweep is entered rather than when the
-picker
-opens. The branches view keeps the cheap query it has, and anyone who never sweeps never pays
-for the other one.
+picker opens. The branches view keeps the cheap query it has, and anyone who never sweeps
+never pays for the other one.
 
 **A default mark is a suggestion with its reason attached.** Each marked row says why —
 `gone`, `PR #123 merged` — because a mark whose reason is invisible is one the user either
