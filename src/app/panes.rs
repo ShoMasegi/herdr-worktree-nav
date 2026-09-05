@@ -8,7 +8,7 @@ use crate::app::collect;
 use crate::app::dirty::Dirty;
 use crate::app::home_dir;
 use crate::app::removals::Removals;
-use crate::domain::removal;
+use crate::domain::removal::{self, Removal};
 use crate::port::{GitPort, HerdrPort, PaneSplit, SplitDirection, WorktreeOpen};
 use crate::ui::render::{self, Mode};
 use crate::ui::state::{Action, PanesState};
@@ -132,34 +132,7 @@ pub fn run(
             // nor the user has to wait for git to walk a working tree. See
             // `docs/adr/0014-removing-outlives-the-picker.md`.
             Action::RemoveWorktree(removal) => {
-                match removals.remove(herdr, &removal) {
-                    Ok(()) => {
-                        // The row says what is happening to it; nothing to add here.
-                        state.set_removing(removals.paths());
-                        // And only here: the panes are gone, so the list is known wrong
-                        // rather than merely possibly stale. An empty checkout's removal
-                        // changes nothing on screen yet and leaves the cursor where it was,
-                        // which is where the next thing to tidy up usually is.
-                        if !removal.panes().is_empty() {
-                            match collect::collect_tree(herdr, git) {
-                                Ok((_, tree)) => {
-                                    state.replace_tree(tree);
-                                    dirty.ask(state.tree());
-                                }
-                                // Not fatal, but not silent either: rows for panes that
-                                // have certainly stopped are on screen until this works.
-                                Err(error) => state.set_message(format!(
-                                    "the panes closed, but the list could not be read \
-                                     again: {error:#}"
-                                )),
-                            }
-                        }
-                    }
-                    // Nothing else is said or done. This is the account of what happened,
-                    // and a failed re-read would overwrite it with a sentence about panes
-                    // that may not have closed at all.
-                    Err(message) => state.set_message(message),
-                }
+                start_removal(&mut state, dirty, removals, herdr, git, &removal)
             }
             action => break action,
         }
@@ -177,6 +150,50 @@ pub fn run(
 /// none, and it is exactly the answer that turns a refusal into an offer. Left out, every
 /// checkout with panes in it answers "still reading that working tree" for the life of the
 /// picker, and nothing on screen or in the suite says why.
+/// Carry out a removal the user has said yes to, and put what happened on the screen.
+///
+/// Out of the loop for the reason `show_answers` is: `run` needs a terminal and a keyboard,
+/// so nothing in it is reachable from a test, and this is the arm with consequences. What
+/// deleting it looks like is a picker where `y` closes the confirmation box and does
+/// nothing else — no error, no message, the row unchanged — which is a shape this
+/// repository has shipped once already.
+fn start_removal(
+    state: &mut PanesState,
+    dirty: &mut Dirty,
+    removals: &mut Removals,
+    herdr: &dyn HerdrPort,
+    git: &dyn GitPort,
+    removal: &Removal,
+) {
+    match removals.remove(herdr, removal) {
+        Ok(()) => {
+            // The row says what is happening to it; nothing to add here.
+            state.set_removing(removals.paths());
+            // And only here: the panes are gone, so the list is known wrong rather than
+            // merely possibly stale. An empty checkout's removal changes nothing on screen
+            // yet and leaves the cursor where it was, which is where the next thing to tidy
+            // up usually is.
+            if !removal.panes().is_empty() {
+                match collect::collect_tree(herdr, git) {
+                    Ok((_, tree)) => {
+                        state.replace_tree(tree);
+                        dirty.ask(state.tree());
+                    }
+                    // Not fatal, but not silent either: rows for panes that have certainly
+                    // stopped are on screen until this works.
+                    Err(error) => state.set_message(format!(
+                        "the panes closed, but the list could not be read again: {error:#}"
+                    )),
+                }
+            }
+        }
+        // Nothing else is said or done. This is the account of what happened, and a failed
+        // re-read would overwrite it with a sentence about panes that may not have closed
+        // at all.
+        Err(message) => state.set_message(message),
+    }
+}
+
 fn show_answers(state: &mut PanesState, dirty: &mut Dirty) -> bool {
     if dirty.drain() {
         state.set_dirty(dirty.paths());
@@ -232,7 +249,7 @@ fn perform(herdr: &dyn HerdrPort, action: Action) -> Result<Exit> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::fakes::until;
+    use crate::app::fakes::{until, Recorder, Refuses, Started};
     use crate::ui::state::PanesState;
     use anyhow::Result;
 
@@ -272,6 +289,12 @@ mod tests {
         fn head_ref(&self, _repo_root: &str) -> Result<String> {
             unreachable!()
         }
+    }
+
+    fn no_pane_tree() -> crate::domain::model::Tree {
+        let mut tree = one_pane_tree();
+        tree.repos[0].worktrees[0].panes.clear();
+        tree
     }
 
     fn one_pane_tree() -> crate::domain::model::Tree {
@@ -331,6 +354,70 @@ mod tests {
             Some("that checkout is holding work nobody has committed"),
             "and it says which of the refusals this is"
         );
+    }
+
+    /// The checkout the one-pane tree describes, ready to be removed.
+    fn only_removal(state: &PanesState) -> Removal {
+        let repo = &state.tree().repos[0];
+        Removal::of(&repo.repo_root, &repo.worktrees[0])
+    }
+
+    #[test]
+    fn a_yes_starts_the_removal_and_says_on_the_row_that_it_is_going() {
+        // The arm behind `y`. Deleted, the confirmation box closes and nothing happens —
+        // no error, no message, the row unchanged — and the whole gate stays green.
+        let recorder = Recorder::default();
+        let port = Started(&recorder);
+        let mut removals = Removals::new(&port);
+        let mut state = PanesState::new(no_pane_tree(), None);
+        let mut dirty = Dirty::new(std::sync::Arc::new(Answers(Some(false))));
+        let removal = only_removal(&state);
+
+        start_removal(
+            &mut state,
+            &mut dirty,
+            &mut removals,
+            &recorder,
+            &Answers(Some(false)),
+            &removal,
+        );
+
+        assert_eq!(recorder.did(), ["start /wt/feat-login after 0"]);
+        assert_eq!(removals.paths(), ["/wt/feat-login".to_string()]);
+        assert!(
+            state.rows().iter().any(|row| row.is_removing),
+            "and the row it is happening to says so"
+        );
+        assert_eq!(state.message(), None, "the row is the report");
+    }
+
+    #[test]
+    fn a_removal_that_will_not_start_puts_the_reason_where_the_user_is_looking() {
+        // Ignoring the error is the narrower version of deleting the arm, and worse than it
+        // looks: the panes are already closed by the time this can fail.
+        let recorder = Recorder::default();
+        let mut removals = Removals::new(&Refuses);
+        let mut state = PanesState::new(no_pane_tree(), None);
+        let mut dirty = Dirty::new(std::sync::Arc::new(Answers(Some(false))));
+        let removal = only_removal(&state);
+
+        start_removal(
+            &mut state,
+            &mut dirty,
+            &mut removals,
+            &recorder,
+            &Answers(Some(false)),
+            &removal,
+        );
+
+        assert_eq!(
+            state.message(),
+            Some(
+                "could not start removing feat/login: could not spawn: no such file or \
+                 directory"
+            )
+        );
+        assert!(!state.rows().iter().any(|row| row.is_removing));
     }
 
     #[test]
