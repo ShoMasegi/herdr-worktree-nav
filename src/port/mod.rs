@@ -296,10 +296,42 @@ pub struct PullRequest {
     pub is_draft: bool,
 }
 
+/// What became of a pull request, once it is no longer open.
+///
+/// There is no `Open`, and that is the point: a sweep may only be *widened* by a pull request
+/// that is finished with. `docs/adr/0011-what-may-be-swept.md` does not let `gh` clear a mark
+/// git put there, so an open pull request has nothing to say and no variant to say it in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PullRequestOutcome {
+    Merged,
+    Closed,
+}
+
+/// A pull request that is done with, and the branch it was for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettledPullRequest {
+    pub number: u64,
+    pub head_ref: String,
+    pub outcome: PullRequestOutcome,
+}
+
 /// `Sync` because the pull request lookup runs on a background thread while the picker
 /// is already on screen.
 pub trait GhPort: Sync {
     /// Open pull requests for the repository, or an empty list when `gh` is missing or
     /// unauthenticated. This layer is decoration: it must never fail the picker.
     fn pull_requests(&self, repo_root: &str) -> Vec<PullRequest>;
+
+    /// Pull requests that have been merged or closed, for deciding what a sweep may offer.
+    ///
+    /// `None` — not an empty list — when `gh` could not be asked at all. The two are the
+    /// same answer to [`pull_requests`](GhPort::pull_requests), where nothing turns on the
+    /// difference and ADR 0003's promise is that a missing `gh` costs nothing. Here it does
+    /// turn on it: ADR 0011 says a degraded `gh` must be *visible*, because a sweep that
+    /// silently offers fewer rows is worse than one that says which half it could not judge.
+    /// `Some(vec![])` is "asked, and nothing here is finished with".
+    ///
+    /// Heavier than `pull_requests` — it asks about every state — so it is called when a
+    /// sweep is entered rather than when the picker opens.
+    fn settled_pull_requests(&self, repo_root: &str) -> Option<Vec<SettledPullRequest>>;
 }
