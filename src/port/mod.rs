@@ -351,16 +351,23 @@ pub enum SettledPullRequests {
 }
 
 impl SettledPullRequests {
-    pub fn pull_requests(&self) -> &[SettledPullRequest] {
-        match self {
-            SettledPullRequests::All(all) | SettledPullRequests::Window(all) => all,
-        }
-    }
-
-    /// Whether a branch missing from this is a branch with no pull request, or one this
-    /// could not see.
-    pub fn is_all(&self) -> bool {
-        matches!(self, SettledPullRequests::All(_))
+    /// This repository's own finished pull request for `head_ref`, if it has one here.
+    ///
+    /// Deliberately the only way in. Handing out the list would let a caller act on a *miss*
+    /// without knowing which variant it missed in, and what a miss means is the whole
+    /// difference between the two — so a miss has to be read off the variant.
+    ///
+    /// A branch on somebody else's fork never matches. `head_ref` is a name on whichever
+    /// repository the pull request came from, so a contributor's merged `patch-1` says
+    /// nothing about a local checkout of the same name, and matching it would delete work on
+    /// the strength of a coincidence. `gh` may only widen a sweep, and a wrong mark is not a
+    /// widening.
+    pub fn found(&self, head_ref: &str) -> Option<&SettledPullRequest> {
+        let list = match self {
+            SettledPullRequests::All(list) | SettledPullRequests::Window(list) => list,
+        };
+        list.iter()
+            .find(|pull_request| !pull_request.from_a_fork && pull_request.head_ref == head_ref)
     }
 }
 

@@ -155,10 +155,12 @@ pub fn run(
                             repo_root: root.clone(),
                         },
                     });
-                    // A repository GitHub has never heard of has no name to ask about, and
-                    // `gh` given only a directory answers about whatever base repository it
-                    // picks out of the remotes — the parent, for a fork. No slug, no
-                    // question; ADR 0003 says that costs nothing but the annotation.
+                    // No slug, no question. A repository GitHub has never heard of has no
+                    // name to ask about, and git failing to tell us is the same silence from
+                    // here — both cost nothing but the annotation, which is what ADR 0003
+                    // promises. What is not allowed is asking anyway: `gh` given only a
+                    // directory answers about whatever base repository it picks out of the
+                    // remotes, and for a fork that is the parent.
                     let pull_requests = match git.github_slug(&root) {
                         Ok(Some(slug)) => gh.pull_requests(GhRepo {
                             root: &root,

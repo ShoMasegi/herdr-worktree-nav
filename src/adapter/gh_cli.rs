@@ -257,6 +257,14 @@ mod reading {
         format!("[{}]", entries.join(",")).into_bytes()
     }
 
+    /// The list, whichever variant it arrived in, for the assertions about its contents.
+    /// Which variant it is gets asserted on its own, because that is the other half.
+    fn listed(read: &SettledPullRequests) -> &[SettledPullRequest] {
+        match read {
+            SettledPullRequests::All(list) | SettledPullRequests::Window(list) => list,
+        }
+    }
+
     #[test]
     fn both_settled_states_come_through_as_themselves() {
         let read = read_settled(
@@ -271,7 +279,7 @@ mod reading {
         // number names the wrong pull request, and an empty head ref matches no branch at
         // all — which reads as "nothing to sweep here" rather than as a bug.
         assert_eq!(
-            read.pull_requests(),
+            listed(&read),
             [
                 SettledPullRequest {
                     number: 1,
@@ -287,15 +295,18 @@ mod reading {
                 },
             ]
         );
-        assert!(read.is_all(), "two of a window of three hundred");
+        assert!(
+            matches!(read, SettledPullRequests::All(_)),
+            "two of a window of three hundred, so this is all of them"
+        );
     }
 
     #[test]
     fn a_branch_on_somebody_elses_fork_says_so() {
         let read = read_settled(&json(&[one(1, "patch-1", "MERGED", true)]), 300).unwrap();
-        assert!(read.pull_requests()[0].from_a_fork);
+        assert!(listed(&read)[0].from_a_fork);
         assert_eq!(
-            read.pull_requests()[0].head_ref,
+            listed(&read)[0].head_ref,
             "patch-1",
             "and the name is the fork's, which is the whole reason it must be told apart"
         );
@@ -309,8 +320,14 @@ mod reading {
         let entries: Vec<String> = (0..3)
             .map(|n| one(n, &format!("feat/{n}"), "MERGED", false))
             .collect();
-        assert!(!read_settled(&json(&entries), 3).unwrap().is_all());
-        assert!(read_settled(&json(&entries), 4).unwrap().is_all());
+        assert!(matches!(
+            read_settled(&json(&entries), 3).unwrap(),
+            SettledPullRequests::Window(_)
+        ));
+        assert!(matches!(
+            read_settled(&json(&entries), 4).unwrap(),
+            SettledPullRequests::All(_)
+        ));
     }
 
     #[test]
@@ -326,13 +343,9 @@ mod reading {
             300,
         )
         .unwrap();
-        assert_eq!(
-            read.pull_requests().len(),
-            1,
-            "the unknown one is not guessed at"
-        );
+        assert_eq!(listed(&read).len(), 1, "the unknown one is not guessed at");
         assert!(
-            !read.is_all(),
+            matches!(read, SettledPullRequests::Window(_)),
             "and its absence is not passed off as an answer"
         );
     }
@@ -341,7 +354,7 @@ mod reading {
     fn output_this_cannot_read_is_not_an_empty_answer() {
         assert!(read_settled(b"not json at all", 300).is_err());
         assert!(
-            read_settled(b"[]", 300).unwrap().pull_requests().is_empty(),
+            listed(&read_settled(b"[]", 300).unwrap()).is_empty(),
             "but an empty list is one"
         );
     }

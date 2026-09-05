@@ -190,26 +190,28 @@ fn judge(
         return unjudged_if(could_have_decided);
     };
 
-    let found = worktree.branch.as_ref().and_then(|branch| {
-        settled.pull_requests().iter().find(|pull_request| {
-            // Exactly this branch, on this repository. `head_ref` is a name on whichever
-            // repository the pull request came from, so a contributor's merged `patch-1`
-            // says nothing at all about a local checkout of the same name — and matching it
-            // would delete work on the strength of a coincidence. `gh` may only widen a
-            // sweep, and a wrong mark is not a widening.
-            !pull_request.from_a_fork && &pull_request.head_ref == branch
-        })
-    });
-    match found {
-        Some(pull_request) if clean => Candidate::Offered(Reason::PullRequest {
-            number: pull_request.number,
-            outcome: pull_request.outcome,
-        }),
-        // Not found in a list that is all of them is an answer: there is no pull request for
-        // this branch. Not found in a truncated one is not — the window `gh` was given may
-        // simply not reach back far enough, and saying "nothing to sweep" on the strength of
-        // that is the confident wrong claim this whole distinction exists to prevent.
-        _ => unjudged_if(could_have_decided && !settled.is_all()),
+    let found = worktree
+        .branch
+        .as_ref()
+        .and_then(|branch| settled.found(branch));
+    if let Some(pull_request) = found {
+        if clean {
+            return Candidate::Offered(Reason::PullRequest {
+                number: pull_request.number,
+                outcome: pull_request.outcome,
+            });
+        }
+    }
+    // What a *miss* means is a fact about the list rather than about the branch, so it is
+    // read off the variant. Written this way the two answers cannot end up in the same arm
+    // by accident, which a flag beside the list would have allowed.
+    match settled {
+        // Missing from all of them: this branch has no finished pull request.
+        SettledPullRequests::All(_) => Candidate::Available,
+        // Missing from as many as `gh` was asked for: the window may not reach back far
+        // enough, and saying "nothing to sweep" on the strength of a page size is the
+        // confident wrong claim this whole distinction exists to prevent.
+        SettledPullRequests::Window(_) => unjudged_if(could_have_decided),
     }
 }
 
