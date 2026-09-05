@@ -5,7 +5,8 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::domain::model::{PaneNode, Tree};
+use crate::domain::model::Tree;
+use crate::domain::removal::Removal;
 use crate::domain::rows::{self, DisplayLine, Row, RowRef, StateFilter, ViewOptions};
 
 /// What the event loop should do about a key. Anything that touches herdr is returned
@@ -37,15 +38,10 @@ pub enum Action {
     /// Delete a checkout. The only thing this plugin does that cannot be undone by doing it
     /// again the other way.
     ///
-    /// `panes` are closed first, in the order given. A checkout with panes in it is the
-    /// ordinary end state of a finished worktree, not an unusual one — see
+    /// The panes it names are closed first, in the order given. A checkout with panes in it
+    /// is the ordinary end state of a finished worktree, not an unusual one — see
     /// `docs/adr/0010-closing-the-panes-first.md`.
-    RemoveWorktree {
-        repo_root: String,
-        checkout_path: String,
-        label: String,
-        panes: Vec<String>,
-    },
+    RemoveWorktree(Removal),
     Reload,
 }
 
@@ -69,19 +65,6 @@ pub struct PanesState {
     waiting: bool,
     /// Checkouts git has answered about, dirty or not. Not drawn; see `set_answered`.
     answered: Vec<String>,
-}
-
-/// A checkout the user has asked to delete, held until they say yes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Removal {
-    pub repo_root: String,
-    pub checkout_path: String,
-    /// The branch name, for the question and for saying what went.
-    pub label: String,
-    /// The panes that stop if this goes ahead, in the order the tree lists them. Named in
-    /// the question because uncommitted work is git's to protect and this is not: whatever
-    /// a working agent has in flight has no other safety net.
-    pub panes: Vec<PaneNode>,
 }
 
 impl PanesState {
@@ -447,12 +430,7 @@ impl PanesState {
                 return Action::Consumed;
             }
         }
-        self.pending_removal = Some(Removal {
-            repo_root: repo.repo_root.clone(),
-            checkout_path: worktree.checkout_path.clone(),
-            label: worktree.label().to_string(),
-            panes: worktree.panes.clone(),
-        });
+        self.pending_removal = Some(Removal::of(&repo.repo_root, worktree));
         Action::Consumed
     }
 
@@ -499,12 +477,7 @@ impl PanesState {
         // A question is on screen and it is the only thing the keyboard is for.
         if let Some(removal) = self.pending_removal.take() {
             return match key.code {
-                KeyCode::Char('y') => Action::RemoveWorktree {
-                    repo_root: removal.repo_root,
-                    checkout_path: removal.checkout_path,
-                    label: removal.label,
-                    panes: removal.panes.into_iter().map(|pane| pane.pane_id).collect(),
-                },
+                KeyCode::Char('y') => Action::RemoveWorktree(removal),
                 // Anything else is a no. Taking the removal above is what makes that true
                 // of keys nobody thought of as well as of the ones they did.
                 _ => Action::Consumed,
@@ -859,15 +832,13 @@ mod tests {
         assert_eq!(asked.checkout_path, "/wt/app/fix-crash");
         assert_eq!(asked.repo_root, "/src/app");
 
-        assert_eq!(
-            state.handle_key(key(KeyCode::Char('y'))),
-            Action::RemoveWorktree {
-                repo_root: "/src/app".into(),
-                checkout_path: "/wt/app/fix-crash".into(),
-                label: "fix/crash".into(),
-                panes: Vec::new(),
-            }
-        );
+        let Action::RemoveWorktree(asked) = state.handle_key(key(KeyCode::Char('y'))) else {
+            panic!("`y` is the answer that goes ahead");
+        };
+        assert_eq!(asked.repo_root, "/src/app");
+        assert_eq!(asked.checkout_path, "/wt/app/fix-crash");
+        assert_eq!(asked.label, "fix/crash");
+        assert!(asked.panes().is_empty(), "there were none to close");
         assert!(
             state.pending_removal().is_none(),
             "the question is answered"
@@ -1016,25 +987,20 @@ mod tests {
 
         let asked = state.pending_removal().expect("a question should be up");
         assert_eq!(asked.label, "feat/login");
-        let closing: Vec<&str> = asked
-            .panes
-            .iter()
-            .map(|pane| pane.pane_id.as_str())
-            .collect();
-        assert_eq!(closing, ["w2:p1", "w2:p2"], "and it names what stops");
+        assert_eq!(
+            asked.pane_ids(),
+            ["w2:p1", "w2:p2"],
+            "and it names what stops"
+        );
 
         // And `y` carries them through, in the order the question listed them. Without this
         // the picker could ask about panes it then never closed, and remove the checkout out
         // from under every one of them.
-        assert_eq!(
-            state.handle_key(key(KeyCode::Char('y'))),
-            Action::RemoveWorktree {
-                repo_root: "/src/app".into(),
-                checkout_path: "/wt/app/feat-login".into(),
-                label: "feat/login".into(),
-                panes: vec!["w2:p1".into(), "w2:p2".into()],
-            }
-        );
+        let Action::RemoveWorktree(asked) = state.handle_key(key(KeyCode::Char('y'))) else {
+            panic!("`y` is the answer that goes ahead");
+        };
+        assert_eq!(asked.checkout_path, "/wt/app/feat-login");
+        assert_eq!(asked.pane_ids(), ["w2:p1", "w2:p2"]);
     }
 
     #[test]

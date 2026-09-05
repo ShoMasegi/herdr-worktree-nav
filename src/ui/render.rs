@@ -18,12 +18,13 @@ use ratatui::Frame;
 use crate::domain::model::{PaneNode, RepoNode};
 use crate::domain::order::Order;
 use crate::domain::preview::{Preview, PreviewPane};
+use crate::domain::removal::Removal;
 use crate::domain::resolve::{BranchEntry, BranchState};
 use crate::domain::rows::{self, abbreviate, marks, marks_reserve, DisplayLine, Row, UNNAMED_PANE};
 use crate::port::LayoutRect;
 use crate::ui::branches::{Activity, BranchesState, Step};
 use crate::ui::diagram::{Fit, Frame as DiagramFrame};
-use crate::ui::state::{PanesState, Removal};
+use crate::ui::state::PanesState;
 use crate::ui::theme::Theme;
 
 /// Which picker is on screen. They share the panel, the search line, and the footer.
@@ -301,7 +302,7 @@ fn render_removal(
     // has no other safety net, so the question names every pane that stops, in the words the
     // list behind the box uses for the same panes.
     let name_column = removal
-        .panes
+        .panes()
         .iter()
         .map(|pane| {
             pane.display_name
@@ -313,13 +314,13 @@ fn render_removal(
         .max()
         .unwrap_or(0);
     let state_column = removal
-        .panes
+        .panes()
         .iter()
         .map(|pane| agent_state(pane).chars().count())
         .max()
         .unwrap_or(0);
     let closing: Vec<String> = removal
-        .panes
+        .panes()
         .iter()
         .map(|pane| {
             format!(
@@ -335,7 +336,7 @@ fn render_removal(
         .collect();
     // The question that carries the count is the one the smallest box uses, so it has to be
     // measured even when the list is what ends up being drawn.
-    let counted = match removal.panes.len() {
+    let counted = match removal.panes().len() {
         0 => TITLE.to_string(),
         1 => "Delete this checkout and close 1 pane?".to_string(),
         many => format!("Delete this checkout and close {many} panes?"),
@@ -382,9 +383,9 @@ fn render_removal(
     // The panes, each with the glyph its row carries, so the one that is working is as
     // obvious here as it is in the list behind the box.
     let mut panes: Vec<Line> = Vec::new();
-    if !removal.panes.is_empty() {
+    if !removal.panes().is_empty() {
         panes.push(Line::from(Span::styled(CLOSING, theme.dim())));
-        for (pane, text) in removal.panes.iter().zip(&closing) {
+        for (pane, text) in removal.panes().iter().zip(&closing) {
             let (glyph, glyph_style) = theme.status_glyph(pane.agent_status);
             panes.push(Line::from(vec![
                 Span::raw("  "),

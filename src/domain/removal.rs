@@ -6,7 +6,50 @@
 //! is the only one left when the picker has already closed. The prompt line is the extra
 //! the picker adds when it is still up to read the answer.
 
+use crate::domain::model::{PaneNode, WorktreeNode};
 use crate::port::{Notification, NotificationSound, RemovalOutcome};
+
+/// A checkout to remove: what to say about it, and what has to stop first.
+///
+/// One value rather than four arguments travelling together, because one of them must not be
+/// chosen freely. `app::removals::Removals::remove` closes the panes *this* names and there
+/// is no other way to start a removal, so the list it closes has to be the list that is
+/// actually in the checkout — a shorter one removes a working tree out from under whatever
+/// it left out. `panes` is therefore private and [`Removal::of`] is the only thing that
+/// fills it, from the row the user answered the question for. Naming a checkout and then
+/// claiming it is empty is not a sentence this type can say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Removal {
+    pub repo_root: String,
+    pub checkout_path: String,
+    /// The branch name, for the question and for saying what went.
+    pub label: String,
+    /// The panes that stop if this goes ahead, in the order the tree lists them.
+    panes: Vec<PaneNode>,
+}
+
+impl Removal {
+    /// Everything removing this checkout needs, taken from the checkout itself.
+    pub fn of(repo_root: &str, worktree: &WorktreeNode) -> Self {
+        Self {
+            repo_root: repo_root.to_string(),
+            checkout_path: worktree.checkout_path.clone(),
+            label: worktree.label().to_string(),
+            panes: worktree.panes.clone(),
+        }
+    }
+
+    /// The panes that stop. Named in the question because uncommitted work is git's to
+    /// protect and this is not: whatever a working agent has in flight has no other net.
+    pub fn panes(&self) -> &[PaneNode] {
+        &self.panes
+    }
+
+    /// The pane ids to close, in the order the tree listed them.
+    pub fn pane_ids(&self) -> Vec<String> {
+        self.panes.iter().map(|pane| pane.pane_id.clone()).collect()
+    }
+}
 
 /// What a report line starts with when the checkout went.
 const REMOVED: &str = "removed";

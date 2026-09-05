@@ -1,7 +1,11 @@
-//! Ports that record what they were asked to do, for the tests in this layer.
+//! What the tests in this layer drive their ports with, and wait on.
 //!
-//! Shared because more than one module needs the same one: the ordering rule these exist to
-//! pin — panes close, then the removal starts — now spans two of them.
+//! Here rather than in one module's `mod tests` because the ordering rule these exist to
+//! pin — panes close, then the removal starts — spans two ports. Both write into one
+//! `Recorder` log, so a test reads a single interleaving rather than two sequences it has
+//! to merge by eye. That is also why the whole vocabulary of that log lives in this file:
+//! `record` is private, so no fake elsewhere can put a line into it that reads like one of
+//! these.
 
 use std::sync::Mutex;
 
@@ -9,7 +13,8 @@ use anyhow::{anyhow, Result};
 
 use crate::port::{
     HerdrPort, Notification, OpenRefusal, Pane, PaneDestination, PaneSplit, PluginPaneOpen,
-    Snapshot, WorktreeCreate, WorktreeList, WorktreeOpen, WorktreeOpened,
+    RemovalOutcome, RemovalPort, RunningRemoval, Snapshot, WorktreeCreate, WorktreeList,
+    WorktreeOpen, WorktreeOpened,
 };
 
 /// Spin until `ready`, or fail the test.
@@ -28,8 +33,12 @@ pub fn until(what: &str, mut ready: impl FnMut() -> bool) {
 }
 
 /// A `HerdrPort` that keeps what it was asked to do, in order, and can be told to refuse one
-/// pane. Everything it is not asked in these tests is `unreachable!()`, so a call that was
-/// not meant to happen fails loudly rather than quietly returning something plausible.
+/// pane.
+///
+/// A method this does not need is `unreachable!()`, and that is a rule rather than an
+/// oversight: the tests that share this rely on an unexpected call failing. A module that
+/// needs one of them adds a fake of its own — filling one in here would quietly weaken
+/// every test already using it, and none of them would fail to say so.
 #[derive(Default)]
 pub struct Recorder {
     did: Mutex<Vec<String>>,
@@ -44,9 +53,7 @@ impl Recorder {
         }
     }
 
-    /// Add to the same log the pane closes go into, so a test can assert one interleaving
-    /// rather than two independent sequences.
-    pub fn record(&self, what: String) {
+    fn record(&self, what: String) {
         self.did.lock().unwrap().push(what);
     }
 
@@ -67,36 +74,64 @@ impl HerdrPort for Recorder {
     }
 
     fn snapshot(&self) -> Result<Snapshot> {
-        unreachable!()
+        unreachable!("only pane_close is asked of this port")
     }
     fn worktree_list(&self, _cwd: &str) -> Result<WorktreeList> {
-        unreachable!()
+        unreachable!("only pane_close is asked of this port")
     }
     fn worktree_create(&self, _req: &WorktreeCreate) -> Result<WorktreeOpened> {
-        unreachable!()
+        unreachable!("only pane_close is asked of this port")
     }
     fn worktree_open(&self, _req: &WorktreeOpen) -> Result<WorktreeOpened> {
-        unreachable!()
+        unreachable!("only pane_close is asked of this port")
     }
     fn pane_focus(&self, _pane_id: &str) -> Result<()> {
-        unreachable!()
+        unreachable!("only pane_close is asked of this port")
     }
     fn pane_split(&self, _req: &PaneSplit) -> Result<Pane> {
-        unreachable!()
+        unreachable!("only pane_close is asked of this port")
     }
     fn pane_move(&self, _pane: &str, _dest: &PaneDestination, _focus: bool) -> Result<()> {
-        unreachable!()
+        unreachable!("only pane_close is asked of this port")
     }
     fn workspace_focus(&self, _workspace_id: &str) -> Result<()> {
-        unreachable!()
+        unreachable!("only pane_close is asked of this port")
     }
     fn tab_focus(&self, _tab_id: &str) -> Result<()> {
-        unreachable!()
+        unreachable!("only pane_close is asked of this port")
     }
     fn plugin_pane_open(&self, _req: &PluginPaneOpen) -> Result<Option<OpenRefusal>> {
-        unreachable!()
+        unreachable!("only pane_close is asked of this port")
     }
     fn notify(&self, _notification: &Notification) -> Result<()> {
-        unreachable!()
+        unreachable!("only pane_close is asked of this port")
+    }
+}
+
+/// A `RemovalPort` that starts nothing; it only says that it was asked, into the same log
+/// the pane closes go to. That interleaving is the only place ADR 0010's ordering shows up
+/// as something a test can read.
+pub struct Started<'a>(pub &'a Recorder);
+
+impl RemovalPort for Started<'_> {
+    fn start(
+        &self,
+        _repo_root: &str,
+        checkout_path: &str,
+        _label: &str,
+        panes_closed: usize,
+    ) -> Result<Box<dyn RunningRemoval>> {
+        self.0
+            .record(format!("start {checkout_path} after {panes_closed}"));
+        Ok(Box::new(Done))
+    }
+}
+
+/// A removal that has already finished by the time anyone waits on it.
+struct Done;
+
+impl RunningRemoval for Done {
+    fn wait(self: Box<Self>) -> Result<RemovalOutcome> {
+        Ok(RemovalOutcome::Removed)
     }
 }
