@@ -10,7 +10,19 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use anyhow::Result;
 
-use crate::port::{RemovalOutcome, RemovalPort};
+use crate::domain::removal;
+use crate::port::{HerdrPort, RemovalOutcome, RemovalPort};
+
+/// Panes this process has closed, just now, for the removal about to be started.
+///
+/// The field is private and [`Removals::close_panes`] is the only thing that makes one, so
+/// a removal cannot be started with a count it did not earn — and, more to the point, cannot
+/// be started before the panes are closed at all, because the argument does not exist yet.
+/// `git worktree remove` walking a working tree that still has agents writing into it is
+/// what `docs/adr/0010-closing-the-panes-first.md` is about, and until now the only thing
+/// standing between that and a second caller was one private function.
+#[derive(Debug)]
+pub struct PanesClosed(usize);
 
 /// One removal that has been started and has not reported back.
 struct InFlight {
@@ -58,13 +70,38 @@ impl<'a> Removals<'a> {
     /// Start removing a checkout. Returns once the process is running, which is the point:
     /// the wait happens on a thread of its own so the picker keeps drawing and keeps
     /// reading keys.
+    /// Close every pane in a checkout, in the order given, stopping at the first that
+    /// refuses. `Err` is what to tell the user, already in words: how far it got matters,
+    /// because the panes before the refusal are gone and nothing else on screen says so.
+    ///
+    /// A pane that has already gone is not a refusal — it is the state this asks for, and it
+    /// happens on its own whenever a pane's command finishes.
+    pub fn close_panes(
+        &self,
+        herdr: &dyn HerdrPort,
+        panes: &[String],
+    ) -> Result<PanesClosed, String> {
+        for (closed, pane_id) in panes.iter().enumerate() {
+            if let Err(error) = herdr.pane_close(pane_id) {
+                return Err(removal::interrupted(
+                    pane_id,
+                    &format!("{error:#}"),
+                    closed,
+                    panes.len(),
+                ));
+            }
+        }
+        Ok(PanesClosed(panes.len()))
+    }
+
     pub fn start(
         &mut self,
         repo_root: &str,
         checkout_path: &str,
         label: &str,
-        panes_closed: usize,
+        closed: PanesClosed,
     ) -> Result<()> {
+        let panes_closed = closed.0;
         let running = self
             .port
             .start(repo_root, checkout_path, label, panes_closed)?;
@@ -126,6 +163,7 @@ impl<'a> Removals<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::fakes::{until, Recorder};
     use crate::port::{RemovalOutcome, RunningRemoval};
     use std::sync::Mutex;
 
@@ -175,15 +213,45 @@ mod tests {
         }
     }
 
-    /// Spin until `ready`, or fail the test: the waiting happens on threads of its own.
-    fn until(what: &str, mut ready: impl FnMut() -> bool) {
-        for _ in 0..2000 {
-            if ready() {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        panic!("{what}");
+    fn ids(panes: &[&str]) -> Vec<String> {
+        panes.iter().map(|id| (*id).to_string()).collect()
+    }
+
+    #[test]
+    fn a_removal_cannot_be_started_without_having_closed_the_panes_first() {
+        // Not an assertion so much as a note on what the type does: `start` takes a
+        // `PanesClosed`, and `close_panes` is the only thing that makes one. Writing
+        // `removals.start(.., 0)` — the shape a second caller would reach for — does not
+        // compile, which is the whole point of the type existing.
+        let port = FakeRemover::default();
+        let herdr = Recorder::default();
+        let mut removals = Removals::new(&port);
+
+        let closed = removals
+            .close_panes(&herdr, &ids(&["w1:p1", "w1:p2"]))
+            .unwrap();
+        assert_eq!(herdr.did(), ["close w1:p1", "close w1:p2"]);
+        removals
+            .start("/src/app", "/wt/a", "feat/a", closed)
+            .unwrap();
+    }
+
+    #[test]
+    fn a_pane_that_refuses_stops_the_close_and_mints_nothing() {
+        // No `PanesClosed` comes back, so there is nothing to start a removal with — the
+        // half-dismantled checkout cannot be removed even by a caller that ignores the
+        // error.
+        let port = FakeRemover::default();
+        let herdr = Recorder::refusing("w1:p2");
+        let removals = Removals::new(&port);
+
+        let told = removals.close_panes(&herdr, &ids(&["w1:p1", "w1:p2", "w1:p3"]));
+        assert_eq!(
+            told.unwrap_err(),
+            "could not close w1:p2: herdr rejected pane.close: no such pane (not_found) \
+             — 1 of its 3 panes was closed first, and the checkout was not removed"
+        );
+        assert_eq!(herdr.did(), ["close w1:p1"], "it stopped there");
     }
 
     #[test]
@@ -192,9 +260,16 @@ mod tests {
         // started. Getting this wrong names the wrong branch in the refusal and miscounts
         // the panes it closed — both of which read as facts about the wrong checkout.
         let port = FakeRemover::default();
+        let herdr = Recorder::default();
         let mut removals = Removals::new(&port);
-        removals.start("/src/app", "/wt/a", "feat/a", 3).unwrap();
-        removals.start("/src/app", "/wt/b", "feat/b", 1).unwrap();
+        let three = removals
+            .close_panes(&herdr, &ids(&["w1:p1", "w1:p2", "w1:p3"]))
+            .unwrap();
+        removals
+            .start("/src/app", "/wt/a", "feat/a", three)
+            .unwrap();
+        let one = removals.close_panes(&herdr, &ids(&["w2:p1"])).unwrap();
+        removals.start("/src/app", "/wt/b", "feat/b", one).unwrap();
         assert_eq!(removals.paths(), ["/wt/a".to_string(), "/wt/b".to_string()]);
 
         // The second one answers first.

@@ -5,6 +5,8 @@ pub mod branches;
 pub mod collect;
 pub mod context;
 pub mod dirty;
+#[cfg(test)]
+pub mod fakes;
 pub mod panes;
 pub mod removals;
 pub mod remove;

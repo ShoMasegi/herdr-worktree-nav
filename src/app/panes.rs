@@ -211,20 +211,11 @@ fn close_then_remove(
     label: &str,
     panes: &[String],
 ) -> Result<(), String> {
-    for (closed, pane_id) in panes.iter().enumerate() {
-        if let Err(error) = herdr.pane_close(pane_id) {
-            return Err(removal::interrupted(
-                pane_id,
-                &format!("{error:#}"),
-                closed,
-                panes.len(),
-            ));
-        }
-    }
+    let closed = removals.close_panes(herdr, panes)?;
     // Every pane is gone by now, so a failure here is the same shape as a git refusal and
     // gets the same clause: the worst version of it, in fact, since none of them survived.
     removals
-        .start(repo_root, checkout_path, label, panes.len())
+        .start(repo_root, checkout_path, label, closed)
         .map_err(|error| {
             format!(
                 "could not start removing {label}: {}",
@@ -277,84 +268,10 @@ fn perform(herdr: &dyn HerdrPort, action: Action) -> Result<Exit> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::port::{
-        Notification, Pane, PaneDestination, PluginPaneOpen, RemovalOutcome, RemovalPort,
-        RunningRemoval, Snapshot, WorktreeCreate, WorktreeList, WorktreeOpened,
-    };
+    use crate::app::fakes::Recorder;
+    use crate::port::{RemovalOutcome, RemovalPort, RunningRemoval};
     use crate::ui::state::PanesState;
-    use anyhow::{anyhow, Result};
-    use std::sync::Mutex;
-
-    /// Records the order it was asked to do things in, and can be told to refuse one pane.
-    /// The ordering is the whole of `docs/adr/0010-closing-the-panes-first.md` and there is
-    /// nowhere else it can be checked: the picker's loop needs a terminal and a keyboard.
-    #[derive(Default)]
-    struct Recorder {
-        did: Mutex<Vec<String>>,
-        refuse: Option<String>,
-    }
-
-    impl Recorder {
-        fn refusing(pane_id: &str) -> Self {
-            Self {
-                refuse: Some(pane_id.to_string()),
-                ..Self::default()
-            }
-        }
-
-        fn did(&self) -> Vec<String> {
-            self.did.lock().unwrap().clone()
-        }
-    }
-
-    impl HerdrPort for Recorder {
-        fn pane_close(&self, pane_id: &str) -> Result<()> {
-            if self.refuse.as_deref() == Some(pane_id) {
-                return Err(anyhow!(
-                    "herdr rejected pane.close: no such pane (not_found)"
-                ));
-            }
-            self.did.lock().unwrap().push(format!("close {pane_id}"));
-            Ok(())
-        }
-
-        fn snapshot(&self) -> Result<Snapshot> {
-            unreachable!("only pane_close is asked of this port")
-        }
-        fn worktree_list(&self, _cwd: &str) -> Result<WorktreeList> {
-            unreachable!()
-        }
-        fn worktree_create(&self, _req: &WorktreeCreate) -> Result<WorktreeOpened> {
-            unreachable!()
-        }
-        fn worktree_open(&self, _req: &WorktreeOpen) -> Result<WorktreeOpened> {
-            unreachable!()
-        }
-        fn pane_focus(&self, _pane_id: &str) -> Result<()> {
-            unreachable!()
-        }
-        fn pane_split(&self, _req: &PaneSplit) -> Result<Pane> {
-            unreachable!()
-        }
-        fn pane_move(&self, _p: &str, _d: &PaneDestination, _f: bool) -> Result<()> {
-            unreachable!()
-        }
-        fn workspace_focus(&self, _workspace_id: &str) -> Result<()> {
-            unreachable!()
-        }
-        fn tab_focus(&self, _tab_id: &str) -> Result<()> {
-            unreachable!()
-        }
-        fn plugin_pane_open(
-            &self,
-            _req: &PluginPaneOpen,
-        ) -> Result<Option<crate::port::OpenRefusal>> {
-            unreachable!()
-        }
-        fn notify(&self, _notification: &Notification) -> Result<()> {
-            unreachable!()
-        }
-    }
+    use anyhow::Result;
 
     /// Starts nothing; it only says that it was asked, into the same log the closes go to.
     struct Started<'a>(&'a Recorder);
@@ -376,10 +293,7 @@ mod tests {
             panes_closed: usize,
         ) -> Result<Box<dyn RunningRemoval>> {
             self.0
-                .did
-                .lock()
-                .unwrap()
-                .push(format!("start {checkout_path} after {panes_closed}"));
+                .record(format!("start {checkout_path} after {panes_closed}"));
             Ok(Box::new(Done))
         }
     }
