@@ -5,6 +5,7 @@
 //! a branch whose name contains a slash, a linked worktree that must resolve to the same
 //! repository as its parent, and a fetch that has to leave a usable base behind.
 
+use std::num::NonZeroU32;
 use std::path::Path;
 use std::process::Command;
 
@@ -445,10 +446,7 @@ fn ahead_and_behind_come_out_of_the_ref_walk() {
     git(repo.path(), &["commit", "-q", "-m", "local only"]);
     assert_eq!(
         track_of(&GitCli.local_refs(&path_str(repo.path())).unwrap(), "main"),
-        Some(Track::Divergence {
-            ahead: 1,
-            behind: 0
-        })
+        Some(Track::Ahead(NonZeroU32::new(1).unwrap()))
     );
 
     // And one on origin that this repository does not have, made through a second clone so
@@ -474,9 +472,9 @@ fn ahead_and_behind_come_out_of_the_ref_walk() {
     git(repo.path(), &["fetch", "-q", "origin"]);
     assert_eq!(
         track_of(&GitCli.local_refs(&path_str(repo.path())).unwrap(), "main"),
-        Some(Track::Divergence {
-            ahead: 1,
-            behind: 1
+        Some(Track::Diverged {
+            ahead: NonZeroU32::new(1).unwrap(),
+            behind: NonZeroU32::new(1).unwrap()
         })
     );
 }
@@ -562,10 +560,7 @@ fn a_branch_with_no_upstream_is_still_measured_against_where_it_would_push() {
             &GitCli.local_refs(&path_str(repo.path())).unwrap(),
             "feat/login"
         ),
-        Some(Track::Divergence {
-            ahead: 1,
-            behind: 0
-        })
+        Some(Track::Ahead(NonZeroU32::new(1).unwrap()))
     );
 }
 

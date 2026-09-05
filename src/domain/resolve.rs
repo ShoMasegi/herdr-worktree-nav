@@ -40,10 +40,23 @@ pub struct BranchEntry {
     pub committed_at: Option<i64>,
     /// Decoration only — an open pull request whose head is this branch.
     pub pull_request: Option<PullRequest>,
+    /// Where the branch stands against what it tracks, when git said anything. Only ever set
+    /// from a local ref: a branch that exists nowhere but the remote has nothing to be
+    /// measured against.
+    ///
+    /// The whole value rather than the one bit the branches view draws today. The bit is a
+    /// projection anybody can take — see [`BranchEntry::upstream_gone`] — and taking it at
+    /// the boundary instead threw away ahead/behind on the way in, so a later reader wanting
+    /// what the panes view already shows would have had to rebuild the boundary to get it.
+    pub track: Option<Track>,
+}
+
+impl BranchEntry {
     /// git cannot find the ref this branch tracks — the ordinary end of a branch whose pull
-    /// request was merged and whose head the remote then deleted. Only ever set from a local
-    /// ref: a branch that exists nowhere but the remote has nothing to be gone.
-    pub upstream_gone: bool,
+    /// request was merged and whose head the remote then deleted.
+    pub fn upstream_gone(&self) -> bool {
+        self.track == Some(Track::Gone)
+    }
 }
 
 /// The first herdr/git step picking a branch requires. Everything after it — moving the new
@@ -84,12 +97,12 @@ pub fn resolve(
             subject: None,
             committed_at: None,
             pull_request: None,
-            upstream_gone: false,
+            track: None,
         });
         // A local ref beats a remote-only one; a remote ref only fills in missing detail.
         if git_ref.kind == RefKind::Local {
             entry.state = BranchState::LocalRef;
-            entry.upstream_gone = git_ref.track == Some(Track::Gone);
+            entry.track = git_ref.track;
         }
         if entry.committed_at.is_none() || git_ref.kind == RefKind::Local {
             entry.committed_at = git_ref.committed_at.or(entry.committed_at);
@@ -104,7 +117,7 @@ pub fn resolve(
             subject: None,
             committed_at: None,
             pull_request: None,
-            upstream_gone: false,
+            track: None,
         });
     }
 
@@ -120,7 +133,7 @@ pub fn resolve(
             subject: None,
             committed_at: None,
             pull_request: None,
-            upstream_gone: false,
+            track: None,
         });
         entry.state = match worktree.panes.first() {
             Some(pane) => BranchState::LivePane {
@@ -154,7 +167,7 @@ pub fn new_branch(name: &str) -> BranchEntry {
         subject: None,
         committed_at: None,
         pull_request: None,
-        upstream_gone: false,
+        track: None,
     }
 }
 
@@ -309,8 +322,8 @@ mod tests {
             &[],
             &[],
         );
-        assert!(entry_named(&entries, "fix/crash").upstream_gone);
-        assert!(!entry_named(&entries, "feat/search").upstream_gone);
+        assert!(entry_named(&entries, "fix/crash").upstream_gone());
+        assert!(!entry_named(&entries, "feat/search").upstream_gone());
     }
 
     fn entry_named<'a>(entries: &'a [BranchEntry], name: &str) -> &'a BranchEntry {

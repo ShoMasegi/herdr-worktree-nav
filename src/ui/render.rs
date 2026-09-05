@@ -1515,7 +1515,7 @@ fn branch_state_label(entry: &BranchEntry) -> String {
     // What the branch is, and then whether git can still find what it tracks. The second is
     // not a state of its own: a branch whose upstream is gone is still checked out, or still
     // running, and saying only `gone` would drop the half that says where it is.
-    match entry.upstream_gone {
+    match entry.upstream_gone() {
         true => format!("{state} gone"),
         false => state.to_string(),
     }
@@ -1542,6 +1542,7 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
+    use std::num::NonZeroU32;
 
     use crate::domain::chrome::Chrome;
     use crate::domain::dest::Destination;
@@ -1642,15 +1643,12 @@ mod tests {
         // The four answers, on four checkouts: ahead and behind its upstream, an upstream
         // that is gone, uncommitted work, and a checkout with nothing to report at all.
         let mut tree = tree();
-        tree.repos[0].worktrees[0].track = Some(Track::Divergence {
-            ahead: 2,
-            behind: 1,
+        tree.repos[0].worktrees[0].track = Some(Track::Diverged {
+            ahead: NonZeroU32::new(2).unwrap(),
+            behind: NonZeroU32::new(1).unwrap(),
         });
         tree.repos[0].worktrees[1].track = Some(Track::Gone);
-        tree.repos[0].worktrees[2].track = Some(Track::Divergence {
-            ahead: 0,
-            behind: 3,
-        });
+        tree.repos[0].worktrees[2].track = Some(Track::Behind(NonZeroU32::new(3).unwrap()));
         let mut state = PanesState::new(tree, None);
         state.set_dirty(vec!["/wt/feat-login".into(), "/wt/fix-crash".into()]);
         insta::assert_snapshot!(screen(&state, 92, 18));

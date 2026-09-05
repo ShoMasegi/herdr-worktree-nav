@@ -66,19 +66,24 @@ fn parse_track(field: &str) -> Option<Track> {
     if inside == "gone" {
         return Some(Track::Gone);
     }
-    let mut ahead = 0;
-    let mut behind = 0;
+    let mut ahead = None;
+    let mut behind = None;
     for part in inside.split(", ") {
         match part.split_once(' ') {
-            Some(("ahead", count)) => ahead = count.parse().ok()?,
-            Some(("behind", count)) => behind = count.parse().ok()?,
+            Some(("ahead", count)) => ahead = count.parse().ok(),
+            Some(("behind", count)) => behind = count.parse().ok(),
             _ => return None,
         }
     }
-    if ahead == 0 && behind == 0 {
-        return None;
+    // `NonZeroU32` does the arithmetic that used to be a guard: git prints `[ahead 0]` for
+    // nobody, so a zero here is a field this could not read rather than a divergence of
+    // nothing, and either way there is no variant to put it in.
+    match (ahead, behind) {
+        (Some(ahead), Some(behind)) => Some(Track::Diverged { ahead, behind }),
+        (Some(ahead), None) => Some(Track::Ahead(ahead)),
+        (None, Some(behind)) => Some(Track::Behind(behind)),
+        (None, None) => None,
     }
-    Some(Track::Divergence { ahead, behind })
 }
 
 /// Extract `owner/repo` from any GitHub remote URL form:
@@ -289,29 +294,24 @@ impl GitPort for GitCli {
 mod tests {
     use super::{github_slug_from_url, parse_track};
     use crate::port::Track;
+    use std::num::NonZeroU32;
 
     #[test]
     fn reads_every_shape_git_prints_for_upstream_track() {
         assert_eq!(parse_track("[gone]"), Some(Track::Gone));
         assert_eq!(
             parse_track("[ahead 2]"),
-            Some(Track::Divergence {
-                ahead: 2,
-                behind: 0
-            })
+            Some(Track::Ahead(NonZeroU32::new(2).unwrap()))
         );
         assert_eq!(
             parse_track("[behind 1]"),
-            Some(Track::Divergence {
-                ahead: 0,
-                behind: 1
-            })
+            Some(Track::Behind(NonZeroU32::new(1).unwrap()))
         );
         assert_eq!(
             parse_track("[ahead 2, behind 1]"),
-            Some(Track::Divergence {
-                ahead: 2,
-                behind: 1
+            Some(Track::Diverged {
+                ahead: NonZeroU32::new(2).unwrap(),
+                behind: NonZeroU32::new(1).unwrap()
             })
         );
     }

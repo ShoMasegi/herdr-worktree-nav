@@ -22,22 +22,29 @@ pub struct RepoInput {
     pub refs: Vec<GitRef>,
 }
 
-/// What git said about the branch this checkout has out.
+/// What git said about the branch each checkout has out, by checkout.
 ///
-/// Matched on `%(worktreepath)` rather than on the branch name. git is answering "which
+/// Keyed on `%(worktreepath)` rather than on the branch name. git is answering "which
 /// checkout has this ref", which is the question being asked here, and it is right about a
-/// detached checkout — nothing points at it, so it gets no marker — where a name match would
-/// have to guess.
-fn track_of(refs: &[GitRef], checkout_path: &str) -> Option<Track> {
-    refs.iter()
-        .find(|git_ref| {
-            git_ref.kind == RefKind::Local
-                && git_ref
-                    .worktree_path
-                    .as_deref()
-                    .is_some_and(|path| normalize_path(path) == checkout_path)
-        })?
-        .track
+/// detached checkout — nothing points at it, so it is absent and gets no marker — where a
+/// name match would have to guess.
+///
+/// One map over every repository rather than a scan per checkout: the two callers below used
+/// to reach into `repos` by an index that was only valid because `nodes` happened to be
+/// built from it in order, and a `filter` added to that `map` would have silently attached
+/// one repository's branch state to another's checkouts.
+fn tracks(repos: &[RepoInput]) -> HashMap<&str, Track> {
+    repos
+        .iter()
+        .flat_map(|repo| &repo.refs)
+        .filter(|git_ref| git_ref.kind == RefKind::Local)
+        .filter_map(|git_ref| {
+            Some((
+                normalize_path(git_ref.worktree_path.as_deref()?),
+                git_ref.track?,
+            ))
+        })
+        .collect()
 }
 
 /// Which repository and checkout a pane's working directory resolved to.
@@ -56,6 +63,7 @@ pub fn build(
     repos: &[RepoInput],
     placements: &HashMap<String, PanePlacement>,
 ) -> Tree {
+    let tracks = tracks(repos);
     let mut nodes: Vec<RepoNode> = repos
         .iter()
         .map(|repo| RepoNode {
@@ -72,7 +80,7 @@ pub fn build(
                     checkout_path: normalize_path(&worktree.path).to_string(),
                     is_primary: !worktree.is_linked_worktree,
                     open_workspace_id: worktree.open_workspace_id.clone(),
-                    track: track_of(&repo.refs, normalize_path(&worktree.path)),
+                    track: tracks.get(normalize_path(&worktree.path)).copied(),
                     panes: Vec::new(),
                 })
                 .collect(),
@@ -128,9 +136,8 @@ pub fn build(
                     checkout_path: checkout.to_string(),
                     is_primary: false,
                     open_workspace_id: Some(node.workspace_id.clone()),
-                    // git knows about it even where herdr does not, and `nodes` was built
-                    // from `repos` in order, so the refs for this one are at the same index.
-                    track: track_of(&repos[index].refs, checkout),
+                    // git knows about it even where herdr does not.
+                    track: tracks.get(checkout).copied(),
                     panes: vec![node],
                 });
             }
@@ -159,6 +166,7 @@ mod tests {
     use super::*;
     use crate::port::AgentStatus;
     use serde_json::json;
+    use std::num::NonZeroU32;
 
     /// Build a snapshot from the wire shape herdr actually sends, so these tests also
     /// exercise the deserializers.
@@ -236,9 +244,9 @@ mod tests {
             local_ref(
                 "feat/login",
                 Some("/wt/feat-login"),
-                Some(Track::Divergence {
-                    ahead: 2,
-                    behind: 1,
+                Some(Track::Diverged {
+                    ahead: NonZeroU32::new(2).unwrap(),
+                    behind: NonZeroU32::new(1).unwrap(),
                 }),
             ),
         ];
@@ -248,9 +256,9 @@ mod tests {
         assert_eq!(worktrees[0].track, None);
         assert_eq!(
             worktrees[1].track,
-            Some(Track::Divergence {
-                ahead: 2,
-                behind: 1
+            Some(Track::Diverged {
+                ahead: NonZeroU32::new(2).unwrap(),
+                behind: NonZeroU32::new(1).unwrap()
             })
         );
     }
