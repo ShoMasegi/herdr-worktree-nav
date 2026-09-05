@@ -69,7 +69,9 @@ pub struct PanesState {
 
 /// The answers a row puts a marker on. Clean and not-yet-answered are both absent here, and
 /// that is the whole point: they render identically, so a list rebuilt on the difference
-/// between them would be an identical list.
+/// between them would draw exactly the same. The rows themselves would differ — one would
+/// carry `Some(Clean)` where the other carries `None` — which is why nothing but
+/// `domain::rows::marks` may read `Row::working_tree`.
 fn marked(answers: &BTreeMap<String, WorkingTree>) -> BTreeMap<&str, WorkingTree> {
     answers
         .iter()

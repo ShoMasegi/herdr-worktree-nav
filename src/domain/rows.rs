@@ -799,15 +799,15 @@ mod tests {
         BTreeMap::from([("/wt/fix-crash".to_string(), working_tree)])
     }
 
-    fn marks_for(is_dirty: bool, track: Option<Track>) -> String {
+    /// `None` is a checkout nobody has answered for, which is a third thing and not a
+    /// synonym for clean. Taking the answer rather than a bool is what lets these say so —
+    /// with a bool the `Clean` arm of `marks` was never reached by any test here, and it
+    /// could be made to draw the "holding uncommitted work" marker without one failing.
+    fn marks_for(working_tree: Option<WorkingTree>, track: Option<Track>) -> String {
         let mut tree = tree();
         tree.repos[0].worktrees[2].track = track;
         let options = ViewOptions {
-            working_trees: if is_dirty {
-                answered(WorkingTree::Dirty)
-            } else {
-                BTreeMap::new()
-            },
+            working_trees: working_tree.map(answered).unwrap_or_default(),
             ..Default::default()
         };
         marks(find(&flatten(&tree, &options), "fix/crash"))
@@ -815,7 +815,20 @@ mod tests {
 
     #[test]
     fn a_checkout_with_nothing_to_report_says_nothing() {
-        assert_eq!(marks_for(false, None), "");
+        assert_eq!(marks_for(None, None), "", "nobody has answered for it");
+        assert_eq!(
+            marks_for(Some(WorkingTree::Clean), None),
+            "",
+            "and git answered and had nothing to report — the same absence of a marker for \
+             two different reasons, which is the whole of why the list is not rebuilt when \
+             one becomes the other"
+        );
+    }
+
+    #[test]
+    fn every_answer_a_working_tree_can_give_reads_on_its_own() {
+        assert_eq!(marks_for(Some(WorkingTree::Dirty), None), "  ✱");
+        assert_eq!(marks_for(Some(WorkingTree::Unreadable), None), "  ?");
     }
 
     #[test]
@@ -845,18 +858,18 @@ mod tests {
 
     #[test]
     fn each_thing_a_checkout_can_be_reads_on_its_own() {
-        assert_eq!(marks_for(true, None), "  \u{2731}");
+        assert_eq!(marks_for(Some(WorkingTree::Dirty), None), "  \u{2731}");
         assert_eq!(
-            marks_for(false, Some(Track::Ahead(NonZeroU32::new(2).unwrap()))),
+            marks_for(None, Some(Track::Ahead(NonZeroU32::new(2).unwrap()))),
             "  \u{2191}2"
         );
         assert_eq!(
-            marks_for(false, Some(Track::Behind(NonZeroU32::new(1).unwrap()))),
+            marks_for(None, Some(Track::Behind(NonZeroU32::new(1).unwrap()))),
             "  \u{2193}1"
         );
         assert_eq!(
             marks_for(
-                false,
+                None,
                 Some(Track::Diverged {
                     ahead: NonZeroU32::new(2).unwrap(),
                     behind: NonZeroU32::new(1).unwrap()
@@ -865,14 +878,17 @@ mod tests {
             "  \u{2191}2\u{2193}1",
             "one gap, not two: they are one answer"
         );
-        assert_eq!(marks_for(false, Some(Track::Gone)), "  gone");
+        assert_eq!(marks_for(None, Some(Track::Gone)), "  gone");
     }
 
     #[test]
     fn a_dirty_checkout_whose_upstream_is_gone_says_both() {
         // Which is the pair that decides whether a checkout can be swept: gone says it is
         // finished with, and dirty says it cannot go anyway.
-        assert_eq!(marks_for(true, Some(Track::Gone)), "  \u{2731}  gone");
+        assert_eq!(
+            marks_for(Some(WorkingTree::Dirty), Some(Track::Gone)),
+            "  \u{2731}  gone"
+        );
     }
 
     #[test]

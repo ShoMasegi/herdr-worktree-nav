@@ -44,8 +44,15 @@ impl WorkingTree {
     /// Whether a row shows a mark for this. Clean draws nothing, and so does a checkout
     /// nobody has answered for yet — which is why the commonest transition of all does not
     /// rebuild the list.
+    ///
+    /// Spelled out rather than written as `!= Clean`, which is the same thing today and
+    /// would go on compiling as an answer that draws nothing was added. This has to track
+    /// `domain::rows::marks`, and the compiler is the only thing that will say so.
     pub fn is_drawn(self) -> bool {
-        self != WorkingTree::Clean
+        match self {
+            WorkingTree::Clean => false,
+            WorkingTree::Dirty | WorkingTree::Unreadable => true,
+        }
     }
 }
 

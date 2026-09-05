@@ -44,11 +44,11 @@ pub fn run(
     let (_, tree) = collect::collect_tree(herdr, git)?;
     let mut state = PanesState::new(tree, home_dir());
     // Both outlive this view: a removal started before a trip through the branches view is
-    // still going, and a working tree walked once does not need walking again. These two
-    // have to be seeded because `show_answers` only refreshes them when `drain` reports a
-    // change, and coming back to a view where nothing has moved reports none. `set_waiting`
-    // needs no seeding — `show_answers` sets it every frame, and the first one runs before
-    // the first draw.
+    // still going, and a working tree walked once does not need walking again. Only
+    // `set_removing` has to be seeded, because `show_answers` never touches it — the
+    // removals are not its to know about. `set_working_trees` and `set_waiting` need no
+    // seeding: `show_answers` sets both every frame, and the first frame runs before the
+    // first draw.
     dirty.ask(state.tree());
     state.set_working_trees(dirty.answers());
     state.set_removing(removals.paths());
@@ -143,7 +143,7 @@ pub fn run(
 /// whether any of it is still coming.
 ///
 /// Split out of the loop because everything the loop does is otherwise untestable — it needs
-/// a terminal and a keyboard — and this is the part with consequences. `set_answered` in
+/// a terminal and a keyboard — and this is the part with consequences. `set_working_trees` in
 /// particular has to run every frame and not only when a marker moved: a clean answer moves
 /// none, and it is exactly the answer that turns a refusal into an offer. Left out, every
 /// checkout with panes in it answers "still reading that working tree" for the life of the
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn the_loop_hands_on_a_dirty_answer_too_or_nothing_is_ever_protected() {
-        // The negative twin of the test below, and the one with teeth. `set_answered` alone
+        // The negative twin of the test below, and the one with teeth. A `Clean` answer alone
         // is what clears "still reading"; the dirty answer is what the refusal is made of.
         // Hand on the first without the second and `Shift-D` walks straight into the
         // confirmation box for a checkout full of working agents. `y` then closes every one
