@@ -1,0 +1,20 @@
+---
+source: src/ui/render.rs
+expression: "screen(&state, 46, 16)"
+---
+" / sweep                             2 marked "
+"──────────────────────────────────────────────"
+" ◆ ● me/app (3)                              █"
+"   ├── ● main             /wt/main           █"
+" ◆ │  ├── ● claude        w1:p1              █"
+"   │  └── · shell         w1:p2              █"
+"   ├── ○ feat/l…  gone    /wt/feat-login     █"
+"   │  └── ○ codex         w2:p1              █"
+"[x]└── · fix/cr…  gone    /wt/fix-crash      █"
+"                                             █"
+"   ● me/site (1)                             █"
+"   ├── ● develop          /wt/develop        │"
+"   │  └── ● claude        w3:p1              │"
+"[x]└── ·   PR #1234 merged    /wt/chore-deps │"
+" me/app · main · w1:p1 · working · /wt/main ──"
+" space mark  ↑↓ move  esc done                "
