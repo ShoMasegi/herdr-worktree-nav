@@ -10,6 +10,8 @@ use std::collections::BTreeMap;
 use crate::domain::model::{Tree, WorkingTree};
 use crate::domain::removal::Removal;
 use crate::domain::rows::{self, DisplayLine, Row, RowRef, StateFilter, ViewOptions};
+use crate::domain::sweep::{self, Changes, Mark, RepoRoot};
+use crate::port::SettledPullRequests;
 
 /// What the event loop should do about a key. Anything that touches herdr is returned
 /// rather than performed, so the terminal can be restored first.
@@ -65,6 +67,39 @@ pub struct PanesState {
     tick: usize,
     /// Whether an answer is still on its way, which the prompt line says with a spinner.
     waiting: bool,
+    /// The sweep, or `None` in the ordinary mode. Holding it here rather than as a flag
+    /// beside the changes is what makes leaving the sweep forget them: the next one opens on
+    /// what the sweep suggests, not on what the last one was talked into.
+    sweep: Option<Sweeping>,
+}
+
+/// What the cursor is on, in terms that survive the row list being rebuilt.
+enum Anchor {
+    Checkout(String),
+    Pane(String),
+}
+
+/// A sweep in progress: what `gh` has said, and what the user has said back.
+///
+/// The candidates themselves are not kept. They are worked out from the tree and the facts
+/// on every rebuild, because every one of their inputs — a working tree answering, a removal
+/// starting, `gh` landing, the tree being read again — changes underneath the sweep while it
+/// is on screen, and a stored judgement would be the one that goes stale.
+#[derive(Default)]
+struct Sweeping {
+    changes: Changes,
+    settled: BTreeMap<RepoRoot, Option<SettledPullRequests>>,
+    /// What went wrong asking `gh`, for the prompt line. Names the repository and says why;
+    /// the rows say which checkouts it cost.
+    trouble: Option<String>,
+    /// Whether `gh` is still being waited on. Its own flag rather than the picker's
+    /// `waiting`, because the two are waited for at different times and say different
+    /// sentences — and because a sweep whose rows look decided while `gh` is still out is a
+    /// sweep that will change its mind under the cursor.
+    waiting: bool,
+    /// Whether the loop has been told this sweep was entered. One shot, read through
+    /// [`PanesState::sweep_entered`].
+    announced: bool,
 }
 
 /// The answers a row puts a marker on. Clean and not-yet-answered are both absent here, and
@@ -97,13 +132,14 @@ impl PanesState {
             message: None,
             tick: 0,
             waiting: false,
+            sweep: None,
         };
         state.rebuild(None);
         state
     }
 
-    /// Replace the tree after a reload, keeping the cursor on the same pane when it is
-    /// still there.
+    /// Replace the tree after a reload, keeping the cursor on the row it was on when that
+    /// row is still there.
     pub fn replace_tree(&mut self, tree: Tree) {
         // A question on screen is about the panes the tree had when it was asked. Another
         // removal finishing is the ordinary way for that to stop being true — tidying up
@@ -113,21 +149,14 @@ impl PanesState {
         if self.pending_removal.take().is_some() {
             self.message = Some("the list changed while that was up — ask again".into());
         }
-        let anchor = self.selected_pane_id().map(str::to_string);
+        // The row, whichever kind it is. Anchored to a pane alone, a cursor on a checkout
+        // was put back by line index against a list that had just got shorter — onto the
+        // next checkout down, with the user's `Space` about to land on it.
+        let anchor = self.anchor();
         let at = self.cursor;
         self.tree = tree;
-        self.rebuild(anchor.as_deref());
-        // The pane the cursor was on is gone — it was closed, or its checkout was removed.
-        // Keeping the place beats going back to the top: tidying up comes in batches, and
-        // the next thing to tidy is near the last one, not at the start of the list.
-        //
-        // Only here. `rebuild`'s other callers are the search box, where the list that comes
-        // back has nothing to do with the one that went in and the first match is the place
-        // to be.
-        if anchor.is_none_or(|pane_id| self.line_of_pane(&pane_id).is_none()) {
-            let from = at.min(self.lines.len().saturating_sub(1));
-            self.cursor = rows::next_row(&self.rows, &self.lines, from).unwrap_or(0);
-        }
+        self.relist();
+        self.restore_cursor(anchor, at);
     }
 
     /// Say what git has said about each working tree so far. Arrives after the first frame,
@@ -142,18 +171,23 @@ impl PanesState {
         if self.options.working_trees == answers {
             return;
         }
-        // Every answer is kept, and only the ones a row would draw are worth rebuilding the
-        // list for. The commonest transition of all — a checkout nobody has asked about
-        // turning out to be clean — draws the same before and after, and there are as many
-        // of those as there are checkouts.
-        let redraws = marked(&self.options.working_trees) != marked(&answers);
+        // Every answer is kept, and outside a sweep only the ones a row would draw are worth
+        // rebuilding the list for. The commonest transition of all — a checkout nobody has
+        // asked about turning out to be clean — draws the same before and after, and there
+        // are as many of those as there are checkouts.
+        //
+        // A sweep is the exception, and `Clean` is exactly why: it is the answer no row
+        // draws and the answer the sweep turns into a mark. Judging on the drawn markers
+        // alone left a sweep permanently short, with no other rebuild in reach — `/`, `r`,
+        // `b` and `d` are all `Ignored` while one is on.
+        let redraws =
+            self.sweep.is_some() || marked(&self.options.working_trees) != marked(&answers);
         self.options.working_trees = answers;
         if redraws {
             // The cursor is not touched at all, which says the promise above more strongly
             // than clamping it would: this feeds nothing but `Row::working_tree`, so the row
             // list that comes back has the same length and the same order it went in with.
-            self.rows = rows::flatten(&self.tree, &self.options);
-            self.lines = rows::display_lines(&self.rows);
+            self.relist();
         }
     }
 
@@ -177,12 +211,15 @@ impl PanesState {
         if self.options.removing == paths {
             return;
         }
-        self.options.removing = paths;
+        // The anchor changes nothing here: the list keeps its shape, so the line the cursor
+        // was on is still the line its row is on, and a row that has just become one of
+        // these is stepped off either way. Passed all the same, so that there is one way of
+        // putting the cursor back and this is not the caller that remembers a different one.
+        let anchor = self.anchor();
         let at = self.cursor;
-        self.rows = rows::flatten(&self.tree, &self.options);
-        self.lines = rows::display_lines(&self.rows);
-        self.cursor =
-            rows::next_row(&self.rows, &self.lines, at.min(self.lines.len())).unwrap_or(0);
+        self.options.removing = paths;
+        self.relist();
+        self.restore_cursor(anchor, at);
     }
 
     /// Advance the spinner one frame. Called by the loop that owns the clock, and only
@@ -201,6 +238,19 @@ impl PanesState {
         if let Some(index) = self.line_of_pane(pane_id) {
             self.cursor = index;
         }
+    }
+
+    /// The line a checkout's own row is drawn on.
+    fn line_of_checkout(&self, checkout_path: &str) -> Option<usize> {
+        self.lines.iter().position(|line| match line {
+            DisplayLine::Spacer => false,
+            DisplayLine::Row(index) => match self.rows[*index].reference {
+                RowRef::Worktree(r, w) => {
+                    self.tree.repos[r].worktrees[w].checkout_path == checkout_path
+                }
+                _ => false,
+            },
+        })
     }
 
     fn line_of_pane(&self, pane_id: &str) -> Option<usize> {
@@ -293,19 +343,254 @@ impl PanesState {
         }
     }
 
+    /// Judge, list, and go to the top — or to a pane, when the caller names one. What the
+    /// search box wants, and the state filter with it: the list a query or a filter returns
+    /// has nothing to do with the one it replaced, and the first match is the place to be —
+    /// unless the filter kept the pane the cursor was on, which is what `anchor` is for. A
+    /// list that is the same one with a change in it wants
+    /// [`restore_cursor`](Self::restore_cursor) instead.
     fn rebuild(&mut self, anchor: Option<&str>) {
-        self.rows = rows::flatten(&self.tree, &self.options);
-        self.lines = rows::display_lines(&self.rows);
+        self.relist();
         self.cursor = rows::next_row(&self.rows, &self.lines, 0).unwrap_or(0);
         if let Some(pane_id) = anchor {
             self.focus_pane(pane_id);
         }
     }
 
+    /// Judge every checkout and lay the rows out again. Every change to the tree, the
+    /// options or the sweep comes through here; where the cursor goes afterwards is the
+    /// caller's to say.
+    fn relist(&mut self) {
+        self.options.sweep = self.judge();
+        self.rows = rows::flatten(&self.tree, &self.options);
+        self.lines = rows::display_lines(&self.rows);
+    }
+
+    /// Put the cursor back after [`relist`](Self::relist) has changed the list under it.
+    ///
+    /// On the row it was on, when that row is still listed and the cursor may still stop
+    /// there. The row rather than the line, because the line index is what moves: a filter
+    /// cleared makes the list longer and a checkout removed makes it shorter, and the same
+    /// index then names a different checkout — or a pane, where `Space` is answered and
+    /// says nothing. Not the row when the cursor may no longer stop on it: leaving a sweep
+    /// is what makes a checkout with panes in it unselectable again, and a cursor left
+    /// there is a highlight the arrow keys can never put back.
+    ///
+    /// Otherwise the nearest line at or after where it was, wrapping to the top only when
+    /// nothing at or after it may be stopped on: tidying up comes in batches, and the next
+    /// thing to tidy is near the last one.
+    fn restore_cursor(&mut self, anchor: Option<Anchor>, at: usize) {
+        self.cursor = anchor
+            .and_then(|anchor| self.line_of_anchor(&anchor))
+            .filter(|&line| rows::selectable(&self.rows, &self.lines, line))
+            .or_else(|| {
+                let from = at.min(self.lines.len().saturating_sub(1));
+                rows::next_row(&self.rows, &self.lines, from)
+            })
+            .unwrap_or(0);
+    }
+
+    /// What a sweep would do with every checkout, or `None` when no sweep is on.
+    ///
+    /// Run on every rebuild rather than kept, because everything it decides on moves while
+    /// the sweep is on screen: a working tree answers, a removal starts, `gh` lands, `r`
+    /// reads the tree again. The user's changes are what is kept; the judgement is not.
+    fn judge(&self) -> Option<BTreeMap<String, Mark>> {
+        let sweeping = self.sweep.as_ref()?;
+        let candidates = sweep::candidates(
+            &self.tree,
+            &sweep::Facts {
+                working_trees: &self.options.working_trees,
+                settled: &sweeping.settled,
+                removing: &self.options.removing,
+            },
+        );
+        // Filtered here rather than where the tree is set, so no call site has to remember
+        // it: this is the only place a `Mark` is made, and `chosen` reads the marks.
+        Some(sweep::marks(
+            &candidates,
+            &sweeping.changes.still_about(&self.tree),
+        ))
+    }
+
+    /// Whether a sweep is on. The prompt line and the gutter both change with it.
+    pub fn is_sweeping(&self) -> bool {
+        self.sweep.is_some()
+    }
+
+    /// What `gh` has said, and what went wrong saying it.
+    ///
+    /// Ignored outside a sweep: the answers are asked for on entering one and would have
+    /// nowhere to be shown otherwise. Landing them is a rebuild, since a row that could not
+    /// be judged a moment ago now says which pull request decided it.
+    pub fn set_settled(
+        &mut self,
+        settled: BTreeMap<RepoRoot, Option<SettledPullRequests>>,
+        trouble: Option<String>,
+        waiting: bool,
+    ) {
+        let Some(sweeping) = self.sweep.as_mut() else {
+            return;
+        };
+        let unchanged = sweeping.settled == settled
+            && sweeping.trouble == trouble
+            && sweeping.waiting == waiting;
+        if unchanged {
+            return;
+        }
+        sweeping.settled = settled;
+        sweeping.trouble = trouble;
+        sweeping.waiting = waiting;
+        // The cursor is not touched: this feeds nothing but `Row::sweep`, so the list that
+        // comes back is the same length in the same order.
+        self.relist();
+    }
+
+    /// What went wrong asking `gh`, for the prompt line.
+    pub fn sweep_trouble(&self) -> Option<&str> {
+        self.sweep.as_ref()?.trouble.as_deref()
+    }
+
+    /// Whether a sweep has been entered since this was last asked. True once per entry.
+    ///
+    /// The loop reads it on the frame after `Shift-S` and asks `gh` again where it refused
+    /// last time — `app::settled::Settled::forget_failures`. Asked here rather than
+    /// answered by the key, because what has to happen is not herdr's to perform: it is a
+    /// change to what the loop is waiting on, which the loop owns and this cannot see.
+    pub fn sweep_entered(&mut self) -> bool {
+        let Some(sweeping) = self.sweep.as_mut() else {
+            return false;
+        };
+        !std::mem::replace(&mut sweeping.announced, true)
+    }
+
+    /// Whether `gh` is still out. The prompt line turns a spinner for it, because until it
+    /// answers the rows are showing what git alone decided — which is a smaller sweep than
+    /// the one the user is about to get, and it is about to change under their cursor.
+    pub fn is_asking_gh(&self) -> bool {
+        self.sweep.as_ref().is_some_and(|sweeping| sweeping.waiting)
+    }
+
+    /// How many checkouts carry a mark. Shown where the pane count is outside a sweep,
+    /// because during one it is the number the user is deciding about.
+    pub fn marked_count(&self) -> usize {
+        self.options
+            .sweep
+            .as_ref()
+            .map(|marks| marks.values().filter(|mark| mark.is_going()).count())
+            .unwrap_or(0)
+    }
+
+    /// Every checkout the sweep would remove, in path order.
+    ///
+    /// The answer `Enter` will act on; it is not bound yet. Empty outside a sweep, which is
+    /// not the same as "nothing is marked" but leads to the same place: nothing is removed.
+    pub fn chosen(&self) -> Vec<String> {
+        let Some(marks) = self.options.sweep.as_ref() else {
+            return Vec::new();
+        };
+        marks
+            .iter()
+            .filter(|(_, mark)| mark.is_going())
+            .map(|(path, _)| path.clone())
+            .collect()
+    }
+
+    /// Enter the sweep, or leave it.
+    ///
+    /// Leaving forgets the changes. A sweep is a decision taken in one sitting — ADR 0011's
+    /// "nothing is deleted that was not on the screen with a mark against it" is about the
+    /// screen the user is looking at, and marks that outlived a trip through the branches
+    /// view would be marks they last saw some time ago.
+    fn set_sweeping(&mut self, sweeping: bool) -> Action {
+        self.sweep = sweeping.then(Sweeping::default);
+        if sweeping {
+            // Everything the sweep judges has to be on the screen it judged it on — ADR
+            // 0011 says so in those words, and it is the promise `Enter` will act against.
+            // `judge` walks the tree and the rows walk the filtered list, so a sweep entered
+            // under `/login` marked and counted checkouts nothing on screen mentioned.
+            //
+            // Clearing is the version of that a reader can hold: with no query and no state
+            // filter, `flatten` drops nothing, so what is judged and what is drawn are the
+            // same list by construction rather than by a second filter agreeing with the
+            // first. `/` and the state keys are `Ignored` while a sweep is on, so it cannot
+            // become filtered again underneath one.
+            self.options.query.clear();
+            self.options.state_filter = None;
+        }
+        let anchor = self.anchor();
+        let at = self.cursor;
+        self.relist();
+        self.restore_cursor(anchor, at);
+        Action::Consumed
+    }
+
+    /// Add or remove the mark on the row under the cursor.
+    fn flip_mark(&mut self) -> Action {
+        let Some(row) = self.selected() else {
+            return Action::Consumed;
+        };
+        let RowRef::Worktree(repo, worktree) = row.reference else {
+            // A group or a pane. Not a checkout, so there is nothing here to sweep, and
+            // saying so on every stray `Space` would be noise.
+            return Action::Consumed;
+        };
+        let checkout = &self.tree.repos[repo].worktrees[worktree];
+        let Some(mark) = self
+            .options
+            .sweep
+            .as_ref()
+            .and_then(|marks| marks.get(&checkout.checkout_path))
+        else {
+            return Action::Consumed;
+        };
+        // The refusal is the whole message. Which checkout it is about is the row the cursor
+        // is on, and the user is looking at it.
+        if let Some(refusal) = mark.refusal() {
+            self.message = Some(refusal.to_string());
+            return Action::Consumed;
+        }
+        // The whole checkout, not its path: what the user said is about the branch the row
+        // was showing, and a path is reused.
+        let answer = mark.clone();
+        let checkout = self.tree.repos[repo].worktrees[worktree].clone();
+        if let Some(sweeping) = self.sweep.as_mut() {
+            sweeping.changes.flip(&checkout, &answer);
+        }
+        self.relist();
+        Action::Consumed
+    }
+
     fn selected(&self) -> Option<&Row> {
         match self.lines.get(self.cursor)? {
             DisplayLine::Spacer => None,
             DisplayLine::Row(index) => self.rows.get(*index),
+        }
+    }
+
+    /// What the cursor is on, said in a way that survives the list being rebuilt: a checkout
+    /// by its path, a pane by its id.
+    ///
+    /// A line index does not survive, and clearing a filter is exactly the case where it
+    /// looks as though it might: the index came from a list of four rows and is used against
+    /// a list of fifteen, so the cursor lands on whatever happens to be fourth. What the user
+    /// searched for is the one row they were not looking at any more.
+    fn anchor(&self) -> Option<Anchor> {
+        let row = self.selected()?;
+        match row.reference {
+            RowRef::Worktree(r, w) => Some(Anchor::Checkout(
+                self.tree.repos[r].worktrees[w].checkout_path.clone(),
+            )),
+            _ => self
+                .selected_pane_id()
+                .map(|id| Anchor::Pane(id.to_string())),
+        }
+    }
+
+    fn line_of_anchor(&self, anchor: &Anchor) -> Option<usize> {
+        match anchor {
+            Anchor::Checkout(path) => self.line_of_checkout(path),
+            Anchor::Pane(pane_id) => self.line_of_pane(pane_id),
         }
     }
 
@@ -516,6 +801,42 @@ impl PanesState {
             return self.handle_filter_key(key);
         }
 
+        // A sweep is a mode, and the keys that mean something in it are its own. Only the
+        // ones that move the cursor are shared, because a list you cannot walk is a list you
+        // cannot decide about.
+        if self.is_sweeping() {
+            match key.code {
+                // Leaving is not quitting. `q` out of a sweep puts the picker back rather
+                // than closing it, because the sweep is what the user opened last and it is
+                // what they are getting out of.
+                KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('S') => {
+                    return self.set_sweeping(false)
+                }
+                KeyCode::Char(' ') => return self.flip_mark(),
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.move_cursor(1);
+                    return Action::Consumed;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.move_cursor(-1);
+                    return Action::Consumed;
+                }
+                KeyCode::Right | KeyCode::Char('l') => {
+                    self.move_group(1);
+                    return Action::Consumed;
+                }
+                KeyCode::Left | KeyCode::Char('h') => {
+                    self.move_group(-1);
+                    return Action::Consumed;
+                }
+                // Everything else, deliberately. A sweep is the one mode where a key that
+                // half works is dangerous: `D` here would ask about one checkout while the
+                // marks say something about twenty, and `Tab` would leave marks behind on a
+                // screen the user has left.
+                _ => return Action::Ignored,
+            }
+        }
+
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => Action::Quit,
             KeyCode::Down | KeyCode::Char('j') => {
@@ -547,6 +868,9 @@ impl PanesState {
                 Action::Consumed
             }
             KeyCode::Char('D') => self.ask_to_remove(),
+            // The sweep. `Shift-S` beside `Shift-D` because they are the two keys that
+            // delete things, and both are shifted for that reason.
+            KeyCode::Char('S') => self.set_sweeping(true),
             // A repository under the cursor is a preselection, not a requirement: the
             // branches picker starts by asking which repository anyway.
             KeyCode::Tab => Action::ShowBranches {
@@ -616,7 +940,9 @@ mod tests {
     }
     use super::*;
     use crate::domain::model::{PaneNode, RepoNode, WorktreeNode};
+    use crate::domain::sweep::{Reason, Refusal};
     use crate::port::AgentStatus;
+    use crate::port::{PullRequestOutcome, SettledPullRequest, Track};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -689,8 +1015,632 @@ mod tests {
             .unwrap();
     }
 
+    fn cursor_label(state: &PanesState) -> String {
+        match state.lines()[state.cursor] {
+            DisplayLine::Row(index) => state.rows()[index].label.clone(),
+            DisplayLine::Spacer => panic!("the cursor is on a spacer"),
+        }
+    }
+
     fn row_labels(state: &PanesState) -> Vec<String> {
         state.rows().iter().map(|r| r.label.clone()).collect()
+    }
+
+    /// A sweep with git's answers in place, and one checkout in each shape the sweep can
+    /// see: `main` is the repository's own, `feat/login` is clean and nobody is finished
+    /// with it, `fix/crash` has a gone upstream, and `feat/wip` has an agent in it.
+    ///
+    /// `feat/login`'s pane goes, because the shared fixture gives it one and a checkout with
+    /// panes in it is refused before anything else is asked about it — which would leave the
+    /// interesting half of these tests unreachable.
+    fn sweeping() -> PanesState {
+        let mut state = state();
+        state.tree.repos[0].worktrees[1].panes.clear();
+        state.tree.repos[0].worktrees[1].open_workspace_id = None;
+        state.tree.repos[0].worktrees[2].track = Some(Track::Gone);
+        state.tree.repos[0].worktrees.push(WorktreeNode {
+            branch: Some("feat/wip".into()),
+            checkout_path: "/wt/app/feat-wip".into(),
+            is_primary: false,
+            open_workspace_id: Some("w3".into()),
+            track: Some(Track::Gone),
+            panes: vec![pane("w3:p1", "codex", AgentStatus::Working)],
+        });
+        state.replace_tree(state.tree.clone());
+        state.set_working_trees(BTreeMap::from([
+            ("/src/app".to_string(), WorkingTree::Clean),
+            ("/wt/app/feat-login".to_string(), WorkingTree::Clean),
+            ("/wt/app/fix-crash".to_string(), WorkingTree::Clean),
+            ("/wt/app/feat-wip".to_string(), WorkingTree::Clean),
+        ]));
+        assert_eq!(state.handle_key(key(KeyCode::Char('S'))), Action::Consumed);
+        state
+    }
+
+    fn mark_of(state: &PanesState, label: &str) -> Option<Mark> {
+        state
+            .rows()
+            .iter()
+            .find(|row| row.label == label)
+            .unwrap_or_else(|| panic!("no row labelled {label}"))
+            .sweep
+            .clone()
+    }
+
+    #[test]
+    fn the_sweep_opens_with_what_git_already_knew_marked() {
+        let state = sweeping();
+        assert!(state.is_sweeping());
+        assert_eq!(
+            mark_of(&state, "fix/crash"),
+            Some(Mark::Going(Reason::Gone)),
+            "clean, nothing running in it, and its upstream is gone"
+        );
+        assert_eq!(mark_of(&state, "feat/login"), Some(Mark::Staying));
+        assert_eq!(
+            mark_of(&state, "main"),
+            Some(Mark::Refused(Refusal::Primary))
+        );
+        assert_eq!(
+            mark_of(&state, "feat/wip"),
+            Some(Mark::Refused(Refusal::Running)),
+            "its upstream is gone too, and somebody is working in it"
+        );
+        assert_eq!(
+            mark_of(&state, "claude"),
+            None,
+            "a pane is not a checkout and has nothing to sweep"
+        );
+        assert_eq!(state.chosen(), vec!["/wt/app/fix-crash".to_string()]);
+    }
+
+    #[test]
+    fn a_working_tree_answering_clean_during_a_sweep_reaches_the_marks() {
+        // The ordering that actually happens: `gh` is one call per repository and lands
+        // quickly, the walk is one process per checkout and lands after. Clean is the answer
+        // the sweep turns into a mark, and it is also the one answer no row draws — so the
+        // rebuild that the drawn markers decide on never fires for it.
+        //
+        // Nothing else would catch it either. During a sweep `/`, `r`, `b` and `d` are all
+        // `Ignored`, so the only rebuild a user can reach is `Space` on some other row.
+        let mut state = state();
+        state.tree.repos[0].worktrees[1].panes.clear();
+        state.tree.repos[0].worktrees[1].open_workspace_id = None;
+        state.tree.repos[0].worktrees[2].track = Some(Track::Gone);
+        state.replace_tree(state.tree.clone());
+        state.handle_key(key(KeyCode::Char('S')));
+        assert_eq!(
+            state.marked_count(),
+            0,
+            "nobody has answered for anything yet"
+        );
+
+        state.set_working_trees(BTreeMap::from([(
+            "/wt/app/fix-crash".to_string(),
+            WorkingTree::Clean,
+        )]));
+        assert_eq!(
+            mark_of(&state, "fix/crash"),
+            Some(Mark::Going(Reason::Gone)),
+            "clean is what the sweep was waiting for"
+        );
+        assert_eq!(state.marked_count(), 1);
+    }
+
+    #[test]
+    fn space_adds_a_mark_and_takes_it_away_again() {
+        let mut state = sweeping();
+        select(&mut state, "feat/login");
+
+        state.handle_key(key(KeyCode::Char(' ')));
+        assert_eq!(mark_of(&state, "feat/login"), Some(Mark::GoingByHand));
+        assert_eq!(
+            state.chosen(),
+            vec![
+                "/wt/app/feat-login".to_string(),
+                "/wt/app/fix-crash".to_string()
+            ]
+        );
+
+        state.handle_key(key(KeyCode::Char(' ')));
+        assert_eq!(mark_of(&state, "feat/login"), Some(Mark::Staying));
+        assert_eq!(state.chosen(), vec!["/wt/app/fix-crash".to_string()]);
+    }
+
+    #[test]
+    fn space_on_a_checkout_the_sweep_refuses_says_why_and_changes_nothing() {
+        // The repository's own checkout, which `git worktree remove` will not take. A
+        // keypress that silently did nothing would read as a picker that had stopped
+        // responding.
+        let mut state = sweeping();
+        select(&mut state, "main");
+
+        state.handle_key(key(KeyCode::Char(' ')));
+        assert_eq!(state.message(), Some("the repository itself"));
+        assert_eq!(
+            mark_of(&state, "main"),
+            Some(Mark::Refused(Refusal::Primary))
+        );
+        assert!(!state.chosen().contains(&"/src/app".to_string()));
+    }
+
+    #[test]
+    fn leaving_the_sweep_forgets_what_was_marked_in_it() {
+        // ADR 0011's "nothing is deleted that was not on the screen with a mark against it"
+        // is about the screen the user is looking at. A mark that survived a trip out of the
+        // sweep would be one they last saw some time ago.
+        let mut state = sweeping();
+        select(&mut state, "feat/login");
+        state.handle_key(key(KeyCode::Char(' ')));
+        assert_eq!(state.chosen().len(), 2);
+
+        assert_eq!(state.handle_key(key(KeyCode::Esc)), Action::Consumed);
+        assert!(!state.is_sweeping());
+        assert!(
+            state.chosen().is_empty(),
+            "and nothing is marked outside one"
+        );
+        assert_eq!(mark_of(&state, "fix/crash"), None);
+
+        state.handle_key(key(KeyCode::Char('S')));
+        assert_eq!(
+            state.chosen(),
+            vec!["/wt/app/fix-crash".to_string()],
+            "the next sweep opens on what it suggests, not on what the last was talked into"
+        );
+    }
+
+    #[test]
+    fn a_sweep_judges_the_whole_list_because_it_opens_the_whole_list() {
+        // A sweep entered under a filter marked and counted checkouts nothing on screen
+        // mentioned — `judge` walks the tree and the rows walk the filtered list. ADR 0011's
+        // promise is in those words: nothing is deleted that was not on the screen with a
+        // mark against it.
+        let mut state = sweeping();
+        state.handle_key(key(KeyCode::Esc));
+        state.handle_key(key(KeyCode::Char('/')));
+        for character in "login".chars() {
+            state.handle_key(key(KeyCode::Char(character)));
+        }
+        state.handle_key(key(KeyCode::Enter));
+        assert!(
+            !row_labels(&state).contains(&"fix/crash".to_string()),
+            "the filter is on and fix/crash is off screen"
+        );
+
+        state.handle_key(key(KeyCode::Char('S')));
+        assert_eq!(state.query(), "", "the sweep opens the list it is judging");
+        assert!(row_labels(&state).contains(&"fix/crash".to_string()));
+        assert_eq!(
+            state.chosen(),
+            vec!["/wt/app/fix-crash".to_string()],
+            "and what is marked is on the screen it was marked on"
+        );
+    }
+
+    #[test]
+    fn a_state_filter_is_opened_by_a_sweep_too() {
+        let mut state = sweeping();
+        state.handle_key(key(KeyCode::Esc));
+        state.handle_key(key(KeyCode::Char('w')));
+        assert!(state.state_filter().is_some());
+
+        state.handle_key(key(KeyCode::Char('S')));
+        assert!(state.state_filter().is_none());
+        assert!(row_labels(&state).contains(&"fix/crash".to_string()));
+    }
+
+    #[test]
+    fn the_cursor_stops_on_every_checkout_a_sweep_has_something_to_say_about() {
+        // Two of the three refusals are on rows the cursor steps over outside a sweep — a
+        // checkout with panes in it is answered by the panes under it. In a sweep the
+        // checkout is the subject, and pressing `Space` on it is how its refusal is asked
+        // for, so a cursor that cannot reach it makes the sentence unreachable text.
+        let mut state = sweeping();
+        let mut reached = Vec::new();
+        for _ in 0..state.lines().len() {
+            if let Some(row) = state.rows().get(match state.lines()[state.cursor] {
+                DisplayLine::Row(index) => index,
+                DisplayLine::Spacer => continue,
+            }) {
+                reached.push(row.label.clone());
+            }
+            state.handle_key(key(KeyCode::Char('j')));
+        }
+        for checkout in ["main", "feat/login", "fix/crash", "feat/wip"] {
+            assert!(
+                reached.contains(&checkout.to_string()),
+                "{checkout} is a checkout the sweep has an answer for, and `j` never reached it"
+            );
+        }
+
+        // And the refusal it was stepping over is now askable.
+        select(&mut state, "feat/wip");
+        state.handle_key(key(KeyCode::Char(' ')));
+        assert_eq!(state.message(), Some("panes are running in it"));
+    }
+
+    #[test]
+    fn q_out_of_a_sweep_puts_the_picker_back_rather_than_closing_it() {
+        let mut state = sweeping();
+        assert_eq!(state.handle_key(key(KeyCode::Char('q'))), Action::Consumed);
+        assert!(!state.is_sweeping());
+        assert_eq!(
+            state.handle_key(key(KeyCode::Char('q'))),
+            Action::Quit,
+            "and the second one closes it"
+        );
+    }
+
+    #[test]
+    fn every_way_out_of_a_sweep_is_a_way_out_of_a_sweep() {
+        // The footer offers `shift+s done` beside `esc done`. Falling through to `Ignored`
+        // there is a picker that looks frozen on the one key the screen just told you to
+        // press — and the footer string is pinned, so the offer is real.
+        for out in [KeyCode::Char('S'), KeyCode::Esc, KeyCode::Char('q')] {
+            let mut state = sweeping();
+            select(&mut state, "feat/login");
+            state.handle_key(key(KeyCode::Char(' ')));
+            assert_eq!(state.chosen().len(), 2);
+
+            assert_eq!(state.handle_key(key(out)), Action::Consumed, "{out:?}");
+            assert!(!state.is_sweeping(), "{out:?} did not leave the sweep");
+            assert!(state.chosen().is_empty(), "{out:?} kept the marks");
+        }
+    }
+
+    #[test]
+    fn entering_a_sweep_from_a_search_leaves_the_cursor_on_what_was_searched_for() {
+        // The sweep opens the whole list, so the line the cursor was on in a list of four
+        // points at a different checkout in a list of fifteen — and the row the user typed a
+        // search to reach is the one they are no longer on. On a pane row `Space` is
+        // answered and says nothing, so the key they reach for next does nothing at all.
+        for query in ["crash", "wip", "login"] {
+            let mut state = sweeping();
+            state.handle_key(key(KeyCode::Esc));
+            state.handle_key(key(KeyCode::Char('/')));
+            for character in query.chars() {
+                state.handle_key(key(KeyCode::Char(character)));
+            }
+            state.handle_key(key(KeyCode::Enter));
+            let found = cursor_label(&state);
+
+            state.handle_key(key(KeyCode::Char('S')));
+            assert_eq!(
+                cursor_label(&state),
+                found,
+                "/{query} then Shift-S moved the cursor off the row it was on"
+            );
+        }
+
+        // And the row it stays on is the one that was searched for, not merely some row.
+        let mut state = sweeping();
+        state.handle_key(key(KeyCode::Esc));
+        state.handle_key(key(KeyCode::Char('/')));
+        for character in "crash".chars() {
+            state.handle_key(key(KeyCode::Char(character)));
+        }
+        state.handle_key(key(KeyCode::Enter));
+        state.handle_key(key(KeyCode::Char('S')));
+        assert_eq!(cursor_label(&state), "fix/crash");
+        assert_eq!(row_labels(&state).len(), 9, "on the whole list");
+    }
+
+    #[test]
+    fn entering_a_sweep_leaves_the_cursor_where_it_was() {
+        // Nothing about the list has changed except what each row says about itself. A
+        // cursor thrown back to the top makes the user find their place again on the one
+        // screen where where they are is the whole of what they are deciding about.
+        let mut state = sweeping();
+        state.handle_key(key(KeyCode::Esc));
+        select(&mut state, "fix/crash");
+        let at = state.cursor;
+
+        state.handle_key(key(KeyCode::Char('S')));
+        assert_eq!(state.cursor, at);
+        assert_eq!(cursor_label(&state), "fix/crash");
+    }
+
+    #[test]
+    fn a_removal_running_under_a_sweep_takes_the_checkout_out_of_it() {
+        // `Shift-D` on a checkout, then `Shift-S` while git is still walking its working
+        // tree. Offering to delete a checkout that is already being deleted is the one
+        // refusal that is about something happening right now rather than about what the
+        // checkout is.
+        let mut state = sweeping();
+        assert!(state.chosen().contains(&"/wt/app/fix-crash".to_string()));
+
+        state.set_removing(vec!["/wt/app/fix-crash".to_string()]);
+        assert_eq!(
+            mark_of(&state, "fix/crash"),
+            Some(Mark::Refused(Refusal::Removing))
+        );
+        assert!(!state.chosen().contains(&"/wt/app/fix-crash".to_string()));
+
+        // And when it ends without removing anything — git refused it, say — the row goes
+        // back to being the sweep's to offer.
+        state.set_removing(Vec::new());
+        assert_eq!(
+            mark_of(&state, "fix/crash"),
+            Some(Mark::Going(Reason::Gone))
+        );
+    }
+
+    #[test]
+    fn a_mark_does_not_move_to_whatever_is_at_that_path_next() {
+        // Reachable without leaving the sweep: a removal finishing re-reads the tree, and a
+        // second herdr session can have made a worktree where the last one was. The user's
+        // yes was about the branch on the row they were looking at.
+        let mut state = sweeping();
+        select(&mut state, "feat/login");
+        state.handle_key(key(KeyCode::Char(' ')));
+        assert!(state.chosen().contains(&"/wt/app/feat-login".to_string()));
+
+        let mut moved = state.tree.clone();
+        moved.repos[0].worktrees[1].branch = Some("release/v2".into());
+        state.replace_tree(moved);
+
+        assert!(
+            !state.chosen().contains(&"/wt/app/feat-login".to_string()),
+            "release/v2 has never been on the screen with a mark against it"
+        );
+        assert_eq!(mark_of(&state, "release/v2"), Some(Mark::Staying));
+    }
+
+    #[test]
+    fn a_tree_read_again_under_a_sweep_keeps_the_cursor_on_the_checkout_it_was_on() {
+        // A removal started before the sweep reports back, the loop reads the tree again,
+        // and the list is one row shorter above the cursor. Put back by line index, the
+        // cursor was on the next checkout down — and the `Space` the user had lined up
+        // marked, or unmarked, a checkout they never pointed at. In the next PR that is the
+        // list `Enter` deletes.
+        let mut state = sweeping();
+        let mut tree = state.tree().clone();
+        tree.repos[0].worktrees[3].panes.clear();
+        tree.repos[0].worktrees[3].open_workspace_id = None;
+        state.replace_tree(tree);
+        select(&mut state, "fix/crash");
+
+        let mut shorter = state.tree().clone();
+        shorter.repos[0].worktrees.remove(1);
+        state.replace_tree(shorter);
+
+        assert_eq!(cursor_label(&state), "fix/crash");
+        state.handle_key(key(KeyCode::Char(' ')));
+        assert_eq!(
+            mark_of(&state, "fix/crash"),
+            Some(Mark::Staying),
+            "the Space landed on the row the user was looking at"
+        );
+        assert!(
+            state.chosen().contains(&"/wt/app/feat-wip".to_string()),
+            "and not on the one below it"
+        );
+    }
+
+    #[test]
+    fn leaving_a_sweep_takes_the_cursor_off_a_checkout_it_may_no_longer_stop_on() {
+        // Inside a sweep every checkout is a row with an answer on it, so the cursor stops
+        // on one with panes in it. Outside, it does not — and put back on that row by name,
+        // the cursor sat where the arrow keys could never take it again, and `Enter` there
+        // reached an arm whose comment calls it unreachable.
+        let mut state = sweeping();
+        select(&mut state, "feat/wip");
+        state.handle_key(key(KeyCode::Esc));
+
+        assert!(!state.is_sweeping());
+        let row = state.selected().expect("the cursor is on a row");
+        assert!(row.is_selectable(), "on a row it may stop on");
+        assert_eq!(
+            row.label, "codex",
+            "the pane under the checkout, which is where to go"
+        );
+    }
+
+    #[test]
+    fn a_tree_read_again_under_a_sweep_is_judged_again() {
+        let mut state = sweeping();
+        assert!(state.chosen().contains(&"/wt/app/fix-crash".to_string()));
+
+        // The upstream came back — somebody pushed the branch again — and the tree was read
+        // again underneath the sweep.
+        let mut tree = state.tree.clone();
+        tree.repos[0].worktrees[2].track = None;
+        state.replace_tree(tree);
+        assert_eq!(mark_of(&state, "fix/crash"), Some(Mark::Staying));
+        assert!(state.chosen().is_empty());
+    }
+
+    #[test]
+    fn space_on_a_row_that_is_not_a_checkout_is_answered_and_says_nothing() {
+        // A repository heading, or a pane. `Ignored` would fall through to the loop as an
+        // unhandled key, and a message would be noise on every stray press.
+        let mut state = sweeping();
+        select(&mut state, "claude");
+        assert_eq!(state.handle_key(key(KeyCode::Char(' '))), Action::Consumed);
+        assert_eq!(state.message(), None);
+        assert_eq!(state.chosen(), vec!["/wt/app/fix-crash".to_string()]);
+    }
+
+    #[test]
+    fn the_cursor_keys_go_the_way_they_are_drawn_during_a_sweep() {
+        // `j` down and `k` up. Asserting only that the cursor moved and came back is
+        // satisfied by a pair that both go the wrong way.
+        let mut state = sweeping();
+        select(&mut state, "main");
+        state.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(cursor_label(&state), "claude", "j is down");
+        state.handle_key(key(KeyCode::Char('k')));
+        assert_eq!(cursor_label(&state), "main", "and k is back up");
+    }
+
+    #[test]
+    fn the_keys_that_act_on_one_row_are_not_answered_during_a_sweep() {
+        // `D` asks about the checkout under the cursor while the marks say something about
+        // twenty, and `Tab` would leave a screenful of marks behind. Both are `Ignored`
+        // rather than half-done.
+        for code in [
+            KeyCode::Char('D'),
+            KeyCode::Tab,
+            KeyCode::Enter,
+            KeyCode::Char('r'),
+            KeyCode::Char('n'),
+            KeyCode::Char('/'),
+        ] {
+            let mut state = sweeping();
+            select(&mut state, "fix/crash");
+            assert_eq!(
+                state.handle_key(key(code)),
+                Action::Ignored,
+                "{code:?} means something outside a sweep and nothing in one"
+            );
+            assert!(state.is_sweeping(), "and it did not leave the sweep either");
+        }
+    }
+
+    #[test]
+    fn the_cursor_still_walks_the_list_during_a_sweep() {
+        // A list you cannot walk is a list you cannot decide about.
+        let mut state = sweeping();
+        let first = state.cursor;
+        assert_eq!(state.handle_key(key(KeyCode::Char('j'))), Action::Consumed);
+        assert_ne!(state.cursor, first);
+        assert_eq!(state.handle_key(key(KeyCode::Char('k'))), Action::Consumed);
+        assert_eq!(state.cursor, first);
+    }
+
+    #[test]
+    fn a_row_gh_could_not_judge_says_so_and_is_still_the_users_to_mark() {
+        let mut state = sweeping();
+        // `gh` was asked about the repository and could not answer.
+        state.set_settled(
+            BTreeMap::from([(RepoRoot::of(&state.tree.repos[0]), None)]),
+            Some("gh could not be run: no such file or directory".to_string()),
+            false,
+        );
+
+        assert_eq!(mark_of(&state, "feat/login"), Some(Mark::Unjudged));
+        assert_eq!(
+            mark_of(&state, "fix/crash"),
+            Some(Mark::Going(Reason::Gone)),
+            "gh may only widen a sweep: it never clears a mark git put there"
+        );
+        assert_eq!(
+            state.sweep_trouble(),
+            Some("gh could not be run: no such file or directory")
+        );
+
+        select(&mut state, "feat/login");
+        state.handle_key(key(KeyCode::Char(' ')));
+        assert_eq!(
+            mark_of(&state, "feat/login"),
+            Some(Mark::GoingUnjudged),
+            "not judged is not refused — and the row goes on saying it was not judged"
+        );
+    }
+
+    #[test]
+    fn a_pull_request_gh_found_widens_the_sweep_and_says_which_one() {
+        let mut state = sweeping();
+        state.set_settled(
+            BTreeMap::from([(
+                RepoRoot::of(&state.tree.repos[0]),
+                Some(SettledPullRequests::All(vec![SettledPullRequest {
+                    number: 42,
+                    head_ref: "feat/login".to_string(),
+                    from_a_fork: false,
+                    outcome: PullRequestOutcome::Merged,
+                }])),
+            )]),
+            None,
+            false,
+        );
+
+        assert_eq!(
+            mark_of(&state, "feat/login"),
+            Some(Mark::Going(Reason::PullRequest {
+                number: 42,
+                outcome: PullRequestOutcome::Merged,
+            }))
+        );
+        assert_eq!(state.sweep_trouble(), None);
+        assert_eq!(
+            state.chosen(),
+            vec![
+                "/wt/app/feat-login".to_string(),
+                "/wt/app/fix-crash".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn gh_landing_does_not_move_the_cursor() {
+        // It arrives on its own, after a frame the user is already reading. A cursor that
+        // jumped when the network answered would move the row under a `Space` about to be
+        // pressed.
+        let mut state = sweeping();
+        select(&mut state, "feat/login");
+        let at = state.cursor;
+        state.set_settled(
+            BTreeMap::from([(RepoRoot::of(&state.tree.repos[0]), None)]),
+            None,
+            false,
+        );
+        assert_eq!(state.cursor, at);
+    }
+
+    #[test]
+    fn a_sweep_says_it_was_entered_once_and_then_stops_saying_so() {
+        // The loop asks on every frame, and what it does with a yes is ask `gh` again
+        // where it refused. Answered on every frame, that is a `gh` call per frame for
+        // as long as it keeps refusing.
+        let mut state = state();
+        assert!(!state.sweep_entered(), "no sweep, so nothing was entered");
+        state.handle_key(key(KeyCode::Char('S')));
+        assert!(state.sweep_entered());
+        assert!(!state.sweep_entered(), "once per entry");
+        state.handle_key(key(KeyCode::Esc));
+        assert!(!state.sweep_entered(), "leaving is not entering");
+        state.handle_key(key(KeyCode::Char('S')));
+        assert!(state.sweep_entered(), "and once more on the next entry");
+    }
+
+    #[test]
+    fn git_answering_does_not_move_the_cursor_either() {
+        // The twin of the test above, for the answers that arrive first and most often:
+        // the working trees reporting in, one at a time, in the seconds after the picker
+        // opens. Relisted from the top on each, the cursor was yanked back once per answer
+        // under the arrow keys, with `Shift-D` aimed at whatever was then beneath it.
+        let mut state = state();
+        select(&mut state, "fix/crash");
+        let at = state.cursor;
+        state.set_working_trees(answers(&[("/wt/app/feat-login", WorkingTree::Dirty)]));
+        assert_eq!(state.cursor, at);
+        assert_eq!(cursor_label(&state), "fix/crash");
+    }
+
+    #[test]
+    fn a_removal_starting_elsewhere_leaves_the_cursor_where_it_was() {
+        // `the_cursor_steps_off_a_checkout_once_its_removal_has_started` says where the
+        // cursor is not. This says where it is: relisted from the top instead, `Shift-D`
+        // and `y` sent the cursor to the top of the picker — which is also "off the row",
+        // so nothing noticed.
+        let mut state = state();
+        select(&mut state, "fix/crash");
+        state.set_removing(vec!["/wt/app/feat-login".into()]);
+        assert_eq!(cursor_label(&state), "fix/crash");
+    }
+
+    #[test]
+    fn what_gh_says_outside_a_sweep_has_nowhere_to_go() {
+        let mut state = state();
+        state.set_settled(
+            BTreeMap::from([(RepoRoot::of(&state.tree.repos[0]), None)]),
+            Some("gh could not be run".to_string()),
+            false,
+        );
+        assert_eq!(state.sweep_trouble(), None);
+        assert!(state.chosen().is_empty());
     }
 
     #[test]
@@ -906,6 +1856,25 @@ mod tests {
 
         assert_ne!(state.cursor(), 0, "not back at the top");
         assert!(state.cursor() >= before.saturating_sub(1));
+    }
+
+    #[test]
+    fn a_reload_that_takes_the_last_row_away_keeps_the_bottom_rather_than_the_top() {
+        // The index the cursor had is past the end of the list that came back. Clamped to
+        // the length rather than the last line, `next_row` starts at `len`, which wraps to
+        // `0` — and a cursor at the bottom of the list went to the top of it.
+        let mut state = state();
+        select(&mut state, "zsh");
+
+        let mut without = state.tree().clone();
+        without.ungrouped.clear();
+        state.replace_tree(without);
+
+        assert_eq!(
+            cursor_label(&state),
+            "fix/crash",
+            "the new last row, not the first"
+        );
     }
 
     #[test]

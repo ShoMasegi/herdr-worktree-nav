@@ -106,6 +106,10 @@ herdr 側は CI ではテストできません（サーバーが無いため）�
 - [ ] `←`/`→` が 1 押しで 1 リポジトリ動き、その最初の pane または最初の idle checkout に着く。端で巻き戻り、リポジトリに属さない pane 群も対象に含まれる
 - [ ] 別の space の pane で `Enter` を押すとそこへ移動し、popup が閉じた後もそこに留まる
 - [ ] `n` でカーソル位置の checkout に pane が追加される
+- [ ] `Shift-S` で sweep が開く。upstream が `gone` で working tree が clean な checkout に `[x]` が付き、pane が動いている checkout には箱が付かず、そこで `Space` を押すと `panes are running in it` と出る。sweep 中はカーソルがすべての checkout に止まる（sweep 外と違う点）。`Space` でマークが増減し、右の数字がそれに追随する
+- [ ] `gh` が入っていてログイン済みなら、クローズ済み pull request のあるリポジトリで sweep に入ると `asking gh…` が出て、その後マージ済み pull request を持つブランチにマークが付き、行に `PR #<n> merged` が出る。**この経路は CI では通せない** — スイート内で `gh` を起動するものは何も無い
+- [ ] `gh` を `PATH` から外す、または GitHub リモートの無いリポジトリで試すと、sweep は git の判断だけで開き、該当行は `PR unknown` と出て、プロンプト行がどのリポジトリで何が起きたかを一度だけ言う。`PR unknown` の行で `Space` を押すとマークが付き、`PR unknown` は残る。`gh` を戻して `Esc`、そして `Shift-S` を押すと、`r` 無しで行が埋まる
+- [ ] `/login` と入力してから `Shift-S` を押すと一覧が開き直る（sweep が判定するものは画面に出ているものと一致する）
 - [ ] `no pane` の行で `Shift-D` を押すとブランチ名とパスを載せた枠が出て、`y` で checkout が消えブランチは残る。他のキーは取り消し。リポジトリ自身の checkout では断られ、未コミットの変更がある checkout では git の理由が出る
 - [ ] pane の上で `Shift-D` を押すと、その pane が居る checkout について訊かれ、閉じられる pane が枠にすべて並ぶ（別の tab や space へ移した pane も含む）。`y` で全部閉じてから checkout が消える
 - [ ] そのあと **空の workspace や tab が残っていない**。herdr が畳むことは 0.7.4 で実測済みで、これはその回帰確認（CI には試す相手のサーバーが無い）

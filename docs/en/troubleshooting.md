@@ -131,6 +131,21 @@ through this against a real session.
 - [ ] `Enter` on a pane in another space lands there — and stays there after the popup
       closes.
 - [ ] `n` adds a pane to the checkout under the cursor.
+- [ ] `Shift-S` opens the sweep. Checkouts whose upstream is `gone` and whose working tree
+      is clean carry `[x]`; ones with panes running in them carry no box, and `Space` on one
+      says `panes are running in it`. The cursor stops on every checkout, unlike outside a
+      sweep. `Space` adds and removes a mark and the count on the right follows it.
+- [ ] With `gh` installed and logged in, entering the sweep in a repository with closed pull
+      requests shows `asking gh…` and then marks any branch whose pull request was merged,
+      with `PR #<n> merged` on the row. **CI cannot reach this path** — nothing in the suite
+      runs `gh`.
+- [ ] With `gh` removed from `PATH`, or in a repository with no GitHub remote, the sweep
+      still opens on what git decided, the affected rows say `PR unknown`, and the prompt
+      line names the repository and says why, once. `Space` on a `PR unknown` row marks it
+      and leaves `PR unknown` on it. Put `gh` back, press `Esc` and then `Shift-S`: the
+      rows fill in without an `r`.
+- [ ] Typing `/login` and then pressing `Shift-S` opens the whole list again: what the sweep
+      judges is what is on the screen.
 - [ ] `Shift-D` on a `no pane` row asks in a box naming the branch and the path, `y` removes the checkout and leaves the branch, and
       any other key cancels. It refuses on the repository's own checkout; a checkout with
       uncommitted work refuses with git's reason.

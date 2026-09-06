@@ -15,6 +15,7 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::collections::BTreeMap;
 
 use crate::domain::model::{PaneNode, Tree, WorkingTree};
+use crate::domain::sweep::Mark;
 use crate::port::{AgentStatus, Track};
 
 /// Which node of the tree a row stands for. Indices point into [`Tree`].
@@ -82,6 +83,11 @@ pub struct Row {
     /// Whether this row matched the active filter, as opposed to being kept as ancestor
     /// context or as part of a matching group's subtree. Always true with no filter.
     pub matched: bool,
+    /// What a sweep would do with this checkout, or `None` when no sweep is on — which is
+    /// most of the time, and is why this is an `Option` rather than a fourth state of
+    /// `Mark`. Only worktree rows ever carry one: a sweep deletes checkouts, and a group or
+    /// a pane is neither.
+    pub sweep: Option<Mark>,
 }
 
 impl Row {
@@ -91,15 +97,23 @@ impl Row {
     /// running in it. A repository is a heading, and a checkout that already has panes is
     /// answered by the panes listed directly under it — stopping on either would only make
     /// the arrow keys longer to press.
+    ///
+    /// A sweep changes what the cursor is for, so it changes this: every checkout is a row
+    /// with an answer on it, the ones the sweep refuses included, and a refusal is asked
+    /// for by pressing `Space` on the row. Without this the cursor stepped
+    /// over the checkouts with panes in them — the refusal with the most to explain. One
+    /// refusal stays out of reach: a checkout being removed is not a row the cursor stops
+    /// on, sweep or no sweep, and `deleting` on the row is what says so.
     pub fn is_selectable(&self) -> bool {
         if self.is_removing {
-            // Nothing left to do to it. A second `Shift-D` would race the first, and Enter
-            // would open a checkout that is being deleted underneath.
+            // Nothing left to do to it, sweep or no sweep. A second `Shift-D` would race the
+            // first, Enter would open a checkout being deleted underneath, and the sweep
+            // refuses it anyway — with `deleting` already on the row saying why.
             return false;
         }
         match self.reference {
             RowRef::Pane(..) | RowRef::Ungrouped(_) => true,
-            RowRef::Worktree(..) => self.is_idle,
+            RowRef::Worktree(..) => self.is_idle || self.sweep.is_some(),
             RowRef::Repo(_) | RowRef::UngroupedRepo => false,
         }
     }
@@ -238,6 +252,11 @@ pub struct ViewOptions {
     /// is absent, which is a different fact from `Clean` and decides different things — see
     /// `domain::model::WorkingTree`.
     pub working_trees: BTreeMap<String, WorkingTree>,
+    /// What a sweep would do with each checkout, by checkout path, or `None` when no sweep
+    /// is on. Worked out once by `domain::sweep::marks` and handed here, rather than
+    /// recomputed per row: the same answer decides what is drawn and what is deleted, and
+    /// two of it is one too many.
+    pub sweep: Option<BTreeMap<String, Mark>>,
 }
 
 impl ViewOptions {
@@ -347,6 +366,10 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                     track: worktree.track,
                     is_current: false,
                     matched: worktree_matches,
+                    sweep: options
+                        .sweep
+                        .as_ref()
+                        .and_then(|marks| marks.get(&worktree.checkout_path).cloned()),
                 }];
                 subtree.append(&mut pane_rows);
                 subtrees.push((best, subtree));
@@ -380,6 +403,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
             track: None,
             is_current: panes.iter().any(|pane| pane.focused),
             matched: repo_matches,
+            sweep: None,
         }];
         for (_, mut subtree) in subtrees {
             group.append(&mut subtree);
@@ -421,6 +445,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                 track: None,
                 is_current: tree.ungrouped.iter().any(|pane| pane.focused),
                 matched: true,
+                sweep: None,
             });
             rows.append(&mut panes);
         }
@@ -445,6 +470,7 @@ fn pane_row(reference: RowRef, depth: u8, pane: &PaneNode, matched: bool) -> Row
         track: None,
         is_current: pane.focused,
         matched,
+        sweep: None,
     }
 }
 
@@ -556,7 +582,8 @@ fn groups(rows: &[Row], lines: &[DisplayLine]) -> Vec<(usize, usize)> {
         .collect()
 }
 
-fn selectable(rows: &[Row], lines: &[DisplayLine], index: usize) -> bool {
+/// Whether the cursor may stop on this line.
+pub fn selectable(rows: &[Row], lines: &[DisplayLine], index: usize) -> bool {
     match lines.get(index) {
         Some(DisplayLine::Row(row)) => rows[*row].is_selectable(),
         // A blank line separating two groups, or nothing there at all.

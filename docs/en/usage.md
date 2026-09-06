@@ -27,6 +27,7 @@ branch list starts on.
 | `Enter` on a checkout with nothing running | open it |
 | `n` | add a pane to the checkout under the cursor |
 | `Shift-D` | delete the checkout under the cursor, after asking |
+| `Shift-S` | sweep: show which checkouts are finished with |
 | `Tab` | branches, starting on the repository under the cursor |
 | `/` | search |
 | `b` `w` `i` `d` | narrow to blocked, working, idle, or done |
@@ -50,6 +51,53 @@ The cursor stops only where there is somewhere to go: a pane, and a checkout wit
 running in it. Repository headings and checkouts that already have panes are stepped over —
 the panes listed directly under them are the answer, and stopping on the header first would
 only make the walk longer. They stay on screen; the arrow keys just pass through them.
+
+### Seeing what is finished with
+
+`Shift-D` deletes one checkout because you put the cursor on it. `Shift-S` answers a
+different question: which of these is nobody working on any more. Twenty finished worktrees
+are twenty `Shift-D`s otherwise.
+
+The gutter becomes a box. `[x]` is a checkout the sweep would take, `[ ]` is one it would
+leave, and a checkout with no box at all is one it will never take — press `Space` there and
+the prompt line says why.
+
+The cursor stops on every checkout while a sweep is on, including the ones with panes running
+in them, which it steps over the rest of the time. That is what makes the refusals askable. It
+still skips a checkout that is already being removed: its row says `deleting` and there is
+nothing to decide about it.
+
+A checkout is marked when its upstream is `gone`, its working tree is clean, and nothing is
+running in it. The `gone` marker beside the branch name is the reason, which is why the row
+does not repeat it. Where `gh` answers, a branch whose pull request has been merged or closed
+is marked too, and that row says `PR #123 merged` — the number, so you can go and check it.
+
+`Space` adds a mark and takes it away again. The same key does both, because disagreeing with
+the sweep should cost exactly what agreeing with it extra does. `Shift-S` again, `q` or `Esc`
+leaves, and leaving forgets the marks: the next sweep opens on what it would suggest now, not
+on what the last one was talked into.
+
+`Enter` does not remove them yet.
+
+#### Without `gh`
+
+The sweep runs on git alone. It marks fewer rows, and it says so: a checkout it would have
+asked `gh` about reads `PR unknown` rather than looking like one with nothing to find, and
+goes on reading it if you mark it by hand. The prompt line names the repository and says why,
+once — no `gh` on the machine, no GitHub remote, `gh` not logged in, and `gh`'s own words when
+it refused. Fix the cause and enter the sweep again: a repository `gh` refused is asked about
+again on the way in; one it answered for is not, and neither is one with no GitHub remote, since
+there is nothing to ask. With more than one repository in trouble the prompt line names the
+first and counts the rest, and a refusal — the one you can do something about — is named ahead
+of a missing remote. Entering again re-asks `gh` and nothing else: which working trees are
+clean and which checkouts have panes in them were read when the picker opened, and `r`,
+outside a sweep, is what reads them again.
+
+While `gh` is still out the prompt line spins on `asking gh…`. Until it answers, the rows are
+showing what git decided on its own, which is the smaller half.
+
+`gh` may only widen a sweep. It never clears a mark git put there, and it never gates the
+mode.
 
 ### Deleting a checkout
 

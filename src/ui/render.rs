@@ -41,6 +41,31 @@ const META_GAP: usize = 4;
 /// The meta column never starts so far right that nothing useful fits after it.
 const MIN_META_WIDTH: usize = 20;
 
+/// The fewest columns a path keeps before the note beside the name is dropped instead.
+///
+/// Enough for `/…re-deps` — an ellipsis and a tail, and the tail is what tells checkouts
+/// apart. A note is allowed past the meta column (see `MIN_LABEL`), but not this far: a row
+/// that had given the name away for its reason then gave the path away too, and at 31
+/// columns was a `[x]`, `PR #1234 merged`, and nothing either was about.
+const MIN_PATH: usize = 8;
+
+/// The fewest columns a label keeps before the note beside it is dropped instead.
+///
+/// Enough for `fea…` — the start of a name and the ellipsis that says it is one. In a narrow
+/// pane a `gone` marker and a `no pane` note together could take the whole budget, and the
+/// row then carried a marker, a note and no way of telling which checkout either was about.
+///
+/// What this can take away is worth stating exactly. It can drop `no pane`, which is the one
+/// note that is only ever a remark. It cannot drop `gone`, which is a marker rather than a
+/// note and is measured into the meta column; it cannot drop `deleting`; and it cannot drop
+/// what a sweep says beside a box — `PR #123 merged`, `PR unknown` — because ADR 0011 asks
+/// for exactly that: a mark whose reason is invisible is one the user trusts blindly. Where
+/// those do not fit beside the name, the name gives way instead, down to nothing, and the
+/// path in the meta column is what still says which checkout the row is about — which is
+/// why the path is the one thing a note is never allowed to take: past `MIN_PATH`, the note
+/// gives way after all. The call site says why each of the two is not negotiable.
+const MIN_LABEL: usize = 4;
+
 /// Where the meta column starts: just past the longest label that has something to say,
 /// so paths sit beside their rows instead of against the far edge of a wide pane.
 ///
@@ -94,6 +119,23 @@ const IDLE_NOTE: &str = "  no pane";
 /// see. The spinner glyph follows.
 const REMOVING_NOTE: &str = "  deleting ";
 
+/// What a row says about itself in a sweep — `PR #123 merged` or `PR unknown` — with the gap
+/// the other notes use.
+///
+/// Not `gone`, which the row already carries as its upstream marker, and not a refusal,
+/// which is said by the absence of a box and answered on the prompt line to whoever presses
+/// `Space`. [`domain::sweep::Mark::note`](crate::domain::sweep::Mark::note) is where both of
+/// those are decided and why.
+///
+/// Left out of `label_end` for the reason `REMOVING_NOTE` is, and it is the same reason
+/// pointed at a different key: this appears when the user presses `Shift-S` and changes
+/// again when `gh` answers, and measuring it would move every path in the list sideways
+/// twice — including the paths of repositories nothing has been said about. So the columns
+/// come out of the label of the row that wanted them.
+fn sweep_note(row: &Row) -> Option<String> {
+    Some(format!("  {}", row.sweep.as_ref()?.note()?))
+}
+
 /// How wide the note actually drawn on a row is — as opposed to how wide `label_end`
 /// measured it, which is where the reasoning about the two lives.
 fn note_width(row: &Row) -> usize {
@@ -101,10 +143,39 @@ fn note_width(row: &Row) -> usize {
         // The spinner glyph follows the note.
         return REMOVING_NOTE.chars().count() + 1;
     }
+    if let Some(note) = sweep_note(row) {
+        return note.chars().count();
+    }
     if row.is_idle {
         return IDLE_NOTE.len();
     }
     0
+}
+
+/// The three columns a checkout's mark takes in the gutter during a sweep, or `None` for a
+/// row that is not a checkout.
+///
+/// Exactly the width of the `" ◆ "` it replaces, so nothing else on the line moves when the
+/// sweep opens. What it would replace is where the session currently is — the less useful of
+/// the two while the question on screen is what to delete, and said by the panes listed
+/// under the checkout anyway.
+///
+/// As it stands the two never meet: `domain::rows::flatten` gives every worktree row
+/// `is_current: false`, so a row with a box is never a row with a diamond, and the order the
+/// gutter takes them in is unobservable — a mutation that swaps them survives. Whoever makes
+/// a checkout able to be current has to decide it, which is why the gutter matches on the
+/// pair rather than checking one and falling through to the other.
+fn sweep_box(row: &Row) -> Option<&'static str> {
+    let mark = row.sweep.as_ref()?;
+    Some(if mark.is_going() {
+        "[x]"
+    } else if mark.is_markable() {
+        "[ ]"
+    } else {
+        // No box at all rather than an empty one: an empty box is an invitation, and `Space`
+        // does nothing here.
+        "   "
+    })
 }
 
 /// Widest first; the picker draws the first that fits. Each rung drops the least useful
@@ -122,6 +193,13 @@ const HELP_PANES: &[&str] = &[
 /// While a deletion is waiting on a yes. Says what the dialog says, in case the dialog is
 /// too small a pane to have drawn everything.
 const HELP_PANES_REMOVE: &[&str] = &["y delete  any other key cancels", "y delete"];
+/// While a sweep is on. `\u{21b5}` is not offered: it removes what is marked, and that is
+/// not wired up yet.
+const HELP_PANES_SWEEP: &[&str] = &[
+    "space mark  \u{2191}\u{2193} move  \u{2190}\u{2192} repo  shift+s done  esc done",
+    "space mark  \u{2191}\u{2193} move  esc done",
+    "space mark  esc done",
+];
 const HELP_PANES_SEARCH: &[&str] = &[
     "\u{21b5} keep search  ctrl+u clear  esc cancel  \u{2191}\u{2193} move  \u{2190}\u{2192} repo",
     "\u{21b5} keep  esc cancel",
@@ -171,10 +249,17 @@ pub fn draw(frame: &mut Frame, state: &PanesState, theme: &Theme, _mode: Mode) -
     };
     render_detail(frame, &state.detail(), theme, panel.detail);
 
-    let variants = match (state.pending_removal().is_some(), state.is_filtering()) {
-        (true, _) => HELP_PANES_REMOVE,
-        (false, true) => HELP_PANES_SEARCH,
-        (false, false) => HELP_PANES,
+    let variants = match (
+        state.pending_removal().is_some(),
+        state.is_sweeping(),
+        state.is_filtering(),
+    ) {
+        (true, _, _) => HELP_PANES_REMOVE,
+        // Before the search variant, because `/` does nothing during a sweep — the keys a
+        // footer offers have to be the keys that answer.
+        (false, true, _) => HELP_PANES_SWEEP,
+        (false, false, true) => HELP_PANES_SEARCH,
+        (false, false, false) => HELP_PANES,
     };
     frame.render_widget(footer(variants, theme, panel.footer.width), panel.footer);
     asked
@@ -215,6 +300,15 @@ fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'stat
                 spans.push(Span::raw("  "));
             }
             spans.push(Span::raw(state.query().to_string()));
+        } else if state.is_sweeping() {
+            // `/` does nothing during a sweep, so the field says what the mode is instead of
+            // offering a search that would not run. Where `gh` failed, it says that instead:
+            // it is the one thing the rows cannot say for themselves — they can say a
+            // repository could not be judged, not why.
+            match state.sweep_trouble() {
+                Some(trouble) => spans.push(Span::styled(trouble.to_string(), theme.dim())),
+                None => spans.push(Span::styled("sweep", theme.dim())),
+            }
         } else if !state.is_filtering() && state.state_filter().is_none() {
             // The placeholder is what to do when the field is not focused; once it is, the
             // cursor says everything and the hint is in the way of what is being typed.
@@ -237,8 +331,22 @@ fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'stat
         spans.push(Span::styled(spinner(state.frame()), theme.dim()));
         spans.push(Span::styled(" reading working trees\u{2026}", theme.dim()));
     }
+    // Its own spinner, because until `gh` answers the rows are showing what git alone
+    // decided — a smaller sweep than the one the user is about to get, and one that is about
+    // to change under their cursor.
+    if state.is_asking_gh() {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(spinner(state.frame()), theme.dim()));
+        spans.push(Span::styled(" asking gh\u{2026}", theme.dim()));
+    }
 
-    let count = format!("{} panes", state.pane_count());
+    // During a sweep the number being decided about is how many are going, not how many
+    // panes are open.
+    let count = if state.is_sweeping() {
+        format!("{} marked", state.marked_count())
+    } else {
+        format!("{} panes", state.pane_count())
+    };
     let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
     let pad = (width as usize).saturating_sub(used + count.chars().count() + 1);
     spans.push(Span::raw(" ".repeat(pad)));
@@ -575,10 +683,15 @@ fn render_row(
         glyph_style
     };
 
-    let gutter = if row.is_current { " \u{25c6} " } else { "   " };
+    let sweep_box = sweep_box(row);
+    let gutter = match (sweep_box, row.is_current) {
+        (Some(marked), _) => marked,
+        (None, true) => " \u{25c6} ",
+        (None, false) => "   ",
+    };
     let gutter_style = if selected {
         base
-    } else if row.is_current {
+    } else if sweep_box.is_some_and(|marked| marked.starts_with('[')) || row.is_current {
         Style::default().fg(theme.accent)
     } else {
         theme.dim()
@@ -593,15 +706,46 @@ fn render_row(
     // upstream. Measured and drawn from the same string, so the two cannot drift.
     let marks = marks(row);
     let used = gutter.chars().count() + prefix.chars().count() + glyph.chars().count() + 1;
-    // Everything drawn between the label and the meta column.
-    let after_label = note_width(row) + marks.chars().count();
     // A row with nothing in the meta column may use the whole line for its label; one with
     // something has to stop short of the column so the two do not collide.
-    let label_budget = if row.meta.is_empty() {
-        (rect.width as usize).saturating_sub(used + after_label)
+    let room = if row.meta.is_empty() {
+        (rect.width as usize).saturating_sub(used + marks.chars().count())
     } else {
-        meta_column.saturating_sub(META_GAP + used + after_label)
+        meta_column.saturating_sub(META_GAP + used + marks.chars().count())
     };
+    // What the note would leave, and whether it may take that much.
+    //
+    // A note gives way whole rather than truncated: half of `PR #123 merged` says nothing,
+    // and the number is the checkable part.
+    //
+    // Two notes do not give way. `no pane` is a remark about a checkout the user may still
+    // act on, and the name is worth more than the remark. `deleting` is not a remark: a row
+    // being removed has stopped being about its checkout and started being about an
+    // operation — it is the one row the cursor will not stop on to explain itself, it cannot
+    // be marked or removed again, and the note is the whole of what the picker adds over the
+    // toast (`docs/adr/0014-removing-outlives-the-picker.md`). Dropping it drew a removal in
+    // flight as a perfectly ordinary row. And a sweep's note is the reason for the box in
+    // the gutter, which ADR 0011 says may not be shown without one; dropped, a `[x]` sat on
+    // a row with nothing to say why, on the list `Enter` will act on. The name gives way
+    // instead, down to nothing: the path still says which checkout it is.
+    let with_note = room.saturating_sub(note_width(row));
+    // But never past the path. A note wider than the room is drawn on into the meta column,
+    // and the path there is the last thing on the row that says which checkout it is — so a
+    // note is kept only while the path keeps `MIN_PATH` columns after it. Narrower than
+    // that, the name gets the room back and the row is a name and a path, which is what it
+    // was before there were notes: a `[x]` with a reason and nothing the reason is about
+    // is worse than a `[x]` with a name and no reason.
+    let path_after_note = if row.meta.is_empty() {
+        usize::MAX
+    } else {
+        let drawn = used + marks.chars().count() + with_note + note_width(row);
+        let gap = meta_column.saturating_sub(drawn).max(META_GAP);
+        (rect.width as usize).saturating_sub(drawn + gap + 1)
+    };
+    let fits = path_after_note >= MIN_PATH.min(row.meta.chars().count());
+    let not_negotiable = row.is_removing || sweep_note(row).is_some();
+    let keeps_its_note = fits && (not_negotiable || with_note >= MIN_LABEL);
+    let label_budget = if keeps_its_note { with_note } else { room };
 
     let mut spans = vec![
         Span::styled(gutter, gutter_style),
@@ -617,9 +761,16 @@ fn render_row(
     // The meta column is taken by the checkout path, so a checkout with nothing running in
     // it says so beside its name instead — and one that is going says that, which is the
     // more urgent thing to know about the same row.
-    if row.is_removing {
+    if !keeps_its_note {
+        // The name won the columns. Nothing goes here.
+    } else if row.is_removing {
         spans.push(Span::styled(REMOVING_NOTE, quiet));
         spans.push(Span::styled(spinner(tick), quiet));
+    } else if let Some(note) = sweep_note(row) {
+        // Why this row is going, or why it cannot. A mark whose reason is invisible is one
+        // the user either trusts blindly or clears wholesale —
+        // `docs/adr/0011-what-may-be-swept.md`.
+        spans.push(Span::styled(note, quiet));
     } else if row.is_idle {
         spans.push(Span::styled(IDLE_NOTE, quiet));
     }
@@ -1563,7 +1714,9 @@ mod tests {
     use crate::domain::dest::Destination;
     use crate::domain::model::{PaneNode, RepoNode, Tree, WorktreeNode};
     use crate::domain::progress::Stage;
+    use crate::domain::sweep::RepoRoot;
     use crate::port::{AgentStatus, GitRef, PullRequest, RefKind, SplitDirection, Track};
+    use crate::port::{PullRequestOutcome, SettledPullRequest, SettledPullRequests};
     use crate::ui::branches::BranchData;
 
     fn theme() -> Theme {
@@ -1651,6 +1804,385 @@ mod tests {
         // Tall enough for the whole list, including the panes that are in no repository:
         // they are a section of it like any other.
         insta::assert_snapshot!(screen(&PanesState::new(tree(), None), 92, 18));
+    }
+
+    /// The panes tree with a sweep on, one checkout in each shape it can be in: going,
+    /// staying, refused for a pane, refused for being the repository itself.
+    fn swept() -> PanesState {
+        let mut tree = tree();
+        // Finished with: gone upstream, nothing running in it.
+        tree.repos[0].worktrees[2].track = Some(Track::Gone);
+        // Gone too, but somebody is working in it.
+        tree.repos[0].worktrees[1].track = Some(Track::Gone);
+        // Nobody is finished with this one, and the user may still say otherwise.
+        tree.repos[1]
+            .worktrees
+            .push(worktree("chore/deps", false, vec![]));
+        let mut state = PanesState::new(tree, None);
+        state.set_working_trees(answers(&[
+            ("/wt/main", WorkingTree::Clean),
+            ("/wt/feat-login", WorkingTree::Clean),
+            ("/wt/fix-crash", WorkingTree::Clean),
+            ("/wt/develop", WorkingTree::Clean),
+            ("/wt/chore-deps", WorkingTree::Clean),
+        ]));
+        press(&mut state, KeyCode::Char('S'));
+        state
+    }
+
+    #[test]
+    fn a_sweep_puts_a_box_in_the_gutter_and_the_reason_beside_the_name() {
+        // Every row says what is happening to it: `fix/crash` goes because its upstream is
+        // gone, `feat/login` cannot because somebody is working in it, the two primaries
+        // cannot because git will not take them, and the count on the right is how many are
+        // going rather than how many panes are open.
+        insta::assert_snapshot!(screen(&swept(), 92, 20));
+    }
+
+    /// The style of one cell. `screen()` serialises characters and throws every style away,
+    /// so a snapshot can show `[x]` in the right column and say nothing at all about whether
+    /// it is drawn as a mark or as chrome.
+    fn cell_style(state: &PanesState, width: u16, height: u16, x: u16, y: u16) -> Style {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw(frame, state, &theme(), Mode::Panes);
+            })
+            .unwrap();
+        terminal.backend().buffer()[(x, y)].style()
+    }
+
+    /// Which row a label is drawn on, counting the two lines above the list.
+    fn label_under_cursor(state: &PanesState) -> String {
+        match state.lines()[state.cursor()] {
+            crate::domain::rows::DisplayLine::Row(index) => state.rows()[index].label.clone(),
+            crate::domain::rows::DisplayLine::Spacer => String::new(),
+        }
+    }
+
+    fn line_of(state: &PanesState, label: &str) -> u16 {
+        let index = state
+            .rows()
+            .iter()
+            .position(|row| row.label == label)
+            .unwrap_or_else(|| panic!("no row labelled {label}"));
+        let at = state
+            .lines()
+            .iter()
+            .position(|line| *line == DisplayLine::Row(index))
+            .expect("the row is drawn");
+        at as u16 + 2
+    }
+
+    #[test]
+    fn a_mark_is_drawn_as_a_mark_and_a_refusal_is_not_drawn_as_one() {
+        // The gutter is three columns that mean four different things — a box that is
+        // ticked, a box that is empty, no box at all, and the diamond where the session is.
+        // Every snapshot in this file would draw all four identically if the colour were
+        // wrong, because none of them record a colour.
+        let state = swept();
+        let accent = Some(theme().accent);
+
+        let marked = line_of(&state, "fix/crash");
+        assert_eq!(
+            cell_style(&state, 92, 20, 1, marked).fg,
+            accent,
+            "a checkout that is going says so in the colour the picker uses for a mark"
+        );
+
+        let markable = line_of(&state, "chore/deps");
+        assert_eq!(
+            cell_style(&state, 92, 20, 1, markable).fg,
+            accent,
+            "and so does an empty box, which is an invitation to press Space"
+        );
+
+        // Not `main`: the cursor opens on it, and a selected row is drawn in the selection's
+        // colours whatever its gutter says.
+        let refused = cell_style(&state, 92, 20, 1, line_of(&state, "develop"));
+        assert_ne!(
+            refused.fg, accent,
+            "a refusal has no box, and three accented spaces would be a mark nobody made"
+        );
+        assert!(
+            refused.add_modifier.contains(Modifier::DIM),
+            "it is chrome, drawn the way the gutter is drawn on every other quiet row"
+        );
+
+        // And the mark's accent is not taken from the diamond that says where the session
+        // is: the two share the three columns and share the colour, and outside a sweep the
+        // diamond is the only thing that wears it.
+        let mut ordinary = PanesState::new(tree(), None);
+        // Off the focused pane, since a selected row is drawn in the selection's colours
+        // whatever else it is.
+        press(&mut ordinary, KeyCode::Char('j'));
+        assert_eq!(
+            cell_style(&ordinary, 92, 18, 1, line_of(&ordinary, "claude")).fg,
+            accent,
+            "the row the session is on says so, sweep or no sweep"
+        );
+    }
+
+    #[test]
+    fn a_removal_in_flight_says_so_at_every_width_the_picker_supports() {
+        // The rule that keeps a row's name in a narrow pane took this away for every width
+        // from 37 to 48: a removal running somewhere the picker cannot see was drawn as a
+        // perfectly ordinary row — no note, no spinner — while the cursor silently would not
+        // stop on it and `Shift-D` could not reach it. It is the whole of what the picker
+        // adds over the toast, and the row it is on has nothing left to decide about.
+        let mut state = PanesState::new(tree(), None);
+        state.set_removing(vec!["/wt/fix-crash".into()]);
+        for width in [46u16, 53, 60, 92] {
+            let drawn = screen(&state, width, 16);
+            let row = drawn
+                .lines()
+                .find(|line| line.contains("/wt/fix-crash"))
+                .unwrap_or_else(|| panic!("no fix/crash row at {width}"));
+            assert!(
+                row.contains("deleting"),
+                "at {width} columns the row says nothing about the removal: {row}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_narrow_pane_still_says_which_checkout_a_sweep_is_talking_about() {
+        // The width the picker already supports. A sweep's reason is drawn without being
+        // measured, so it comes out of this row's own label — and at this width there is
+        // not a name's worth and a reason's worth both. The reason wins: the box beside it
+        // is a suggestion to delete, and ADR 0011 does not allow one without its reason
+        // showing. The path in the meta column is what still says which checkout the row
+        // is about, and it is the last thing on the row to be given away — never below
+        // `MIN_PATH` columns, at which point the reason gives way instead.
+        let mut state = swept();
+        let answered = SettledPullRequests::All(vec![SettledPullRequest {
+            number: 1234,
+            head_ref: "chore/deps".to_string(),
+            from_a_fork: false,
+            outcome: PullRequestOutcome::Merged,
+        }]);
+        let asked: BTreeMap<_, _> = state
+            .tree()
+            .repos
+            .iter()
+            .map(|repo| (RepoRoot::of(repo), Some(answered.clone())))
+            .collect();
+        state.set_settled(asked, None, false);
+        insta::assert_snapshot!(screen(&state, 46, 16));
+    }
+
+    #[test]
+    fn a_mark_keeps_its_reason_at_every_width_the_picker_supports() {
+        // The snapshot above pins one width. This pins the rule: whatever else the row
+        // gives up, the reason for its box is not it — from the narrowest pane the suite
+        // calls supported to one wide enough that nothing has to give.
+        let mut state = swept();
+        let answered = SettledPullRequests::All(vec![SettledPullRequest {
+            number: 1234,
+            head_ref: "chore/deps".to_string(),
+            from_a_fork: false,
+            outcome: PullRequestOutcome::Merged,
+        }]);
+        let asked: BTreeMap<_, _> = state
+            .tree()
+            .repos
+            .iter()
+            .map(|repo| (RepoRoot::of(repo), Some(answered.clone())))
+            .collect();
+        state.set_settled(asked, None, false);
+        for width in [46u16, 53, 60, 92] {
+            let drawn = screen(&state, width, 16);
+            let row = drawn
+                .lines()
+                .find(|line| line.contains("/wt/chore-deps"))
+                .unwrap_or_else(|| panic!("no chore/deps row at {width}"));
+            assert!(row.contains("[x]"), "marked at {width}: {row}");
+            assert!(
+                row.contains("PR #1234 merged"),
+                "and says why at {width}: {row}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_note_never_pushes_the_path_off_the_row() {
+        // Measured rather than reasoned about, at every width from 24 to 92: the marked row
+        // and the row being removed keep the tail of their path throughout, and each note
+        // appears at the width its path first keeps `MIN_PATH` columns beside it — 39 for
+        // `PR #1234 merged`, 34 for `deleting` — and at every width above. Before this rule
+        // the marked row at 28 to 31 columns was a box, a reason, and no path at all, and
+        // from 32 to 44 a path elided down to as little as `…`. (Narrower than 28 the meta
+        // column is short of the path on every row, note or no note; that is `MIN_META_WIDTH`.)
+        let mut marked = swept();
+        let answered = SettledPullRequests::All(vec![SettledPullRequest {
+            number: 1234,
+            head_ref: "chore/deps".to_string(),
+            from_a_fork: false,
+            outcome: PullRequestOutcome::Merged,
+        }]);
+        let asked: BTreeMap<_, _> = marked
+            .tree()
+            .repos
+            .iter()
+            .map(|repo| (RepoRoot::of(repo), Some(answered.clone())))
+            .collect();
+        marked.set_settled(asked, None, false);
+        let mut removing = PanesState::new(tree(), None);
+        removing.set_removing(vec!["/wt/fix-crash".into()]);
+
+        for width in 24u16..=92 {
+            let drawn = screen(&marked, width, 16);
+            let row = drawn
+                .lines()
+                .find(|line| line.contains("[x]") && line.contains("deps"))
+                .unwrap_or_else(|| panic!("the marked row lost its path at {width}"));
+            assert_eq!(
+                row.contains("PR #1234 merged"),
+                width >= 39,
+                "the reason, at {width}: {row}"
+            );
+            // Whole from 45, where the note leaves it the room, and from 28 to 38, where
+            // there is no note. Narrower than 28 the meta column itself is short of the
+            // path, note or no note.
+            assert_eq!(
+                row.contains("/wt/chore-deps"),
+                width >= 45 || (28..=38).contains(&width),
+                "the whole path, at {width}: {row}"
+            );
+
+            let drawn = screen(&removing, width, 16);
+            let row = drawn
+                .lines()
+                .find(|line| line.contains("rash"))
+                .unwrap_or_else(|| panic!("the row being removed lost its path at {width}"));
+            assert_eq!(
+                row.contains("deleting"),
+                width >= 34,
+                "the note, at {width}: {row}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_path_shorter_than_min_path_asks_only_for_its_own_length() {
+        // `MIN_PATH` is a floor for paths that have that much to show. A four-character
+        // path is whole in four columns, and holding its note back until eight were free
+        // would have dropped the reason at 35 to 38 columns for nothing. Measured: with
+        // `/w/x` the note appears from 35; with `/wt/chore-deps` it appears from 39.
+        let mut state = swept();
+        let mut tree = state.tree().clone();
+        tree.repos[1].worktrees[1].checkout_path = "/w/x".to_string();
+        state.replace_tree(tree);
+        state.set_working_trees(answers(&[("/w/x", WorkingTree::Clean)]));
+        let answered = SettledPullRequests::All(vec![SettledPullRequest {
+            number: 1234,
+            head_ref: "chore/deps".to_string(),
+            from_a_fork: false,
+            outcome: PullRequestOutcome::Merged,
+        }]);
+        let asked: BTreeMap<_, _> = state
+            .tree()
+            .repos
+            .iter()
+            .map(|repo| (RepoRoot::of(repo), Some(answered.clone())))
+            .collect();
+        state.set_settled(asked, None, false);
+
+        for width in [34u16, 35, 38, 39] {
+            let drawn = screen(&state, width, 16);
+            let row = drawn
+                .lines()
+                .find(|line| line.contains("[x]") && line.contains("/w/x"))
+                .unwrap_or_else(|| panic!("no marked row at {width}"));
+            assert_eq!(
+                row.contains("PR #1234 merged"),
+                width >= 35,
+                "the reason, at {width}: {row}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_sweep_says_it_is_still_asking_gh_before_it_says_what_it_found() {
+        // Until `gh` answers the rows show what git alone decided, which is a smaller sweep
+        // than the one about to arrive. Without the spinner that reads as a finished answer.
+        let mut state = swept();
+        state.set_settled(BTreeMap::new(), None, true);
+        insta::assert_snapshot!(screen(&state, 92, 20));
+    }
+
+    #[test]
+    fn a_gh_that_could_not_answer_says_why_once_and_which_rows_it_cost() {
+        // The sentence goes on the prompt line because it is the one thing the rows cannot
+        // say for themselves: they can say a checkout could not be judged, not why.
+        let mut state = swept();
+        let asked: BTreeMap<_, _> = state
+            .tree()
+            .repos
+            .iter()
+            .map(|repo| (RepoRoot::of(repo), None))
+            .collect();
+        state.set_settled(
+            asked,
+            Some("gh could not be run: no such file or directory".to_string()),
+            false,
+        );
+        insta::assert_snapshot!(screen(&state, 92, 20));
+    }
+
+    #[test]
+    fn a_row_marked_where_gh_could_not_look_goes_on_saying_so() {
+        // Marking `chore/deps` turned `PR unknown` into `no pane` — the warning went away at
+        // the moment it started to matter, and the row was then indistinguishable from one
+        // marked by hand on a repository `gh` had answered for.
+        let mut state = swept();
+        let asked: BTreeMap<_, _> = state
+            .tree()
+            .repos
+            .iter()
+            .map(|repo| (RepoRoot::of(repo), None))
+            .collect();
+        state.set_settled(asked, Some("gh could not be run".to_string()), false);
+        for _ in 0..20 {
+            if label_under_cursor(&state) == "chore/deps" {
+                break;
+            }
+            press(&mut state, KeyCode::Char('j'));
+        }
+        assert_eq!(label_under_cursor(&state), "chore/deps");
+        press(&mut state, KeyCode::Char(' '));
+
+        let drawn = screen(&state, 92, 20);
+        let row = drawn
+            .lines()
+            .find(|line| line.contains("chore/deps"))
+            .expect("the row is drawn");
+        assert!(row.contains("[x]"), "marked: {row}");
+        assert!(
+            row.contains("PR unknown"),
+            "and still says nobody could judge it: {row}"
+        );
+    }
+
+    #[test]
+    fn a_pull_request_gh_found_is_named_on_the_row_it_decided() {
+        // `chore/deps` was staying a moment ago: git had nothing to say about it. `gh` may
+        // only widen a sweep, and this is what widening looks like.
+        let mut state = swept();
+        let answered = SettledPullRequests::All(vec![SettledPullRequest {
+            number: 123,
+            head_ref: "chore/deps".to_string(),
+            from_a_fork: false,
+            outcome: PullRequestOutcome::Merged,
+        }]);
+        let asked: BTreeMap<_, _> = state
+            .tree()
+            .repos
+            .iter()
+            .map(|repo| (RepoRoot::of(repo), Some(answered.clone())))
+            .collect();
+        state.set_settled(asked, None, false);
+        insta::assert_snapshot!(screen(&state, 92, 20));
     }
 
     #[test]

@@ -8,6 +8,7 @@ use crate::app::collect;
 use crate::app::dirty::Dirty;
 use crate::app::home_dir;
 use crate::app::removals::Removals;
+use crate::app::Pending;
 use crate::domain::removal::{self, Removal};
 use crate::port::{GitPort, HerdrPort, PaneSplit, SplitDirection, WorktreeOpen};
 use crate::ui::render::{self, Mode};
@@ -37,7 +38,7 @@ pub fn run(
     herdr: &dyn HerdrPort,
     git: &dyn GitPort,
     removals: &mut Removals,
-    dirty: &mut Dirty,
+    pending: &mut Pending,
     initial_pane: Option<&str>,
     theme: &Theme,
 ) -> Result<Exit> {
@@ -49,7 +50,7 @@ pub fn run(
     // removals are not its to know about. `set_working_trees` and `set_waiting` need no
     // seeding: `show_answers` sets both every frame, and the first frame runs before the
     // first draw.
-    dirty.ask(state.tree());
+    pending.dirty.ask(state.tree());
     state.set_removing(removals.paths());
     if let Some(pane_id) = initial_pane {
         state.focus_pane(pane_id);
@@ -59,8 +60,12 @@ pub fn run(
     // user types nor stalls while they hold a key down.
     let mut last_tick = std::time::Instant::now();
     let outcome = loop {
-        let reading_working_trees = show_answers(&mut state, dirty);
-        let waiting = !removals.is_empty() || reading_working_trees;
+        let still_coming = show_answers(&mut state, pending);
+        // Everything the loop is waiting on, not only the removals: `waiting` is both what
+        // advances the spinner and what makes this poll instead of blocking on a key. Left
+        // out, `asking gh…` draws frame zero for ever and the answer lands whenever the user
+        // next happens to press something.
+        let waiting = !removals.is_empty() || still_coming;
         if waiting && last_tick.elapsed() >= TICK {
             state.tick();
             last_tick = std::time::Instant::now();
@@ -90,7 +95,7 @@ pub fn run(
                     // Errors here are not fatal: the picker keeps showing what it had.
                     if let Ok((_, tree)) = collect::collect_tree(herdr, git) {
                         state.replace_tree(tree);
-                        dirty.ask(state.tree());
+                        pending.dirty.ask(state.tree());
                     }
                 }
                 // The panes are gone by now either way, so the report says so.
@@ -117,9 +122,11 @@ pub fn run(
                 Ok((_, tree)) => {
                     state.replace_tree(tree);
                     // Reload means reload: whether a checkout is dirty is a fact about a
-                    // working tree the user has been editing since it was last asked.
-                    dirty.reask(state.tree());
-                    state.set_working_trees(dirty.answers());
+                    // working tree the user has been editing since it was last asked, and a
+                    // pull request can land while the picker is up.
+                    pending.dirty.reask(state.tree());
+                    pending.settled.forget();
+                    state.set_working_trees(pending.dirty.answers());
                 }
                 Err(error) => state.set_message(format!("{error:#}")),
             },
@@ -128,9 +135,14 @@ pub fn run(
             // the deletion itself goes to a process of its own, so that neither the loop
             // nor the user has to wait for git to walk a working tree. See
             // `docs/adr/0014-removing-outlives-the-picker.md`.
-            Action::RemoveWorktree(removal) => {
-                start_removal(&mut state, dirty, removals, herdr, git, &removal)
-            }
+            Action::RemoveWorktree(removal) => start_removal(
+                &mut state,
+                &mut pending.dirty,
+                removals,
+                herdr,
+                git,
+                &removal,
+            ),
             action => break action,
         }
     };
@@ -182,8 +194,8 @@ fn start_removal(
     }
 }
 
-/// Tell the state what the working-tree walk has said since the last frame, and answer
-/// whether any of it is still coming.
+/// Tell the state what the walk and `gh` have said since the last frame, and answer whether
+/// either has more to come.
 ///
 /// Split out of the loop because everything the loop does is otherwise untestable — it needs
 /// a terminal and a keyboard — and this is the part with consequences. `set_working_trees` in
@@ -191,7 +203,8 @@ fn start_removal(
 /// none, and it is exactly the answer that turns a refusal into an offer. Left out, every
 /// checkout with panes in it answers "still reading that working tree" for the life of the
 /// picker, and nothing on screen or in the suite says why.
-fn show_answers(state: &mut PanesState, dirty: &mut Dirty) -> bool {
+fn show_answers(state: &mut PanesState, pending: &mut Pending) -> bool {
+    let Pending { dirty, settled } = pending;
     dirty.drain();
     // Unconditionally, and not only when a marker moved: `PanesState` keeps every answer and
     // decides for itself what is worth redrawing. What is *known* about a working tree and
@@ -199,7 +212,30 @@ fn show_answers(state: &mut PanesState, dirty: &mut Dirty) -> bool {
     state.set_working_trees(dirty.answers());
     let reading = dirty.is_waiting();
     state.set_waiting(reading);
-    reading
+
+    // The heavier of the two `gh` calls, so it is asked when a sweep is entered rather than
+    // when the picker opens — ADR 0011. Asked from here rather than from the key that
+    // enters the sweep because `ask` is the same question every time and answers it once:
+    // a `Tab` away and back, or a sweep left and re-entered, costs a map lookup rather than
+    // another round of `gh`.
+    if state.is_sweeping() {
+        // On the frame after `Shift-S`, and on no other: a `gh` that could not answer when
+        // the sweep was last entered is asked again, and one that answered is not.
+        if state.sweep_entered() {
+            settled.forget_failures();
+        }
+        settled.ask(state.tree());
+    }
+    settled.drain();
+    let answered = settled.answers(state.tree());
+    let trouble = settled.trouble(state.tree());
+    // Ignored outside a sweep, which is where the answers would have nowhere to be shown.
+    let asking = settled.is_waiting(state.tree());
+    state.set_settled(answered, trouble, asking);
+
+    // Both, because the loop's clock has to run while either is out — and because a sweep
+    // entered on a slow network is exactly when a frozen spinner reads as a finished answer.
+    reading || asking
 }
 
 fn perform(herdr: &dyn HerdrPort, action: Action) -> Result<Exit> {
@@ -288,6 +324,220 @@ mod tests {
         }
     }
 
+    impl crate::port::GhPort for Answers {
+        fn pull_requests(&self, _slug: &crate::port::Slug) -> Vec<crate::port::PullRequest> {
+            unreachable!("the panes view does not decorate")
+        }
+        fn settled_pull_requests(
+            &self,
+            _slug: &crate::port::Slug,
+        ) -> std::result::Result<crate::port::SettledPullRequests, String> {
+            unreachable!("these tests never enter a sweep")
+        }
+    }
+
+    /// A git that never gets round to naming the repository, so a sweep's `gh` question
+    /// stays outstanding for exactly as long as the test wants it to. Parking rather than
+    /// sleeping, so the wait is decided by the test rather than by a duration.
+    struct Never;
+
+    impl GitPort for Never {
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<crate::port::Slug>> {
+            std::thread::park();
+            unreachable!("nothing unparks this")
+        }
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn local_refs(&self, _repo_root: &str) -> Result<Vec<crate::port::GitRef>> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn head_ref(&self, _repo_root: &str) -> Result<String> {
+            unreachable!("only github_slug is asked of this port")
+        }
+    }
+
+    impl crate::port::GhPort for Never {
+        fn pull_requests(&self, _slug: &crate::port::Slug) -> Vec<crate::port::PullRequest> {
+            unreachable!("the sweep does not decorate")
+        }
+        fn settled_pull_requests(
+            &self,
+            _slug: &crate::port::Slug,
+        ) -> std::result::Result<crate::port::SettledPullRequests, String> {
+            unreachable!("git never names a repository to ask about")
+        }
+    }
+
+    /// A `gh` that answers, and remembers what it was asked and how often. Everything the
+    /// loop does with the sweep's half of the question goes through this.
+    #[derive(Default)]
+    struct Answering {
+        asked: std::sync::Mutex<Vec<String>>,
+        /// What `gh` says. `Err` is a `gh` that refused, which is a sentence for the prompt
+        /// line rather than an empty answer — see ADR 0011.
+        answer: Option<std::result::Result<crate::port::SettledPullRequests, String>>,
+    }
+
+    impl Answering {
+        fn asked(&self) -> Vec<String> {
+            self.asked.lock().unwrap().clone()
+        }
+    }
+
+    impl GitPort for Answering {
+        fn github_slug(&self, repo_root: &str) -> Result<Option<crate::port::Slug>> {
+            self.asked.lock().unwrap().push(repo_root.to_string());
+            Ok(crate::port::Slug::owner_repo("me", "app"))
+        }
+        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
+            Ok(false)
+        }
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            unreachable!("the loop asks this port two things")
+        }
+        fn local_refs(&self, _repo_root: &str) -> Result<Vec<crate::port::GitRef>> {
+            unreachable!("the loop asks this port two things")
+        }
+        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
+            unreachable!("the loop asks this port two things")
+        }
+        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("the loop asks this port two things")
+        }
+        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
+            unreachable!("the loop asks this port two things")
+        }
+        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!("the loop asks this port two things")
+        }
+        fn head_ref(&self, _repo_root: &str) -> Result<String> {
+            unreachable!("the loop asks this port two things")
+        }
+    }
+
+    impl crate::port::GhPort for Answering {
+        fn pull_requests(&self, _slug: &crate::port::Slug) -> Vec<crate::port::PullRequest> {
+            unreachable!("the panes view does not decorate")
+        }
+        fn settled_pull_requests(
+            &self,
+            _slug: &crate::port::Slug,
+        ) -> std::result::Result<crate::port::SettledPullRequests, String> {
+            self.answer
+                .clone()
+                .unwrap_or_else(|| Ok(crate::port::SettledPullRequests::All(Vec::new())))
+        }
+    }
+
+    /// A `gh` that refuses the first time it is asked and answers every time after: the
+    /// network coming back, or a token renewed.
+    #[derive(Default)]
+    struct Recovering {
+        asked: std::sync::Mutex<usize>,
+    }
+
+    impl Recovering {
+        fn asked(&self) -> usize {
+            *self.asked.lock().unwrap()
+        }
+    }
+
+    impl GitPort for Recovering {
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<crate::port::Slug>> {
+            Ok(crate::port::Slug::owner_repo("me", "app"))
+        }
+        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
+            Ok(false)
+        }
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            unreachable!("the loop asks this port two things")
+        }
+        fn local_refs(&self, _repo_root: &str) -> Result<Vec<crate::port::GitRef>> {
+            unreachable!("the loop asks this port two things")
+        }
+        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
+            unreachable!("the loop asks this port two things")
+        }
+        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("the loop asks this port two things")
+        }
+        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
+            unreachable!("the loop asks this port two things")
+        }
+        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!("the loop asks this port two things")
+        }
+        fn head_ref(&self, _repo_root: &str) -> Result<String> {
+            unreachable!("the loop asks this port two things")
+        }
+    }
+
+    impl crate::port::GhPort for Recovering {
+        fn pull_requests(&self, _slug: &crate::port::Slug) -> Vec<crate::port::PullRequest> {
+            unreachable!("the panes view does not decorate")
+        }
+        fn settled_pull_requests(
+            &self,
+            _slug: &crate::port::Slug,
+        ) -> std::result::Result<crate::port::SettledPullRequests, String> {
+            let mut asked = self.asked.lock().unwrap();
+            *asked += 1;
+            if *asked == 1 {
+                return Err("gh refused the question this asked: could not connect".into());
+            }
+            Ok(crate::port::SettledPullRequests::All(Vec::new()))
+        }
+    }
+
+    fn press(state: &mut PanesState, key: char) {
+        state.handle_key(ratatui::crossterm::event::KeyEvent::new(
+            ratatui::crossterm::event::KeyCode::Char(key),
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        ));
+    }
+
+    /// Drive the loop's per-frame step until nothing is outstanding, the way `run` does.
+    fn settle(state: &mut PanesState, pending: &mut Pending) {
+        until("the frame never stopped waiting", || {
+            !show_answers(state, pending)
+        });
+    }
+
+    /// A walk in progress and a sweep whose `gh` question will not come back.
+    fn pending_on_gh(dirty: Dirty) -> Pending {
+        let port = std::sync::Arc::new(Never);
+        Pending {
+            dirty,
+            settled: crate::app::settled::Settled::new(port.clone(), port),
+        }
+    }
+
+    /// A walk in progress and a sweep nobody has entered. `show_answers` asks `gh` nothing
+    /// until one is, which is what lets these ports say `unreachable!()` and mean it.
+    fn pending(dirty: Dirty) -> Pending {
+        let port = std::sync::Arc::new(Answers(Some(false)));
+        Pending {
+            dirty,
+            settled: crate::app::settled::Settled::new(port.clone(), port),
+        }
+    }
+
     fn no_pane_tree() -> crate::domain::model::Tree {
         let mut tree = one_pane_tree();
         tree.repos[0].worktrees[0].panes.clear();
@@ -333,9 +583,10 @@ mod tests {
         let mut dirty = Dirty::new(std::sync::Arc::new(Answers(Some(true))));
         dirty.ask(state.tree());
 
+        let mut pending = pending(dirty);
         until(
             "the walk never answered for the only checkout there is",
-            || !show_answers(&mut state, &mut dirty),
+            || !show_answers(&mut state, &mut pending),
         );
 
         state.handle_key(ratatui::crossterm::event::KeyEvent::new(
@@ -357,6 +608,178 @@ mod tests {
     fn only_removal(state: &PanesState) -> Removal {
         let repo = &state.tree().repos[0];
         Removal::of(&repo.repo_root, &repo.worktrees[0])
+    }
+
+    #[test]
+    fn gh_is_asked_when_a_sweep_is_entered_and_not_before() {
+        // The heavier of the two `gh` calls, so ADR 0011 defers it: most sessions never
+        // sweep, and one that does should not pay for it on every picker open. Every line
+        // between `show_answers` and the screen could be deleted with the whole gate green
+        // — including the call that hands the answers over at all.
+        let port = std::sync::Arc::new(Answering::default());
+        let mut state = PanesState::new(no_pane_tree(), None);
+        let mut pending = Pending {
+            dirty: Dirty::new(port.clone()),
+            settled: crate::app::settled::Settled::new(port.clone(), port.clone()),
+        };
+        pending.dirty.ask(state.tree());
+        settle(&mut state, &mut pending);
+        assert!(
+            port.asked().is_empty(),
+            "the picker opened and nobody swept"
+        );
+
+        press(&mut state, 'S');
+        settle(&mut state, &mut pending);
+        assert_eq!(
+            port.asked(),
+            ["/src/app"],
+            "asked once, about the repository root"
+        );
+
+        // And a second frame, and leaving and coming back, ask nothing more: a merged pull
+        // request does not become unmerged.
+        settle(&mut state, &mut pending);
+        press(&mut state, 'q');
+        press(&mut state, 'S');
+        settle(&mut state, &mut pending);
+        assert_eq!(port.asked().len(), 1);
+    }
+
+    #[test]
+    fn what_gh_said_reaches_the_rows_and_what_went_wrong_reaches_the_prompt() {
+        let port = std::sync::Arc::new(Answering {
+            answer: Some(Err(
+                "gh refused the question this asked: no auth".to_string()
+            )),
+            ..Answering::default()
+        });
+        let mut state = PanesState::new(no_pane_tree(), None);
+        let mut pending = Pending {
+            dirty: Dirty::new(port.clone()),
+            settled: crate::app::settled::Settled::new(port.clone(), port.clone()),
+        };
+        pending.dirty.ask(state.tree());
+
+        press(&mut state, 'S');
+        settle(&mut state, &mut pending);
+
+        assert_eq!(
+            state.sweep_trouble(),
+            Some("me/app: gh refused the question this asked: no auth"),
+            "the rows can say a checkout could not be judged; only this says which and why"
+        );
+        assert!(!state.is_asking_gh(), "and the spinner has stopped");
+    }
+
+    #[test]
+    fn a_pull_request_gh_found_widens_the_sweep_through_the_loop() {
+        let port = std::sync::Arc::new(Answering {
+            answer: Some(Ok(crate::port::SettledPullRequests::All(vec![
+                crate::port::SettledPullRequest {
+                    number: 9,
+                    head_ref: "feat/login".to_string(),
+                    from_a_fork: false,
+                    outcome: crate::port::PullRequestOutcome::Merged,
+                },
+            ]))),
+            ..Answering::default()
+        });
+        let mut state = PanesState::new(no_pane_tree(), None);
+        let mut pending = Pending {
+            dirty: Dirty::new(port.clone()),
+            settled: crate::app::settled::Settled::new(port.clone(), port.clone()),
+        };
+        pending.dirty.ask(state.tree());
+
+        press(&mut state, 'S');
+        settle(&mut state, &mut pending);
+
+        assert_eq!(
+            state.chosen(),
+            vec!["/wt/feat-login".to_string()],
+            "git had nothing to say about it; gh may only widen, and this is widening"
+        );
+    }
+
+    #[test]
+    fn a_reload_asks_gh_again_because_a_pull_request_can_land_while_the_picker_is_up() {
+        let port = std::sync::Arc::new(Answering::default());
+        let mut state = PanesState::new(no_pane_tree(), None);
+        let mut pending = Pending {
+            dirty: Dirty::new(port.clone()),
+            settled: crate::app::settled::Settled::new(port.clone(), port.clone()),
+        };
+        pending.dirty.ask(state.tree());
+        press(&mut state, 'S');
+        settle(&mut state, &mut pending);
+        assert_eq!(port.asked().len(), 1);
+
+        // What the `r` arm does to the sweep's half. `r` itself is `Ignored` during a sweep,
+        // so this is the state the arm leaves behind rather than the key.
+        pending.settled.forget();
+        settle(&mut state, &mut pending);
+        assert_eq!(
+            port.asked().len(),
+            2,
+            "the reload asks again rather than showing what it had"
+        );
+    }
+
+    #[test]
+    fn entering_a_sweep_again_asks_gh_again_where_it_refused() {
+        // A `gh` that could not answer when `Shift-S` was first pressed is not one that can
+        // never answer. The only other way to ask again is `r`, which a sweep does not take
+        // and the footer does not send the user out to press — so a network that was out
+        // for one keypress was out for the life of the picker.
+        let port = std::sync::Arc::new(Recovering::default());
+        let mut state = PanesState::new(no_pane_tree(), None);
+        let mut pending = Pending {
+            dirty: Dirty::new(port.clone()),
+            settled: crate::app::settled::Settled::new(port.clone(), port.clone()),
+        };
+        pending.dirty.ask(state.tree());
+
+        press(&mut state, 'S');
+        settle(&mut state, &mut pending);
+        assert_eq!(
+            state.sweep_trouble(),
+            Some("me/app: gh refused the question this asked: could not connect")
+        );
+
+        press(&mut state, 'S');
+        press(&mut state, 'S');
+        settle(&mut state, &mut pending);
+        assert_eq!(
+            state.sweep_trouble(),
+            None,
+            "asked again on the way back in, and this time it answered"
+        );
+        assert_eq!(port.asked(), 2, "and not on any frame between");
+    }
+
+    #[test]
+    fn the_loop_keeps_its_clock_while_the_sweep_is_waiting_on_gh() {
+        // `show_answers`' answer is what the loop turns the spinner on, and what makes it
+        // poll instead of blocking in `event::read()`. With `gh` left out of it, `asking gh…`
+        // draws frame zero for ever and the answer reaches the rows only when the user
+        // happens to press a key.
+        let mut state = PanesState::new(no_pane_tree(), None);
+        let mut pending = pending_on_gh(Dirty::new(std::sync::Arc::new(Answers(Some(false)))));
+
+        // The walk has nothing outstanding; the sweep does.
+        state.handle_key(ratatui::crossterm::event::KeyEvent::new(
+            ratatui::crossterm::event::KeyCode::Char('S'),
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        ));
+        assert!(state.is_sweeping());
+        pending.settled.ask(state.tree());
+
+        assert!(
+            show_answers(&mut state, &mut pending),
+            "gh is still out, so the loop still has something to wake up for"
+        );
+        assert!(state.is_asking_gh(), "and the prompt line says which");
     }
 
     #[test]
@@ -460,9 +883,10 @@ mod tests {
         let mut dirty = Dirty::new(std::sync::Arc::new(Answers(None)));
         dirty.ask(state.tree());
 
+        let mut pending = pending(dirty);
         until(
             "the walk never answered for the only checkout there is",
-            || !show_answers(&mut state, &mut dirty),
+            || !show_answers(&mut state, &mut pending),
         );
 
         state.handle_key(ratatui::crossterm::event::KeyEvent::new(
@@ -485,9 +909,10 @@ mod tests {
         let mut dirty = Dirty::new(std::sync::Arc::new(Answers(Some(false))));
         dirty.ask(state.tree());
 
+        let mut pending = pending(dirty);
         until(
             "the walk never answered for the only checkout there is",
-            || !show_answers(&mut state, &mut dirty),
+            || !show_answers(&mut state, &mut pending),
         );
 
         // The cursor starts on the only pane there is.

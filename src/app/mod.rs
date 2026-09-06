@@ -10,6 +10,7 @@ pub(crate) mod fakes;
 pub mod panes;
 pub mod removals;
 pub mod remove;
+pub mod settled;
 
 use anyhow::Result;
 use ratatui::DefaultTerminal;
@@ -20,9 +21,27 @@ use crate::adapter::herdr_config;
 use crate::app::context::{Context, FROM_PANE, REPO_ROOT};
 use crate::app::dirty::Dirty;
 use crate::app::removals::Removals;
+use crate::app::settled::Settled;
 use crate::domain::listing;
 use crate::port::{GhPort, GitPort, HerdrPort, RemovalPort};
 use crate::ui::theme::Theme;
+
+/// What the panes view has asked for behind the first frame.
+///
+/// Kept across a `Tab` and across leaving a sweep, so that a trip through the branches view
+/// asks none of it again — an answer that cost a round of processes is worth more than the
+/// frame it took to get. Both are here rather than passed separately because they are the
+/// same shape: a question put to a port on a thread, drained by the loop, and drawn on the
+/// rows as it lands.
+pub struct Pending {
+    /// Which checkouts are holding uncommitted work. One process per checkout, so it is
+    /// asked as soon as the picker opens and fills the list in behind the first frame.
+    pub dirty: Dirty,
+    /// What `gh` says has become of each repository's pull requests. Asked when a sweep is
+    /// entered rather than when the picker opens: it is the heavier call, and most sessions
+    /// never sweep — `docs/adr/0011-what-may-be-swept.md`.
+    pub settled: Settled,
+}
 
 /// Which picker to start on. They toggle with `Tab`, so this is only the entry point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,7 +68,7 @@ pub(crate) fn home_dir() -> Option<String> {
 pub fn run_picker(
     herdr: &dyn HerdrPort,
     git: Arc<dyn GitPort>,
-    gh: &dyn GhPort,
+    gh: Arc<dyn GhPort>,
     remover: &dyn RemovalPort,
     start: Entrypoint,
 ) -> Result<()> {
@@ -106,7 +125,7 @@ fn views(
     terminal: &mut DefaultTerminal,
     herdr: &dyn HerdrPort,
     git: Arc<dyn GitPort>,
-    gh: &dyn GhPort,
+    gh: Arc<dyn GhPort>,
     remover: &dyn RemovalPort,
     theme: &Theme,
     start: Entrypoint,
@@ -121,14 +140,25 @@ fn views(
     let mut removals = Removals::new(remover);
     // Kept for the same reason, and with one of its own: walking a working tree to see
     // whether it is dirty is the one answer here that costs a process per checkout.
-    let mut dirty = Dirty::new(Arc::clone(&git));
+    let mut pending = Pending {
+        dirty: Dirty::new(Arc::clone(&git)),
+        settled: Settled::new(Arc::clone(&git), Arc::clone(&gh)),
+    };
     let mut view = start;
     loop {
         match view {
             Entrypoint::Branches => {
                 // No repository in hand is not a failure: the picker opens on its list of
                 // them. It falls back to the panes view only when there are none at all.
-                match branches::run(terminal, herdr, &*git, gh, &summoned, theme, &mut listings)? {
+                match branches::run(
+                    terminal,
+                    herdr,
+                    &*git,
+                    &*gh,
+                    &summoned,
+                    theme,
+                    &mut listings,
+                )? {
                     branches::Exit::Closed => return Ok(()),
                     branches::Exit::ShowPanes => view = Entrypoint::Panes,
                 }
@@ -139,7 +169,7 @@ fn views(
                     herdr,
                     &*git,
                     &mut removals,
-                    &mut dirty,
+                    &mut pending,
                     summoned.pane.as_deref(),
                     theme,
                 )? {
