@@ -76,7 +76,9 @@ fn pane(start: Entrypoint) -> Result<()> {
         // Shared rather than borrowed: the threads asking whether each checkout is dirty
         // outlive the view that started them, so they cannot borrow from one.
         std::sync::Arc::new(GitCli),
-        &GhCli,
+        // Shared for the same reason: the sweep asks `gh` about each repository on a thread
+        // that outlives the view that entered it.
+        std::sync::Arc::new(GhCli),
         &DetachedRemovals,
         start,
     )
