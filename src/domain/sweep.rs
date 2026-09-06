@@ -10,9 +10,9 @@
 //! never clears a mark git put there, never gates the mode, and when it cannot be asked the
 //! rows it would have judged say so rather than looking like rows with nothing to find.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::domain::model::{RepoNode, Tree, WorkingTree};
+use crate::domain::model::{RepoNode, Tree, WorkingTree, WorktreeNode};
 use crate::port::{PullRequestOutcome, SettledPullRequest, SettledPullRequests, Track};
 
 /// Why a checkout is offered for deletion. Shown beside the mark, because a mark whose
@@ -60,7 +60,10 @@ pub enum Refusal {
     /// Panes are running in it. Closing somebody's panes is one deliberate act — see
     /// `docs/adr/0010-closing-the-panes-first.md` — and a batch is not where it belongs.
     Running,
-    /// Its removal is already going, in a process of its own.
+    /// Its removal is already going, in a process of its own. The one refusal never asked
+    /// for: the cursor does not stop on a row being removed, sweep or no sweep, and
+    /// `deleting` on the row is what says so — `domain::rows::Row::is_selectable`. The
+    /// variant is still needed, because it is what keeps the row out of `chosen`.
     Removing,
 }
 
@@ -105,12 +108,25 @@ pub enum Candidate {
 impl Candidate {
     /// Whether the sweep marks this when it opens.
     pub fn is_offered(&self) -> bool {
-        matches!(self, Candidate::Offered(_))
+        match self {
+            Candidate::Offered(_) => true,
+            Candidate::Unjudged | Candidate::Available | Candidate::Refused(_) => false,
+        }
     }
 
     /// Whether the user may mark it at all.
+    ///
+    /// Spelled out rather than written as `!matches!(_, Refused(_))`, which is the same
+    /// answer today and would go on compiling as a variant was added — answering *yes* for
+    /// it, because that is what the negation of a single pattern does. This is the predicate
+    /// that decides what may be deleted, so the direction it fails in is the whole question:
+    /// a fifth variant meant to be untouchable would have been markable, and nothing but a
+    /// second filter in [`chosen`] between it and a removal. The compiler asks now.
     pub fn is_markable(&self) -> bool {
-        !matches!(self, Candidate::Refused(_))
+        match self {
+            Candidate::Offered(_) | Candidate::Unjudged | Candidate::Available => true,
+            Candidate::Refused(_) => false,
+        }
     }
 }
 
@@ -166,10 +182,12 @@ fn judge(
     // anyone is finished with it: a running pane is a reason not to sweep a branch whose
     // upstream went, not a tie to be broken afterwards.
     //
-    // Their order among themselves decides only which sentence a checkout that earns two of
-    // them shows, and it runs most permanent first: being the repository itself is not a
+    // Their order among themselves decides only which refusal a checkout that earns two of
+    // them carries, and it runs most permanent first: being the repository itself is not a
     // state that passes, a removal already going will end, and panes close whenever somebody
     // closes them. `which_refusal_a_checkout_that_earns_two_of_them_shows` is what says so.
+    // Only the first and the last are ever put into words — `Space` cannot reach a row being
+    // removed — so for `Removing` the order decides which variant it is, not what is read.
     if worktree.is_primary {
         return Candidate::Refused(Refusal::Primary);
     }
@@ -260,6 +278,254 @@ fn finished_with<'a>(
                 pull_request.number,
             )
         })
+}
+
+/// What the user has said about the sweep's suggestions since it opened.
+///
+/// **The decision, not the keypress.** `Space` flips the row it is on — the same key widens
+/// the sweep and narrows it, which is the whole of ADR 0011's "a mark is a suggestion" — but
+/// what is written down is where that left the row, not that it was pressed.
+///
+/// The difference is not academic. A stored flip is exclusive-or-ed against a suggestion,
+/// and `judge` recomputes the suggestion on every rebuild out of four things that all move
+/// while the sweep is on screen. So a flip changes meaning underneath itself. Mark a row
+/// `gh` had said nothing about, let `gh` land and agree, and the two cancel and the mark goes
+/// out. Clear the `gone` row, let the walk report it dirty, and the row comes back marked — a
+/// checkout the user said no to, going.
+///
+/// Keyed by checkout path rather than by row index, because the row list is rebuilt
+/// underneath this every time a working tree answers. An index would move; a path stays with
+/// the checkout it names, and a path whose checkout has left the tree simply stops matching
+/// anything.
+#[derive(Debug, Default, Clone)]
+pub struct Changes(BTreeMap<String, Decision>);
+
+/// One answer, and what it was about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Decision {
+    /// The branch the row carried when the user answered.
+    ///
+    /// A path outlives the checkout that had it: remove a worktree and make another in the
+    /// same place — which `git worktree add` will do, and which a second herdr session can
+    /// do while the picker is up — and the tree comes back through `replace_tree` with a
+    /// different branch at a path the user has already said yes to. Without this, that yes
+    /// is now about a branch nobody has seen, on the list `Enter` acts on. ADR 0011's
+    /// "nothing is deleted that was not on the screen with a mark against it" is about what
+    /// was on the screen, and a path is not that.
+    ///
+    /// `None` is a detached checkout, which is a thing the row shows too. Two of those at
+    /// one path are as different as two branches are, and this cannot tell them apart: a
+    /// `WorktreeNode` carries no commit, so an answer about one carries over to the other.
+    /// It takes a checkout removed and another made detached at the same path while the
+    /// sweep is up, and what closes it is a commit id on the node, which nothing reads yet.
+    branch: Option<String>,
+    going: bool,
+}
+
+impl Changes {
+    /// Flip one row, and answer whether it is now going.
+    ///
+    /// Takes the [`Mark`] rather than only the path so that a refusal cannot be flipped into
+    /// a mark by a keypress. `None` is that refusal: nothing was recorded, and the caller has
+    /// a sentence from [`Mark::refusal`] to put on the prompt line.
+    ///
+    /// The `Mark` is also what the answer is read off. What a row is now is what it was not,
+    /// and it is written down as that rather than as "flipped" — see the note on the type.
+    pub fn flip(&mut self, worktree: &WorktreeNode, mark: &Mark) -> Option<bool> {
+        if !mark.is_markable() {
+            return None;
+        }
+        let going = !mark.is_going();
+        self.0.insert(
+            worktree.checkout_path.clone(),
+            Decision {
+                branch: worktree.branch.clone(),
+                going,
+            },
+        );
+        Some(going)
+    }
+
+    /// The answers that are still about the checkouts they were given about.
+    ///
+    /// Everything the sweep decides on is worked out again on every rebuild, and this is the
+    /// one input that is not — it is what the user said, and it is meant to outlive a `gh`
+    /// answer landing and a working tree reporting. What it must not outlive is the checkout
+    /// it was said about. A path is reused; an answer is not transferable.
+    ///
+    /// Applied where the marks are made rather than where the tree is set, so there is no
+    /// call site that has to remember it.
+    pub fn still_about(&self, tree: &Tree) -> Changes {
+        let listed: BTreeMap<&str, Option<&str>> = tree
+            .repos
+            .iter()
+            .flat_map(|repo| &repo.worktrees)
+            .map(|worktree| (worktree.checkout_path.as_str(), worktree.branch.as_deref()))
+            .collect();
+        Changes(
+            self.0
+                .iter()
+                .filter(|(path, decision)| {
+                    listed.get(path.as_str()) == Some(&decision.branch.as_deref())
+                })
+                .map(|(path, decision)| (path.clone(), decision.clone()))
+                .collect(),
+        )
+    }
+
+    /// What the user said about this row, or `None` where they have said nothing.
+    fn said(&self, path: &str) -> Option<bool> {
+        self.0.get(path).map(|decision| decision.going)
+    }
+}
+
+/// Which checkouts carry a mark right now, in path order.
+///
+/// The sweep's suggestion for every row the user has not spoken about, and the user's own
+/// answer for every row they have. This is the answer `Enter` will act on — it is not bound
+/// yet, and the footer leaves it out — so a refusal reaching it would be a checkout deleted that
+/// the picker had promised never to touch. It cannot: [`Changes::flip`] will not record one,
+/// and this filters again rather than trusting that, because a checkout somebody opens a
+/// pane in becomes `Refused(Running)` the next time the tree is read — which, while a sweep
+/// is on, is when a removal started before it reports back — with the user's answer still
+/// written down against it.
+pub fn chosen<'a>(
+    candidates: &'a BTreeMap<String, Candidate>,
+    changes: &Changes,
+) -> BTreeSet<&'a str> {
+    candidates
+        .iter()
+        .filter(|(path, candidate)| {
+            candidate.is_markable() && changes.said(path).unwrap_or(candidate.is_offered())
+        })
+        .map(|(path, _)| path.as_str())
+        .collect()
+}
+
+/// What one row shows while a sweep is on.
+///
+/// Everything a row needs and nothing a row has to work out for itself, because the sweep's
+/// suggestions and the user's changes are two collections and a row that consulted both
+/// would be the third place the rule lives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Mark {
+    /// Going, for the reason shown: what the sweep found.
+    Going(Reason),
+    /// Going because the user said so, on a row the sweep had nothing to say about. The row
+    /// says nothing beside the mark — "because you said so" is not a finding.
+    GoingByHand,
+    /// Going because the user said so, on a row `gh` could not settle. The row goes on
+    /// saying so: it is the one row on the list where what is being acted on is nobody
+    /// knows, and that is worth most on the row about to be acted on. Its own variant
+    /// rather than a flag beside [`GoingByHand`](Mark::GoingByHand), because a mark carrying
+    /// both a reason and "could not look" would be a state nothing here can mean.
+    GoingUnjudged,
+    /// Staying, and the user may change that.
+    Staying,
+    /// Staying, and `gh` could not settle whether it should be. Says so, because a sweep
+    /// that quietly finds less when it could not look is worse than one that says which half
+    /// it could not see — `docs/adr/0011-what-may-be-swept.md`.
+    Unjudged,
+    /// Never swept, and why.
+    Refused(Refusal),
+}
+
+impl Mark {
+    /// Whether this row goes when the sweep runs.
+    pub fn is_going(&self) -> bool {
+        match self {
+            Mark::Going(_) | Mark::GoingByHand | Mark::GoingUnjudged => true,
+            Mark::Staying | Mark::Unjudged | Mark::Refused(_) => false,
+        }
+    }
+
+    /// Whether `Space` does anything here.
+    ///
+    /// Exhaustive for the reason [`Candidate::is_markable`] is, and it has to agree with it:
+    /// `Candidate` decides what may be deleted and this decides what the keyboard may touch,
+    /// and a variant added to one has to be answered in both. Written as a negation, each
+    /// would have said yes to a new variant on its own and gone on agreeing while both were
+    /// wrong.
+    pub fn is_markable(&self) -> bool {
+        match self {
+            Mark::Going(_)
+            | Mark::GoingByHand
+            | Mark::GoingUnjudged
+            | Mark::Staying
+            | Mark::Unjudged => true,
+            Mark::Refused(_) => false,
+        }
+    }
+
+    /// What the row says beside its mark, or nothing.
+    ///
+    /// Two things are deliberately not here, and both because the row already says them.
+    ///
+    /// `Reason::Gone` is drawn by `domain::rows::marks` as the branch's upstream marker on
+    /// every row it is true of — and `judge` offers that reason only where `track` is
+    /// `Gone`, so wherever the reason would go the marker already is. Repeating it puts the
+    /// same word on the row twice. (The converse does not hold: a row whose track is gone
+    /// is not offered while it is primary, running, being removed, or not known to be
+    /// clean.)
+    ///
+    /// A refusal is said by the absence of a box, and asked about with `Space`, which
+    /// answers on the prompt line — see [`refusal`](Mark::refusal). On the row it would be a
+    /// sentence as long as "panes are running in it" beside every primary checkout in the
+    /// list, which is where the label would otherwise go.
+    pub fn note(&self) -> Option<String> {
+        match self {
+            Mark::Going(reason @ Reason::PullRequest { .. }) => Some(reason.label()),
+            Mark::Unjudged | Mark::GoingUnjudged => Some("PR unknown".to_string()),
+            Mark::Going(Reason::Gone) | Mark::GoingByHand | Mark::Staying | Mark::Refused(_) => {
+                None
+            }
+        }
+    }
+
+    /// Why `Space` did nothing here, for the prompt line.
+    ///
+    /// On demand rather than on the row, because the answer is only wanted by somebody who
+    /// has just tried — and because these are sentences rather than labels.
+    pub fn refusal(&self) -> Option<&'static str> {
+        match self {
+            Mark::Refused(refusal) => Some(refusal.label()),
+            _ => None,
+        }
+    }
+}
+
+/// What every checkout shows while a sweep is on, by checkout path.
+///
+/// Worked out once per rebuild rather than per row: `chosen` is the answer `Enter` acts on,
+/// and a row that recomputed it would be a second implementation of the same rule, free to
+/// disagree with the one that deletes things.
+pub fn marks(
+    candidates: &BTreeMap<String, Candidate>,
+    changes: &Changes,
+) -> BTreeMap<String, Mark> {
+    let going = chosen(candidates, changes);
+    candidates
+        .iter()
+        .map(|(path, candidate)| {
+            // Flat, so that every pairing of what the sweep found and what the user said is
+            // an arm of its own. The nested `match` this was had a wildcard on its inside. A
+            // fifth `Candidate` did stop the compiler — at the outer arm — but the smallest
+            // edit that satisfied it left the inner wildcard to answer for the new variant,
+            // with `Going(None)`: a box with nothing beside it, and no second stop to say so.
+            let going = going.contains(path.as_str());
+            let mark = match candidate {
+                Candidate::Refused(refusal) => Mark::Refused(*refusal),
+                Candidate::Offered(reason) if going => Mark::Going(reason.clone()),
+                Candidate::Available if going => Mark::GoingByHand,
+                Candidate::Unjudged if going => Mark::GoingUnjudged,
+                Candidate::Unjudged => Mark::Unjudged,
+                // Including an `Offered` the user has just cleared: the sweep's reason is no
+                // longer why this row is doing anything, so it stops being shown.
+                Candidate::Offered(_) | Candidate::Available => Mark::Staying,
+            };
+            (path.clone(), mark)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -865,6 +1131,396 @@ mod tests {
         // no error, nothing on screen. Every other test here builds both sides of the map
         // with `RepoRoot::of`, so the choice cancels out and only this pins it.
         assert_eq!(RepoRoot::of(&only_repo()), RepoRoot("/src/app".to_string()));
+    }
+
+    /// What `Space` does, through the same two steps the picker takes: judge every row, then
+    /// flip the one the cursor is on by what it shows.
+    fn flip(
+        changes: &mut Changes,
+        candidates: &BTreeMap<String, Candidate>,
+        path: &str,
+    ) -> Option<bool> {
+        let shown = marks(candidates, changes);
+        changes.flip(&worktree("b", path), &shown[path])
+    }
+
+    /// The four answers side by side, since what `Space` does depends on which one a row is.
+    fn one_of_each() -> BTreeMap<String, Candidate> {
+        BTreeMap::from([
+            ("/wt/gone".to_string(), Candidate::Offered(Reason::Gone)),
+            ("/wt/unjudged".to_string(), Candidate::Unjudged),
+            ("/wt/available".to_string(), Candidate::Available),
+            ("/src/app".to_string(), Candidate::Refused(Refusal::Primary)),
+        ])
+    }
+
+    #[test]
+    fn the_sweep_opens_on_what_it_offered_and_nothing_else() {
+        let candidates = one_of_each();
+        assert_eq!(
+            chosen(&candidates, &Changes::default()),
+            BTreeSet::from(["/wt/gone"])
+        );
+    }
+
+    #[test]
+    fn space_widens_the_sweep_and_narrows_it_with_the_same_key() {
+        // ADR 0011's "a mark is a suggestion" is this: disagreeing with the sweep costs
+        // exactly what agreeing with it extra does, one key on one row. A pair of add and
+        // remove keys would make one of the two the easier answer.
+        let candidates = one_of_each();
+        let mut changes = Changes::default();
+
+        assert_eq!(
+            flip(&mut changes, &candidates, "/wt/available"),
+            Some(true),
+            "a row the sweep said nothing about is now going"
+        );
+        assert_eq!(
+            flip(&mut changes, &candidates, "/wt/gone"),
+            Some(false),
+            "and one it offered is not"
+        );
+        assert_eq!(
+            chosen(&candidates, &changes),
+            BTreeSet::from(["/wt/available"])
+        );
+
+        // And back, because the same key has to undo itself — a user who marks the wrong row
+        // reaches for the key they just pressed.
+        assert_eq!(
+            flip(&mut changes, &candidates, "/wt/available"),
+            Some(false)
+        );
+        assert_eq!(flip(&mut changes, &candidates, "/wt/gone"), Some(true));
+        assert_eq!(chosen(&candidates, &changes), BTreeSet::from(["/wt/gone"]));
+    }
+
+    #[test]
+    fn gh_agreeing_with_a_mark_the_user_made_does_not_take_it_away() {
+        // Storing the keypress rather than the decision made this fail: a flip is
+        // exclusive-or-ed against a suggestion that moves, so `gh` arriving at the same
+        // answer the user had already given cancelled it out.
+        let mut candidates = one_of_each();
+        let mut changes = Changes::default();
+        flip(&mut changes, &candidates, "/wt/available");
+        assert!(chosen(&candidates, &changes).contains("/wt/available"));
+
+        // `gh` answers: that branch's pull request is merged. The sweep now suggests what
+        // the user already said.
+        candidates.insert(
+            "/wt/available".to_string(),
+            Candidate::Offered(Reason::PullRequest {
+                number: 7,
+                outcome: PullRequestOutcome::Merged,
+            }),
+        );
+        assert!(
+            chosen(&candidates, &changes).contains("/wt/available"),
+            "gh agreeing with the user cannot take the user's mark away"
+        );
+    }
+
+    #[test]
+    fn a_row_the_user_cleared_does_not_come_back_when_the_facts_move() {
+        // The same fault pointed the other way, and the dangerous direction: a checkout the
+        // user explicitly said no to, coming back marked while they are not looking, on the
+        // list that `Enter` will act on.
+        let mut candidates = one_of_each();
+        let mut changes = Changes::default();
+        flip(&mut changes, &candidates, "/wt/gone");
+        assert!(!chosen(&candidates, &changes).contains("/wt/gone"));
+
+        // The walk answers: that working tree is dirty, so the sweep stops offering it.
+        candidates.insert("/wt/gone".to_string(), Candidate::Available);
+        assert!(
+            !chosen(&candidates, &changes).contains("/wt/gone"),
+            "a checkout the user said no to does not come back marked"
+        );
+    }
+
+    #[test]
+    fn a_row_the_sweep_refuses_is_not_the_users_to_overrule() {
+        // The one thing a keypress may not do. `Shift-D` asks before it removes and this
+        // does not, so a refusal that could be flipped into a mark would be the picker
+        // deleting the repository's own checkout on two keys and no question.
+        let candidates = one_of_each();
+        let mut changes = Changes::default();
+        assert_eq!(flip(&mut changes, &candidates, "/src/app"), None);
+        assert!(
+            !chosen(&candidates, &changes).contains("/src/app"),
+            "and nothing was recorded to leak into the answer"
+        );
+    }
+
+    #[test]
+    fn an_answer_is_about_the_checkout_it_was_given_about_and_not_about_the_path() {
+        // A path outlives the checkout that had it. Remove a worktree and make another in
+        // the same place — `git worktree add` will, and a second herdr session can while the
+        // picker is up — and the tree comes back with a different branch at a path the user
+        // has already said yes to. That yes is then about a branch nobody has seen, on the
+        // list `Enter` acts on.
+        let tree = tree_of(vec![worktree("feat/login", "/wt/feat-login")]);
+        let candidates = BTreeMap::from([("/wt/feat-login".to_string(), Candidate::Available)]);
+        let mut changes = Changes::default();
+        changes.flip(&worktree("feat/login", "/wt/feat-login"), &Mark::Staying);
+        assert!(chosen(&candidates, &changes.still_about(&tree)).contains("/wt/feat-login"));
+
+        // Same path, different branch.
+        let moved = tree_of(vec![worktree("release/v2", "/wt/feat-login")]);
+        assert!(
+            !chosen(&candidates, &changes.still_about(&moved)).contains("/wt/feat-login"),
+            "the answer was about feat/login, and feat/login is not there any more"
+        );
+
+        // And a checkout that leaves the tree and comes back the same takes its answer with
+        // it: what the user said is still true of what they said it about.
+        assert!(chosen(&candidates, &changes.still_about(&tree)).contains("/wt/feat-login"));
+    }
+
+    #[test]
+    fn a_detached_checkout_is_not_the_same_checkout_as_a_branch_at_the_same_path() {
+        // Two checkouts with no branch at one path are as different as two branches are, and
+        // the row shows the difference either way.
+        let mut detached = worktree("feat/login", "/wt/feat-login");
+        detached.branch = None;
+        let candidates = BTreeMap::from([("/wt/feat-login".to_string(), Candidate::Available)]);
+
+        let mut changes = Changes::default();
+        changes.flip(&detached, &Mark::Staying);
+        assert!(chosen(
+            &candidates,
+            &changes.still_about(&tree_of(vec![detached.clone()]))
+        )
+        .contains("/wt/feat-login"));
+        assert!(
+            !chosen(
+                &candidates,
+                &changes.still_about(&tree_of(vec![worktree("feat/login", "/wt/feat-login")]))
+            )
+            .contains("/wt/feat-login"),
+            "a branch was checked out where there was none"
+        );
+    }
+
+    #[test]
+    fn an_answer_about_a_checkout_that_left_the_tree_is_not_kept() {
+        let mut changes = Changes::default();
+        changes.flip(&worktree("feat/login", "/wt/feat-login"), &Mark::Staying);
+        assert!(changes.said("/wt/feat-login").is_some());
+
+        let empty = tree_of(Vec::new());
+        assert!(changes.still_about(&empty).said("/wt/feat-login").is_none());
+    }
+
+    #[test]
+    fn a_row_that_becomes_a_refusal_under_a_mark_stops_being_chosen() {
+        // The rows are judged again whenever `gh` answers or a removal starts, and a
+        // checkout somebody opened a pane in between two frames becomes `Refused(Running)`
+        // while the user's flip is still recorded against it. Filtering only on the way in
+        // would leave that mark standing on a row the sweep may not touch.
+        let mut candidates = one_of_each();
+        let mut changes = Changes::default();
+        flip(&mut changes, &candidates, "/wt/available");
+        assert!(chosen(&candidates, &changes).contains("/wt/available"));
+
+        candidates.insert(
+            "/wt/available".to_string(),
+            Candidate::Refused(Refusal::Running),
+        );
+        assert!(
+            !chosen(&candidates, &changes).contains("/wt/available"),
+            "somebody started working in it; the mark goes with the judgement"
+        );
+    }
+
+    #[test]
+    fn a_flip_is_remembered_against_a_path_and_not_against_a_row() {
+        // The list is rebuilt underneath the sweep every time a working tree answers, so a
+        // remembered row index would end up on a different checkout. And a checkout that
+        // leaves the tree takes its flip with it rather than passing it to whatever sorts
+        // into the same place.
+        let mut candidates = one_of_each();
+        let mut changes = Changes::default();
+        flip(&mut changes, &candidates, "/wt/available");
+
+        candidates.remove("/wt/available");
+        assert_eq!(
+            chosen(&candidates, &changes),
+            BTreeSet::from(["/wt/gone"]),
+            "the flip left with the checkout it named, and the rest is untouched"
+        );
+
+        // And a checkout made afterwards does not inherit it by sorting into the same place.
+        candidates.insert("/wt/available".to_string(), Candidate::Available);
+        candidates.insert("/wt/aaa-first".to_string(), Candidate::Available);
+        assert_eq!(
+            chosen(&candidates, &changes),
+            BTreeSet::from(["/wt/gone", "/wt/available"]),
+            "though a path used again is the one thing a path cannot tell apart"
+        );
+    }
+
+    #[test]
+    fn every_row_says_what_is_happening_to_it_and_why() {
+        let candidates = one_of_each();
+        let shown = marks(&candidates, &Changes::default());
+
+        assert_eq!(
+            shown["/wt/gone"],
+            Mark::Going(Reason::Gone),
+            "nothing goes without its reason attached"
+        );
+        assert_eq!(
+            shown["/wt/gone"].note(),
+            None,
+            "and its reason is the upstream marker the row already draws — `judge` offers \
+             `Gone` only where the track is gone, so saying it again would put the same \
+             word on the row twice"
+        );
+        assert_eq!(shown["/wt/available"], Mark::Staying);
+        assert_eq!(shown["/wt/available"].note(), None);
+        assert_eq!(shown["/wt/unjudged"], Mark::Unjudged);
+        assert_eq!(
+            shown["/wt/unjudged"].note().as_deref(),
+            Some("PR unknown"),
+            "a row gh could not judge says so rather than looking like one with nothing to \
+             find"
+        );
+        assert_eq!(shown["/src/app"], Mark::Refused(Refusal::Primary));
+        assert_eq!(
+            shown["/src/app"].note(),
+            None,
+            "a refusal is said by the absence of a box, not by a sentence where the label goes"
+        );
+        assert_eq!(
+            shown["/src/app"].refusal(),
+            Some("the repository itself"),
+            "and answered on the prompt line to whoever pressed Space"
+        );
+        assert_eq!(
+            shown["/wt/gone"].refusal(),
+            None,
+            "nothing else has one to give"
+        );
+    }
+
+    #[test]
+    fn the_reason_a_gone_branch_is_going_is_the_marker_the_row_already_carries() {
+        // The one place `Mark::note` stays quiet about a reason it has, and it is only right
+        // while `judge` offers `Gone` for exactly the rows `domain::rows::marks` draws
+        // `gone` on. If that ever comes apart, a row goes with nothing on it saying why.
+        let mut worktree = worktree("feat/login", "/wt/feat-login");
+        worktree.track = Some(Track::Gone);
+        let judged = judged(
+            &tree_of(vec![worktree]),
+            &facts(&clean(&["/wt/feat-login"]), &BTreeMap::new()),
+        );
+        assert_eq!(
+            judged["/wt/feat-login"],
+            Candidate::Offered(Reason::Gone),
+            "gone is offered for a track that is gone, and for nothing else"
+        );
+    }
+
+    #[test]
+    fn a_pull_request_is_named_on_the_row_it_decided() {
+        let candidates = BTreeMap::from([(
+            "/wt/feat-login".to_string(),
+            Candidate::Offered(Reason::PullRequest {
+                number: 123,
+                outcome: PullRequestOutcome::Merged,
+            }),
+        )]);
+        let shown = marks(&candidates, &Changes::default());
+        assert_eq!(
+            shown["/wt/feat-login"].note().as_deref(),
+            Some("PR #123 merged"),
+            "the number is what makes the reason checkable"
+        );
+    }
+
+    #[test]
+    fn a_row_the_user_marked_says_nothing_beside_its_mark() {
+        // "Because you said so" is not a finding, and putting one there would make the
+        // sweep look as though it had agreed.
+        let candidates = one_of_each();
+        let mut changes = Changes::default();
+        flip(&mut changes, &candidates, "/wt/available");
+
+        let shown = marks(&candidates, &changes);
+        assert_eq!(shown["/wt/available"], Mark::GoingByHand);
+        assert_eq!(shown["/wt/available"].note(), None);
+    }
+
+    #[test]
+    fn a_row_marked_where_gh_could_not_look_goes_on_saying_so() {
+        // The one exception to the above. `PR unknown` went away the moment the row was
+        // marked, which is the moment it starts to matter: a box on a row nobody could judge
+        // looked exactly like a box on a row `gh` had answered for, on the list `Enter` will
+        // act on. ADR 0011: a mark whose reason is invisible is one the user trusts blindly
+        // — and here the reason is that there is not one.
+        let candidates = one_of_each();
+        let mut changes = Changes::default();
+        flip(&mut changes, &candidates, "/wt/unjudged");
+
+        let shown = marks(&candidates, &changes);
+        assert_eq!(shown["/wt/unjudged"], Mark::GoingUnjudged);
+        assert!(shown["/wt/unjudged"].is_going());
+        assert_eq!(shown["/wt/unjudged"].note().as_deref(), Some("PR unknown"));
+
+        // And it comes off again. `is_markable` is what `flip` asks before it records
+        // anything, and a variant left out of its `true` arm is a mark the user can put on
+        // and never take off — on the one row where what is being acted on is nobody knows.
+        flip(&mut changes, &candidates, "/wt/unjudged");
+        let shown = marks(&candidates, &changes);
+        assert_eq!(shown["/wt/unjudged"], Mark::Unjudged);
+    }
+
+    #[test]
+    fn a_row_the_user_cleared_stops_showing_the_reason_it_was_offered_for() {
+        // The reason is why the sweep would have taken it, and it no longer would.
+        let candidates = one_of_each();
+        let mut changes = Changes::default();
+        flip(&mut changes, &candidates, "/wt/gone");
+
+        let shown = marks(&candidates, &changes);
+        assert_eq!(shown["/wt/gone"], Mark::Staying);
+        assert_eq!(shown["/wt/gone"].note(), None);
+    }
+
+    #[test]
+    fn what_a_row_shows_and_what_the_sweep_takes_are_the_same_answer() {
+        // Two collections decide this — the sweep's suggestions and the user's changes — and
+        // a row working it out for itself would be a second implementation of the rule, free
+        // to disagree with the one that deletes things. There is one, and this says so.
+        let candidates = one_of_each();
+        let mut changes = Changes::default();
+        flip(&mut changes, &candidates, "/wt/available");
+        flip(&mut changes, &candidates, "/wt/gone");
+
+        let going: BTreeSet<String> = marks(&candidates, &changes)
+            .into_iter()
+            .filter(|(_, mark)| mark.is_going())
+            .map(|(path, _)| path)
+            .collect();
+        let taken: BTreeSet<String> = chosen(&candidates, &changes)
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(going, taken);
+    }
+
+    #[test]
+    fn space_is_refused_on_exactly_the_rows_that_show_a_refusal() {
+        let candidates = one_of_each();
+        for (path, mark) in marks(&candidates, &Changes::default()) {
+            assert_eq!(
+                mark.is_markable(),
+                candidates[&path].is_markable(),
+                "{path} disagrees with itself about whether Space does anything"
+            );
+        }
     }
 
     #[test]

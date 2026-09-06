@@ -409,9 +409,11 @@ impl Slug {
     }
 }
 
-/// `Sync` because the pull request lookup runs on a background thread while the picker
-/// is already on screen.
-pub trait GhPort: Sync {
+/// `Sync` because the branches view's pull request lookup borrows this into a scoped thread,
+/// and `Send` because the sweep's does not: that one outlives the view that asked, for the
+/// reason `GitPort`'s does, so it goes into a detached thread through an `Arc` — which needs
+/// both.
+pub trait GhPort: Send + Sync {
     /// Open pull requests for the repository, or an empty list when `gh` is missing or
     /// unauthenticated. This layer is decoration: it must never fail the picker.
     /// A repository GitHub has never heard of has no [`Slug`] and cannot be asked, which is
