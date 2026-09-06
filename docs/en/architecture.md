@@ -115,6 +115,10 @@ herdr api snapshot ─┬─▶ workspaces (some carry .worktree: repo_key, repo
                                 ▼
                     git --no-optional-locks status --porcelain per checkout,
                     eight at a time, on threads that outlive the view that started them
+                                │
+                        Shift-S ▼
+                    gh pr list --state closed per repository, one thread each,
+                    kept for the life of the picker
 ```
 
 Two shortcuts keep it instant. Working directories are resolved once each rather than once
@@ -137,6 +141,17 @@ view switch and not by the panes view. The room a `✱` would take is kept from 
 frame, so an answer arriving never moves the paths beside it; `r` throws every answer away
 and asks again, and an answer from before that is dropped rather than mistaken for a fresh
 one.
+
+A sweep asks a third question, on the same shape. What `gh` says has become of each
+repository's pull requests is one process per repository, started on `Shift-S` rather than
+when the picker opens — it is the heavier of the two `gh` calls, and most sessions never
+sweep — and taken in by the loop as it lands, so a sweep entered on a slow network says
+`asking gh…` rather than looking like one that found nothing. It is owned by the view switch
+for the reason the working-tree answers are, and kept: a merged pull request does not become
+unmerged, so a sweep left and re-entered costs a map lookup. On the way back in only the
+repositories `gh` could not answer for are asked about again; `r` throws the whole answer
+away. A repository `gh` could not answer for is named on the prompt line, and its rows say
+`PR unknown` rather than nothing at all — [ADR 0011](../adr/0011-what-may-be-swept.md).
 
 ## Opening a branch
 

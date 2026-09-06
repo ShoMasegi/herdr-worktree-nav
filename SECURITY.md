@@ -43,7 +43,13 @@ Specifically, herdr-worktree-nav:
   of its own, so closing the picker does not leave a half-deleted checkout behind. It removes
   the one checkout it was given and then exits; it takes no further instructions and does
   nothing else. It reports what happened as a herdr notification.
-- **Runs `gh pr list`** if `gh` is on your `PATH`, to annotate branches. Read-only.
+- **Runs `gh pr list`** if `gh` is on your `PATH`: per repository, to annotate branches; and
+  per repository again, over closed pull requests, when you enter a sweep with `Shift-S` —
+  to suggest which checkouts are finished with. A repository `gh` refused is asked about
+  again the next time you enter a sweep; one it answered for, or one with no GitHub remote,
+  is not. Read-only, and a suggestion only: what `gh` says puts a mark on a row, a mark is
+  something you see before anything acts on it, and nothing is removed that was not marked
+  on the screen in front of you.
 
 Nothing here rewrites history, deletes a branch, changes a file in a working tree, or pushes.
 
