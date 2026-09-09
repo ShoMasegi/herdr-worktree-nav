@@ -635,6 +635,7 @@ mod tests {
             kind: crate::port::RefKind::Local,
             committed_at: None,
             subject: None,
+            upstream: None,
             track: None,
             worktree_path: None,
         }

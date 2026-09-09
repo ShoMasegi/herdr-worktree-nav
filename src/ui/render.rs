@@ -1926,11 +1926,11 @@ mod tests {
         // What leaving it off bought, which is not reach: `refusal` appends the call after
         // both refnames and the prompt line cuts from the right, so it moved the width the
         // second one arrives at by the single column the ellipsis takes — 133 to 134 —
-        // while making the sentence 285 columns instead of 120. Drawn rather than
+        // while making the sentence 305 columns instead of 120. Drawn rather than
         // remembered: the reason for dropping it is what no assertion was holding.
         let with_the_call = format!(
             "{TWO_REFS_REFUSAL} (`git for-each-ref \
-             --format=%(refname)%09%(committerdate:unix)%09\
+             --format=%(refname)%09%(committerdate:unix)%09%(upstream:short)%09\
              %(upstream:track)%09%(push:track)%09%(worktreepath)%09%(contents:subject) \
              refs/heads refs/remotes`)"
         );
@@ -2826,6 +2826,7 @@ mod tests {
             kind: RefKind::Local,
             committed_at: Some(at),
             subject: Some(format!("latest work on {name}")),
+            upstream: None,
             track: None,
             worktree_path: None,
         }

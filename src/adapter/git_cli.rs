@@ -69,7 +69,7 @@ impl GitCli {
 /// What a refusal reads as: git's words first, the call after them.
 ///
 /// The other way round put the call first, and for `local_refs` the call carries a
-/// `--format=` string 119 columns long: git's words began 171 columns in, past the right
+/// `--format=` string 139 columns long: git's words began 191 columns in, past the right
 /// edge of every prompt line the picker draws, so the sentence that exists to show them
 /// showed the plugin's own argv instead. What a reader needs is what git said; which call
 /// it was is the part that can be cut.
@@ -102,14 +102,15 @@ fn refusal(args: &[&str], stderr: &str) -> String {
 ///
 /// Not passed through [`refusal`], which is the one place these words are not followed by the
 /// call that produced them. It is always this call, so naming it tells a reader nothing they
-/// could act on, and it is not small: `refusal` appends 165 columns, 119 of them the
+/// could act on, and it is not small: `refusal` appends 185 columns, 139 of them the
 /// `--format=` string.
 ///
 /// Not for reach, though. The call goes on after both refnames and the prompt line cuts from
 /// the right, so leaving it off moves the width at which a second refname arrives by exactly
 /// one column — the one the ellipsis takes. `src/ui/render.rs` draws both and asserts both
 /// widths. What it buys is every width below that one, where the line spends itself on git's
-/// words rather than on an argv that is the same on every call.
+/// words rather than on an argv that is the same on every call; `dump` writes the whole
+/// sentence at any width either way.
 ///
 /// A ref git drops in silence — an unreadable directory under `refs/heads`, a dangling
 /// symref — is not here and cannot be: the walk exits 0 with nothing said. That is issue
@@ -247,17 +248,22 @@ impl GitPort for GitCli {
         // that, and a path with a tab in it would be the least of that user's problems.
         let args = [
             "for-each-ref",
-            "--format=%(refname)%09%(committerdate:unix)%09%(upstream:track)%09%(push:track)%09%(worktreepath)%09%(contents:subject)",
+            "--format=%(refname)%09%(committerdate:unix)%09%(upstream:short)%09%(upstream:track)%09%(push:track)%09%(worktreepath)%09%(contents:subject)",
             "refs/heads",
             "refs/remotes",
         ];
         let said = GitCli::run_in_repo(repo_root, &args)?;
         let mut refs = Vec::new();
         for line in said.stdout.lines() {
-            let mut parts = line.splitn(6, '\t');
+            let mut parts = line.splitn(7, '\t');
             let (Some(refname), Some(date)) = (parts.next(), parts.next()) else {
                 continue;
             };
+            // Empty for a branch with no upstream configured, and for every remote ref.
+            let upstream_name = parts
+                .next()
+                .map(str::to_string)
+                .filter(|name| !name.is_empty());
             // A branch with no upstream configured but a push destination still has
             // somewhere to be ahead of, and `push:track` is where git says so.
             //
@@ -303,6 +309,7 @@ impl GitPort for GitCli {
                 kind,
                 committed_at: date.parse().ok(),
                 subject,
+                upstream: upstream_name,
                 track,
                 worktree_path,
             });

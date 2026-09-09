@@ -15,9 +15,28 @@ not appear almost always left an explanation there.
 herdr-worktree-nav dump
 ```
 
-Prints the tree the panes view would draw. If `dump` is right and the picker is wrong, the
-problem is drawing; if `dump` is already wrong, it is what herdr or git reported. Run it from
-inside a herdr pane — it needs `HERDR_SOCKET_PATH`.
+Prints the tree the panes view would draw, and under each checkout what git said about it:
+
+```
+  - fix/crash  /Users/me/.herdr/worktrees/app/fix-crash
+      upstream origin/fix/crash  track gone  working tree clean
+```
+
+`track level` is a branch even with its upstream and `upstream none` one with no upstream to
+be even with — the same empty marker on a row. `working tree unreadable:` carries git's own
+words where the row shows `?`. A repository whose refs git would not read says
+`refs unreadable:` under its name, with git's words, and its checkouts read `not read`. If
+only this page's own second read of the refs failed — the picker read them once for its
+markers, and `dump` reads them again for the upstream names — the repository says
+`refs unreadable on the second read:` and its checkouts keep the track the picker is drawing,
+with `upstream not read`. A checkout git lists no ref at says `no ref at this checkout for
+<branch>`: git and herdr disagree about what is checked out where, which is the thing to
+look at. Each checkout's working tree is walked in the open, one after another, so on many
+checkouts this takes a moment.
+
+If `dump` is right and the picker is wrong, the problem is drawing; if `dump` is already
+wrong, it is what herdr or git reported. Run it from inside a herdr pane — it needs
+`HERDR_SOCKET_PATH`.
 
 ## Nothing happens when I press the key
 
@@ -150,6 +169,11 @@ through this against a real session.
       line names the repository and says why, once. `Space` on a `PR unknown` row marks it
       and leaves `PR unknown` on it. Put `gh` back, press `Esc` and then `Shift-S`: the
       rows fill in without an `r`.
+- [ ] `herdr-worktree-nav dump` from inside a pane prints, under each checkout, the upstream
+      it tracks, where it stands against it and the working tree — `upstream origin/x`,
+      `track gone`, `working tree clean`. A branch level with its upstream reads
+      `track level`; one with no upstream reads `upstream none`. A repository whose refs
+      could not be read says `refs unreadable:` under its name, with git's words.
 - [ ] With that ref still broken, `Shift-S` shows the checkouts it would otherwise have
       judged reading `refs unreadable`, and `Space` on one keeps that reason on the row.
       `Tab` to the branches view: every branch git could still read is listed there.

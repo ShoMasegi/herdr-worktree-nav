@@ -309,6 +309,7 @@ mod tests {
             kind: RefKind::Local,
             committed_at: Some(at),
             subject: Some(format!("work on {name}")),
+            upstream: None,
             track: None,
             worktree_path: None,
         }

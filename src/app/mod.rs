@@ -5,6 +5,7 @@ pub mod branches;
 pub mod collect;
 pub mod context;
 pub mod dirty;
+pub mod dump;
 #[cfg(test)]
 pub(crate) mod fakes;
 pub mod panes;
@@ -61,9 +62,10 @@ pub struct Summoned {
 
 /// git's words on one line, for a reader who has one.
 ///
-/// git says its piece over as many lines as it likes, and the place these words are shown
-/// is a line: the prompt line, where a sentence that keeps its newlines wraps. So it is
-/// folded once here rather than by every reader that comes to have one.
+/// git says its piece over as many lines as it likes, and the two places these words are
+/// shown are a line each: the prompt line, and the line `dump` gives a repository under its
+/// name. A sentence that keeps its newlines wraps in the first and indents its tail like a
+/// checkout of its own in the second, so it is folded once here rather than by every reader.
 pub(crate) fn one_line(words: &str) -> String {
     words.split_whitespace().collect::<Vec<_>>().join(" ")
 }

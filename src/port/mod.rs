@@ -185,6 +185,12 @@ pub struct GitRef {
     /// Committer date, for ordering most-recent-first. `None` when unknown.
     pub committed_at: Option<i64>,
     pub subject: Option<String>,
+    /// The ref this branch tracks, as git shortens it — `origin/feat/login` — when one is
+    /// configured. Nothing on screen draws it. It is what tells a branch level with its
+    /// upstream from one with no upstream to be level with, which `track` alone cannot —
+    /// both are `None` there — and `dump` says which, since that is the question somebody
+    /// staring at a row with no `gone` on it is asking.
+    pub upstream: Option<String>,
     /// Where this branch stands against the upstream it tracks — or, for a branch with no
     /// upstream configured, against where it would push. `None` when it is level with
     /// whichever of those it was measured against, and when there is neither.

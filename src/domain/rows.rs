@@ -168,7 +168,7 @@ pub fn marks_reserve(row: &Row) -> usize {
 }
 
 /// Where the branch stands against its upstream, with the gap that precedes it.
-fn track_mark(track: Option<Track>) -> String {
+pub fn track_mark(track: Option<Track>) -> String {
     match track {
         Some(Track::Gone) => format!("  {GONE}"),
         Some(Track::Ahead(ahead)) => format!("  \u{2191}{ahead}"),
@@ -682,8 +682,8 @@ pub fn detail(tree: &Tree, reference: RowRef) -> String {
 /// failing takes during a sweep, and shown ahead of it: refs not read is about ahead,
 /// behind and `gone` on every row of the repository, sweep or no sweep.
 ///
-/// `refs unreadable` is the word the row uses in a sweep as well, so a reader meets one
-/// term in both places. It is short on purpose:
+/// `refs unreadable` is the word the row uses in a sweep and `dump` uses under the
+/// repository, so a reader meets one term in all three places. It is short on purpose:
 /// what follows is git's, and the prompt line is one line.
 pub fn refs_trouble(tree: &Tree) -> Option<String> {
     let mut unreadable = tree.repos.iter().filter_map(|repo| match &repo.refs {

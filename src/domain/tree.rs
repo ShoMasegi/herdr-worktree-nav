@@ -238,6 +238,7 @@ mod tests {
             kind: RefKind::Local,
             committed_at: None,
             subject: None,
+            upstream: None,
             track,
             worktree_path: worktree_path.map(str::to_string),
         }

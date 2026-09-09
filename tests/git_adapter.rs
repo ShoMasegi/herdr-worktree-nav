@@ -448,6 +448,14 @@ fn track_of(refs: &[herdr_worktree_nav::port::GitRef], name: &str) -> Option<Tra
         .track
 }
 
+fn upstream_of(refs: &[herdr_worktree_nav::port::GitRef], name: &str) -> Option<String> {
+    refs.iter()
+        .find(|r| r.kind == RefKind::Local && r.name == name)
+        .unwrap_or_else(|| panic!("no local ref {name}"))
+        .upstream
+        .clone()
+}
+
 #[test]
 fn a_branch_level_with_its_upstream_has_nothing_to_report() {
     let (repo, _remote) = with_origin();
@@ -456,6 +464,11 @@ fn a_branch_level_with_its_upstream_has_nothing_to_report() {
     // Never pushed, so it has no upstream at all — also nothing to say, and in particular
     // not "gone".
     assert_eq!(track_of(&refs, "feat/login"), None);
+
+    // The same `None` twice, and the upstream's name is what tells them apart: `dump`
+    // reads it, since a row with no marker cannot say which of the two it is.
+    assert_eq!(upstream_of(&refs, "main").as_deref(), Some("origin/main"));
+    assert_eq!(upstream_of(&refs, "feat/login"), None);
 }
 
 #[test]

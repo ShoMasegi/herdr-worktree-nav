@@ -269,6 +269,7 @@ mod tests {
                         kind: crate::port::RefKind::Local,
                         committed_at: None,
                         subject: None,
+                        upstream: None,
                         track: Some(crate::port::Track::Gone),
                         worktree_path: Some("/src/app".to_string()),
                     }],
