@@ -1046,7 +1046,7 @@ fn is_branch_name(query: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{PaneNode, WorktreeNode};
+    use crate::domain::model::{PaneNode, Refs, WorktreeNode};
     use crate::domain::order::SortKey;
     use crate::domain::progress::Stage;
     use crate::port::{AgentStatus, RefKind, SplitDirection};
@@ -1088,6 +1088,7 @@ mod tests {
             repo_key: "/src/app/.git".into(),
             repo_root: "/src/app".into(),
             display_name: "me/app".into(),
+            refs: Refs::Read,
             worktrees: vec![WorktreeNode {
                 branch: Some("feat/live".into()),
                 checkout_path: "/wt/feat-live".into(),
@@ -1111,6 +1112,7 @@ mod tests {
             repo_key: "/src/tools/.git".into(),
             repo_root: "/src/tools".into(),
             display_name: "me/tools".into(),
+            refs: Refs::Read,
             worktrees: vec![WorktreeNode {
                 branch: Some("main".into()),
                 checkout_path: "/src/tools".into(),

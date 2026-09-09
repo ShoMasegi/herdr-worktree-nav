@@ -99,6 +99,17 @@ showing what git decided on its own, which is the smaller half.
 `gh` may only widen a sweep. It never clears a mark git put there, and it never gates the
 mode.
 
+#### Without git's refs
+
+The same rule holds for git's own half. A repository whose refs git would not read — the one
+`for-each-ref` that `gone` comes from — has no `gone` to offer, and the checkouts it would
+otherwise have judged — clean, on a branch, nothing running in them, and not the repository's
+own — read `refs unreadable` in a sweep, before and after you mark them by hand. The prompt
+line names the repository with git's words, as it does for `gh`. `gh` still widens the sweep
+there: a merged pull request marks the row as it would anywhere. When git and `gh` have both
+failed, the prompt line names git's failure — it is the one the track markers on the row went
+with — and shows `gh`'s once that is fixed.
+
 ### Deleting a checkout
 
 `Shift-D` offers to remove the checkout under the cursor — or, on a pane, the checkout that
@@ -283,6 +294,19 @@ need it: a `safe.directory` refusal, or a `git` that is not on the path herdr la
 plugin with, fails the same way for every checkout at once — while a worktree whose directory
 has gone out from under git fails for exactly one, on a list where every other row is fine.
 It takes the room already kept for `✱`, so nothing moves.
+
+The other way git can fail is on the refs themselves: the one `for-each-ref` that ahead,
+behind and `gone` come from. When it fails, every checkout in that repository loses those
+three markers at once, and the rows say nothing — a missing marker beats a wrong one — so
+the prompt line says it instead, where the search hint was:
+
+```
+ / me/app: refs unreadable: warning: ignoring broken ref refs/heads/main               5 panes
+```
+
+git's own words, and a count when more than one repository is in trouble. It stays for as
+long as the refs cannot be read, and steps aside for a search — being typed or left in the
+field — and for a state filter. `r` reads the refs again.
 
 `r` asks again. It is the only thing that does: the answers are otherwise kept for as long as
 the picker is open, `Tab` to the branches view and back included.
@@ -567,7 +591,7 @@ If a step fails, the picker holds the screen and shows what git or herdr said, o
 that said it:
 
 ```
- × fetching origin/feat/login: `git fetch …` failed: fatal: Could not read from remote…
+ × fetching origin/feat/login: fatal: unable to access 'https://…/me/app.git/': Could…
  …
  ↵ close  esc close
 ```

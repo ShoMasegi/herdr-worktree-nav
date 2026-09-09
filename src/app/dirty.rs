@@ -202,8 +202,8 @@ mod tests {
     }
     use super::*;
     use crate::app::fakes::until;
-    use crate::domain::model::{RepoNode, WorktreeNode};
-    use crate::port::{GitRef, RepoIdentity};
+    use crate::domain::model::{Refs, RepoNode, WorktreeNode};
+    use crate::port::{RefWalk, RepoIdentity};
     use anyhow::Result;
     use std::sync::Mutex;
 
@@ -267,7 +267,7 @@ mod tests {
         fn github_slug(&self, _repo_root: &str) -> Result<Option<crate::port::Slug>> {
             unreachable!()
         }
-        fn local_refs(&self, _repo_root: &str) -> Result<Vec<GitRef>> {
+        fn local_refs(&self, _repo_root: &str) -> Result<RefWalk> {
             unreachable!()
         }
         fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
@@ -293,6 +293,7 @@ mod tests {
                 repo_key: "/src/app/.git".into(),
                 repo_root: "/src/app".into(),
                 display_name: "me/app".into(),
+                refs: Refs::Read,
                 worktrees: checkouts
                     .iter()
                     .map(|path| WorktreeNode {

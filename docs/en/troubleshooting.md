@@ -121,6 +121,12 @@ through this against a real session.
 - [ ] A checkout that is ahead of or behind its upstream says so in the first frame. One
       whose upstream has been deleted on the remote says `gone` — in both views; the arrows
       are the panes view only.
+- [ ] Break a loose ref — `printf 'not-a-sha\n' > .git/refs/heads/<branch>` in a repository
+      with checkouts open — and reopen the picker. The prompt line names the repository where
+      the search hint was, with `refs unreadable:` and git's own words after it, and the rows
+      draw no ahead/behind/`gone` marker rather than a wrong one. Restore the ref and press
+      `r`: the line goes. **CI cannot reach this path** — nothing in the suite draws a real
+      walk into a real terminal.
 - [ ] Leave an untracked file in a checkout: `✱` appears on its row a moment after the
       picker opens, with a spinner beside the prompt until every checkout has answered.
       Commit or delete the file and press `r`: the marker goes.
@@ -144,6 +150,9 @@ through this against a real session.
       line names the repository and says why, once. `Space` on a `PR unknown` row marks it
       and leaves `PR unknown` on it. Put `gh` back, press `Esc` and then `Shift-S`: the
       rows fill in without an `r`.
+- [ ] With that ref still broken, `Shift-S` shows the checkouts it would otherwise have
+      judged reading `refs unreadable`, and `Space` on one keeps that reason on the row.
+      `Tab` to the branches view: every branch git could still read is listed there.
 - [ ] Typing `/login` and then pressing `Shift-S` opens the whole list again: what the sweep
       judges is what is on the screen.
 - [ ] `Shift-D` on a `no pane` row asks in a box naming the branch and the path, `y` removes the checkout and leaves the branch, and

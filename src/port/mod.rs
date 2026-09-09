@@ -195,6 +195,37 @@ pub struct GitRef {
     pub worktree_path: Option<String>,
 }
 
+/// One walk of a repository's refs: what git listed, and what it dropped.
+///
+/// Two facts rather than one, because the two views want different halves of a walk that
+/// went partly wrong. A ref git cannot read is left out of the list with a word on stderr
+/// and a clean exit, and the panes view answers that by dropping every track marker in the
+/// repository and saying so once ([`crate::domain::model::Refs`]): a checkout whose ref went
+/// missing carries no marker, which is exactly what a checkout with nothing to report
+/// carries, so no row can be trusted and the repository speaks instead.
+///
+/// The branches view wants the other half. The refs git did list are real, and a branch
+/// missing from a list of branches reads as a branch that is missing — while an empty list
+/// reads as "every branch here exists only on the remote", which sends the picker off to
+/// fetch a branch git already has locally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefWalk {
+    pub refs: Vec<GitRef>,
+    /// git's words when it dropped a ref it could not read, in which case `refs` is short by
+    /// at least one and there is no way to tell which checkout lost its marker.
+    pub dropped: Option<String>,
+}
+
+impl RefWalk {
+    /// A walk that dropped nothing: every ref git holds is in `refs`.
+    pub fn of(refs: Vec<GitRef>) -> Self {
+        Self {
+            refs,
+            dropped: None,
+        }
+    }
+}
+
 /// What git says about a branch's position relative to the upstream it tracks.
 ///
 /// Read out of `%(upstream:track)`, or `%(push:track)` for a branch with no upstream
@@ -260,7 +291,11 @@ pub trait GitPort: Send + Sync {
     fn github_slug(&self, repo_root: &str) -> Result<Option<Slug>>;
 
     /// Local and already-fetched remote branches. Cheap and offline.
-    fn local_refs(&self, repo_root: &str) -> Result<Vec<GitRef>>;
+    ///
+    /// `Err` is git refusing the call. A ref git could not read is not that: git leaves it
+    /// out, says so, and exits 0, so the walk comes back with the rest of the refs and
+    /// [`RefWalk::dropped`] set — see there for why both halves are handed up.
+    fn local_refs(&self, repo_root: &str) -> Result<RefWalk>;
 
     /// Branch names on the remote, including ones never fetched. Requires the network.
     fn remote_heads(&self, repo_root: &str) -> Result<Vec<String>>;

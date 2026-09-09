@@ -32,7 +32,21 @@ fn git(dir: &Path, args: &[&str]) {
 fn repository() -> TempDir {
     let dir = tempfile::tempdir().expect("a temp dir");
     let path = dir.path();
-    git(path, &["init", "--initial-branch=main"]);
+    // The ref format is pinned rather than inherited, for the reason `push.default` is
+    // below: two tests here reach into `.git/refs` and `.git/packed-refs` directly, and
+    // under a global `init.defaultRefFormat = reftable` neither file exists, so both fail
+    // on a machine whose git is configured that way while the other twenty pass. `-c` on
+    // the command rather than `--ref-format=`, which git 2.43 on CI does not know: an
+    // unknown configuration key is ignored where an unknown flag is fatal.
+    git(
+        path,
+        &[
+            "-c",
+            "init.defaultRefFormat=files",
+            "init",
+            "--initial-branch=main",
+        ],
+    );
     git(path, &["config", "user.email", "test@example.com"]);
     git(path, &["config", "user.name", "Test"]);
     // Pinned, not inherited. `%(push:track)` answers a different question under each
@@ -122,7 +136,7 @@ fn reads_local_and_remote_refs_without_confusing_the_two() {
     git(repo.path(), &["push", "-q", "origin", "main"]);
     git(repo.path(), &["fetch", "-q", "origin"]);
 
-    let refs = GitCli.local_refs(&root).unwrap();
+    let refs = GitCli.local_refs(&root).unwrap().refs;
     let local: Vec<_> = refs
         .iter()
         .filter(|r| r.kind == RefKind::Local)
@@ -182,6 +196,7 @@ fn lists_remote_heads_and_fetches_one_into_a_usable_base() {
         !GitCli
             .local_refs(&root)
             .unwrap()
+            .refs
             .iter()
             .any(|r| r.kind == RefKind::Remote),
         "there should be no local ref to base a worktree on yet"
@@ -221,7 +236,7 @@ fn fetching_the_repository_updates_every_branch_and_drops_the_ones_that_are_gone
 
     // A branch the remote has and this clone has never fetched.
     GitCli.fetch_all(&root).unwrap();
-    let refs = GitCli.local_refs(&root).unwrap();
+    let refs = GitCli.local_refs(&root).unwrap().refs;
     let fetched = refs
         .iter()
         .find(|r| r.name == "feat/login" && r.kind == RefKind::Remote);
@@ -244,6 +259,7 @@ fn fetching_the_repository_updates_every_branch_and_drops_the_ones_that_are_gone
         !GitCli
             .local_refs(&root)
             .unwrap()
+            .refs
             .iter()
             .any(|r| r.name == "feat/login" && r.kind == RefKind::Remote),
         "--prune is what keeps a deleted branch from haunting the list"
@@ -313,6 +329,7 @@ fn removing_a_worktree_takes_the_checkout_and_leaves_the_branch() {
         GitCli
             .local_refs(&root)
             .unwrap()
+            .refs
             .iter()
             .any(|r| r.name == "feat/login"),
         "the branch it was on is not the picker's to delete"
@@ -434,7 +451,7 @@ fn track_of(refs: &[herdr_worktree_nav::port::GitRef], name: &str) -> Option<Tra
 #[test]
 fn a_branch_level_with_its_upstream_has_nothing_to_report() {
     let (repo, _remote) = with_origin();
-    let refs = GitCli.local_refs(&path_str(repo.path())).unwrap();
+    let refs = GitCli.local_refs(&path_str(repo.path())).unwrap().refs;
     assert_eq!(track_of(&refs, "main"), None);
     // Never pushed, so it has no upstream at all — also nothing to say, and in particular
     // not "gone".
@@ -449,7 +466,10 @@ fn ahead_and_behind_come_out_of_the_ref_walk() {
     git(repo.path(), &["add", "."]);
     git(repo.path(), &["commit", "-q", "-m", "local only"]);
     assert_eq!(
-        track_of(&GitCli.local_refs(&path_str(repo.path())).unwrap(), "main"),
+        track_of(
+            &GitCli.local_refs(&path_str(repo.path())).unwrap().refs,
+            "main"
+        ),
         Some(Track::Ahead(NonZeroU32::new(1).unwrap()))
     );
 
@@ -475,7 +495,10 @@ fn ahead_and_behind_come_out_of_the_ref_walk() {
 
     git(repo.path(), &["fetch", "-q", "origin"]);
     assert_eq!(
-        track_of(&GitCli.local_refs(&path_str(repo.path())).unwrap(), "main"),
+        track_of(
+            &GitCli.local_refs(&path_str(repo.path())).unwrap().refs,
+            "main"
+        ),
         Some(Track::Diverged {
             ahead: NonZeroU32::new(1).unwrap(),
             behind: NonZeroU32::new(1).unwrap()
@@ -492,7 +515,7 @@ fn a_branch_nobody_has_pushed_is_never_gone() {
     let (repo, _remote) = with_origin();
     git(repo.path(), &["config", "push.default", "current"]);
 
-    let refs = GitCli.local_refs(&path_str(repo.path())).unwrap();
+    let refs = GitCli.local_refs(&path_str(repo.path())).unwrap().refs;
     assert_eq!(track_of(&refs, "feat/login"), None);
 }
 
@@ -506,7 +529,7 @@ fn an_upstream_deleted_on_the_remote_reads_as_gone() {
     git(remote.path(), &["branch", "-D", "feat/login"]);
     git(repo.path(), &["fetch", "-q", "--prune", "origin"]);
 
-    let refs = GitCli.local_refs(&path_str(repo.path())).unwrap();
+    let refs = GitCli.local_refs(&path_str(repo.path())).unwrap().refs;
     assert_eq!(track_of(&refs, "feat/login"), Some(Track::Gone));
     assert_eq!(track_of(&refs, "main"), None, "only the deleted one");
 }
@@ -523,7 +546,7 @@ fn a_branch_says_which_checkout_has_it() {
         &["worktree", "add", worktree.to_str().unwrap(), "feat/login"],
     );
 
-    let refs = GitCli.local_refs(&root).unwrap();
+    let refs = GitCli.local_refs(&root).unwrap().refs;
     let checked_out = |name: &str| {
         refs.iter()
             .find(|r| r.kind == RefKind::Local && r.name == name)
@@ -548,6 +571,99 @@ fn a_checkout_git_will_not_look_at_is_an_error_rather_than_a_clean_one() {
 }
 
 #[test]
+fn a_ref_git_cannot_read_is_named_and_every_other_ref_is_still_listed() {
+    // git drops a broken loose ref with a warning and exits 0. Read as a clean exit, that
+    // is one checkout with no marker — which is what a branch with nothing to report looks
+    // like — and the repository saying nothing, which is the silence issue #21 was about.
+    // So the walk carries git's words. It carries the refs git could read as well: they are
+    // a list of branches, and the branches view reads an empty one as "every branch here is
+    // only on the remote".
+    let repo = repository();
+    std::fs::write(
+        repo.path().join(".git/refs/heads/feat/login"),
+        "not-a-sha\n",
+    )
+    .unwrap();
+
+    let walk = GitCli
+        .local_refs(&path_str(repo.path()))
+        .expect("git listed what it could and exited 0");
+    let words = walk.dropped.expect("git said which ref it would not read");
+    assert!(
+        words.starts_with("warning: ignoring broken ref refs/heads/feat/login"),
+        "git's words, and first: {words}"
+    );
+    assert!(
+        words.ends_with("refs/heads/feat/login"),
+        "git's words, and only those: the call they came from is left off this one sentence, \
+         because it is always this call and its format string is most of the line: {words}"
+    );
+    let names: Vec<&str> = walk.refs.iter().map(|r| r.name.as_str()).collect();
+    assert!(
+        names.contains(&"main"),
+        "the refs git could read: {names:?}"
+    );
+    assert!(
+        !names.contains(&"feat/login"),
+        "and the one it could not is the one that is missing: {names:?}"
+    );
+}
+
+#[test]
+fn every_ref_git_dropped_is_named_and_not_just_the_first() {
+    // git says it once per ref, so a repository with two broken refs gets two lines, and the
+    // words carry both: a reader told about one, who fixes it and is then told about the
+    // next, has been given half of what git already knew. What the prompt line can show of
+    // them is a question of width — `src/ui/render.rs` measures that, and `dump` prints the
+    // whole sentence either way.
+    let repo = repository();
+    git(repo.path(), &["branch", "chore/deps"]);
+    for branch in ["feat/login", "chore/deps"] {
+        std::fs::write(
+            repo.path().join(format!(".git/refs/heads/{branch}")),
+            "not-a-sha\n",
+        )
+        .unwrap();
+    }
+
+    let walk = GitCli
+        .local_refs(&path_str(repo.path()))
+        .expect("git listed what it could and exited 0");
+    let words = walk.dropped.expect("git said which refs it would not read");
+    for branch in ["feat/login", "chore/deps"] {
+        assert!(
+            words.contains(&format!("ignoring broken ref refs/heads/{branch}")),
+            "{branch} is named: {words}"
+        );
+    }
+}
+
+#[test]
+fn a_refusal_puts_gits_words_before_the_call() {
+    // The other way round, the `--format=` string put git's words 191 columns in — past
+    // the right edge of every prompt line the picker draws.
+    let repo = repository();
+    std::fs::write(
+        repo.path().join(".git/packed-refs"),
+        "this is not a packed-refs file\n",
+    )
+    .unwrap();
+
+    let error = GitCli
+        .local_refs(&path_str(repo.path()))
+        .expect_err("git cannot read the refs");
+    let words = format!("{error:#}");
+    assert!(words.starts_with("fatal: "), "git's words first: {words}");
+    let call = words
+        .find("(`git for-each-ref")
+        .expect("the call is named after them");
+    assert!(
+        words[..call].contains("packed-refs"),
+        "and what git said is all before it: {words}"
+    );
+}
+
+#[test]
 fn a_branch_with_no_upstream_is_still_measured_against_where_it_would_push() {
     // Which is what `%(push:track)` is in the format string for. Pushed without `-u`, so
     // there is no upstream to compare against and `%(upstream:track)` says nothing.
@@ -561,7 +677,7 @@ fn a_branch_with_no_upstream_is_still_measured_against_where_it_would_push() {
 
     assert_eq!(
         track_of(
-            &GitCli.local_refs(&path_str(repo.path())).unwrap(),
+            &GitCli.local_refs(&path_str(repo.path())).unwrap().refs,
             "feat/login"
         ),
         Some(Track::Ahead(NonZeroU32::new(1).unwrap()))

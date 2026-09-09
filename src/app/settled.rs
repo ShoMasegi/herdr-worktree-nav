@@ -290,7 +290,7 @@ mod tests {
 
     use super::*;
     use crate::app::fakes::until;
-    use crate::domain::model::RepoNode;
+    use crate::domain::model::{Refs, RepoNode};
     use crate::port::{PullRequest, Slug};
 
     /// A git that names one repository, and a `gh` that answers about it — both counting
@@ -332,7 +332,7 @@ mod tests {
         fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
             unreachable!("only github_slug is asked of this port")
         }
-        fn local_refs(&self, _repo_root: &str) -> Result<Vec<crate::port::GitRef>> {
+        fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
             unreachable!("only github_slug is asked of this port")
         }
         fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
@@ -425,7 +425,7 @@ mod tests {
         fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
             unreachable!("only github_slug is asked of this port")
         }
-        fn local_refs(&self, _repo_root: &str) -> Result<Vec<crate::port::GitRef>> {
+        fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
             unreachable!("only github_slug is asked of this port")
         }
         fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
@@ -483,6 +483,7 @@ mod tests {
             repo_key: format!("{repo_root}/.git"),
             repo_root: repo_root.to_string(),
             display_name: format!("me/{name}"),
+            refs: Refs::Read,
             worktrees: Vec::new(),
         }
     }

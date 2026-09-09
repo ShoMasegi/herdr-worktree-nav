@@ -304,7 +304,7 @@ mod tests {
         fn github_slug(&self, _repo_root: &str) -> Result<Option<crate::port::Slug>> {
             unreachable!()
         }
-        fn local_refs(&self, _repo_root: &str) -> Result<Vec<crate::port::GitRef>> {
+        fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
             unreachable!()
         }
         fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
@@ -349,7 +349,7 @@ mod tests {
         fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
             unreachable!("only github_slug is asked of this port")
         }
-        fn local_refs(&self, _repo_root: &str) -> Result<Vec<crate::port::GitRef>> {
+        fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
             unreachable!("only github_slug is asked of this port")
         }
         fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
@@ -411,7 +411,7 @@ mod tests {
         fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
             unreachable!("the loop asks this port two things")
         }
-        fn local_refs(&self, _repo_root: &str) -> Result<Vec<crate::port::GitRef>> {
+        fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
             unreachable!("the loop asks this port two things")
         }
         fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
@@ -468,7 +468,7 @@ mod tests {
         fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
             unreachable!("the loop asks this port two things")
         }
-        fn local_refs(&self, _repo_root: &str) -> Result<Vec<crate::port::GitRef>> {
+        fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
             unreachable!("the loop asks this port two things")
         }
         fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
@@ -545,12 +545,13 @@ mod tests {
     }
 
     fn one_pane_tree() -> crate::domain::model::Tree {
-        use crate::domain::model::{PaneNode, RepoNode, Tree, WorktreeNode};
+        use crate::domain::model::{PaneNode, Refs, RepoNode, Tree, WorktreeNode};
         Tree {
             repos: vec![RepoNode {
                 repo_key: "/src/app/.git".into(),
                 repo_root: "/src/app".into(),
                 display_name: "me/app".into(),
+                refs: Refs::Read,
                 worktrees: vec![WorktreeNode {
                     branch: Some("feat/login".into()),
                     checkout_path: "/wt/feat-login".into(),

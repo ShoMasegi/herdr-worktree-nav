@@ -136,7 +136,10 @@ one process per repository rather than a `rev-list --count` per branch — so th
 screen in the first frame. Whether a working tree is dirty is a walk
 of that tree, once per checkout, so it is asked behind the first frame and each row is filled
 in as its answer lands. A checkout with no answer yet carries no marker rather than a wrong
-one, and the answers are kept for the life of the picker — which is why they are owned by the
+one. Every checkout of a repository whose refs git would not read loses its three track
+markers for the same reason — a wrong `gone` is worse than none — which is why that
+repository carries git's words and the prompt line names it: the rows cannot. The
+answers are kept for the life of the picker — which is why they are owned by the
 view switch and not by the panes view. The room a `✱` would take is kept from the first
 frame, so an answer arriving never moves the paths beside it; `r` throws every answer away
 and asks again, and an answer from before that is dropped rather than mistaken for a fresh
@@ -151,7 +154,9 @@ for the reason the working-tree answers are, and kept: a merged pull request doe
 unmerged, so a sweep left and re-entered costs a map lookup. On the way back in only the
 repositories `gh` could not answer for are asked about again; `r` throws the whole answer
 away. A repository `gh` could not answer for is named on the prompt line, and its rows say
-`PR unknown` rather than nothing at all — [ADR 0011](../adr/0011-what-may-be-swept.md).
+`PR unknown` rather than nothing at all; one whose refs git would not read is named there
+ahead of it, and the rows it would have judged say `refs unreadable` — the same price, on
+git's half — [ADR 0011](../adr/0011-what-may-be-swept.md).
 
 ## Opening a branch
 

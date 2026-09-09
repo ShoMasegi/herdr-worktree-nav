@@ -59,6 +59,15 @@ pub struct Summoned {
     pub repo_root: Option<String>,
 }
 
+/// git's words on one line, for a reader who has one.
+///
+/// git says its piece over as many lines as it likes, and the place these words are shown
+/// is a line: the prompt line, where a sentence that keeps its newlines wraps. So it is
+/// folded once here rather than by every reader that comes to have one.
+pub(crate) fn one_line(words: &str) -> String {
+    words.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// The user's home directory, for shortening checkout paths in the lists.
 pub(crate) fn home_dir() -> Option<String> {
     dirs::home_dir().and_then(|home| home.to_str().map(str::to_string))

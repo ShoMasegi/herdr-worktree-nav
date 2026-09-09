@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use anyhow::Result;
 
+use crate::app::one_line;
 use crate::domain::model::{normalize_path, Tree};
 use crate::domain::tree::{self, PanePlacement, RepoInput};
 use crate::port::{GitPort, HerdrPort, Snapshot};
@@ -33,7 +34,8 @@ pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapsho
 /// known the moment git answers, so there is nothing to be gained by drawing the list
 /// without them first.
 ///
-/// A repository git could not answer for simply carries no markers.
+/// A repository git could not answer for carries no markers and says so: git's words go on
+/// the repository, and the prompt line names it once — `domain::rows::refs_trouble`.
 fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
     // No chunking: repositories are however many the user has panes open in, which is a
     // handful — unlike working directories, where every pane can have its own.
@@ -42,7 +44,21 @@ fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
             .iter()
             .map(|repo| {
                 let repo_root = repo.repo_root.clone();
-                scope.spawn(move || git.local_refs(&repo_root).unwrap_or_default())
+                scope.spawn(move || {
+                    // Two ways this repository ends up with no markers, and the rows cannot
+                    // tell them apart from having nothing to report either way: git refused
+                    // the call, or git answered without a ref it could not read. The second
+                    // is the whole answer for a checkout whose ref that was, so it is a
+                    // refusal here as well — `port::RefWalk` says why the branches view
+                    // makes the other choice.
+                    match git.local_refs(&repo_root) {
+                        Err(error) => Err(one_line(&format!("{error:#}"))),
+                        Ok(walk) => match walk.dropped {
+                            Some(words) => Err(one_line(&words)),
+                            None => Ok(walk.refs),
+                        },
+                    }
+                })
             })
             .collect();
         for (repo, handle) in repos.iter_mut().zip(handles) {
@@ -50,8 +66,11 @@ fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
             // is unreachable — `panic = "abort"` in the release profile ends the process
             // before this line — so what is chosen here only applies to a debug build,
             // where ratatui's hook has already restored the terminal and the picker would
-            // carry on drawing onto it either way. That repository's markers are missing.
-            repo.refs = handle.join().unwrap_or_default();
+            // carry on drawing onto it either way. That repository's markers are missing,
+            // and it says so like any other repository whose refs were not read.
+            repo.refs = handle
+                .join()
+                .unwrap_or_else(|_| Err("the thread reading them did not finish".to_string()));
         }
     });
 }
@@ -195,7 +214,8 @@ fn collect_repos(
                 repo_root,
                 display_name,
                 worktrees: listed.worktrees,
-                refs: Vec::new(),
+                // Read next, all at once — `read_refs`.
+                refs: Ok(Vec::new()),
             })
         })
         .collect()
@@ -207,8 +227,8 @@ mod tests {
 
     use anyhow::Result;
 
-    use super::{collect_repos, is_inside};
-    use crate::domain::tree::PanePlacement;
+    use super::{collect_repos, is_inside, read_refs};
+    use crate::domain::tree::{PanePlacement, RepoInput};
     use crate::port::{
         GitPort, HerdrPort, PaneDestination, PaneSplit, Slug, Snapshot, Worktree, WorktreeCreate,
         WorktreeList, WorktreeOpen, WorktreeOpened, WorktreeSource,
@@ -218,6 +238,172 @@ mod tests {
     /// GitHub. Between them they are everything `collect_repos` reads.
     struct Repository {
         slug: Result<Option<Slug>, ()>,
+    }
+
+    /// A git whose ref walk goes wrong for one repository root and answers for every other:
+    /// refused outright, or answered with a ref it had to drop.
+    struct RefsFailFor(&'static str, Trouble);
+
+    /// Which of the two ways the walk went wrong.
+    enum Trouble {
+        Refused,
+        Dropped,
+    }
+
+    impl GitPort for RefsFailFor {
+        fn local_refs(&self, repo_root: &str) -> Result<crate::port::RefWalk> {
+            if repo_root != self.0 {
+                return Ok(crate::port::RefWalk::of(Vec::new()));
+            }
+            match self.1 {
+                Trouble::Refused => {
+                    anyhow::bail!("fatal: bad ref for\n  refs/heads/x (`git for-each-ref …`)")
+                }
+                // A warning as the port allows one: the refs git could read, and its words
+                // about the ones it could not. `GitCli` folds its own words to a line
+                // already and `RefWalk::dropped` promises nothing about lines, so a fake is
+                // the only place `one_line` can be seen doing anything on this path.
+                Trouble::Dropped => Ok(crate::port::RefWalk {
+                    refs: vec![crate::port::GitRef {
+                        name: "main".to_string(),
+                        kind: crate::port::RefKind::Local,
+                        committed_at: None,
+                        subject: None,
+                        track: Some(crate::port::Track::Gone),
+                        worktree_path: Some("/src/app".to_string()),
+                    }],
+                    dropped: Some(
+                        "warning: ignoring broken ref refs/heads/x\n  warning: ignoring \
+                         ref with broken name refs/heads/a..b"
+                            .to_string(),
+                    ),
+                }),
+            }
+        }
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn head_ref(&self, _repo_root: &str) -> Result<String> {
+            unreachable!("only local_refs is asked of this port")
+        }
+    }
+
+    /// A git whose ref walk panics — a debug build's shape of a walk that did not finish.
+    struct RefsPanic;
+
+    impl GitPort for RefsPanic {
+        fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
+            panic!("the walk did not finish")
+        }
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn head_ref(&self, _repo_root: &str) -> Result<String> {
+            unreachable!("only local_refs is asked of this port")
+        }
+    }
+
+    fn repo_input(repo_root: &str) -> RepoInput {
+        RepoInput {
+            repo_key: format!("{repo_root}/.git"),
+            repo_root: repo_root.to_string(),
+            display_name: repo_root.to_string(),
+            worktrees: Vec::new(),
+            refs: Ok(Vec::new()),
+        }
+    }
+
+    #[test]
+    fn a_ref_walk_that_failed_keeps_gits_words_on_one_line_and_touches_no_other_repository() {
+        // What used to be `unwrap_or_default()`: the failure became an empty list, which is
+        // also what a repository with nothing to report looks like. The words are what the
+        // prompt line shows, and it is one line, so git's several are folded here.
+        let mut repos = vec![repo_input("/src/app"), repo_input("/src/site")];
+        read_refs(&RefsFailFor("/src/app", Trouble::Refused), &mut repos);
+        assert_eq!(
+            repos[0].refs,
+            Err("fatal: bad ref for refs/heads/x (`git for-each-ref …`)".to_string())
+        );
+        assert_eq!(
+            repos[1].refs,
+            Ok(Vec::new()),
+            "the other repository answered"
+        );
+    }
+
+    #[test]
+    fn a_walk_git_dropped_a_ref_from_is_not_this_repository_s_refs() {
+        // git exits 0 and lists everything it could read, so the refs are right there and
+        // one of them even carries a `gone`. Believing them is believing that the checkout
+        // whose ref went missing has nothing to report, which is the wrong marker ADR 0011
+        // will not have — so the panes view takes the words instead and every row of the
+        // repository goes bare. The branches view is where the other choice is made.
+        let mut repos = vec![repo_input("/src/app"), repo_input("/src/site")];
+        read_refs(&RefsFailFor("/src/app", Trouble::Dropped), &mut repos);
+        assert_eq!(
+            repos[0].refs,
+            Err(
+                "warning: ignoring broken ref refs/heads/x warning: ignoring ref with \
+                 broken name refs/heads/a..b"
+                    .to_string()
+            ),
+            "git's words, on one line"
+        );
+        assert_eq!(
+            repos[1].refs,
+            Ok(Vec::new()),
+            "the other repository answered"
+        );
+    }
+
+    #[test]
+    fn a_ref_walk_whose_thread_did_not_finish_is_not_an_empty_answer() {
+        // Debug builds only — the release profile aborts on a panic — but the string is what
+        // `Refs::Unreadable` carries, and this line is one `unwrap_or_default` away from
+        // the silence #21 was about. The panic prints on stderr; that is the thread's, not
+        // this test's.
+        let mut repos = vec![repo_input("/src/app")];
+        read_refs(&RefsPanic, &mut repos);
+        assert_eq!(
+            repos[0].refs,
+            Err("the thread reading them did not finish".to_string())
+        );
     }
 
     impl HerdrPort for Repository {
@@ -283,7 +469,7 @@ mod tests {
         fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
             unreachable!("only github_slug is asked of this port")
         }
-        fn local_refs(&self, _repo_root: &str) -> Result<Vec<crate::port::GitRef>> {
+        fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
             unreachable!("only github_slug is asked of this port")
         }
         fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {

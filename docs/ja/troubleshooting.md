@@ -101,6 +101,7 @@ herdr 側は CI ではテストできません（サーバーが無いため）�
 - [ ] ピッカーが herdr の枠付き（タイトル `herdr-worktree-nav`）の中央寄せ popup として開き、周囲にセッションが見えたままで、**自分自身は一覧に出ない**
 - [ ] pane の無い worktree が `no pane` 付きで出て、`Enter` で開ける
 - [ ] upstream より進んでいる／遅れている checkout が最初のフレームからそう表示される。リモートで削除された upstream を持つものは `gone` と出る（`gone` は両方のビュー、矢印は panes ビューのみ）
+- [ ] loose ref を壊し（checkout の開いているリポジトリで `printf 'not-a-sha\n' > .git/refs/heads/<branch>`）、ピッカーを開き直す。検索ヒントのあった場所にリポジトリ名と `refs unreadable:` と git 自身の言葉が出て、行は ahead/behind/`gone` を「間違った印」ではなく「印なし」で描く。ref を戻して `r` を押すと消える。**CI ではこの経路に届きません** — 実際の walk を実際の端末に描くテストはありません
 - [ ] checkout に未追跡ファイルを置くと、ピッカーを開いた少し後にその行へ `✱` が出る。全 checkout が答えるまでプロンプトの脇でスピナーが回る。ファイルをコミットまたは削除して `r` を押すと印が消える
 - [ ] `↑`/`↓` が pane と「何も動いていない checkout」にだけ止まる。リポジトリの見出しと、既に pane を持つ checkout は飛ばされ、表示自体は残る
 - [ ] `←`/`→` が 1 押しで 1 リポジトリ動き、その最初の pane または最初の idle checkout に着く。端で巻き戻り、リポジトリに属さない pane 群も対象に含まれる
@@ -109,6 +110,7 @@ herdr 側は CI ではテストできません（サーバーが無いため）�
 - [ ] `Shift-S` で sweep が開く。upstream が `gone` で working tree が clean な checkout に `[x]` が付き、pane が動いている checkout には箱が付かず、そこで `Space` を押すと `panes are running in it` と出る。sweep 中はカーソルがすべての checkout に止まる（sweep 外と違う点）。`Space` でマークが増減し、右の数字がそれに追随する
 - [ ] `gh` が入っていてログイン済みなら、クローズ済み pull request のあるリポジトリで sweep に入ると `asking gh…` が出て、その後マージ済み pull request を持つブランチにマークが付き、行に `PR #<n> merged` が出る。**この経路は CI では通せない** — スイート内で `gh` を起動するものは何も無い
 - [ ] `gh` を `PATH` から外す、または GitHub リモートの無いリポジトリで試すと、sweep は git の判断だけで開き、該当行は `PR unknown` と出て、プロンプト行がどのリポジトリで何が起きたかを一度だけ言う。`PR unknown` の行で `Space` を押すとマークが付き、`PR unknown` は残る。`gh` を戻して `Esc`、そして `Shift-S` を押すと、`r` 無しで行が埋まる
+- [ ] その ref を壊したまま `Shift-S` を押すと、判定するはずだった checkout が `refs unreadable` と読め、`Space` で印を付けてもその理由が行に残る。`Tab` で branches ビューに移ると、git が読めたブランチはすべて並んでいる
 - [ ] `/login` と入力してから `Shift-S` を押すと一覧が開き直る（sweep が判定するものは画面に出ているものと一致する）
 - [ ] `no pane` の行で `Shift-D` を押すとブランチ名とパスを載せた枠が出て、`y` で checkout が消えブランチは残る。他のキーは取り消し。リポジトリ自身の checkout では断られ、未コミットの変更がある checkout では git の理由が出る
 - [ ] pane の上で `Shift-D` を押すと、その pane が居る checkout について訊かれ、閉じられる pane が枠にすべて並ぶ（別の tab や space へ移した pane も含む）。`y` で全部閉じてから checkout が消える

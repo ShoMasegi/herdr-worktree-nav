@@ -451,6 +451,16 @@ impl PanesState {
         self.sweep.as_ref()?.trouble.as_deref()
     }
 
+    /// What the prompt line says went wrong, or nothing.
+    ///
+    /// git not reading a repository's refs comes first, and `gh` only after it: the first is
+    /// about the track markers on every row of the repository and is true sweep or no sweep,
+    /// while `gh` is asked only during a sweep and about the half git could not decide. One
+    /// sentence at a time, so the `gh` one waits behind the git one until that is fixed.
+    pub fn trouble(&self) -> Option<String> {
+        rows::refs_trouble(&self.tree).or_else(|| self.sweep_trouble().map(str::to_string))
+    }
+
     /// Whether a sweep has been entered since this was last asked. True once per entry.
     ///
     /// The loop reads it on the frame after `Shift-S` and asks `gh` again where it refused
@@ -939,8 +949,8 @@ mod tests {
             .collect()
     }
     use super::*;
-    use crate::domain::model::{PaneNode, RepoNode, WorktreeNode};
-    use crate::domain::sweep::{Reason, Refusal};
+    use crate::domain::model::{PaneNode, Refs, RepoNode, WorktreeNode};
+    use crate::domain::sweep::{Half, Reason, Refusal};
     use crate::port::AgentStatus;
     use crate::port::{PullRequestOutcome, SettledPullRequest, Track};
 
@@ -968,6 +978,7 @@ mod tests {
                     repo_key: "/src/app/.git".into(),
                     repo_root: "/src/app".into(),
                     display_name: "me/app".into(),
+                    refs: Refs::Read,
                     worktrees: vec![
                         WorktreeNode {
                             branch: Some("main".into()),
@@ -1519,7 +1530,10 @@ mod tests {
             false,
         );
 
-        assert_eq!(mark_of(&state, "feat/login"), Some(Mark::Unjudged));
+        assert_eq!(
+            mark_of(&state, "feat/login"),
+            Some(Mark::Unjudged(Half::PullRequests))
+        );
         assert_eq!(
             mark_of(&state, "fix/crash"),
             Some(Mark::Going(Reason::Gone)),
@@ -1534,8 +1548,46 @@ mod tests {
         state.handle_key(key(KeyCode::Char(' ')));
         assert_eq!(
             mark_of(&state, "feat/login"),
-            Some(Mark::GoingUnjudged),
+            Some(Mark::GoingUnjudged(Half::PullRequests)),
             "not judged is not refused — and the row goes on saying it was not judged"
+        );
+    }
+
+    #[test]
+    fn git_not_reading_the_refs_is_said_ahead_of_gh_and_outside_a_sweep() {
+        let mut state = state();
+        assert_eq!(state.trouble(), None);
+
+        let mut tree = state.tree.clone();
+        tree.repos[0].refs = Refs::Unreadable("fatal: bad ref".into());
+        state.replace_tree(tree);
+        assert_eq!(
+            state.trouble().as_deref(),
+            Some("me/app: refs unreadable: fatal: bad ref"),
+            "sweep or no sweep: the track markers are missing either way"
+        );
+
+        // Both in trouble during a sweep: git's is the one about the track markers on the
+        // row, so it is the one said, and `gh`'s waits behind it.
+        state.handle_key(key(KeyCode::Char('S')));
+        state.set_settled(
+            BTreeMap::from([(RepoRoot::of(&state.tree.repos[0]), None)]),
+            Some("me/app: gh could not be run".to_string()),
+            false,
+        );
+        assert_eq!(state.sweep_trouble(), Some("me/app: gh could not be run"));
+        assert_eq!(
+            state.trouble().as_deref(),
+            Some("me/app: refs unreadable: fatal: bad ref")
+        );
+
+        let mut tree = state.tree.clone();
+        tree.repos[0].refs = Refs::Read;
+        state.replace_tree(tree);
+        assert_eq!(
+            state.trouble().as_deref(),
+            Some("me/app: gh could not be run"),
+            "and is what shows once git's is fixed"
         );
     }
 
@@ -2114,6 +2166,7 @@ mod tests {
                     repo_key: "/src/app/.git".into(),
                     repo_root: "/src/app".into(),
                     display_name: "me/app".into(),
+                    refs: Refs::Read,
                     worktrees: vec![
                         WorktreeNode {
                             branch: Some("main".into()),

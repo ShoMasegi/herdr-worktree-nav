@@ -14,9 +14,11 @@ All notable changes to this project are documented here. The format follows
   upstream git can no longer find, `PR #<n> merged` when `gh` can say so. `gh` is asked when
   the sweep is entered rather than when the picker opens, it only ever widens the sweep, and
   a repository it could not answer for is named on the prompt line with its rows reading
-  `PR unknown` rather than nothing — before and after you mark them. `Space` marks and
-  unmarks, and a mark keeps its reason at every width the picker supports. `Enter` does not
-  remove anything yet. See [ADR 0011](docs/adr/0011-what-may-be-swept.md).
+  `PR unknown` rather than nothing — before and after you mark them — and one whose refs git
+  would not read is named there ahead of it, the rows it would have judged reading
+  `refs unreadable`. `Space` marks and unmarks, and a mark keeps its reason at every width
+  the picker supports. `Enter` does not remove anything yet. See
+  [ADR 0011](docs/adr/0011-what-may-be-swept.md).
 
 - **`Shift-D` deletes a checkout that has panes in it**, which is what a finished worktree
   usually looks like. It closes every pane in the checkout first — wherever you moved them,
@@ -43,6 +45,12 @@ All notable changes to this project are documented here. The format follows
   `✱` would take is kept from the first frame, so an answer arriving never moves the paths
   beside it — and `?` takes the same room, so a working tree git would not read says so
   rather than passing for a clean one.
+
+- **A repository whose refs git would not read says so.** Ahead, behind and `gone` come off
+  one `for-each-ref` per repository, and when that fails every checkout in the repository
+  used to lose its markers in silence — indistinguishable from a repository with nothing to
+  report. The rows still draw nothing, since no marker beats a wrong one; the prompt line now
+  names the repository with git's own words where the search hint was, and counts the rest.
 
 ### Changed
 
