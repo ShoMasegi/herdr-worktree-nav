@@ -34,6 +34,11 @@ with `upstream not read`. A checkout git lists no ref at says `no ref at this ch
 look at. Each checkout's working tree is walked in the open, one after another, so on many
 checkouts this takes a moment.
 
+git's words arrive in English here and on the prompt line whatever language your git speaks
+in a terminal: the plugin runs git under `LC_ALL=C`, because it decides two things by reading
+those sentences — whether a path is a repository, and whether a ref was left out of a walk —
+and a translated sentence is one it cannot read.
+
 If `dump` is right and the picker is wrong, the problem is drawing; if `dump` is already
 wrong, it is what herdr or git reported. Run it from inside a herdr pane — it needs
 `HERDR_SOCKET_PATH`.
@@ -169,6 +174,10 @@ through this against a real session.
       line names the repository and says why, once. `Space` on a `PR unknown` row marks it
       and leaves `PR unknown` on it. Put `gh` back, press `Esc` and then `Shift-S`: the
       rows fill in without an `r`.
+- [ ] With a ref still broken, open the picker from a shell whose `LC_ALL` is a locale your
+      git has a translation for (`LC_ALL=de_DE.UTF-8`, after `locale-gen`): the prompt line
+      still says `refs unreadable:` with git's words, in English. The plugin pins `LC_ALL=C`
+      on every git it starts, and a translated warning is one the adapter cannot read.
 - [ ] `herdr-worktree-nav dump` from inside a pane prints, under each checkout, the upstream
       it tracks, where it stands against it and the working tree — `upstream origin/x`,
       `track gone`, `working tree clean`. A branch level with its upstream reads

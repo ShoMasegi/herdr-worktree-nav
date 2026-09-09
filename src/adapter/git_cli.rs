@@ -14,6 +14,9 @@ const GIT_FATAL: i32 = 128;
 
 /// What git says when the path itself is the problem. That is an ordinary answer here — a
 /// pane simply is not in a repository — rather than a failure worth reporting.
+///
+/// git's own English, which is what [`GIT_LOCALE`] is for: the first of these is translated
+/// and the second, measured against 2.55.0, is not.
 const NOT_A_REPOSITORY: [&str; 2] = ["not a git repository", "cannot change to"];
 
 pub struct GitCli;
@@ -29,15 +32,55 @@ struct Said {
     stderr: String,
 }
 
+/// The locale every git this plugin starts runs under.
+///
+/// Two things here are decided by reading git's own words — whether the path is a repository
+/// at all ([`NOT_A_REPOSITORY`]) and whether a ref was dropped from a walk ([`dropped_refs`])
+/// — and both are English literals, while git ships translations of both messages and picks
+/// one from the environment herdr launched the plugin in. Measured against git 2.55.0:
+///
+/// ```text
+/// LC_ALL=C            warning: ignoring broken ref refs/heads/broken
+/// LC_ALL=de_DE.UTF-8  Warnung: Ignoriere fehlerhafte Referenz refs/heads/broken
+/// LC_ALL=C            fatal: not a git repository (or any of the parent directories): .git
+/// LC_ALL=de_DE.UTF-8  Schwerwiegend: Kein Git-Repository (oder irgendeines der …): .git
+/// ```
+///
+/// Under the second of each, a dropped ref goes unnoticed — the walk still exits 0 and the
+/// refs it did list still build the markers, so the checkout on the dropped ref carries none
+/// and reads exactly like a checkout with nothing to report, with nothing anywhere saying
+/// why. That is the silence issue #21 is about. And a pane that is simply not in a
+/// repository is read as git refusing.
+///
+/// `LC_ALL` rather than `LC_MESSAGES` because it outranks the other `LC_*` variables and
+/// `LANG`. `LANGUAGE` outranks even `LC_ALL` — `LANGUAGE=fr LC_ALL=de_DE.UTF-8` prints French
+/// — but is ignored when the locale is `C`, which is why pinning `LC_ALL` alone is enough:
+/// measured with `LANGUAGE=de LC_ALL=de_DE.UTF-8` in the parent and `LC_ALL=C` on the child,
+/// which printed git's English.
+///
+/// The cost is that git's words reach the prompt line and `dump` in English rather than in
+/// the reader's language. Everything else the plugin writes is English too, and a sentence
+/// this side cannot read is a sentence it cannot act on.
+const GIT_LOCALE: (&str, &str) = ("LC_ALL", "C");
+
 impl GitCli {
+    /// The command every call here runs, before its arguments: git, in `dir`, with no stdin
+    /// and a pinned locale.
+    fn command(dir: &str) -> Command {
+        let mut command = Command::new("git");
+        command
+            .arg("-C")
+            .arg(dir)
+            .stdin(Stdio::null())
+            .env(GIT_LOCALE.0, GIT_LOCALE.1);
+        command
+    }
+
     /// Run git in `dir`. Returns `None` when git said the path is not a repository; any
     /// other non-zero exit is an error carrying git's words.
     fn run(dir: &str, args: &[&str]) -> Result<Option<Said>> {
-        let output: Output = Command::new("git")
-            .arg("-C")
-            .arg(dir)
+        let output: Output = Self::command(dir)
             .args(args)
-            .stdin(Stdio::null())
             .output()
             .map_err(|error| anyhow!("{}", could_not_run(args, &error)))?;
 
@@ -88,6 +131,8 @@ fn refusal(args: &[&str], stderr: &str) -> String {
 /// refs/heads/x`, and a file under `refs/` whose name is not a legal refname gives
 /// `warning: ignoring ref with broken name refs/heads/x`. Both exit 0 and list every other
 /// ref.
+///
+/// In git's English, which git translates and [`GIT_LOCALE`] is what keeps it in.
 ///
 /// Two prefixes rather than "stderr said something", which is what this was and what made a
 /// healthy repository read as an unreadable one: `GIT_TRACE`, `GIT_TRACE_PERFORMANCE` and
@@ -396,7 +441,10 @@ impl GitPort for GitCli {
 
 #[cfg(test)]
 mod tests {
-    use super::{could_not_run, dropped_refs, github_slug_from_url, parse_track, refusal, Slug};
+    use super::{
+        could_not_run, dropped_refs, github_slug_from_url, parse_track, refusal, GitCli, Slug,
+        GIT_LOCALE,
+    };
     use crate::port::Track;
     use std::num::NonZeroU32;
 
@@ -480,6 +528,23 @@ mod tests {
             refusal(&["fetch", "origin"], "  \n"),
             "git said nothing (`git fetch origin`)"
         );
+    }
+
+    #[test]
+    fn the_command_every_call_is_built_from_asks_for_the_locale() {
+        // One third of the claim, and only that third: this sees the command the helper
+        // hands back, so it says nothing about whether a call uses the helper. Two things
+        // here are decided by reading git's English — whether the path is a repository, and
+        // whether a ref was dropped — and git translates both, so the other two thirds are
+        // `scripts/check-invariants.sh`, which counts the places a git is started, and
+        // `tests/git_locale.rs`, which watches a real git obey.
+        let command = GitCli::command("/src/app");
+        let locale: Vec<_> = command
+            .get_envs()
+            .filter(|(key, _)| *key == GIT_LOCALE.0)
+            .map(|(_, value)| value.map(|v| v.to_string_lossy().into_owned()))
+            .collect();
+        assert_eq!(locale, vec![Some("C".to_string())]);
     }
 
     #[test]

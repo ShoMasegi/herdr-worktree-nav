@@ -23,6 +23,8 @@ Panes ビューが描画するはずのツリーと、各 checkout について 
 
 `track level` は upstream と揃っているブランチ、`upstream none` は揃う相手の upstream が無いブランチで、行の上ではどちらも同じ「印なし」です。`working tree unreadable:` には、行が `?` を出す場面の git の言葉がそのまま付きます。git が refs を読めなかったリポジトリは名前の下に `refs unreadable:` と git の言葉を出し、その checkout は `not read` と読めます。このページ自身の 2 回目の refs 読み取りだけが失敗した場合——ピッカーはマーカーのために一度読み、`dump` は upstream 名のためにもう一度読みます——リポジトリは `refs unreadable on the second read:` と言い、その checkout はピッカーが描いている track をそのまま持って `upstream not read` と読めます。git がその checkout に ref を挙げていない場合は `no ref at this checkout for <branch>` と言います。何がどこに checkout されているかについて git と herdr の言い分が食い違っているということで、そこを見に行くのが筋です。作業ツリーは checkout ごとに順番にその場で歩くので、checkout が多いと少し時間が掛かります。
 
+git の言葉は、端末で使う git が何語を話していても、ここでもプロンプト行でも英語で出ます。プラグインが git を `LC_ALL=C` で走らせているためです。2 つのこと——そのパスがリポジトリかどうか、walk から ref が抜け落ちたかどうか——をその文面を読んで決めているので、翻訳された文は読めない文になります。
+
 `dump` が正しくてピッカーが誤っていれば描画の問題、`dump` の時点で誤っていれば herdr か git が返した内容の問題です。`HERDR_SOCKET_PATH` が必要なので herdr の pane 内から実行してください。
 
 ## キーを押しても何も起きない
@@ -119,6 +121,7 @@ herdr 側は CI ではテストできません（サーバーが無いため）�
 - [ ] `Shift-S` で sweep が開く。upstream が `gone` で working tree が clean な checkout に `[x]` が付き、pane が動いている checkout には箱が付かず、そこで `Space` を押すと `panes are running in it` と出る。sweep 中はカーソルがすべての checkout に止まる（sweep 外と違う点）。`Space` でマークが増減し、右の数字がそれに追随する
 - [ ] `gh` が入っていてログイン済みなら、クローズ済み pull request のあるリポジトリで sweep に入ると `asking gh…` が出て、その後マージ済み pull request を持つブランチにマークが付き、行に `PR #<n> merged` が出る。**この経路は CI では通せない** — スイート内で `gh` を起動するものは何も無い
 - [ ] `gh` を `PATH` から外す、または GitHub リモートの無いリポジトリで試すと、sweep は git の判断だけで開き、該当行は `PR unknown` と出て、プロンプト行がどのリポジトリで何が起きたかを一度だけ言う。`PR unknown` の行で `Space` を押すとマークが付き、`PR unknown` は残る。`gh` を戻して `Esc`、そして `Shift-S` を押すと、`r` 無しで行が埋まる
+- [ ] ref を壊したまま、`LC_ALL` に手元の git が翻訳を持つロケールを設定したシェル（`locale-gen` 済みの `LC_ALL=de_DE.UTF-8` など）からピッカーを開く。プロンプト行は変わらず `refs unreadable:` と git の言葉を英語で出す。プラグインは起動する全ての git に `LC_ALL=C` を固定しており、翻訳された警告はアダプタが読めない警告になる
 - [ ] pane の中から `herdr-worktree-nav dump` を実行すると、各 checkout の下に、追っている upstream・それに対する位置・作業ツリーが出る（`upstream origin/x`、`track gone`、`working tree clean`）。upstream と揃っているブランチは `track level`、upstream の無いものは `upstream none`。refs を読めなかったリポジトリは名前の下に `refs unreadable:` と git の言葉を出す
 - [ ] その ref を壊したまま `Shift-S` を押すと、判定するはずだった checkout が `refs unreadable` と読め、`Space` で印を付けてもその理由が行に残る。`Tab` で branches ビューに移ると、git が読めたブランチはすべて並んでいる
 - [ ] `/login` と入力してから `Shift-S` を押すと一覧が開き直る（sweep が判定するものは画面に出ているものと一致する）
