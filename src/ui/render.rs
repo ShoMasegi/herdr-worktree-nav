@@ -119,7 +119,8 @@ const IDLE_NOTE: &str = "  no pane";
 /// see. The spinner glyph follows.
 const REMOVING_NOTE: &str = "  deleting ";
 
-/// What a row says about itself in a sweep — `PR #123 merged` or `PR unknown` — with the gap
+/// What a row says about itself in a sweep — `PR #123 merged`, `PR unknown`, `refs
+/// unreadable` — with the gap
 /// the other notes use.
 ///
 /// Not `gone`, which the row already carries as its upstream marker, and not a refusal,
@@ -276,6 +277,48 @@ fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'stat
     };
     let mut spans = vec![Span::styled(" / ", focus)];
 
+    // What follows the field, worked out first so the field knows how much room it has.
+    // Whether a checkout is holding uncommitted work is a walk of its whole working tree,
+    // one per checkout, so the answers land after the first frame. The spinner says the
+    // list is still filling in rather than finished and empty-handed — the same thing the
+    // branches view does while it waits on a remote.
+    //
+    // A checkout git would not answer for says so on its own row rather than here — see
+    // `domain::rows::marks`, and `docs/adr/0011-what-may-be-swept.md`, which puts the
+    // unknown on the row it belongs to for the same reason.
+    let mut tail = Vec::new();
+    if state.is_waiting() {
+        tail.push(Span::raw("  "));
+        tail.push(Span::styled(spinner(state.frame()), theme.dim()));
+        tail.push(Span::styled(" reading working trees\u{2026}", theme.dim()));
+    }
+    // Its own spinner, because until `gh` answers the rows are showing what git alone
+    // decided — a smaller sweep than the one the user is about to get, and one that is about
+    // to change under their cursor.
+    if state.is_asking_gh() {
+        tail.push(Span::raw("  "));
+        tail.push(Span::styled(spinner(state.frame()), theme.dim()));
+        tail.push(Span::styled(" asking gh\u{2026}", theme.dim()));
+    }
+    // During a sweep the number being decided about is how many are going, not how many
+    // panes are open.
+    let count = if state.is_sweeping() {
+        format!("{} marked", state.marked_count())
+    } else {
+        format!("{} panes", state.pane_count())
+    };
+    // What git said about a repository's refs is as long as git made it, and it is the one
+    // thing on this line that can be: cut to what fits, so the words that fit are git's and
+    // the count on the right is still there. An ellipsis says there was more.
+    let taken: usize = spans
+        .iter()
+        .chain(tail.iter())
+        .map(|s| s.content.chars().count())
+        .sum();
+    // Two columns of gap before the count and the one after it, the same as a short line.
+    let room = (width as usize).saturating_sub(taken + count.chars().count() + 3);
+    let trouble = state.trouble().map(|trouble| truncate(&trouble, room));
+
     if let Some(message) = state.message() {
         spans.push(Span::styled(
             message.to_string(),
@@ -302,51 +345,29 @@ fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'stat
             spans.push(Span::raw(state.query().to_string()));
         } else if state.is_sweeping() {
             // `/` does nothing during a sweep, so the field says what the mode is instead of
-            // offering a search that would not run. Where `gh` failed, it says that instead:
-            // it is the one thing the rows cannot say for themselves — they can say a
-            // repository could not be judged, not why.
-            match state.sweep_trouble() {
-                Some(trouble) => spans.push(Span::styled(trouble.to_string(), theme.dim())),
+            // offering a search that would not run. Where git or `gh` failed, it says that
+            // instead: it is the one thing the rows cannot say for themselves — they can
+            // say a repository could not be judged, not why.
+            match trouble {
+                Some(trouble) => spans.push(Span::styled(trouble, theme.dim())),
                 None => spans.push(Span::styled("sweep", theme.dim())),
             }
         } else if !state.is_filtering() && state.state_filter().is_none() {
             // The placeholder is what to do when the field is not focused; once it is, the
             // cursor says everything and the hint is in the way of what is being typed.
-            spans.push(Span::styled("search panes", theme.dim()));
+            // A repository whose refs git would not read takes the placeholder's place: its
+            // rows are missing their track markers, and outside a sweep nothing on them says
+            // so.
+            match trouble {
+                Some(trouble) => spans.push(Span::styled(trouble, theme.dim())),
+                None => spans.push(Span::styled("search panes", theme.dim())),
+            }
         }
     }
     if state.is_filtering() {
         spans.push(Span::styled("\u{2588}", theme.dim()));
     }
-    // Whether a checkout is holding uncommitted work is a walk of its whole working tree,
-    // one per checkout, so the answers land after the first frame. The spinner says the
-    // list is still filling in rather than finished and empty-handed — the same thing the
-    // branches view does while it waits on a remote.
-    //
-    // A checkout git would not answer for says so on its own row rather than here — see
-    // `domain::rows::marks`, and `docs/adr/0011-what-may-be-swept.md`, which puts the
-    // unknown on the row it belongs to for the same reason.
-    if state.is_waiting() {
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(spinner(state.frame()), theme.dim()));
-        spans.push(Span::styled(" reading working trees\u{2026}", theme.dim()));
-    }
-    // Its own spinner, because until `gh` answers the rows are showing what git alone
-    // decided — a smaller sweep than the one the user is about to get, and one that is about
-    // to change under their cursor.
-    if state.is_asking_gh() {
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(spinner(state.frame()), theme.dim()));
-        spans.push(Span::styled(" asking gh\u{2026}", theme.dim()));
-    }
-
-    // During a sweep the number being decided about is how many are going, not how many
-    // panes are open.
-    let count = if state.is_sweeping() {
-        format!("{} marked", state.marked_count())
-    } else {
-        format!("{} panes", state.pane_count())
-    };
+    spans.extend(tail);
     let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
     let pad = (width as usize).saturating_sub(used + count.chars().count() + 1);
     spans.push(Span::raw(" ".repeat(pad)));
@@ -1712,7 +1733,7 @@ mod tests {
 
     use crate::domain::chrome::Chrome;
     use crate::domain::dest::Destination;
-    use crate::domain::model::{PaneNode, RepoNode, Tree, WorktreeNode};
+    use crate::domain::model::{PaneNode, Refs, RepoNode, Tree, WorktreeNode};
     use crate::domain::progress::Stage;
     use crate::domain::sweep::RepoRoot;
     use crate::port::{AgentStatus, GitRef, PullRequest, RefKind, SplitDirection, Track};
@@ -1753,6 +1774,7 @@ mod tests {
                     repo_key: "/src/app/.git".into(),
                     repo_root: "/src/app".into(),
                     display_name: "me/app".into(),
+                    refs: Refs::Read,
                     worktrees: vec![
                         worktree(
                             "main",
@@ -1774,6 +1796,7 @@ mod tests {
                     repo_key: "/src/site/.git".into(),
                     repo_root: "/src/site".into(),
                     display_name: "me/site".into(),
+                    refs: Refs::Read,
                     worktrees: vec![worktree(
                         "develop",
                         true,
@@ -1797,6 +1820,186 @@ mod tests {
             })
             .unwrap();
         terminal.backend().to_string()
+    }
+
+    #[test]
+    fn a_repository_whose_refs_git_would_not_read_is_named_where_the_search_hint_was() {
+        // Its rows carry no marker, which is what they carry when there is nothing to
+        // report; the prompt line is the one place that says which of the two it is.
+        let mut tree = tree();
+        tree.repos[0].refs = Refs::Unreadable(REFS_REFUSAL.into());
+        let mut state = PanesState::new(tree, None);
+        insta::assert_snapshot!(screen(&state, 92, 18));
+
+        // Typing takes the field back: the hint gives way to the query, and so does this.
+        press(&mut state, KeyCode::Char('/'));
+        press(&mut state, KeyCode::Char('m'));
+        let typed = screen(&state, 92, 18);
+        assert!(
+            !typed.contains("refs unreadable"),
+            "the search field is the user's while they type:\n{typed}"
+        );
+    }
+
+    #[test]
+    fn the_refs_sentence_gives_way_to_a_state_chip_and_to_a_message() {
+        // Two more things that own the field, and the sentence has to step aside for both:
+        // a state filter's chip, which stays until the filter is cleared, and a message,
+        // which is there for one keypress. Neither is said twice on one line.
+        let mut tree = tree();
+        tree.repos[0].refs = Refs::Unreadable("fatal: bad ref".into());
+        let mut state = PanesState::new(tree, None);
+
+        press(&mut state, KeyCode::Char('b'));
+        let filtered = screen(&state, 92, 18);
+        let line = filtered.lines().next().expect("the prompt line");
+        assert!(line.contains("blocked"), "the chip is there: {line}");
+        assert!(
+            !line.contains("refs unreadable"),
+            "and the sentence is not: {line}"
+        );
+        press(&mut state, KeyCode::Char('a'));
+        let cleared = screen(&state, 92, 18);
+        assert!(
+            cleared.lines().next().unwrap().contains("refs unreadable"),
+            "and it is back once the filter is: {cleared}"
+        );
+
+        state.set_message("select a worktree or a pane first".into());
+        let told = screen(&state, 92, 18);
+        let line = told.lines().next().expect("the prompt line");
+        assert!(line.contains("select a worktree"), "the message: {line}");
+        assert!(
+            !line.contains("refs unreadable"),
+            "alone on the line: {line}"
+        );
+    }
+
+    /// What `adapter::git_cli::local_refs` actually hands up when a loose ref is broken:
+    /// git's words, and only those — the call is left off this one sentence, for the reason
+    /// `dropped_refs` gives. The picker's tests otherwise use short hand-written words, which
+    /// is how a sentence that began with the call went unnoticed until a real one was drawn.
+    const REFS_REFUSAL: &str = "warning: ignoring broken ref refs/heads/main";
+
+    /// And what it hands up when git dropped two, which is one warning per ref joined with a
+    /// space.
+    const TWO_REFS_REFUSAL: &str = "warning: ignoring broken ref refs/heads/main \
+        warning: ignoring broken ref refs/heads/chore/deps";
+
+    #[test]
+    fn a_second_dropped_ref_reaches_the_line_once_there_is_room_for_it() {
+        // git says it once per ref, so two broken refs are two warnings and the sentence is
+        // 120 columns with the repository's name on the front. The prompt line shows what
+        // fits: at 92 that is the first ref and nothing of the second.
+        let mut tree = tree();
+        tree.repos[0].refs = Refs::Unreadable(TWO_REFS_REFUSAL.into());
+        let state = PanesState::new(tree, None);
+
+        let narrow = screen(&state, 92, 18);
+        let line = narrow.lines().next().expect("the prompt line");
+        assert!(line.contains("refs/heads/main"), "the first ref: {line}");
+        assert!(
+            !line.contains("refs/heads/chore/deps"),
+            "and nothing of the second, at 92: {line}"
+        );
+
+        // Both from 133, and 132 is one short. The pair is what pins it: at 92 the second
+        // refname is past the edge of the terminal whatever the line does with it, so that
+        // assertion holds under any cut and this one holds under only the right one.
+        let one_short = screen(&state, 132, 18);
+        let line = one_short.lines().next().expect("the prompt line");
+        assert!(
+            !line.contains("refs/heads/chore/deps"),
+            "132 is one short: {line}"
+        );
+
+        let wide = screen(&state, 133, 18);
+        let line = wide.lines().next().expect("the prompt line");
+        assert!(
+            line.contains("refs/heads/main") && line.contains("refs/heads/chore/deps"),
+            "both, at 133: {line}"
+        );
+    }
+
+    #[test]
+    fn the_call_this_sentence_no_longer_carries_was_never_what_hid_the_second_ref() {
+        // What leaving it off bought, which is not reach: `refusal` appends the call after
+        // both refnames and the prompt line cuts from the right, so it moved the width the
+        // second one arrives at by the single column the ellipsis takes — 133 to 134 —
+        // while making the sentence 305 columns instead of 120. Drawn rather than
+        // remembered: the reason for dropping it is what no assertion was holding.
+        let with_the_call = format!(
+            "{TWO_REFS_REFUSAL} (`git for-each-ref \
+             --format=%(refname)%09%(committerdate:unix)%09%(upstream:short)%09\
+             %(upstream:track)%09%(push:track)%09%(worktreepath)%09%(contents:subject) \
+             refs/heads refs/remotes`)"
+        );
+        let mut wordier = tree();
+        wordier.repos[0].refs = Refs::Unreadable(with_the_call);
+        let state = PanesState::new(wordier, None);
+
+        let still_narrow = screen(&state, 133, 18);
+        let line = still_narrow.lines().next().expect("the prompt line");
+        assert!(
+            !line.contains("refs/heads/chore/deps"),
+            "with the call there, 133 is one short: {line}"
+        );
+        let one_wider = screen(&state, 134, 18);
+        let line = one_wider.lines().next().expect("the prompt line");
+        assert!(
+            line.contains("refs/heads/chore/deps"),
+            "and 134 reaches it, which is the whole of what the call cost: {line}"
+        );
+    }
+
+    #[test]
+    fn gits_words_fit_on_the_prompt_line_and_the_count_survives_them() {
+        // The sentence is as long as git made it; what fits has to be git's words, not the
+        // plugin's argv, and the count on the right has to still be there. Measured at every
+        // width the picker supports, with and without the spinner that shares the line.
+        let mut tree = tree();
+        tree.repos[0].refs = Refs::Unreadable(REFS_REFUSAL.into());
+        let mut state = PanesState::new(tree, None);
+        for waiting in [false, true] {
+            state.set_waiting(waiting);
+            for width in 24..=92u16 {
+                let drawn = screen(&state, width, 18);
+                let line = drawn.lines().next().expect("the prompt line");
+                let line = line.trim_matches('"');
+                assert_eq!(
+                    line.chars().count(),
+                    width as usize,
+                    "the line is the width, at {width}: {line}"
+                );
+                // The spinner's `  ⠋ reading working trees…` is 26 columns of its own, so
+                // with the sentence cut to nothing ` / ` and it and `5 panes` are 36. Below
+                // that the spinner is what pushes the count off the line, which is not what
+                // this measures.
+                if !waiting || width >= 36 {
+                    assert!(
+                        line.trim_end().ends_with("5 panes"),
+                        "the count is still there at {width}: {line}"
+                    );
+                }
+                // The sentence up to and including git's verdict is 53 columns; the frame
+                // around it (` / `, two columns of gap, the count, one trailing) is 13, and
+                // a cut keeps one column for the ellipsis — so from 67 the verdict is whole.
+                // With the spinner's 26 columns on the line too that is 93, past the widest
+                // width here, so the whole verdict is measured without it.
+                if !waiting && width >= 67 {
+                    assert!(
+                        line.contains("ignoring broken ref"),
+                        "git's words are what fits at {width}: {line}"
+                    );
+                }
+                if waiting && width >= 36 {
+                    assert!(
+                        line.contains("reading working trees"),
+                        "and so is the spinner at {width}: {line}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -2162,6 +2365,52 @@ mod tests {
             row.contains("PR unknown"),
             "and still says nobody could judge it: {row}"
         );
+    }
+
+    #[test]
+    fn a_row_in_a_repository_whose_refs_git_would_not_read_says_so_in_a_sweep() {
+        // The prompt line names the repository; the row says which half of the question
+        // went unanswered, and goes on saying it once marked — the same rule `PR unknown`
+        // is under, and as wide as `PR #1234 merged`, which the width tests measure. The row is
+        // found by its path's tail because at 46 columns the note takes the label's place,
+        // which is the rule for every note a sweep draws, marked or not.
+        let mut state = swept();
+        let mut tree = state.tree().clone();
+        tree.repos[1].refs = Refs::Unreadable("fatal: bad ref".into());
+        state.replace_tree(tree);
+        for _ in 0..20 {
+            if label_under_cursor(&state) == "chore/deps" {
+                break;
+            }
+            press(&mut state, KeyCode::Char('j'));
+        }
+        assert_eq!(label_under_cursor(&state), "chore/deps");
+
+        let row_of = |drawn: &str| {
+            drawn
+                .lines()
+                .find(|line| line.contains("chore-deps") && !line.starts_with(" me/site"))
+                .expect("the row is drawn")
+                .to_string()
+        };
+        for width in [92, 46] {
+            let drawn = screen(&state, width, 20);
+            let row = row_of(&drawn);
+            assert!(
+                row.contains("[ ]"),
+                "unjudged is not offered at {width}: {row}"
+            );
+            assert!(row.contains("refs unreadable"), "at {width}: {row}");
+            assert!(
+                drawn.contains("me/site: refs unreadable: fatal"),
+                "named once, on the prompt line, at {width}:\n{drawn}"
+            );
+        }
+
+        press(&mut state, KeyCode::Char(' '));
+        let row = row_of(&screen(&state, 92, 20));
+        assert!(row.contains("[x]"), "marked: {row}");
+        assert!(row.contains("refs unreadable"), "and still unjudged: {row}");
     }
 
     #[test]
@@ -2577,6 +2826,7 @@ mod tests {
             kind: RefKind::Local,
             committed_at: Some(at),
             subject: Some(format!("latest work on {name}")),
+            upstream: None,
             track: None,
             worktree_path: None,
         }
@@ -2589,6 +2839,7 @@ mod tests {
             repo_key: "/src/app/.git".into(),
             repo_root: "/src/app".into(),
             display_name: "me/app".into(),
+            refs: Refs::Read,
             worktrees: vec![
                 worktree(
                     "feat/login",
@@ -2602,6 +2853,7 @@ mod tests {
             repo_key: "/home/me/src/notes/.git".into(),
             repo_root: "/home/me/src/notes".into(),
             display_name: "me/notes".into(),
+            refs: Refs::Read,
             worktrees: vec![worktree(
                 "main",
                 true,

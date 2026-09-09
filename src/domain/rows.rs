@@ -14,7 +14,7 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 use std::collections::BTreeMap;
 
-use crate::domain::model::{PaneNode, Tree, WorkingTree};
+use crate::domain::model::{PaneNode, Refs, Tree, WorkingTree};
 use crate::domain::sweep::Mark;
 use crate::port::{AgentStatus, Track};
 
@@ -168,7 +168,7 @@ pub fn marks_reserve(row: &Row) -> usize {
 }
 
 /// Where the branch stands against its upstream, with the gap that precedes it.
-fn track_mark(track: Option<Track>) -> String {
+pub fn track_mark(track: Option<Track>) -> String {
     match track {
         Some(Track::Gone) => format!("  {GONE}"),
         Some(Track::Ahead(ahead)) => format!("  \u{2191}{ahead}"),
@@ -673,6 +673,31 @@ pub fn detail(tree: &Tree, reference: RowRef) -> String {
     parts.join(" \u{b7} ")
 }
 
+/// What the prompt line says when git would not read a repository's refs, or nothing.
+///
+/// The first such repository on screen, named, with git's words, and the rest counted. The
+/// rows cannot say this themselves: a checkout with no track marker is drawn the same
+/// whether git had nothing to say or would not say it — the right row, and the wrong
+/// silence — so this is the one place the difference is visible. The same shape `gh`
+/// failing takes during a sweep, and shown ahead of it: refs not read is about ahead,
+/// behind and `gone` on every row of the repository, sweep or no sweep.
+///
+/// `refs unreadable` is the word the row uses in a sweep and `dump` uses under the
+/// repository, so a reader meets one term in all three places. It is short on purpose:
+/// what follows is git's, and the prompt line is one line.
+pub fn refs_trouble(tree: &Tree) -> Option<String> {
+    let mut unreadable = tree.repos.iter().filter_map(|repo| match &repo.refs {
+        Refs::Read => None,
+        Refs::Unreadable(words) => Some((repo.display_name.as_str(), words.as_str())),
+    });
+    let (name, words) = unreadable.next()?;
+    let first = format!("{name}: refs unreadable: {words}");
+    Some(match unreadable.count() {
+        0 => first,
+        more => format!("{first} (+{more} more)"),
+    })
+}
+
 fn plural(count: usize, noun: &str) -> String {
     if count == 1 {
         noun.to_string()
@@ -684,7 +709,7 @@ fn plural(count: usize, noun: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{RepoNode, WorktreeNode};
+    use crate::domain::model::{Refs, RepoNode, WorktreeNode};
     use std::num::NonZeroU32;
 
     fn pane(id: &str, name: Option<&str>, status: AgentStatus) -> PaneNode {
@@ -719,6 +744,7 @@ mod tests {
                     repo_key: "/src/app/.git".into(),
                     repo_root: "/src/app".into(),
                     display_name: "me/app".into(),
+                    refs: Refs::Read,
                     worktrees: vec![
                         worktree(
                             "main",
@@ -738,6 +764,7 @@ mod tests {
                     repo_key: "/src/site/.git".into(),
                     repo_root: "/src/site".into(),
                     display_name: "me/site".into(),
+                    refs: Refs::Read,
                     worktrees: vec![worktree(
                         "develop",
                         vec![pane("w3:p1", Some("claude"), AgentStatus::Blocked)],
@@ -1193,12 +1220,14 @@ mod tests {
                     repo_key: "/src/hbr/.git".into(),
                     repo_root: "/src/lin".into(),
                     display_name: "me/harbour-backend".into(),
+                    refs: Refs::Read,
                     worktrees: vec![worktree("feat/hbr-51-grant-table", vec![])],
                 },
                 RepoNode {
                     repo_key: "/src/harken/.git".into(),
                     repo_root: "/src/harken".into(),
                     display_name: "me/harken".into(),
+                    refs: Refs::Read,
                     worktrees: vec![worktree("main", vec![])],
                 },
             ],
@@ -1364,6 +1393,28 @@ mod tests {
         assert_eq!(
             detail(&tree, RowRef::Repo(0)),
             "me/app · 3 worktrees · 3 panes · /src/app"
+        );
+    }
+
+    #[test]
+    fn a_repository_whose_refs_git_would_not_read_is_named_once_with_gits_words() {
+        // The rows carry no marker either way, so this sentence is the whole of what tells
+        // "nothing to report" from "git would not say".
+        let mut tree = tree();
+        assert_eq!(refs_trouble(&tree), None);
+
+        tree.repos[1].refs = Refs::Unreadable("fatal: bad ref for refs/heads/x".into());
+        assert_eq!(
+            refs_trouble(&tree).as_deref(),
+            Some("me/site: refs unreadable: fatal: bad ref for refs/heads/x")
+        );
+
+        // Two in trouble: the first on screen is named, the other counted — the shape the
+        // sweep's `gh` line already has, so the reader learns one.
+        tree.repos[0].refs = Refs::Unreadable("fatal: index file corrupt".into());
+        assert_eq!(
+            refs_trouble(&tree).as_deref(),
+            Some("me/app: refs unreadable: fatal: index file corrupt (+1 more)")
         );
     }
 

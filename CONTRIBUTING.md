@@ -37,6 +37,12 @@ cargo test
 
 CI runs exactly these.
 
+`cargo test` needs a locale your git has a translation for. `tests/git_locale.rs` proves the
+`LC_ALL` pin by reading a git that would otherwise answer in another language, and where there
+is no such locale it fails rather than skipping, because libtest keeps a passing test's output
+to itself and a skip would read as a pass. The failure says which of the two things is missing
+and names the fix — on Linux, `sudo locale-gen de_DE.UTF-8`.
+
 If you changed the UI, review the snapshots rather than editing them:
 
 ```sh
@@ -49,7 +55,8 @@ cargo insta review
   titles and bodies, documentation. `docs/ja` is the one exception, and it is a translation.
 - **Conventional Commits.** `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `ci:`.
 - **`src/domain` stays pure.** No processes, filesystem, network, environment, or clock.
-  `Command::new` belongs in `src/adapter` alone.
+  `Command::new` belongs in `src/adapter` alone, and exactly one place there starts a git:
+  that is where the locale git's messages are matched in gets pinned.
 - **Translations ship together.** Touch `docs/en/x.md` and you touch `docs/ja/x.md` in the
   same change. If you cannot write the Japanese, say so in the pull request and it can be
   written for you — but the pair must land together.

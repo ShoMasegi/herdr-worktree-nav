@@ -28,6 +28,17 @@ if [ -n "$offenders" ]; then
     printf '%s\n' "$offenders" >&2
 fi
 
+# 2a. Exactly one place starts a git, because that place is the only one that pins the locale
+#     git's messages are matched in. A second one is a call whose stderr comes back
+#     translated and whose warnings therefore go unread, and nothing else here would notice:
+#     giving is_dirty a git of its own left every unit test and every other check on this
+#     page green. Occurrences, not lines: two on one line would otherwise pass.
+gits=$(grep -rho 'Command::new("git")' src/ 2>/dev/null | wc -l | tr -d ' ')
+if [ "$gits" != "1" ]; then
+    fail "src/ must start exactly one git: the one GitCli::command builds, which pins the locale. Found $gits. That function is private, so a second adapter needing a git goes through GitPort, or widens it first. Prose counts too — write it bare in comments, as gh_cli.rs does:"
+    grep -rn 'Command::new("git")' src/ >&2 || true
+fi
+
 # 3. The manifest and the crate agree on the version, so a release cannot ship a binary
 #    whose fetch-or-build.sh looks for a different tag.
 manifest=$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' herdr-plugin.toml | head -n 1)

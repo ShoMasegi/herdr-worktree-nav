@@ -13,7 +13,7 @@ use std::process::ExitCode;
 
 use anyhow::{bail, Result};
 use herdr_worktree_nav::adapter::{herdr_config, DetachedRemovals, GhCli, GitCli, SocketHerdr};
-use herdr_worktree_nav::app::{action, collect, remove, run_picker, Entrypoint};
+use herdr_worktree_nav::app::{action, collect, dump, remove, run_picker, Entrypoint};
 
 fn main() -> ExitCode {
     match run() {
@@ -84,55 +84,21 @@ fn pane(start: Entrypoint) -> Result<()> {
     )
 }
 
-/// Print the resolved tree as plain text. Useful when the picker shows something surprising:
-/// it separates "herdr or git told us something odd" from "the UI drew it wrong".
+/// Print what the plugin sees as plain text. Useful when the picker shows something
+/// surprising: it separates "herdr or git told us something odd" from "the UI drew it wrong".
 fn dump() -> Result<()> {
     let herdr = SocketHerdr::from_env()?;
     let (snapshot, tree) = collect::collect_tree(&herdr, &GitCli)?;
 
-    let chrome = herdr_config::load();
-    println!(
-        "herdr {} (protocol {})",
-        snapshot.version, snapshot.protocol
+    print!(
+        "{}",
+        dump::report(
+            &snapshot,
+            &herdr_config::load(),
+            &tree,
+            &dump::read_refs(&GitCli, &tree),
+            &dump::read_working_trees(&GitCli, &tree),
+        )
     );
-    println!(
-        "chrome: accent {:?}, indicators {:?}",
-        chrome.accent, chrome.indicators
-    );
-    println!(
-        "{} panes in {} repos",
-        snapshot.panes.len(),
-        tree.repos.len()
-    );
-    for repo in &tree.repos {
-        println!("\n{}  [{}]", repo.display_name, repo.repo_root);
-        for worktree in &repo.worktrees {
-            let open = match &worktree.open_workspace_id {
-                Some(id) => format!(" open in {id}"),
-                None => String::new(),
-            };
-            println!(
-                "  {} {}{}  {}",
-                if worktree.is_primary { "*" } else { "-" },
-                worktree.label(),
-                open,
-                worktree.checkout_path
-            );
-            for pane in &worktree.panes {
-                println!(
-                    "      {}  {:?}  {}",
-                    pane.pane_id,
-                    pane.agent_status,
-                    pane.display_name.as_deref().unwrap_or("")
-                );
-            }
-        }
-    }
-    if !tree.ungrouped.is_empty() {
-        println!("\nnot in any repository:");
-        for pane in &tree.ungrouped {
-            println!("      {}", pane.pane_id);
-        }
-    }
     Ok(())
 }

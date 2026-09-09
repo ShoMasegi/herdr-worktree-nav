@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::domain::model::{normalize_path, PaneNode, RepoNode, Tree, WorktreeNode};
+use crate::domain::model::{normalize_path, PaneNode, Refs, RepoNode, Tree, WorktreeNode};
 use crate::port::{GitRef, RefKind, Snapshot, Track, Worktree};
 
 /// A repository the caller has identified, together with the worktrees herdr reported for it.
@@ -16,10 +16,11 @@ pub struct RepoInput {
     /// `owner/repo` for a GitHub origin, otherwise the directory name.
     pub display_name: String,
     pub worktrees: Vec<Worktree>,
-    /// The repository's refs, for what git says about each branch's upstream. Empty when
-    /// the read failed: a checkout simply carries no marker then, which is the same thing
-    /// it does for a branch with nothing to report.
-    pub refs: Vec<GitRef>,
+    /// The repository's refs, for what git says about each branch's upstream — or git's own
+    /// words when the read failed. A checkout carries no marker then, which is the same
+    /// thing it does for a branch with nothing to report, and the repository says so
+    /// instead: see [`Refs`].
+    pub refs: Result<Vec<GitRef>, String>,
 }
 
 /// What git said about the branch each checkout has out, by checkout.
@@ -42,7 +43,7 @@ pub struct RepoInput {
 fn tracks(repos: &[RepoInput]) -> HashMap<&str, Track> {
     repos
         .iter()
-        .flat_map(|repo| &repo.refs)
+        .flat_map(|repo| repo.refs.as_deref().unwrap_or_default())
         .filter(|git_ref| git_ref.kind == RefKind::Local)
         .filter_map(|git_ref| {
             Some((
@@ -76,6 +77,10 @@ pub fn build(
             repo_key: normalize_path(&repo.repo_key).to_string(),
             repo_root: normalize_path(&repo.repo_root).to_string(),
             display_name: repo.display_name.clone(),
+            refs: match &repo.refs {
+                Ok(_) => Refs::Read,
+                Err(words) => Refs::Unreadable(words.clone()),
+            },
             worktrees: repo
                 .worktrees
                 .iter()
@@ -223,7 +228,7 @@ mod tests {
             repo_root: root.to_string(),
             display_name: display_name.to_string(),
             worktrees,
-            refs: Vec::new(),
+            refs: Ok(Vec::new()),
         }
     }
 
@@ -233,6 +238,7 @@ mod tests {
             kind: RefKind::Local,
             committed_at: None,
             subject: None,
+            upstream: None,
             track,
             worktree_path: worktree_path.map(str::to_string),
         }
@@ -248,7 +254,7 @@ mod tests {
                 worktree("feat/login", "/wt/feat-login", true),
             ],
         );
-        input.refs = vec![
+        input.refs = Ok(vec![
             local_ref("main", Some("/src/app"), None),
             local_ref(
                 "feat/login",
@@ -258,7 +264,7 @@ mod tests {
                     behind: NonZeroU32::new(1).unwrap(),
                 }),
             ),
-        ];
+        ]);
 
         let tree = build(&snapshot(json!([])), &[input], &HashMap::new());
         let worktrees = &tree.repos[0].worktrees;
@@ -273,6 +279,38 @@ mod tests {
     }
 
     #[test]
+    fn a_repository_whose_refs_could_not_be_read_says_so_and_marks_nothing() {
+        // What the read failing used to do — nothing — is still what the rows do: no marker
+        // beats a wrong one. What is new is that the repository carries git's words, so the
+        // prompt line can say which it was. The other repository is untouched either way.
+        let mut app = repo(
+            "me/app",
+            "/src/app",
+            vec![worktree("main", "/src/app", false)],
+        );
+        app.refs = Err("fatal: bad ref (`git for-each-ref …`)".to_string());
+        let mut site = repo(
+            "me/site",
+            "/src/site",
+            vec![worktree("main", "/src/site", false)],
+        );
+        site.refs = Ok(vec![local_ref(
+            "main",
+            Some("/src/site"),
+            Some(Track::Gone),
+        )]);
+
+        let tree = build(&snapshot(json!([])), &[app, site], &HashMap::new());
+        assert_eq!(
+            tree.repos[0].refs,
+            Refs::Unreadable("fatal: bad ref (`git for-each-ref …`)".to_string())
+        );
+        assert_eq!(tree.repos[0].worktrees[0].track, None);
+        assert_eq!(tree.repos[1].refs, Refs::Read);
+        assert_eq!(tree.repos[1].worktrees[0].track, Some(Track::Gone));
+    }
+
+    #[test]
     fn a_checkout_herdr_did_not_list_still_gets_what_git_said_about_it() {
         // The path the index-based lookup used to take, and the reason it was replaced: it
         // reached into `repos` by an index that was only valid because `nodes` happened to
@@ -282,10 +320,10 @@ mod tests {
             "/src/app",
             vec![worktree("main", "/src/app", false)],
         );
-        input.refs = vec![
+        input.refs = Ok(vec![
             local_ref("main", Some("/src/app"), None),
             local_ref("manual", Some("/elsewhere/manual"), Some(Track::Gone)),
-        ];
+        ]);
         let tree = build(
             &snapshot(json!([pane("w1:p1", None)])),
             &[input],
@@ -309,13 +347,13 @@ mod tests {
             "/src/app",
             vec![worktree("main", "/src/app", false)],
         );
-        app.refs = vec![local_ref("main", Some("/src/app"), Some(Track::Gone))];
+        app.refs = Ok(vec![local_ref("main", Some("/src/app"), Some(Track::Gone))]);
         let mut site = repo(
             "me/site",
             "/src/site",
             vec![worktree("main", "/src/site", false)],
         );
-        site.refs = vec![local_ref("main", Some("/src/site"), None)];
+        site.refs = Ok(vec![local_ref("main", Some("/src/site"), None)]);
 
         let tree = build(&snapshot(json!([])), &[app, site], &HashMap::new());
         assert_eq!(tree.repos[0].worktrees[0].track, Some(Track::Gone));
@@ -335,10 +373,10 @@ mod tests {
                 worktree("", "/wt/detached", true),
             ],
         );
-        input.refs = vec![
+        input.refs = Ok(vec![
             local_ref("main", Some("/src/app"), Some(Track::Gone)),
             local_ref("feat/login", None, Some(Track::Gone)),
-        ];
+        ]);
 
         let tree = build(&snapshot(json!([])), &[input], &HashMap::new());
         let worktrees = &tree.repos[0].worktrees;

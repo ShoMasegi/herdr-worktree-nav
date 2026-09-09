@@ -26,6 +26,20 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Lint
         run: cargo clippy --all-targets -- -D warnings
+      - name: A locale git does not answer in English
+        # tests/git_locale.rs proves the LC_ALL pin by running a git that would otherwise
+        # answer in another language. This image lists C, C.utf8, POSIX and en_US.utf8 only,
+        # and the test needs one git has a translation for. Written into locale.gen rather
+        # than passed to locale-gen, which not every version takes as an argument, and
+        # grepped afterwards so a locale that was not generated fails on this step, where
+        # the cause is on screen, rather than two steps later as a locale test with nothing
+        # to measure and only its own panic to say so.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y locales
+          echo 'de_DE.UTF-8 UTF-8' | sudo tee -a /etc/locale.gen
+          sudo locale-gen
+          locale -a | grep -qx 'de_DE.utf8'
       - name: Test
         run: cargo test --all-targets
       - name: Architecture invariants

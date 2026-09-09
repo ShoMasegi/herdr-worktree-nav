@@ -87,7 +87,7 @@ pub fn run(
 mod tests {
     use super::*;
     use crate::port::{
-        GitRef, Notification, Pane, PaneDestination, PaneSplit, PluginPaneOpen, RepoIdentity,
+        Notification, Pane, PaneDestination, PaneSplit, PluginPaneOpen, RefWalk, RepoIdentity,
         Snapshot, WorktreeCreate, WorktreeList, WorktreeOpen, WorktreeOpened,
     };
     use std::sync::Mutex;
@@ -156,7 +156,7 @@ mod tests {
         fn github_slug(&self, _repo_root: &str) -> Result<Option<crate::port::Slug>> {
             unreachable!()
         }
-        fn local_refs(&self, _repo_root: &str) -> Result<Vec<GitRef>> {
+        fn local_refs(&self, _repo_root: &str) -> Result<RefWalk> {
             unreachable!()
         }
         fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {

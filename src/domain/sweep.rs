@@ -78,26 +78,56 @@ impl Refusal {
     }
 }
 
+/// Which half of the question nobody could answer.
+///
+/// A sweep asks two things of a checkout — git, whether its upstream is gone; `gh`, whether
+/// its pull request is finished with — and a row that neither could settle says which one
+/// went unanswered, since they are fixed in different places. ADR 0011 puts it as saying
+/// "which half it is missing"; this is the half.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Half {
+    /// git would not read the repository's refs, so `gone` was never on offer — for every
+    /// checkout of the repository at once. Named ahead of `gh` when both are missing: it
+    /// was known before the first frame, it is true outside a sweep too, and the three track
+    /// markers on the row — ahead, behind, `gone` — went with it.
+    Refs,
+    /// `gh` could not settle it: could not be asked, asked and the window it was given came
+    /// back full, or asked and answered in a state this does not know.
+    PullRequests,
+}
+
+impl Half {
+    /// What the row says beside its box.
+    pub fn label(self) -> &'static str {
+        match self {
+            Half::Refs => "refs unreadable",
+            Half::PullRequests => "PR unknown",
+        }
+    }
+}
+
 /// What a sweep may do with one checkout.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Candidate {
     /// Marked when the sweep opens.
     Offered(Reason),
-    /// Nothing found that says it should go, and `gh`'s answer could not settle it.
+    /// Nothing found that says it should go, and one half of the question went unanswered.
     ///
-    /// Three ways `gh` fails to settle it, and only the first is a missing dependency: it
-    /// could not be asked at all; it answered but the window it was given was full, so a
-    /// branch absent from the list may simply be further back than it reached; or it
-    /// answered and one of the entries was in a state this does not know. The row says so in
-    /// all three, because a sweep that quietly finds less when it could not look is worse
-    /// than one that says which half it could not see.
+    /// Only where the answer would have changed something: a clean checkout on a branch,
+    /// which is what both halves are asked about. A dirty one, a detached one, a refused one
+    /// and one whose working tree has not been read or could not be are all rows nothing was
+    /// going to offer, so nothing about them is unknown that matters.
     ///
-    /// That enumeration is about `gh`, and is not the whole of "could not look". git has a
-    /// way to fail too — a ref walk that failed leaves every checkout with `track: None`,
-    /// which is also what a branch level with its upstream has — and no variant here can say
-    /// so, because `Track` has nowhere to put it. See issue #21. Fixing it is a change to
-    /// what a `RepoInput` can carry, and it has to land before a sweep deletes anything.
-    Unjudged,
+    /// The row says so, because a sweep that quietly finds less when it could not look is
+    /// worse than one that says which half it could not see. Three ways `gh` fails to settle
+    /// a row, and only the first is a missing dependency: it could not be asked at all; it
+    /// answered but the window it was given was full, so a branch absent from the list may
+    /// simply be further back than it reached; or it answered and one of the entries was in
+    /// a state this does not know. One way git does: the ref walk failed, and every checkout
+    /// of the repository has `track: None` — which is also what a branch level with its
+    /// upstream has, so the row cannot tell and the repository carries the fact instead
+    /// (`domain::model::Refs`).
+    Unjudged(Half),
     /// Nothing says it should go. `Space` still marks it: disagreeing with the sweep is the
     /// same act as widening it, one row at a time.
     Available,
@@ -110,7 +140,7 @@ impl Candidate {
     pub fn is_offered(&self) -> bool {
         match self {
             Candidate::Offered(_) => true,
-            Candidate::Unjudged | Candidate::Available | Candidate::Refused(_) => false,
+            Candidate::Unjudged(_) | Candidate::Available | Candidate::Refused(_) => false,
         }
     }
 
@@ -124,7 +154,7 @@ impl Candidate {
     /// second filter in [`chosen`] between it and a removal. The compiler asks now.
     pub fn is_markable(&self) -> bool {
         match self {
-            Candidate::Offered(_) | Candidate::Unjudged | Candidate::Available => true,
+            Candidate::Offered(_) | Candidate::Unjudged(_) | Candidate::Available => true,
             Candidate::Refused(_) => false,
         }
     }
@@ -167,14 +197,15 @@ pub fn candidates(tree: &Tree, facts: &Facts) -> BTreeMap<String, Candidate> {
         let settled = facts.settled.get(&RepoRoot::of(repo));
         for worktree in &repo.worktrees {
             let path = &worktree.checkout_path;
-            out.insert(path.clone(), judge(worktree, settled, facts));
+            out.insert(path.clone(), judge(repo, worktree, settled, facts));
         }
     }
     out
 }
 
 fn judge(
-    worktree: &crate::domain::model::WorktreeNode,
+    repo: &RepoNode,
+    worktree: &WorktreeNode,
     settled: Option<&Option<SettledPullRequests>>,
     facts: &Facts,
 ) -> Candidate {
@@ -214,15 +245,23 @@ fn judge(
     // Below here `gh` is the only thing left that could say anything, so a row it could not
     // reach is `Unjudged` rather than `Available` — but only where its answer would have
     // changed the outcome. A row already refused, already offered by git, or that git would
-    // refuse anyway was never a row a pull request was going to decide.
+    // refuse anyway was never a row a pull request was going to decide. The same gate holds
+    // for git's own half: `gone` was never going to offer a dirty or a detached checkout,
+    // so refs that were not read leave nothing unknown about those that matters.
     let could_have_decided = clean && worktree.branch.is_some();
+    let refs_unread = could_have_decided && !repo.refs.is_read();
     let settled = match settled {
-        // Nobody has asked yet. Not the same as asking and getting nothing, but there is
-        // nothing to say about it either: an answer is still on its way, and a permanent word
-        // on a temporary state is what the working-tree walk already avoids.
+        // Nobody has asked `gh` yet. Not the same as asking and getting nothing, but there
+        // is nothing to say about it either: an answer is still on its way, and a permanent
+        // word on a temporary state is what the working-tree walk already avoids. git's
+        // half is not on its way — it was read before the first frame — so that is said now.
+        None if refs_unread => return Candidate::Unjudged(Half::Refs),
         None => return Candidate::Available,
-        // Asked, and `gh` could not answer. This is the row that says so.
-        Some(None) if could_have_decided => return Candidate::Unjudged,
+        // Asked, and `gh` could not answer. This is the row that says so — unless git could
+        // not either, in which case the half named is git's: the track markers on the row
+        // are missing with it, and fixing it is what makes the `gh` half worth reading.
+        Some(None) if refs_unread => return Candidate::Unjudged(Half::Refs),
+        Some(None) if could_have_decided => return Candidate::Unjudged(Half::PullRequests),
         Some(None) => return Candidate::Available,
         Some(Some(settled)) => settled,
     };
@@ -236,6 +275,8 @@ fn judge(
         .as_ref()
         .and_then(|branch| finished_with(settled.pull_requests(), branch));
     match (found, settled) {
+        // `gh` widens whatever git could or could not say: a finished pull request offers
+        // the row even in a repository whose refs were not read.
         (Some(pull_request), _) if clean => Candidate::Offered(Reason::PullRequest {
             number: pull_request.number,
             outcome: pull_request.outcome,
@@ -243,12 +284,17 @@ fn judge(
         // Found, and the working tree has something in it. git would refuse the removal, so
         // the sweep does not suggest it — the same rule the `gone` path is under.
         (Some(_), _) => Candidate::Available,
+        // Not found, and git never got to look for `gone`: whichever list this is, the row
+        // is one nobody judged, and git's is the half it says.
+        (None, _) if refs_unread => Candidate::Unjudged(Half::Refs),
         // Missing from all of them: this branch has no finished pull request.
         (None, SettledPullRequests::All(_)) => Candidate::Available,
         // Missing from as many as `gh` was asked for: the window may not reach back far
         // enough, and saying "nothing to sweep" on the strength of a page size is the
         // confident wrong claim this whole distinction exists to prevent.
-        (None, SettledPullRequests::Window(_)) if could_have_decided => Candidate::Unjudged,
+        (None, SettledPullRequests::Window(_)) if could_have_decided => {
+            Candidate::Unjudged(Half::PullRequests)
+        }
         (None, SettledPullRequests::Window(_)) => Candidate::Available,
     }
 }
@@ -414,18 +460,18 @@ pub enum Mark {
     /// Going because the user said so, on a row the sweep had nothing to say about. The row
     /// says nothing beside the mark — "because you said so" is not a finding.
     GoingByHand,
-    /// Going because the user said so, on a row `gh` could not settle. The row goes on
-    /// saying so: it is the one row on the list where what is being acted on is nobody
-    /// knows, and that is worth most on the row about to be acted on. Its own variant
+    /// Going because the user said so, on a row neither git nor `gh` could settle. The row
+    /// goes on saying which: it is the one row on the list where what is being acted on is
+    /// nobody knows, and that is worth most on the row about to be acted on. Its own variant
     /// rather than a flag beside [`GoingByHand`](Mark::GoingByHand), because a mark carrying
     /// both a reason and "could not look" would be a state nothing here can mean.
-    GoingUnjudged,
+    GoingUnjudged(Half),
     /// Staying, and the user may change that.
     Staying,
-    /// Staying, and `gh` could not settle whether it should be. Says so, because a sweep
+    /// Staying, and one half of the question went unanswered. Says which, because a sweep
     /// that quietly finds less when it could not look is worse than one that says which half
     /// it could not see — `docs/adr/0011-what-may-be-swept.md`.
-    Unjudged,
+    Unjudged(Half),
     /// Never swept, and why.
     Refused(Refusal),
 }
@@ -434,8 +480,8 @@ impl Mark {
     /// Whether this row goes when the sweep runs.
     pub fn is_going(&self) -> bool {
         match self {
-            Mark::Going(_) | Mark::GoingByHand | Mark::GoingUnjudged => true,
-            Mark::Staying | Mark::Unjudged | Mark::Refused(_) => false,
+            Mark::Going(_) | Mark::GoingByHand | Mark::GoingUnjudged(_) => true,
+            Mark::Staying | Mark::Unjudged(_) | Mark::Refused(_) => false,
         }
     }
 
@@ -450,9 +496,9 @@ impl Mark {
         match self {
             Mark::Going(_)
             | Mark::GoingByHand
-            | Mark::GoingUnjudged
+            | Mark::GoingUnjudged(_)
             | Mark::Staying
-            | Mark::Unjudged => true,
+            | Mark::Unjudged(_) => true,
             Mark::Refused(_) => false,
         }
     }
@@ -475,7 +521,7 @@ impl Mark {
     pub fn note(&self) -> Option<String> {
         match self {
             Mark::Going(reason @ Reason::PullRequest { .. }) => Some(reason.label()),
-            Mark::Unjudged | Mark::GoingUnjudged => Some("PR unknown".to_string()),
+            Mark::Unjudged(half) | Mark::GoingUnjudged(half) => Some(half.label().to_string()),
             Mark::Going(Reason::Gone) | Mark::GoingByHand | Mark::Staying | Mark::Refused(_) => {
                 None
             }
@@ -517,8 +563,8 @@ pub fn marks(
                 Candidate::Refused(refusal) => Mark::Refused(*refusal),
                 Candidate::Offered(reason) if going => Mark::Going(reason.clone()),
                 Candidate::Available if going => Mark::GoingByHand,
-                Candidate::Unjudged if going => Mark::GoingUnjudged,
-                Candidate::Unjudged => Mark::Unjudged,
+                Candidate::Unjudged(half) if going => Mark::GoingUnjudged(*half),
+                Candidate::Unjudged(half) => Mark::Unjudged(*half),
                 // Including an `Offered` the user has just cleared: the sweep's reason is no
                 // longer why this row is doing anything, so it stops being shown.
                 Candidate::Offered(_) | Candidate::Available => Mark::Staying,
@@ -531,7 +577,7 @@ pub fn marks(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{PaneNode, RepoNode, WorktreeNode};
+    use crate::domain::model::{PaneNode, Refs, RepoNode, WorktreeNode};
     use crate::port::{AgentStatus, SettledPullRequest};
 
     fn worktree(branch: &str, path: &str) -> WorktreeNode {
@@ -551,8 +597,16 @@ mod tests {
             repo_key: "/src/app/.git".into(),
             repo_root: "/src/app".into(),
             display_name: "me/app".into(),
+            refs: Refs::Read,
             worktrees: Vec::new(),
         }
+    }
+
+    /// The same repository, with a ref walk git would not do.
+    fn tree_unread(worktrees: Vec<WorktreeNode>) -> Tree {
+        let mut tree = tree_of(worktrees);
+        tree.repos[0].refs = Refs::Unreadable("fatal: bad ref".to_string());
+        tree
     }
 
     fn tree_of(worktrees: Vec<WorktreeNode>) -> Tree {
@@ -784,7 +838,10 @@ mod tests {
             &tree_of(vec![judgeable, already, running]),
             &facts(&trees, &unavailable),
         );
-        assert_eq!(judged["/wt/feat-login"], Candidate::Unjudged);
+        assert_eq!(
+            judged["/wt/feat-login"],
+            Candidate::Unjudged(Half::PullRequests)
+        );
         assert_eq!(
             judged["/wt/fix-crash"],
             Candidate::Offered(Reason::Gone),
@@ -794,6 +851,110 @@ mod tests {
             judged["/wt/tidy"],
             Candidate::Refused(Refusal::Running),
             "a pull request was never going to decide this one"
+        );
+    }
+
+    #[test]
+    fn a_repository_whose_refs_git_would_not_read_says_so_on_the_rows_git_would_have_judged() {
+        // git's half of ADR 0011's price. A failed ref walk leaves every checkout with
+        // `track: None`, which is what a branch level with its upstream has too, so without
+        // this the repository offers nothing on git's account and looks like one with nothing
+        // to find.
+        // Known before `gh` is asked — the refs were read in front of the first frame — so
+        // it is said before `gh` is asked, and the gate is the one `gh`'s half is under: a
+        // dirty or a detached checkout was never going to be offered on `gone`.
+        let judgeable = worktree("feat/login", "/wt/feat-login");
+        let holding_work = worktree("fix/crash", "/wt/fix-crash");
+        let mut detached = worktree("", "/wt/detached");
+        detached.branch = None;
+        let mut running = worktree("chore/tidy", "/wt/tidy");
+        running.panes = vec![PaneNode {
+            pane_id: "w3:p1".into(),
+            workspace_id: "w3".into(),
+            tab_id: "w3:t1".into(),
+            display_name: None,
+            agent_status: AgentStatus::Idle,
+            focused: false,
+        }];
+        let mut trees = clean(&["/wt/feat-login", "/wt/detached", "/wt/tidy"]);
+        trees.insert("/wt/fix-crash".to_string(), WorkingTree::Dirty);
+        let not_asked = BTreeMap::new();
+
+        let judged = judged(
+            &tree_unread(vec![judgeable, holding_work, detached, running]),
+            &facts(&trees, &not_asked),
+        );
+        assert_eq!(judged["/wt/feat-login"], Candidate::Unjudged(Half::Refs));
+        assert_eq!(
+            judged["/wt/fix-crash"],
+            Candidate::Available,
+            "git would refuse it anyway, so nothing unknown about it matters"
+        );
+        assert_eq!(
+            judged["/wt/detached"],
+            Candidate::Available,
+            "nothing to be gone from"
+        );
+        assert_eq!(judged["/wt/tidy"], Candidate::Refused(Refusal::Running));
+    }
+
+    #[test]
+    fn gh_still_widens_a_repository_whose_refs_git_would_not_read() {
+        // `gh` may only widen, and a failed ref walk takes nothing away from it: a finished
+        // pull request offers the row exactly as it would have. Where `gh` has nothing to
+        // offer — no pull request, or no answer — the half the row names is git's, since
+        // the track markers on the row went with it and fixing it is what makes `gh`'s half
+        // worth reading.
+        let trees = clean(&["/wt/feat-login", "/wt/fix-crash"]);
+        let both = vec![
+            worktree("feat/login", "/wt/feat-login"),
+            worktree("fix/crash", "/wt/fix-crash"),
+        ];
+
+        let found = judged(
+            &tree_unread(both.clone()),
+            &facts(&trees, &asked(vec![merged(7, "feat/login")])),
+        );
+        assert_eq!(
+            found["/wt/feat-login"],
+            Candidate::Offered(Reason::PullRequest {
+                number: 7,
+                outcome: PullRequestOutcome::Merged,
+            })
+        );
+        assert_eq!(
+            found["/wt/fix-crash"],
+            Candidate::Unjudged(Half::Refs),
+            "the whole list, and not in it — which is an answer from gh and none from git"
+        );
+
+        let unavailable = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
+        let neither = judged(&tree_unread(both.clone()), &facts(&trees, &unavailable));
+        assert_eq!(
+            neither["/wt/feat-login"],
+            Candidate::Unjudged(Half::Refs),
+            "both halves missing: git's is the one named"
+        );
+
+        let window = judged(
+            &tree_unread(both.clone()),
+            &facts(&trees, &told(vec![merged(1, "some/other")], false)),
+        );
+        assert_eq!(window["/wt/feat-login"], Candidate::Unjudged(Half::Refs));
+
+        // And a window that does reach the branch offers it, whatever git could not read:
+        // the same widening as from the whole list. Pinned separately because the arms are
+        // separate, and a guard on the wrong one would leave this reading `Unjudged`.
+        let reached = judged(
+            &tree_unread(both),
+            &facts(&trees, &told(vec![merged(7, "feat/login")], false)),
+        );
+        assert_eq!(
+            reached["/wt/feat-login"],
+            Candidate::Offered(Reason::PullRequest {
+                number: 7,
+                outcome: PullRequestOutcome::Merged,
+            })
         );
     }
 
@@ -813,7 +974,10 @@ mod tests {
             &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
             &facts(&trees, &unavailable),
         );
-        assert_eq!(could_not["/wt/feat-login"], Candidate::Unjudged);
+        assert_eq!(
+            could_not["/wt/feat-login"],
+            Candidate::Unjudged(Half::PullRequests)
+        );
     }
 
     #[test]
@@ -827,7 +991,10 @@ mod tests {
             &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
             &facts(&trees, &truncated),
         );
-        assert_eq!(partial["/wt/feat-login"], Candidate::Unjudged);
+        assert_eq!(
+            partial["/wt/feat-login"],
+            Candidate::Unjudged(Half::PullRequests)
+        );
 
         // And the same list, known to be all of them, is an answer.
         let whole = told(vec![merged(1, "some/other")], true);
@@ -892,6 +1059,7 @@ mod tests {
         let tree = Tree {
             repos: vec![
                 RepoNode {
+                    refs: Refs::Read,
                     worktrees: vec![worktree("feat/login", "/wt/app-login")],
                     ..only_repo()
                 },
@@ -899,6 +1067,7 @@ mod tests {
                     repo_key: "/src/site/.git".into(),
                     repo_root: "/src/site".into(),
                     display_name: "me/site".into(),
+                    refs: Refs::Read,
                     worktrees: vec![worktree("feat/login", "/wt/site-login")],
                 },
             ],
@@ -1148,7 +1317,10 @@ mod tests {
     fn one_of_each() -> BTreeMap<String, Candidate> {
         BTreeMap::from([
             ("/wt/gone".to_string(), Candidate::Offered(Reason::Gone)),
-            ("/wt/unjudged".to_string(), Candidate::Unjudged),
+            (
+                "/wt/unjudged".to_string(),
+                Candidate::Unjudged(Half::PullRequests),
+            ),
             ("/wt/available".to_string(), Candidate::Available),
             ("/src/app".to_string(), Candidate::Refused(Refusal::Primary)),
         ])
@@ -1380,7 +1552,7 @@ mod tests {
         );
         assert_eq!(shown["/wt/available"], Mark::Staying);
         assert_eq!(shown["/wt/available"].note(), None);
-        assert_eq!(shown["/wt/unjudged"], Mark::Unjudged);
+        assert_eq!(shown["/wt/unjudged"], Mark::Unjudged(Half::PullRequests));
         assert_eq!(
             shown["/wt/unjudged"].note().as_deref(),
             Some("PR unknown"),
@@ -1465,7 +1637,10 @@ mod tests {
         flip(&mut changes, &candidates, "/wt/unjudged");
 
         let shown = marks(&candidates, &changes);
-        assert_eq!(shown["/wt/unjudged"], Mark::GoingUnjudged);
+        assert_eq!(
+            shown["/wt/unjudged"],
+            Mark::GoingUnjudged(Half::PullRequests)
+        );
         assert!(shown["/wt/unjudged"].is_going());
         assert_eq!(shown["/wt/unjudged"].note().as_deref(), Some("PR unknown"));
 
@@ -1474,7 +1649,34 @@ mod tests {
         // and never take off — on the one row where what is being acted on is nobody knows.
         flip(&mut changes, &candidates, "/wt/unjudged");
         let shown = marks(&candidates, &changes);
-        assert_eq!(shown["/wt/unjudged"], Mark::Unjudged);
+        assert_eq!(shown["/wt/unjudged"], Mark::Unjudged(Half::PullRequests));
+    }
+
+    #[test]
+    fn a_row_says_which_half_of_the_question_went_unanswered() {
+        // Two halves, two words, and the mark carries the half through: fixed in different
+        // places, so the row has to say which one to go and fix.
+        let candidates = BTreeMap::from([
+            ("/wt/refs".to_string(), Candidate::Unjudged(Half::Refs)),
+            (
+                "/wt/prs".to_string(),
+                Candidate::Unjudged(Half::PullRequests),
+            ),
+        ]);
+        let mut changes = Changes::default();
+        let shown = marks(&candidates, &changes);
+        assert_eq!(shown["/wt/refs"], Mark::Unjudged(Half::Refs));
+        assert_eq!(shown["/wt/refs"].note().as_deref(), Some("refs unreadable"));
+        assert_eq!(shown["/wt/prs"].note().as_deref(), Some("PR unknown"));
+
+        flip(&mut changes, &candidates, "/wt/refs");
+        let shown = marks(&candidates, &changes);
+        assert_eq!(shown["/wt/refs"], Mark::GoingUnjudged(Half::Refs));
+        assert_eq!(
+            shown["/wt/refs"].note().as_deref(),
+            Some("refs unreadable"),
+            "marked by hand, it still says nobody judged it — and which half"
+        );
     }
 
     #[test]
@@ -1526,7 +1728,10 @@ mod tests {
     #[test]
     fn what_the_sweep_marks_and_what_the_user_may_mark_are_different_questions() {
         assert!(Candidate::Offered(Reason::Gone).is_offered());
-        for own in [Candidate::Unjudged, Candidate::Available] {
+        for own in [
+            Candidate::Unjudged(Half::PullRequests),
+            Candidate::Available,
+        ] {
             assert!(!own.is_offered(), "{own:?} is not marked for the user");
             assert!(own.is_markable(), "{own:?} is still the user's to mark");
         }

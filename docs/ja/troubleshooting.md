@@ -14,7 +14,18 @@ herdr は実行したプラグインコマンドを、終了コードと stderr 
 herdr-worktree-nav dump
 ```
 
-Panes ビューが描画するはずのツリーを出力します。`dump` が正しくてピッカーが誤っていれば描画の問題、`dump` の時点で誤っていれば herdr か git が返した内容の問題です。`HERDR_SOCKET_PATH` が必要なので herdr の pane 内から実行してください。
+Panes ビューが描画するはずのツリーと、各 checkout について git が言ったことを出力します。
+
+```
+  - fix/crash  /Users/me/.herdr/worktrees/app/fix-crash
+      upstream origin/fix/crash  track gone  working tree clean
+```
+
+`track level` は upstream と揃っているブランチ、`upstream none` は揃う相手の upstream が無いブランチで、行の上ではどちらも同じ「印なし」です。`working tree unreadable:` には、行が `?` を出す場面の git の言葉がそのまま付きます。git が refs を読めなかったリポジトリは名前の下に `refs unreadable:` と git の言葉を出し、その checkout は `not read` と読めます。このページ自身の 2 回目の refs 読み取りだけが失敗した場合——ピッカーはマーカーのために一度読み、`dump` は upstream 名のためにもう一度読みます——リポジトリは `refs unreadable on the second read:` と言い、その checkout はピッカーが描いている track をそのまま持って `upstream not read` と読めます。git がその checkout に ref を挙げていない場合は `no ref at this checkout for <branch>` と言います。何がどこに checkout されているかについて git と herdr の言い分が食い違っているということで、そこを見に行くのが筋です。作業ツリーは checkout ごとに順番にその場で歩くので、checkout が多いと少し時間が掛かります。
+
+git の言葉は、端末で使う git が何語を話していても、ここでもプロンプト行でも英語で出ます。プラグインが git を `LC_ALL=C` で走らせているためです。2 つのこと——そのパスがリポジトリかどうか、walk から ref が抜け落ちたかどうか——をその文面を読んで決めているので、翻訳された文は読めない文になります。
+
+`dump` が正しくてピッカーが誤っていれば描画の問題、`dump` の時点で誤っていれば herdr か git が返した内容の問題です。`HERDR_SOCKET_PATH` が必要なので herdr の pane 内から実行してください。
 
 ## キーを押しても何も起きない
 
@@ -101,6 +112,7 @@ herdr 側は CI ではテストできません（サーバーが無いため）�
 - [ ] ピッカーが herdr の枠付き（タイトル `herdr-worktree-nav`）の中央寄せ popup として開き、周囲にセッションが見えたままで、**自分自身は一覧に出ない**
 - [ ] pane の無い worktree が `no pane` 付きで出て、`Enter` で開ける
 - [ ] upstream より進んでいる／遅れている checkout が最初のフレームからそう表示される。リモートで削除された upstream を持つものは `gone` と出る（`gone` は両方のビュー、矢印は panes ビューのみ）
+- [ ] loose ref を壊し（checkout の開いているリポジトリで `printf 'not-a-sha\n' > .git/refs/heads/<branch>`）、ピッカーを開き直す。検索ヒントのあった場所にリポジトリ名と `refs unreadable:` と git 自身の言葉が出て、行は ahead/behind/`gone` を「間違った印」ではなく「印なし」で描く。ref を戻して `r` を押すと消える。**CI ではこの経路に届きません** — 実際の walk を実際の端末に描くテストはありません
 - [ ] checkout に未追跡ファイルを置くと、ピッカーを開いた少し後にその行へ `✱` が出る。全 checkout が答えるまでプロンプトの脇でスピナーが回る。ファイルをコミットまたは削除して `r` を押すと印が消える
 - [ ] `↑`/`↓` が pane と「何も動いていない checkout」にだけ止まる。リポジトリの見出しと、既に pane を持つ checkout は飛ばされ、表示自体は残る
 - [ ] `←`/`→` が 1 押しで 1 リポジトリ動き、その最初の pane または最初の idle checkout に着く。端で巻き戻り、リポジトリに属さない pane 群も対象に含まれる
@@ -109,6 +121,9 @@ herdr 側は CI ではテストできません（サーバーが無いため）�
 - [ ] `Shift-S` で sweep が開く。upstream が `gone` で working tree が clean な checkout に `[x]` が付き、pane が動いている checkout には箱が付かず、そこで `Space` を押すと `panes are running in it` と出る。sweep 中はカーソルがすべての checkout に止まる（sweep 外と違う点）。`Space` でマークが増減し、右の数字がそれに追随する
 - [ ] `gh` が入っていてログイン済みなら、クローズ済み pull request のあるリポジトリで sweep に入ると `asking gh…` が出て、その後マージ済み pull request を持つブランチにマークが付き、行に `PR #<n> merged` が出る。**この経路は CI では通せない** — スイート内で `gh` を起動するものは何も無い
 - [ ] `gh` を `PATH` から外す、または GitHub リモートの無いリポジトリで試すと、sweep は git の判断だけで開き、該当行は `PR unknown` と出て、プロンプト行がどのリポジトリで何が起きたかを一度だけ言う。`PR unknown` の行で `Space` を押すとマークが付き、`PR unknown` は残る。`gh` を戻して `Esc`、そして `Shift-S` を押すと、`r` 無しで行が埋まる
+- [ ] ref を壊したまま、`LC_ALL` に手元の git が翻訳を持つロケールを設定したシェル（`locale-gen` 済みの `LC_ALL=de_DE.UTF-8` など）からピッカーを開く。プロンプト行は変わらず `refs unreadable:` と git の言葉を英語で出す。プラグインは起動する全ての git に `LC_ALL=C` を固定しており、翻訳された警告はアダプタが読めない警告になる
+- [ ] pane の中から `herdr-worktree-nav dump` を実行すると、各 checkout の下に、追っている upstream・それに対する位置・作業ツリーが出る（`upstream origin/x`、`track gone`、`working tree clean`）。upstream と揃っているブランチは `track level`、upstream の無いものは `upstream none`。refs を読めなかったリポジトリは名前の下に `refs unreadable:` と git の言葉を出す
+- [ ] その ref を壊したまま `Shift-S` を押すと、判定するはずだった checkout が `refs unreadable` と読め、`Space` で印を付けてもその理由が行に残る。`Tab` で branches ビューに移ると、git が読めたブランチはすべて並んでいる
 - [ ] `/login` と入力してから `Shift-S` を押すと一覧が開き直る（sweep が判定するものは画面に出ているものと一致する）
 - [ ] `no pane` の行で `Shift-D` を押すとブランチ名とパスを載せた枠が出て、`y` で checkout が消えブランチは残る。他のキーは取り消し。リポジトリ自身の checkout では断られ、未コミットの変更がある checkout では git の理由が出る
 - [ ] pane の上で `Shift-D` を押すと、その pane が居る checkout について訊かれ、閉じられる pane が枠にすべて並ぶ（別の tab や space へ移した pane も含む）。`y` で全部閉じてから checkout が消える

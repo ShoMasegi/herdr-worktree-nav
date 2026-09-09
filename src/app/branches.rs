@@ -22,7 +22,7 @@ use crate::app::home_dir;
 use crate::app::Summoned;
 use crate::domain::dest;
 use crate::domain::listing;
-use crate::domain::model::{normalize_path, RepoNode};
+use crate::domain::model::{normalize_path, Refs, RepoNode};
 use crate::domain::progress::Stage;
 use crate::domain::resolve::{self, BranchPlan};
 use crate::port::{
@@ -137,7 +137,7 @@ pub fn run(
             // what `listings` is carried across a view switch for: `Tab` away and back is a
             // frame, not a round trip.
             let read = |repo_root: &str, listings: &mut listing::Cache| -> BranchData {
-                let local_refs = git.local_refs(repo_root).unwrap_or_default();
+                let local_refs = listed(git, repo_root);
                 if let Some(remote) = listings.get(repo_root).filter(|remote| !remote.loading) {
                     return shown(local_refs, remote.clone());
                 }
@@ -383,6 +383,23 @@ fn annotations(git: &dyn GitPort, gh: &dyn GhPort, repo_root: &str) -> Vec<PullR
     }
 }
 
+/// The branches to list, including when git dropped a ref it could not read.
+///
+/// The refs git did list are real whatever it left out, and this list is read as a list of
+/// branches: one missing from it is one that is missing. An empty list is not that — it says
+/// every branch here exists only on the remote, which sends `Enter` off to fetch a branch
+/// git already has locally. So the walk's own words are not this view's to
+/// act on. The panes view makes the opposite choice for the opposite reason, and
+/// [`crate::port::RefWalk`] holds both.
+///
+/// A walk git refused outright is still nothing: no branch is worse than a wrong one here
+/// too, and the repository step already lists the repository.
+fn listed(git: &dyn GitPort, repo_root: &str) -> Vec<GitRef> {
+    git.local_refs(repo_root)
+        .map(|walk| walk.refs)
+        .unwrap_or_default()
+}
+
 /// A repository herdr has no worktree record for. Its branches are still listable.
 fn bare(repo_root: &str) -> RepoNode {
     let repo_root = normalize_path(repo_root);
@@ -395,6 +412,7 @@ fn bare(repo_root: &str) -> RepoNode {
             .filter(|name| !name.is_empty())
             .unwrap_or(repo_root)
             .to_string(),
+        refs: Refs::Read,
         worktrees: Vec::new(),
     }
 }
@@ -516,7 +534,7 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    use crate::port::Slug;
+    use crate::port::{RefWalk, Slug};
 
     /// A git that knows one repository by name, or refuses to say.
     struct Origin(std::result::Result<Option<Slug>, ()>);
@@ -531,7 +549,7 @@ mod tests {
         fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
             unreachable!("only github_slug is asked of this port")
         }
-        fn local_refs(&self, _repo_root: &str) -> Result<Vec<GitRef>> {
+        fn local_refs(&self, _repo_root: &str) -> Result<RefWalk> {
             unreachable!("only github_slug is asked of this port")
         }
         fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
@@ -571,6 +589,82 @@ mod tests {
         ) -> std::result::Result<crate::port::SettledPullRequests, String> {
             unreachable!("the branches view does not sweep")
         }
+    }
+
+    /// A git that answers one walk, however it went.
+    struct Walked(std::result::Result<RefWalk, ()>);
+
+    impl GitPort for Walked {
+        fn local_refs(&self, _repo_root: &str) -> Result<RefWalk> {
+            match &self.0 {
+                Ok(walk) => Ok(walk.clone()),
+                Err(()) => Err(anyhow!(
+                    "fatal: not a git repository (`git for-each-ref …`)"
+                )),
+            }
+        }
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn head_ref(&self, _repo_root: &str) -> Result<String> {
+            unreachable!("only local_refs is asked of this port")
+        }
+    }
+
+    fn a_ref(name: &str) -> GitRef {
+        GitRef {
+            name: name.to_string(),
+            kind: crate::port::RefKind::Local,
+            committed_at: None,
+            subject: None,
+            upstream: None,
+            track: None,
+            worktree_path: None,
+        }
+    }
+
+    #[test]
+    fn a_branch_git_could_read_is_still_listed_when_another_ref_was_dropped() {
+        // The panes view answers a dropped ref by dropping the whole repository's markers,
+        // and a list of branches given that answer would be empty. Empty is not "nothing to
+        // report" here: `domain::resolve` reads a branch absent from the local refs but
+        // present on the remote as `RemoteOnly`, so `Enter` on a branch git already has
+        // fetches `origin/<branch>` instead of cutting a worktree from what is there. A
+        // branch that is checked out is safe either way — `domain::resolve` lets an open
+        // worktree override whatever the refs said — which is what makes this quiet.
+        let dropped = Walked(Ok(RefWalk {
+            refs: vec![a_ref("feat/login")],
+            dropped: Some("warning: ignoring broken ref refs/heads/x".to_string()),
+        }));
+        assert_eq!(
+            listed(&dropped, "/src/app")
+                .iter()
+                .map(|git_ref| git_ref.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["feat/login"]
+        );
+
+        // A walk git refused is a different thing: nothing was read, so there is nothing to
+        // list, and no branch beats a wrong one here as well.
+        assert!(listed(&Walked(Err(())), "/src/app").is_empty());
     }
 
     #[test]

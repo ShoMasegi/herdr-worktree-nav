@@ -15,9 +15,33 @@ not appear almost always left an explanation there.
 herdr-worktree-nav dump
 ```
 
-Prints the tree the panes view would draw. If `dump` is right and the picker is wrong, the
-problem is drawing; if `dump` is already wrong, it is what herdr or git reported. Run it from
-inside a herdr pane — it needs `HERDR_SOCKET_PATH`.
+Prints the tree the panes view would draw, and under each checkout what git said about it:
+
+```
+  - fix/crash  /Users/me/.herdr/worktrees/app/fix-crash
+      upstream origin/fix/crash  track gone  working tree clean
+```
+
+`track level` is a branch even with its upstream and `upstream none` one with no upstream to
+be even with — the same empty marker on a row. `working tree unreadable:` carries git's own
+words where the row shows `?`. A repository whose refs git would not read says
+`refs unreadable:` under its name, with git's words, and its checkouts read `not read`. If
+only this page's own second read of the refs failed — the picker read them once for its
+markers, and `dump` reads them again for the upstream names — the repository says
+`refs unreadable on the second read:` and its checkouts keep the track the picker is drawing,
+with `upstream not read`. A checkout git lists no ref at says `no ref at this checkout for
+<branch>`: git and herdr disagree about what is checked out where, which is the thing to
+look at. Each checkout's working tree is walked in the open, one after another, so on many
+checkouts this takes a moment.
+
+git's words arrive in English here and on the prompt line whatever language your git speaks
+in a terminal: the plugin runs git under `LC_ALL=C`, because it decides two things by reading
+those sentences — whether a path is a repository, and whether a ref was left out of a walk —
+and a translated sentence is one it cannot read.
+
+If `dump` is right and the picker is wrong, the problem is drawing; if `dump` is already
+wrong, it is what herdr or git reported. Run it from inside a herdr pane — it needs
+`HERDR_SOCKET_PATH`.
 
 ## Nothing happens when I press the key
 
@@ -121,6 +145,12 @@ through this against a real session.
 - [ ] A checkout that is ahead of or behind its upstream says so in the first frame. One
       whose upstream has been deleted on the remote says `gone` — in both views; the arrows
       are the panes view only.
+- [ ] Break a loose ref — `printf 'not-a-sha\n' > .git/refs/heads/<branch>` in a repository
+      with checkouts open — and reopen the picker. The prompt line names the repository where
+      the search hint was, with `refs unreadable:` and git's own words after it, and the rows
+      draw no ahead/behind/`gone` marker rather than a wrong one. Restore the ref and press
+      `r`: the line goes. **CI cannot reach this path** — nothing in the suite draws a real
+      walk into a real terminal.
 - [ ] Leave an untracked file in a checkout: `✱` appears on its row a moment after the
       picker opens, with a spinner beside the prompt until every checkout has answered.
       Commit or delete the file and press `r`: the marker goes.
@@ -144,6 +174,18 @@ through this against a real session.
       line names the repository and says why, once. `Space` on a `PR unknown` row marks it
       and leaves `PR unknown` on it. Put `gh` back, press `Esc` and then `Shift-S`: the
       rows fill in without an `r`.
+- [ ] With a ref still broken, open the picker from a shell whose `LC_ALL` is a locale your
+      git has a translation for (`LC_ALL=de_DE.UTF-8`, after `locale-gen`): the prompt line
+      still says `refs unreadable:` with git's words, in English. The plugin pins `LC_ALL=C`
+      on every git it starts, and a translated warning is one the adapter cannot read.
+- [ ] `herdr-worktree-nav dump` from inside a pane prints, under each checkout, the upstream
+      it tracks, where it stands against it and the working tree — `upstream origin/x`,
+      `track gone`, `working tree clean`. A branch level with its upstream reads
+      `track level`; one with no upstream reads `upstream none`. A repository whose refs
+      could not be read says `refs unreadable:` under its name, with git's words.
+- [ ] With that ref still broken, `Shift-S` shows the checkouts it would otherwise have
+      judged reading `refs unreadable`, and `Space` on one keeps that reason on the row.
+      `Tab` to the branches view: every branch git could still read is listed there.
 - [ ] Typing `/login` and then pressing `Shift-S` opens the whole list again: what the sweep
       judges is what is on the screen.
 - [ ] `Shift-D` on a `no pane` row asks in a box naming the branch and the path, `y` removes the checkout and leaves the branch, and

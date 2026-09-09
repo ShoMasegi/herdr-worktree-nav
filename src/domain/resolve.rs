@@ -267,7 +267,7 @@ pub fn plan(chosen: &Chosen, head_ref: &str, remote: &str) -> BranchPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{PaneNode, WorktreeNode};
+    use crate::domain::model::{PaneNode, Refs, WorktreeNode};
     use crate::port::AgentStatus;
     use std::num::NonZeroU32;
 
@@ -299,6 +299,7 @@ mod tests {
             repo_root: "/src/app".into(),
             display_name: "me/app".into(),
             worktrees,
+            refs: Refs::Read,
         }
     }
 
@@ -308,6 +309,7 @@ mod tests {
             kind: RefKind::Local,
             committed_at: Some(at),
             subject: Some(format!("work on {name}")),
+            upstream: None,
             track: None,
             worktree_path: None,
         }

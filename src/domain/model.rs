@@ -13,6 +13,8 @@ pub struct RepoNode {
     /// `owner/repo` when the origin is on GitHub, otherwise the directory name.
     pub display_name: String,
     pub worktrees: Vec<WorktreeNode>,
+    /// Whether the markers on those worktrees are what git said, or what git would not say.
+    pub refs: Refs,
 }
 
 /// What git said about a checkout's working tree.
@@ -57,6 +59,49 @@ impl WorkingTree {
         match self {
             WorkingTree::Clean => false,
             WorkingTree::Dirty | WorkingTree::Unreadable => true,
+        }
+    }
+}
+
+/// Whether git read a repository's refs.
+///
+/// The markers a checkout carries — `↑2`, `↓1`, `gone` — come off one `for-each-ref` per
+/// repository, so when that call fails every checkout in the repository loses them at once.
+/// Each then carries none of the three, which is right: no marker beats a wrong one. What a bare
+/// absence cannot do is tell "nothing to report" from "git would not say", and for `gone`
+/// that is the difference between a repository with nothing to sweep and one nobody has
+/// looked at — `docs/adr/0011-what-may-be-swept.md`. So the fact travels with the
+/// repository, and the prompt line says it once rather than every row guessing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refs {
+    /// git answered. A checkout here with no track marker has nothing to report.
+    Read,
+    /// git did not, in its own words — or, in a debug build only, the thread that asked
+    /// did not finish.
+    ///
+    /// A checkout here is meant to be missing its track markers, and `domain::tree::build`
+    /// is the only non-test place that pairs the two. It does not enforce it: `track` comes
+    /// from `domain::tree::tracks`, one map over every repository's read keyed by checkout
+    /// path, so a checkout is left with nothing to draw from only while no other repository
+    /// offers a ref at its path. Two do when a worktree's directory has been moved away and
+    /// `git worktree prune` has not been run, and the stale `[gone]` then lands here — issue
+    /// #31. A fixture can pair the two directly, and `domain::sweep::judge` offers the row on
+    /// `gone` either way.
+    Unreadable(String),
+}
+
+impl Refs {
+    /// Whether git answered.
+    ///
+    /// Spelled out rather than written as `matches!(_, Unreadable(_))`, for the reason
+    /// [`WorkingTree::is_drawn`] is: a third variant — refs not read yet, say — would have
+    /// gone on compiling as "read" in `domain::sweep::judge`, which is the one predicate
+    /// that decides whether a row says `refs unreadable`, and that is the direction it must
+    /// not fail in. The compiler asks now.
+    pub fn is_read(&self) -> bool {
+        match self {
+            Refs::Read => true,
+            Refs::Unreadable(_) => false,
         }
     }
 }
