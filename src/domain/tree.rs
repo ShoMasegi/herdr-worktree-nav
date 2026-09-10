@@ -31,8 +31,10 @@ pub struct RepoInput {
 /// name such a path from a worktree entry that lost its directory, and
 /// `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out` in
 /// `tests/git_adapter.rs` builds one carrying `[gone]`. `build` drops it for the rows herdr
-/// listed; the row `build` makes for a pane herdr did not list keeps it, because there
-/// `branch: None` means herdr never said rather than nothing is out.
+/// listed; the row `build` makes for a pane herdr did not list keeps it, for want of
+/// anything to decide on — herdr named no checkout there, so nothing here knows whether a
+/// branch is out at it. That row's marker can therefore be a `[gone]` about a branch that
+/// is not checked out, which is issue #49.
 ///
 /// One map over every repository rather than a scan per checkout. The lookup for a checkout
 /// herdr did not list used to reach into `repos` by an index that was only valid because
@@ -135,8 +137,9 @@ pub fn build(
                     // that lost its directory — see `tracks` — and that ref's `[gone]`
                     // would otherwise land on a row with no branch for it to be about,
                     // which `domain::sweep::judge` offers for deletion by default. The row
-                    // built below for a pane herdr did not list is a different claim and
-                    // keeps its track.
+                    // built below for a pane herdr did not list keeps its track, and not
+                    // because a branch is out there: herdr said nothing about that
+                    // checkout at all, so there is nothing to make this call with.
                     let track = if branch.is_some() {
                         tracks
                             .get(&(normalize_path(&repo.repo_key), checkout_path))
@@ -210,7 +213,11 @@ pub fn build(
                     checkout_path: checkout.to_string(),
                     is_primary: false,
                     open_workspace_id: Some(node.workspace_id.clone()),
-                    // git knows about it even where herdr does not.
+                    // git knows about it even where herdr does not. Not the call made
+                    // above: `branch: None` here is herdr never naming this checkout,
+                    // which says nothing either way about what is out at it, so what git
+                    // said stands — `[gone]` about a branch that is not checked out
+                    // included, which is issue #49.
                     track: tracks.get(&(owner, checkout)).copied(),
                     panes: vec![node],
                 });
@@ -346,6 +353,63 @@ mod tests {
     }
 
     #[test]
+    fn what_a_branchless_row_draws_turns_on_whether_herdr_listed_it() {
+        // The two rows `build` makes, over one repository's identical git facts: a stale
+        // registration goes on naming `/wt/shared` for `chore/deps`, whose upstream was
+        // deleted, and the checkout sitting there has nothing out. The row herdr listed is
+        // refused the marker, above. The row `build` makes for a pane herdr never
+        // mentioned keeps it, because at that site there is nothing to make the call
+        // with — not because a branch is out there. Both carry `branch: None` and nothing
+        // afterwards can tell them apart, so the second draws `gone` beside a directory
+        // name about a branch it never names. That is issue #49; pinned here so it stays a
+        // difference somebody measured rather than one nobody looked at.
+        let shared = "/wt/shared";
+        let stale = || local_ref("chore/deps", Some(shared), Some(Track::Gone));
+
+        let mut listed = repo("me/app", "/src/app", vec![]);
+        listed.worktrees = vec![serde_json::from_value(json!({
+            "branch": "",
+            "path": shared,
+            "label": "shared",
+            "is_bare": false,
+            "is_detached": true,
+            "is_linked_worktree": true,
+            "is_prunable": false,
+        }))
+        .expect("worktree fixture should deserialize")];
+        listed.refs = Ok(vec![stale()]);
+        let listed = &build(&snapshot(json!([])), &[listed], &HashMap::new()).repos[0].worktrees[0];
+
+        let mut unlisted = repo(
+            "me/app",
+            "/src/app",
+            vec![worktree("main", "/src/app", false)],
+        );
+        unlisted.refs = Ok(vec![stale()]);
+        let tree = build(
+            &snapshot(json!([pane("w1:p1", None)])),
+            &[unlisted],
+            &placements(&[("w1:p1", "/src/app/.git", shared)]),
+        );
+        let unlisted = tree.repos[0]
+            .worktrees
+            .iter()
+            .find(|worktree| worktree.checkout_path == shared)
+            .expect("the row build made for the pane");
+
+        assert_eq!(
+            (listed.branch.as_deref(), unlisted.branch.as_deref()),
+            (None, None),
+            "neither row names a branch"
+        );
+        assert_eq!(
+            (listed.track, unlisted.track),
+            (None, Some(Track::Gone)),
+            "and only the one herdr spoke about is refused the marker"
+        );
+    }
+
+    #[test]
     fn a_track_is_read_from_the_repository_that_owns_the_checkout() {
         // Two repositories naming one path, which `tests/git_adapter.rs` shows git does.
         // Pooled into one map the second one wins, and which that is depends on the order
@@ -405,9 +469,15 @@ mod tests {
 
     #[test]
     fn a_second_ref_counts_even_where_git_had_nothing_to_report_about_it() {
-        // `track: None` is a ref with nothing to report, not the absence of a ref — this
-        // fixture's is a branch with no upstream, which is one of the ways `GitRef::track`
-        // says `None` arrives. It contradicts the `[gone]` beside it about which branch is
+        // `track: None` is a ref with nothing to report, not the absence of a ref.
+        // [`GitRef::track`] arrives at it two ways — level with whatever it was measured
+        // against, and having neither an upstream nor a push destination to be measured
+        // against — and this fixture's ref has neither, `local_ref` leaving `upstream`
+        // unset. Having no upstream is not one of them on its own: git measures such a
+        // branch against where it would push, which
+        // `a_branch_with_no_upstream_is_still_measured_against_where_it_would_push` in
+        // `tests/git_adapter.rs` reads back as a marker rather than as nothing. It
+        // contradicts the `[gone]` beside it about which branch is
         // at that path exactly as a marked ref would. Skipping it would let the `[gone]` in
         // unopposed, and `domain::sweep::judge` offers a `gone` row for deletion by default.
         let shared = "/wt/shared";

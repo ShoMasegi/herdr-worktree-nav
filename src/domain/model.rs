@@ -81,12 +81,17 @@ pub enum Refs {
     ///
     /// Every checkout here is missing its track markers, and `domain::tree::build` is the
     /// only non-test place that pairs the two. `track` comes from `domain::tree::tracks`,
-    /// which is keyed by repository as well as by checkout path, so a repository that said
-    /// nothing has nothing for its checkouts to draw from — no other repository's answer can
-    /// reach them, which is the half of issue #31 this closes.
+    /// which is keyed by repository as well as by checkout path, so no *other* repository's
+    /// answer can reach these checkouts, which is the half of issue #31 this closes.
     ///
-    /// A fixture can still pair the two directly, and `domain::sweep::judge` offers the row
-    /// on `gone` either way, so this holds by construction rather than by a guard.
+    /// What rules out this repository's own answer reaching them is not here and not in
+    /// `domain`: `app::collect_repos` keys its probe paths on `repo_key` in a `BTreeMap`,
+    /// so one `RepoInput` exists per repository and a repository that said nothing has no
+    /// readable twin to draw from. Hand `build` two `RepoInput`s carrying one `repo_key`,
+    /// one `Ok` and one `Err`, and the unreadable one's checkouts come back marked. A
+    /// fixture can pair the two directly as well, and `domain::sweep::judge` offers the row
+    /// on `gone` either way — so this holds by how the tree is built rather than by a
+    /// guard.
     Unreadable(String),
 }
 
