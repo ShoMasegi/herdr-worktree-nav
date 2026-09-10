@@ -79,14 +79,14 @@ pub enum Refs {
     /// git did not, in its own words — or, in a debug build only, the thread that asked
     /// did not finish.
     ///
-    /// A checkout here is meant to be missing its track markers, and `domain::tree::build`
-    /// is the only non-test place that pairs the two. It does not enforce it: `track` comes
-    /// from `domain::tree::tracks`, one map over every repository's read keyed by checkout
-    /// path, so a checkout is left with nothing to draw from only while no other repository
-    /// offers a ref at its path. Two do when a worktree's directory has been moved away and
-    /// `git worktree prune` has not been run, and the stale `[gone]` then lands here — issue
-    /// #31. A fixture can pair the two directly, and `domain::sweep::judge` offers the row on
-    /// `gone` either way.
+    /// Every checkout here is missing its track markers, and `domain::tree::build` is the
+    /// only non-test place that pairs the two. `track` comes from `domain::tree::tracks`,
+    /// which is keyed by repository as well as by checkout path, so a repository that said
+    /// nothing has nothing for its checkouts to draw from — no other repository's answer can
+    /// reach them, which is the half of issue #31 this closes.
+    ///
+    /// A fixture can still pair the two directly, and `domain::sweep::judge` offers the row
+    /// on `gone` either way, so this holds by construction rather than by a guard.
     Unreadable(String),
 }
 

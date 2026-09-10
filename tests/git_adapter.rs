@@ -36,7 +36,7 @@ fn repository() -> TempDir {
     // below: two tests here reach into `.git/refs` and `.git/packed-refs` directly, and
     // under a global `init.defaultRefFormat = reftable` neither file exists, so both fail
     // on a machine whose git is configured that way while the other twenty pass. `-c` on
-    // the command rather than `--ref-format=`, which git 2.43 on CI does not know: an
+    // the command rather than `--ref-format=`, which not every git knows: an
     // unknown configuration key is ignored where an unknown flag is fatal.
     git(
         path,
@@ -545,6 +545,167 @@ fn an_upstream_deleted_on_the_remote_reads_as_gone() {
     let refs = GitCli.local_refs(&path_str(repo.path())).unwrap().refs;
     assert_eq!(track_of(&refs, "feat/login"), Some(Track::Gone));
     assert_eq!(track_of(&refs, "main"), None, "only the deleted one");
+}
+
+/// The `%(worktreepath)` of a local ref, for the premises below.
+fn worktree_path_of<'a>(
+    refs: &'a [herdr_worktree_nav::port::GitRef],
+    name: &str,
+) -> Option<&'a str> {
+    refs.iter()
+        .find(|r| r.kind == RefKind::Local && r.name == name)
+        .unwrap_or_else(|| panic!("no local ref {name}"))
+        .worktree_path
+        .as_deref()
+}
+
+/// Two worktrees, one of which now sits at the path the other's entry still names. Returns
+/// that path.
+///
+/// The way a person reaches it: one directory moved out of the way and the other moved into
+/// its place. `feat/login`'s entry names a path that `chore/deps`'s checkout is now sitting
+/// in, and `chore/deps`'s own entry still names the directory it left, which git marks
+/// prunable. The tests below each add the one step that takes it somewhere.
+fn a_checkout_at_another_entrys_path(repo: &TempDir) -> String {
+    git(repo.path(), &["branch", "chore/deps"]);
+    let one = repo.path().join("one");
+    let two = repo.path().join("two");
+    git(
+        repo.path(),
+        &["worktree", "add", one.to_str().unwrap(), "feat/login"],
+    );
+    git(
+        repo.path(),
+        &["worktree", "add", two.to_str().unwrap(), "chore/deps"],
+    );
+    let shared = path_str(&one);
+    std::fs::rename(&one, repo.path().join("aside")).expect("one moves out of the way");
+    std::fs::rename(&two, &one).expect("two moves into its place");
+    shared
+}
+
+#[test]
+fn two_repositories_can_name_one_path_and_prune_will_not_part_them() {
+    // Half of what `domain::tree::tracks` is keyed by repository for, and all of why
+    // `git worktree prune` is not the answer instead. git goes on naming the path a moved
+    // worktree had; let another repository put a worktree there and a prune in the first
+    // one leaves that entry alone, so both repositories name the path with nothing to
+    // clear it. Issue #31.
+    //
+    // The prune below is a negative control: deleting it leaves this test green, because
+    // what it asserts is that prune does nothing here. `a_prune_that_does_clear_a_stale
+    // _entry` is the other half, and deleting the second repository's `worktree add` there
+    // is what makes prune bite.
+    let old = repository();
+    let app = repository();
+    let shared = old.path().join("shared");
+    git(
+        old.path(),
+        &["worktree", "add", shared.to_str().unwrap(), "feat/login"],
+    );
+    // Taken before the move: `path_str` canonicalises, and a path that is gone has none.
+    let had = path_str(&shared);
+    std::fs::rename(&shared, old.path().join("moved-away")).expect("the directory moves");
+    git(app.path(), &["worktree", "add", &had, "feat/login"]);
+
+    git(old.path(), &["worktree", "prune"]);
+
+    for repo in [&old, &app] {
+        let refs = GitCli
+            .local_refs(&path_str(repo.path()))
+            .expect("git listed what it could")
+            .refs;
+        assert_eq!(
+            worktree_path_of(&refs, "feat/login"),
+            Some(had.as_str()),
+            "both repositories name it, after a prune: {:?}",
+            refs
+        );
+    }
+}
+
+#[test]
+fn one_repository_can_name_one_path_from_two_refs() {
+    // The other half: the second ref `tracks` answers with nothing rather than with
+    // either of them is a state git makes, not one only a broken port could hand it.
+    let repo = repository();
+    let shared = a_checkout_at_another_entrys_path(&repo);
+    // Repair rewrites the entry that lost its directory rather than adding one, and what it
+    // rewrites it to is the path the other entry already names.
+    git(repo.path(), &["worktree", "repair", &shared]);
+
+    let refs = GitCli
+        .local_refs(&path_str(repo.path()))
+        .expect("git listed what it could")
+        .refs;
+    let mut naming: Vec<&str> = refs
+        .iter()
+        .filter(|r| r.kind == RefKind::Local && r.worktree_path.as_deref() == Some(shared.as_str()))
+        .map(|r| r.name.as_str())
+        .collect();
+    naming.sort_unstable();
+    assert_eq!(naming, ["chore/deps", "feat/login"], "refs: {:?}", refs);
+}
+
+#[test]
+fn a_prune_that_does_clear_a_stale_entry() {
+    // The positive control for `two_repositories_can_name_one_path_and_prune_will_not_part
+    // _them`: with nothing sitting at the path, prune clears the entry and the ref stops
+    // naming it. Without this, "prune will not part them" would be a sentence no test
+    // could tell from "prune does nothing at all".
+    let repo = repository();
+    let gone = repo.path().join("gone");
+    git(
+        repo.path(),
+        &["worktree", "add", gone.to_str().unwrap(), "feat/login"],
+    );
+    std::fs::rename(&gone, repo.path().join("moved-away")).expect("the directory moves");
+
+    git(repo.path(), &["worktree", "prune"]);
+
+    let refs = GitCli
+        .local_refs(&path_str(repo.path()))
+        .expect("git listed what it could")
+        .refs;
+    assert_eq!(
+        worktree_path_of(&refs, "feat/login"),
+        None,
+        "prune cleared it: {refs:?}"
+    );
+}
+
+#[test]
+fn a_worktree_whose_directory_moved_is_still_listed_at_the_path_it_had() {
+    // The first premise `domain::tree::tracks` is keyed by repository for: git does not
+    // stop reporting a linked worktree when its directory goes away, it goes on naming the
+    // path the worktree had. The tests above build what that leads to.
+    let repo = repository();
+    let worktree = repo.path().join("wt");
+    git(
+        repo.path(),
+        &["worktree", "add", worktree.to_str().unwrap(), "feat/login"],
+    );
+    // Taken before the move: `path_str` canonicalises, and a path that is gone has none.
+    let had = path_str(&worktree);
+    std::fs::rename(&worktree, repo.path().join("moved-away")).expect("the directory moves");
+    // Without this the assertion below is one `path_str` compared with itself: `had` was
+    // taken before the move, so it holds whether or not anything moved.
+    assert!(
+        !worktree.exists(),
+        "the directory really is gone from {had}"
+    );
+
+    let refs = GitCli.local_refs(&path_str(repo.path())).unwrap().refs;
+    let listed = refs
+        .iter()
+        .find(|r| r.kind == RefKind::Local && r.name == "feat/login")
+        .expect("git still lists the branch");
+    assert_eq!(
+        listed.worktree_path.as_deref(),
+        Some(had.as_str()),
+        "the path it had, not the one it has: {:?}",
+        listed.worktree_path
+    );
 }
 
 #[test]
