@@ -17,7 +17,7 @@ use crate::app::one_line;
 use crate::domain::chrome::Chrome;
 use crate::domain::model::{normalize_path, Refs, RepoNode, Tree, WorktreeNode};
 use crate::domain::rows;
-use crate::port::{GitPort, GitRef, RefKind, Snapshot};
+use crate::port::{GitPort, GitRef, RefKind, Snapshot, Track};
 
 /// What the second ref walk — the one `main` makes for this page, for the upstream names —
 /// said for each repository whose first walk the tree already carries as read: the refs,
@@ -162,50 +162,120 @@ pub fn report(
 /// against, or a push destination git called `[gone]`, which under `push.default = current`
 /// is what a branch nobody has pushed gets and which the adapter drops rather than believe.
 ///
-/// Two ways this page knows less than the picker, and says which. When only its own second
-/// ref walk failed, the upstream is `not read` and the track is the tree's — the marker
-/// the picker is drawing — or `level or none`, which is what an empty marker means without
-/// the upstream to tell the two apart. And when git listed no ref at this checkout — its
-/// list and herdr's disagree about what is checked out where — the page says that rather
-/// than `upstream none`, which is what a branch nobody has pushed reads as.
+/// Three ways this page knows less than the picker, and says which. When only its own
+/// second ref walk failed, the upstream is `not read` and the track is the tree's — the
+/// marker the picker is drawing — or `level or none`, which is as far as an empty marker
+/// narrows down without an upstream to read it against. `domain::tree` leaves an empty
+/// marker for reasons beyond those two — a walk that named no ref at the path, or two that
+/// did — and this page cannot tell those apart: see below.
+/// When git listed no ref at this checkout —
+/// its list and herdr's disagree about what is checked out where — the page says that
+/// rather than `upstream none`, which is what a branch nobody has pushed reads as. And when
+/// git named more than one, the page names each of them with its upstream and where it
+/// stands — two more facts about the contradiction, not a way to resolve it — and the track
+/// after them is the marker the picker is drawing, or `not known` where it is drawing none.
+/// Which of them is the odd one out this page cannot say, and `git worktree list` shows
+/// both registrations and marks neither. `git worktree prune` removes one of the two —
+/// `prune_takes_one_of_two_registrations_at_one_path` in `tests/git_adapter.rs` holds that
+/// much, and deliberately not which, because it came out differently there and on CI on
+/// the same git. Both troubleshooting pages say the same and no more.
+///
+/// Every line here is read from two walks rather than one — the track from the picker's,
+/// the upstream and the ref list from this page's own second `for-each-ref` — and nothing
+/// on the page marks where the two have disagreed. Three shapes that come of it:
+///
+/// - A checkout [`crate::domain::tree`] declined to measure, because the picker's walk saw
+///   two refs at it, reads `track level` here when this walk sees one ref with an upstream:
+///   a measurement standing in for the refusal.
+/// - The other way about, the picker's marker is printed after a list every entry of which
+///   contradicts it — `more than one ref at this checkout: … level, … level  track gone`.
+/// - `upstream none  track gone` is a pair no single walk produces. git reports `[gone]` on
+///   `%(upstream:track)`, which only a branch with an upstream has, and on `%(push:track)`,
+///   which `adapter::git_cli` refuses to believe.
+///
+/// Only the first reads as an ordinary measurement; the other two put the contradiction on
+/// the page with nothing to name it. Marking any of them needs a fact
+/// [`WorktreeNode::track`] cannot carry, which is issue #47.
 fn branch_words(repo: &RepoNode, worktree: &WorktreeNode, refs: &RefsByRepo) -> String {
     let Some(branch) = worktree.branch.as_deref() else {
         return "detached".to_string();
     };
-    let tree_track = || match worktree.track {
+    // The marker the picker is drawing, or `unmarked` where it is drawing none: what an
+    // empty marker leaves open depends on why this page could not narrow it down itself.
+    let tree_track = |unmarked: &str| match worktree.track {
         Some(track) => rows::track_mark(Some(track)).trim_start().to_string(),
-        None => "level or none".to_string(),
+        None => unmarked.to_string(),
     };
     let read = match (&repo.refs, refs.get(&repo.repo_root)) {
         (Refs::Unreadable(_), _) => return "upstream not read  track not read".to_string(),
         (Refs::Read, Some(Err(_)) | None) => {
-            return format!("upstream not read  track {}", tree_track())
+            return format!("upstream not read  track {}", tree_track("level or none"))
         }
         (Refs::Read, Some(Ok(read))) => read,
     };
-    // By the checkout git says has the branch, which is how the tree matched them too.
-    let Some(git_ref) = read
+    // By the checkout git says has the branch, which is how the tree matched them too —
+    // its refusal to choose between two included. `find` would take whichever came first
+    // and print an upstream the empty marker beside it does not stand for.
+    let named: Vec<_> = read
         .iter()
         .filter(|git_ref| git_ref.kind == RefKind::Local)
-        .find(|git_ref| {
+        .filter(|git_ref| {
             git_ref
                 .worktree_path
                 .as_deref()
                 .is_some_and(|path| normalize_path(path) == worktree.checkout_path)
         })
-    else {
-        return format!(
-            "no ref at this checkout for {branch}  track {}",
-            tree_track()
-        );
+        .collect();
+    let git_ref = match named.as_slice() {
+        [only] => only,
+        [] => {
+            return format!(
+                "no ref at this checkout for {branch}  track {}",
+                tree_track("level or none")
+            )
+        }
+        more => {
+            // Each with what git said about it, because the names alone are two words a
+            // reader has nothing to do with. Not a tell: which entry is stale is a fact
+            // about git's worktree registrations and where an upstream went is a fact
+            // about the remote, and nothing ties the two together. What this compact form
+            // loses with the labels is issue #48.
+            let each: Vec<String> = more
+                .iter()
+                .map(|git_ref| {
+                    let upstream = git_ref.upstream.as_deref();
+                    format!(
+                        "{} \u{2192} {} {}",
+                        git_ref.name,
+                        upstream.unwrap_or("none"),
+                        standing(git_ref.track, upstream)
+                    )
+                })
+                .collect();
+            return format!(
+                "more than one ref at this checkout: {}  track {}",
+                each.join(", "),
+                tree_track("not known")
+            );
+        }
     };
     let upstream = git_ref.upstream.as_deref();
-    let track = match (worktree.track, upstream) {
-        (Some(track), _) => rows::track_mark(Some(track)).trim_start().to_string(),
-        (None, Some(_)) => "level".to_string(),
-        (None, None) => "none".to_string(),
-    };
+    let track = standing(worktree.track, upstream);
     format!("upstream {}  track {track}", upstream.unwrap_or("none"))
+}
+
+/// Where a branch stands, in the words the marker cannot hold: what `rows::track_mark`
+/// draws for what git reported, else `level` for a branch even with the upstream git named
+/// and `none` for one with no upstream to be even with, which [`branch_words`]' paragraph
+/// on push destinations spells out. Whose report it is the caller decides: this page's own
+/// walk in the `more` arm, the picker's at the tail — and at the tail the picker's `None`
+/// has readings that paragraph does not cover.
+fn standing(track: Option<Track>, upstream: Option<&str>) -> String {
+    match track {
+        Some(track) => rows::track_mark(Some(track)).trim_start().to_string(),
+        None if upstream.is_some() => "level".to_string(),
+        None => "none".to_string(),
+    }
 }
 
 /// `working tree clean`, `dirty`, `unreadable: <git's words>`, or `not asked`.
@@ -709,6 +779,103 @@ me/site  [/src/site]
         assert!(
             page(&tree, &refs).contains(
                 "      no ref at this checkout for feat/login  track level or none  working tree"
+            ),
+            "got:\n{}",
+            page(&tree, &refs)
+        );
+    }
+
+    #[test]
+    fn a_checkout_two_refs_claim_names_each_with_what_git_said_about_it() {
+        // `domain::tree` answers a checkout that two of a repository's refs name with
+        // nothing, so the picker draws no marker. Saying `level` here would turn a
+        // contradiction into a measurement. The names alone would still leave a reader with
+        // two branches and no way to tell which is the stale one; the upstreams do not.
+        let tree = one_repo(
+            Refs::Read,
+            vec![worktree(Some("feat/login"), "/wt/shared", None)],
+        );
+        let mut deps = local("chore/deps", "/wt/shared", Some("origin/chore/deps"));
+        deps.track = Some(Track::Gone);
+        let refs = RefsByRepo::from([(
+            "/src/app".to_string(),
+            Ok(vec![
+                local("feat/login", "/wt/shared", Some("origin/feat/login")),
+                deps,
+            ]),
+        )]);
+        assert!(
+            page(&tree, &refs).contains(
+                "      more than one ref at this checkout: \
+                 feat/login \u{2192} origin/feat/login level, \
+                 chore/deps \u{2192} origin/chore/deps gone  \
+                 track not known  working tree"
+            ),
+            "got:\n{}",
+            page(&tree, &refs)
+        );
+    }
+
+    #[test]
+    fn a_ref_with_no_upstream_among_the_others_says_so_twice_over() {
+        // Three of them, and the last has never had an upstream configured. Both halves of
+        // its entry read `none`, meaning two different things: git named no upstream, and
+        // git had nothing to report about where it stands against the one it would push to.
+        // The single-ref line keeps them apart with the words `upstream` and `track`; this
+        // one has dropped the labels, which is what makes it worth pinning.
+        let tree = one_repo(
+            Refs::Read,
+            vec![worktree(Some("feat/login"), "/wt/shared", None)],
+        );
+        let mut deps = local("chore/deps", "/wt/shared", Some("origin/chore/deps"));
+        deps.track = Some(Track::Gone);
+        let refs = RefsByRepo::from([(
+            "/src/app".to_string(),
+            Ok(vec![
+                local("feat/login", "/wt/shared", Some("origin/feat/login")),
+                deps,
+                local("scratch", "/wt/shared", None),
+            ]),
+        )]);
+        assert!(
+            page(&tree, &refs).contains(
+                "      more than one ref at this checkout: \
+                 feat/login \u{2192} origin/feat/login level, \
+                 chore/deps \u{2192} origin/chore/deps gone, \
+                 scratch \u{2192} none none  \
+                 track not known  working tree"
+            ),
+            "got:\n{}",
+            page(&tree, &refs)
+        );
+    }
+
+    #[test]
+    fn two_refs_at_a_checkout_the_picker_did_mark_keep_the_marker_it_drew() {
+        // The picker's walk and this page's second walk are two walks, so this one can see
+        // a second ref where that one saw only the marked ref. `not known` is what an empty
+        // marker means here; it is not a word to put over a marker the picker is drawing.
+        let tree = one_repo(
+            Refs::Read,
+            vec![worktree(
+                Some("feat/login"),
+                "/wt/shared",
+                Some(Track::Gone),
+            )],
+        );
+        let refs = RefsByRepo::from([(
+            "/src/app".to_string(),
+            Ok(vec![
+                local("feat/login", "/wt/shared", Some("origin/feat/login")),
+                local("chore/deps", "/wt/shared", Some("origin/chore/deps")),
+            ]),
+        )]);
+        assert!(
+            page(&tree, &refs).contains(
+                "      more than one ref at this checkout: \
+                 feat/login \u{2192} origin/feat/login level, \
+                 chore/deps \u{2192} origin/chore/deps level  \
+                 track gone  working tree"
             ),
             "got:\n{}",
             page(&tree, &refs)

@@ -547,6 +547,13 @@ fn an_upstream_deleted_on_the_remote_reads_as_gone() {
     assert_eq!(track_of(&refs, "main"), None, "only the deleted one");
 }
 
+/// How many local refs name `path`, for the premises below.
+fn naming_count(refs: &[herdr_worktree_nav::port::GitRef], path: &str) -> usize {
+    refs.iter()
+        .filter(|r| r.kind == RefKind::Local && r.worktree_path.as_deref() == Some(path))
+        .count()
+}
+
 /// The `%(worktreepath)` of a local ref, for the premises below.
 fn worktree_path_of<'a>(
     refs: &'a [herdr_worktree_nav::port::GitRef],
@@ -671,6 +678,41 @@ fn a_prune_that_does_clear_a_stale_entry() {
         worktree_path_of(&refs, "feat/login"),
         None,
         "prune cleared it: {refs:?}"
+    );
+}
+
+#[test]
+fn prune_takes_one_of_two_registrations_at_one_path() {
+    // What `docs/{en,ja}/troubleshooting.md` say where the page prints `more than one ref
+    // at this checkout`. Two registrations name one path; `git worktree prune` removes one
+    // of them. Which one is not asserted here on purpose: it came out differently on this
+    // machine and on CI, on the same git, because it turns on which registration `repair`
+    // bound to the directory — so "prune removes one of the two" is the whole of what can
+    // be held.
+    let repo = repository();
+    let shared = a_checkout_at_another_entrys_path(&repo);
+    git(repo.path(), &["worktree", "repair", &shared]);
+
+    let before = GitCli
+        .local_refs(&path_str(repo.path()))
+        .expect("git listed what it could")
+        .refs;
+    assert_eq!(
+        naming_count(&before, &shared),
+        2,
+        "two registrations name {shared}: {before:?}"
+    );
+
+    git(repo.path(), &["worktree", "prune"]);
+
+    let after = GitCli
+        .local_refs(&path_str(repo.path()))
+        .expect("git listed what it could")
+        .refs;
+    assert_eq!(
+        naming_count(&after, &shared),
+        1,
+        "and prune took one of them: {after:?}"
     );
 }
 
