@@ -175,10 +175,13 @@ pub fn report(
 /// stands — two more facts about the contradiction, not a way to resolve it — and the track
 /// after them is the marker the picker is drawing, or `not known` where it is drawing none.
 /// Which of them is the odd one out this page cannot say, and `git worktree list` shows
-/// both registrations and marks neither. `git worktree prune` removes one of the two —
-/// `prune_takes_one_of_two_registrations_at_one_path` in `tests/git_adapter.rs` holds that
-/// much, and deliberately not which, because it came out differently there and on CI on
-/// the same git. Both troubleshooting pages say the same and no more.
+/// every registration and marks none. `git worktree prune` leaves one of them — not one of
+/// two, because git does not stop at two:
+/// `prune_takes_one_of_two_registrations_at_one_path` and
+/// `prune_leaves_one_registration_where_three_name_one_path` in `tests/git_adapter.rs`
+/// build both shapes and hold that much. Which one is left is deliberately not held,
+/// because it came out differently there and on CI on the same git. Both troubleshooting
+/// pages say the same and no more.
 ///
 /// Every line here is read from two walks rather than one — the track from the picker's,
 /// the upstream and the ref list from this page's own second `for-each-ref` — and nothing
@@ -235,7 +238,7 @@ fn branch_words(repo: &RepoNode, worktree: &WorktreeNode, refs: &RefsByRepo) -> 
             )
         }
         more => {
-            // Each with what git said about it, because the names alone are two words a
+            // Each with what git said about it, because the names alone are bare words a
             // reader has nothing to do with. Not a tell: which entry is stale is a fact
             // about git's worktree registrations and where an upstream went is a fact
             // about the remote, and nothing ties the two together. What this compact form

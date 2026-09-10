@@ -717,6 +717,62 @@ fn prune_takes_one_of_two_registrations_at_one_path() {
 }
 
 #[test]
+fn prune_leaves_one_registration_where_three_name_one_path() {
+    // The page's trigger is "more than one ref", and git does not stop at two: a third
+    // checkout moved into the same directory and repaired makes three registrations name
+    // one path, and `git worktree prune` then takes two of them rather than one. What
+    // holds across both shapes is that prune leaves one, which is as much as
+    // `docs/{en,ja}/troubleshooting.md` may say. Which one is left is not asserted, for
+    // the reason `prune_takes_one_of_two_registrations_at_one_path` gives.
+    let repo = repository();
+    git(repo.path(), &["branch", "chore/deps"]);
+    git(repo.path(), &["branch", "scratch"]);
+    let one = repo.path().join("one");
+    let two = repo.path().join("two");
+    let three = repo.path().join("three");
+    for (at, branch) in [
+        (&one, "feat/login"),
+        (&two, "chore/deps"),
+        (&three, "scratch"),
+    ] {
+        git(
+            repo.path(),
+            &["worktree", "add", at.to_str().unwrap(), branch],
+        );
+    }
+    let shared = path_str(&one);
+    // Twice over what `a_checkout_at_another_entrys_path` does once: each repair rewrites
+    // the entry that lost its directory to the path the entry before it already names.
+    for (aside, next) in [("aside-one", &two), ("aside-two", &three)] {
+        std::fs::rename(&one, repo.path().join(aside)).expect("what sits there moves aside");
+        std::fs::rename(next, &one).expect("the next one moves into its place");
+        git(repo.path(), &["worktree", "repair", &shared]);
+    }
+
+    let before = GitCli
+        .local_refs(&path_str(repo.path()))
+        .expect("git listed what it could")
+        .refs;
+    assert_eq!(
+        naming_count(&before, &shared),
+        3,
+        "three registrations name {shared}: {before:?}"
+    );
+
+    git(repo.path(), &["worktree", "prune"]);
+
+    let after = GitCli
+        .local_refs(&path_str(repo.path()))
+        .expect("git listed what it could")
+        .refs;
+    assert_eq!(
+        naming_count(&after, &shared),
+        1,
+        "and prune left one of them: {after:?}"
+    );
+}
+
+#[test]
 fn a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out() {
     // Why `domain::tree::build` asks for a track only where herdr says something is checked
     // out. Two entries name one path and the checkout sitting there is then detached, so

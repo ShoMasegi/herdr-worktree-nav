@@ -32,10 +32,10 @@ markers, and `dump` reads them again for the upstream names — the repository s
 with `upstream not read`. A checkout git lists no ref at says `no ref at this checkout for
 <branch>`: git and herdr disagree about what is checked out where, which is the thing to
 look at. A checkout git names more than one ref at reads `more than one ref at this
-checkout:` and then each of them as `<branch> → <upstream> <where it stands>`. Two of the
-repository's worktree registrations name one path. Which of them is stale is not something
-this page or `git worktree list` can tell you, and `git worktree prune` removes one of the
-two without saying which it will be. The `track` after them is the marker the picker is
+checkout:` and then each of them as `<branch> → <upstream> <where it stands>`. More than one
+of the repository's worktree registrations names one path, and git does not stop at two.
+Which of them is stale is not something this page or `git worktree list` can tell you, and
+`git worktree prune` leaves one of them without saying which one it will keep. The `track` after them is the marker the picker is
 drawing, or `not known` where it is drawing none. Each checkout's working tree is walked in
 the open, one after another, so on many checkouts this takes a moment.
 
