@@ -59,9 +59,19 @@ pub struct RepoInput {
 /// too, and `one_repository_can_name_one_path_from_two_refs` is where that is held rather
 /// than said. What the second ref's `track` says does not come into it, and must not:
 /// `None` there is a ref with nothing to report rather than the absence of a ref, which is
-/// what [`GitRef::track`] means by it. Both halves of the key and the lookup go through
-/// `normalize_path`, which is what makes the match one between paths rather than between
-/// spellings.
+/// what [`GitRef::track`] means by it, and a second ref means a second local one — git puts
+/// no checkout on a remote ref, and the adapter reads `%(worktreepath)` for both kinds
+/// before it decides which kind it has.
+///
+/// Both halves of the key and the lookup go through `normalize_path`, so the match is one
+/// between paths rather than between spellings. Every one of those, and the local-only
+/// filter, is held by a test rather than by this paragraph:
+/// `a_repository_key_spelled_with_a_trailing_slash_still_names_one_repository`,
+/// `a_checkout_spelled_one_way_by_git_and_another_by_herdr_is_one_checkout`,
+/// `a_panes_repository_key_spelled_with_a_trailing_slash_still_reaches_its_refs` and
+/// `a_remote_ref_at_a_checkout_is_not_a_second_ref_of_the_repositorys`. Losing any of them
+/// is silent in the same way: the key misses, and a checkout with no answer is what a
+/// repository that said nothing about it also looks like.
 fn tracks(repos: &[RepoInput]) -> HashMap<(&str, &str), Track> {
     let mut found: HashMap<(&str, &str), Option<Track>> = HashMap::new();
     for repo in repos {
@@ -282,6 +292,13 @@ mod tests {
         }
     }
 
+    fn remote_ref(name: &str, worktree_path: Option<&str>, track: Option<Track>) -> GitRef {
+        GitRef {
+            kind: RefKind::Remote,
+            ..local_ref(name, worktree_path, track)
+        }
+    }
+
     fn local_ref(name: &str, worktree_path: Option<&str>, track: Option<Track>) -> GitRef {
         GitRef {
             name: name.to_string(),
@@ -478,6 +495,115 @@ mod tests {
         assert_eq!(app.worktrees[0].track, None, "refs: {:?}", app.refs);
     }
 
+    #[test]
+    fn a_remote_ref_at_a_checkout_is_not_a_second_ref_of_the_repositorys() {
+        // `tracks` reads local refs and nothing else, and after this the filter is what
+        // stands between a non-local ref carrying a `%(worktreepath)` and the whole
+        // checkout losing its marker: a second ref at a path is answered with nothing, so
+        // one counted in error takes the marker away rather than merely overwriting it.
+        // git does not put a checkout on a remote ref — `app::dump` holds the same filter
+        // and pins the same shape in
+        // `a_ref_git_lists_no_checkout_for_does_not_answer_for_one` — and the adapter
+        // parses `%(worktreepath)` for both kinds before it decides which kind it has, so
+        // this is the only place saying so.
+        let shared = "/wt/shared";
+        let mut app = repo(
+            "me/app",
+            "/src/app",
+            vec![worktree("feat/login", shared, true)],
+        );
+        app.refs = Ok(vec![
+            local_ref("feat/login", Some(shared), Some(Track::Gone)),
+            remote_ref("origin/feat/login", Some(shared), None),
+        ]);
+
+        let tree = build(&snapshot(json!([])), &[app], &HashMap::new());
+        assert_eq!(
+            tree.repos[0].worktrees[0].track,
+            Some(Track::Gone),
+            "a remote ref is not a second ref at this checkout"
+        );
+    }
+
+    #[test]
+    fn a_repository_key_spelled_with_a_trailing_slash_still_names_one_repository() {
+        // The repository half of the key, both where it is built and where it is read.
+        // Spelled two ways it would be two repositories, and a checkout would lose every
+        // marker with nothing said — the same silence a repository with no refs at all
+        // makes.
+        let shared = "/wt/shared";
+        let mut app = repo(
+            "me/app",
+            "/src/app",
+            vec![worktree("feat/login", shared, true)],
+        );
+        app.repo_key = "/src/app/.git/".to_string();
+        app.refs = Ok(vec![local_ref(
+            "feat/login",
+            Some(shared),
+            Some(Track::Gone),
+        )]);
+
+        let tree = build(&snapshot(json!([])), &[app], &HashMap::new());
+        assert_eq!(tree.repos[0].worktrees[0].track, Some(Track::Gone));
+    }
+
+    #[test]
+    fn a_checkout_spelled_one_way_by_git_and_another_by_herdr_is_one_checkout() {
+        // The path half of the key, and the path the row looks itself up by. The two
+        // spellings arrive from different places — `%(worktreepath)` from git, `path` from
+        // herdr — so either of them can be the one carrying the slash.
+        for (herdr_says, git_says) in [("/wt/shared/", "/wt/shared"), ("/wt/shared", "/wt/shared/")]
+        {
+            let mut app = repo(
+                "me/app",
+                "/src/app",
+                vec![worktree("feat/login", herdr_says, true)],
+            );
+            app.refs = Ok(vec![local_ref(
+                "feat/login",
+                Some(git_says),
+                Some(Track::Gone),
+            )]);
+
+            let tree = build(&snapshot(json!([])), &[app], &HashMap::new());
+            assert_eq!(
+                tree.repos[0].worktrees[0].track,
+                Some(Track::Gone),
+                "herdr said {herdr_says}, git said {git_says}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_panes_repository_key_spelled_with_a_trailing_slash_still_reaches_its_refs() {
+        // The same repository half at the other lookup, on the row `build` makes itself.
+        // `by_key` normalizes separately, so the pane is placed either way and only the
+        // marker goes missing.
+        let shared = "/wt/shared";
+        let mut app = repo(
+            "me/app",
+            "/src/app",
+            vec![worktree("main", "/src/app", false)],
+        );
+        app.refs = Ok(vec![local_ref(
+            "feat/login",
+            Some(shared),
+            Some(Track::Gone),
+        )]);
+
+        let tree = build(
+            &snapshot(json!([pane("w1:p1", None)])),
+            &[app],
+            &placements(&[("w1:p1", "/src/app/.git/", shared)]),
+        );
+        let synthesized = tree.repos[0]
+            .worktrees
+            .iter()
+            .find(|worktree| worktree.checkout_path == shared)
+            .expect("the row build made for the pane");
+        assert_eq!(synthesized.track, Some(Track::Gone));
+    }
     #[test]
     fn a_checkout_carries_what_git_said_about_the_branch_it_has_out() {
         let mut input = repo(
