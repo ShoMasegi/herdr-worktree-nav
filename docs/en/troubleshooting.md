@@ -35,9 +35,14 @@ look at. A checkout git names more than one ref at reads `more than one ref at t
 checkout:` and then each of them as `<branch> → <upstream> <where it stands>`. More than one
 of the repository's worktree registrations names one path, and git does not stop at two.
 Which of them is stale is not something this page or `git worktree list` can tell you, and
-`git worktree prune` leaves one of them without saying which one it will keep. The `track` after them is the marker the picker is
-drawing, or `not known` where it is drawing none. Each checkout's working tree is walked in
-the open, one after another, so on many checkouts this takes a moment.
+`git worktree prune` leaves one of them without saying which one it will keep. The `track`
+after them is the marker the picker is drawing, or `not known` where it is drawing none. A
+checkout with nothing checked out reads `detached`, and then `git names at this path:` with
+that same list where git names refs there anyway — registrations that lost their directory,
+and the same job to clear. Any marker the picker is drawing on such a row follows as
+`track <marker>`, and where the refs could not be read the line says `refs not read` rather
+than naming any. Each checkout's working tree is walked in the open, one after another, so
+on many checkouts this takes a moment.
 
 git's words arrive in English here and on the prompt line whatever language your git speaks
 in a terminal: the plugin runs git under `LC_ALL=C`, because it decides two things by reading
