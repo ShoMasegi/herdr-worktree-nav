@@ -246,8 +246,12 @@ fn judge(
     // reach is `Unjudged` rather than `Available` — but only where its answer would have
     // changed the outcome. A row already refused, already offered by git, or that git would
     // refuse anyway was never a row a pull request was going to decide. The same gate holds
-    // for git's own half: `gone` was never going to offer a dirty or a detached checkout,
-    // so refs that were not read leave nothing unknown about those that matters.
+    // for git's own half: `gone` was never going to offer a dirty or a detached checkout —
+    // `domain::tree::build` drops the track for a row herdr listed with nothing checked
+    // out, which is what makes the detached half of that true of those rows — so refs that
+    // were not read leave nothing unknown about those that matters. The row `build` makes
+    // for a pane herdr did not list has no branch either and does keep its track; it is
+    // refused above as `Running`, since it is built holding the pane it was made for.
     let could_have_decided = clean && worktree.branch.is_some();
     let refs_unread = could_have_decided && !repo.refs.is_read();
     let settled = match settled {

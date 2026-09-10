@@ -27,7 +27,12 @@ pub struct RepoInput {
 ///
 /// Keyed on `%(worktreepath)` rather than on the branch name. git is answering "which
 /// checkout has this ref", which is the question being asked here, where a name match would
-/// have to guess.
+/// have to guess. It is not enough on its own for a checkout with no branch out: git will
+/// name such a path from a worktree entry that lost its directory, and
+/// `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out` in
+/// `tests/git_adapter.rs` builds one carrying `[gone]`. `build` drops it for the rows herdr
+/// listed; the row `build` makes for a pane herdr did not list keeps it, because there
+/// `branch: None` means herdr never said rather than nothing is out.
 ///
 /// One map over every repository rather than a scan per checkout. The lookup for a checkout
 /// herdr did not list used to reach into `repos` by an index that was only valid because
@@ -114,14 +119,27 @@ pub fn build(
                 .filter(|worktree| !worktree.is_bare)
                 .map(|worktree| {
                     let checkout_path = normalize_path(&worktree.path);
+                    let branch = worktree.branch.clone().filter(|b| !b.is_empty());
+                    // herdr says nothing is checked out here, so no ref of this
+                    // repository's is about it. git can still name the path from an entry
+                    // that lost its directory — see `tracks` — and that ref's `[gone]`
+                    // would otherwise land on a row with no branch for it to be about,
+                    // which `domain::sweep::judge` offers for deletion by default. The row
+                    // built below for a pane herdr did not list is a different claim and
+                    // keeps its track.
+                    let track = if branch.is_some() {
+                        tracks
+                            .get(&(normalize_path(&repo.repo_key), checkout_path))
+                            .copied()
+                    } else {
+                        None
+                    };
                     WorktreeNode {
-                        branch: worktree.branch.clone().filter(|b| !b.is_empty()),
+                        branch,
                         checkout_path: checkout_path.to_string(),
                         is_primary: !worktree.is_linked_worktree,
                         open_workspace_id: worktree.open_workspace_id.clone(),
-                        track: tracks
-                            .get(&(normalize_path(&repo.repo_key), checkout_path))
-                            .copied(),
+                        track,
                         panes: Vec::new(),
                     }
                 })
@@ -274,6 +292,40 @@ mod tests {
             track,
             worktree_path: worktree_path.map(str::to_string),
         }
+    }
+
+    #[test]
+    fn a_checkout_with_no_branch_out_draws_on_no_ref() {
+        // git names a path from a worktree entry that lost its directory, and the checkout
+        // sitting at that path can have nothing checked out —
+        // `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out` in
+        // `tests/git_adapter.rs` builds exactly that. The row has no branch for a `[gone]`
+        // to be about, and `domain::sweep::judge` offers a clean `gone` row for deletion by
+        // default, so the marker must not reach it.
+        let shared = "/wt/shared";
+        let mut app = repo("me/app", "/src/app", vec![]);
+        app.worktrees = vec![serde_json::from_value(json!({
+            "branch": "",
+            "path": shared,
+            "label": "shared",
+            "is_bare": false,
+            "is_detached": true,
+            "is_linked_worktree": true,
+            "is_prunable": false,
+        }))
+        .expect("worktree fixture should deserialize")];
+        app.refs = Ok(vec![local_ref(
+            "chore/deps",
+            Some(shared),
+            Some(Track::Gone),
+        )]);
+
+        let row = &build(&snapshot(json!([])), &[app], &HashMap::new()).repos[0].worktrees[0];
+        assert_eq!(row.branch, None, "herdr says nothing is checked out there");
+        assert_eq!(
+            row.track, None,
+            "so no ref of this repository's is about it"
+        );
     }
 
     #[test]
