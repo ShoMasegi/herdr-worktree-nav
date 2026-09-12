@@ -227,7 +227,7 @@ mod tests {
 
     use anyhow::Result;
 
-    use super::{collect_repos, is_inside, read_refs};
+    use super::{collect_repos, is_inside, read_refs, resolve_placements};
     use crate::domain::tree::{PanePlacement, RepoInput};
     use crate::port::{
         GitPort, HerdrPort, PaneDestination, PaneSplit, Slug, Snapshot, Worktree, WorktreeCreate,
@@ -531,6 +531,134 @@ mod tests {
         for slug in [Ok(None), Err(())] {
             assert_eq!(named(slug), "app");
         }
+    }
+
+    /// A git that identifies every path as one repository, spelling `repo_key` with a
+    /// trailing slash — which `git rev-parse --git-common-dir` does for a worktree.
+    struct IdentifiesWithASlash;
+
+    impl GitPort for IdentifiesWithASlash {
+        fn identify(&self, cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            Ok(Some(crate::port::RepoIdentity {
+                repo_key: "/src/app/.git/".to_string(),
+                checkout_path: cwd.to_string(),
+                branch: None,
+            }))
+        }
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
+            unreachable!("only identify is asked of this port")
+        }
+        fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
+            unreachable!("only identify is asked of this port")
+        }
+        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
+            unreachable!("only identify is asked of this port")
+        }
+        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("only identify is asked of this port")
+        }
+        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
+            unreachable!("only identify is asked of this port")
+        }
+        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!("only identify is asked of this port")
+        }
+        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
+            unreachable!("only identify is asked of this port")
+        }
+        fn head_ref(&self, _repo_root: &str) -> Result<String> {
+            unreachable!("only identify is asked of this port")
+        }
+    }
+
+    #[test]
+    fn one_repository_is_asked_about_once_however_many_panes_are_in_it() {
+        // What `domain::model::Refs::Unreadable`'s doc leans on. Two `RepoInput`s for one
+        // repository would pool a readable answer under an unreadable node in
+        // `domain::tree::tracks`, whose key separates repositories and not spellings of
+        // one — and a repository whose refs git would not read would come back marked.
+        // Nothing in `domain` prevents that; this is where it is prevented, and every other
+        // test here hands `collect_repos` a single placement, which has nothing to dedupe.
+        let port = Repository {
+            slug: Ok(Slug::owner_repo("ShoMasegi", "app")),
+        };
+        let two_panes = HashMap::from([
+            (
+                "w1:p1".to_string(),
+                PanePlacement {
+                    repo_key: "/src/app/.git".to_string(),
+                    checkout_path: "/src/app".to_string(),
+                },
+            ),
+            (
+                "w1:p2".to_string(),
+                PanePlacement {
+                    repo_key: "/src/app/.git".to_string(),
+                    checkout_path: "/wt/feat-login".to_string(),
+                },
+            ),
+        ]);
+        let repos = collect_repos(&port, &port, &two_panes);
+        assert_eq!(
+            repos.iter().map(|repo| &repo.repo_key).collect::<Vec<_>>(),
+            ["/src/app/.git"],
+            "one repository, asked about once"
+        );
+    }
+
+    #[test]
+    fn a_placement_carries_one_spelling_of_a_repository_key_whichever_answered() {
+        // And this is why the `BTreeMap` above is enough: it keys on the string it is
+        // given, so two spellings of one repository would be two entries and the dedupe
+        // would not happen. Both places a `PanePlacement` is made normalize first — herdr's
+        // own record of a workspace, and git's answer for a pane that has wandered out of
+        // one — so the strings it compares are already the strings `domain::tree` will key
+        // on. Here herdr spells it with a slash and git spells it with a slash, and one
+        // pane takes each route.
+        let snapshot: Snapshot = serde_json::from_value(serde_json::json!({
+            "version": "0.7.4",
+            "protocol": 16,
+            "workspaces": [{
+                "workspace_id": "w1",
+                "worktree": {
+                    "repo_key": "/src/app/.git/",
+                    "repo_name": "app",
+                    "repo_root": "/src/app",
+                    "checkout_path": "/src/app",
+                },
+            }],
+            "tabs": [],
+            "panes": [
+                {
+                    "pane_id": "w1:p1",
+                    "tab_id": "w1:t1",
+                    "workspace_id": "w1",
+                    "terminal_id": "t1",
+                    "cwd": "/src/app/src",
+                },
+                {
+                    "pane_id": "w1:p2",
+                    "tab_id": "w1:t1",
+                    "workspace_id": "w1",
+                    "terminal_id": "t2",
+                    "cwd": "/wt/feat-login",
+                },
+            ],
+        }))
+        .expect("snapshot fixture should deserialize");
+
+        let placements = resolve_placements(&snapshot, &IdentifiesWithASlash);
+        let mut keys: Vec<&str> = placements
+            .values()
+            .map(|placement| placement.repo_key.as_str())
+            .collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(
+            keys,
+            ["/src/app/.git"],
+            "herdr's route and git's route agree on the spelling: {placements:?}"
+        );
     }
 
     #[test]

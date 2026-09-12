@@ -85,12 +85,20 @@ pub enum Refs {
     /// answer can reach these checkouts, which is the half of issue #31 this closes.
     ///
     /// What rules out this repository's own answer reaching them is not here and not in
-    /// `domain`: `app::collect_repos` keys its probe paths on `repo_key` in a `BTreeMap`,
-    /// so one `RepoInput` exists per repository and a repository that said nothing has no
-    /// readable twin to draw from. Hand `build` two `RepoInput`s carrying one `repo_key`,
-    /// one `Ok` and one `Err`, and the unreadable one's checkouts come back marked. A
-    /// fixture can pair the two directly as well, and `domain::sweep::judge` offers the row
-    /// on `gone` either way — so this holds by how the tree is built rather than by a
+    /// `domain`. Hand `build` two `RepoInput`s carrying one `repo_key`, one `Ok` and one
+    /// `Err`, and the unreadable one's checkouts come back marked; nothing in `domain`
+    /// refuses that. `app::collect` is where it cannot arise, in two steps, each held by a
+    /// test there rather than by this paragraph:
+    /// `one_repository_is_asked_about_once_however_many_panes_are_in_it` — `collect_repos`
+    /// keys its probe paths on `repo_key` in a `BTreeMap`, so however many panes are in a
+    /// repository it becomes one `RepoInput`; and
+    /// `a_placement_carries_one_spelling_of_a_repository_key_whichever_answered` — that
+    /// map compares the strings it is given, and both places a `PanePlacement` is made
+    /// normalize `repo_key` first, so two spellings of one repository cannot slip past the
+    /// comparison as two repositories.
+    ///
+    /// A fixture can pair the two directly as well, and `domain::sweep::judge` offers the
+    /// row on `gone` either way — so this holds by how the tree is built rather than by a
     /// guard.
     Unreadable(String),
 }
