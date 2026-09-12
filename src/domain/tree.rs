@@ -65,15 +65,21 @@ pub struct RepoInput {
 /// no checkout on a remote ref, and the adapter reads `%(worktreepath)` for both kinds
 /// before it decides which kind it has.
 ///
-/// Both halves of the key and the lookup go through `normalize_path`, so the match is one
-/// between paths rather than between spellings. Every one of those, and the local-only
-/// filter, is held by a test rather than by this paragraph:
-/// `a_repository_key_spelled_with_a_trailing_slash_still_names_one_repository`,
-/// `a_checkout_spelled_one_way_by_git_and_another_by_herdr_is_one_checkout`,
-/// `a_panes_repository_key_spelled_with_a_trailing_slash_still_reaches_its_refs` and
-/// `a_remote_ref_at_a_checkout_is_not_a_second_ref_of_the_repositorys`. Losing any of them
-/// is silent in the same way: the key misses, and a checkout with no answer is what a
-/// repository that said nothing about it also looks like.
+/// Both halves of the key and both lookups go through `normalize_path`, so the match is one
+/// between paths rather than between spellings. Each of those, and the local-only filter,
+/// is held by a test rather than by this paragraph — one test per call, and
+/// `a_repository_key_herdr_and_the_placement_spell_differently_is_one_repository` for the
+/// pair on the repository half, which reads the same field at both ends and so goes on
+/// matching itself when both are deleted at once. The spellings that actually have to be
+/// reconciled arrive from two places, herdr's list and the pane's own `identify`, which is
+/// what that test builds.
+///
+/// The two ways of losing one are not the same. Drop a `normalize_path` and the key misses:
+/// the checkout draws no marker, which is also what a repository that said nothing about it
+/// looks like — except on `build`'s own `repo_key`, where `by_key` misses instead and the
+/// pane leaves the repository for `ungrouped` with its row. Drop the local-only filter and
+/// the key hits: the entry collapses, per the `and_modify` below, and the marker goes the
+/// same way for the opposite reason.
 fn tracks(repos: &[RepoInput]) -> HashMap<(&str, &str), Track> {
     let mut found: HashMap<(&str, &str), Option<Track>> = HashMap::new();
     for repo in repos {
@@ -674,6 +680,83 @@ mod tests {
             .expect("the row build made for the pane");
         assert_eq!(synthesized.track, Some(Track::Gone));
     }
+
+    #[test]
+    fn a_repository_key_herdr_and_the_placement_spell_differently_is_one_repository() {
+        // The other direction of the slash, and the one the tests above could not see: they
+        // spell `RepoInput::repo_key` once and read it back from the same field, so the two
+        // `normalize_path` calls on the repository half could be deleted *together* with the
+        // whole suite green. The spellings that have to be reconciled arrive from two
+        // places — herdr's worktree list and the pane's own `identify` — and `app::collect`
+        // normalizing both before either struct exists is what makes them agree today.
+        //
+        // Two things go when the match is a match between spellings. `by_key` is built from
+        // `RepoInput::repo_key` and looked up by the placement's, so the pane leaves the
+        // repository for `ungrouped` and its row with it; and `tracks`' key is built from
+        // one and read by the other, so the row that is left draws no marker.
+        let shared = "/wt/shared";
+        let mut app = repo(
+            "me/app",
+            "/src/app",
+            vec![worktree("main", "/src/app", false)],
+        );
+        app.repo_key = "/src/app/.git/".to_string();
+        app.refs = Ok(vec![local_ref(
+            "feat/login",
+            Some(shared),
+            Some(Track::Gone),
+        )]);
+
+        let tree = build(
+            &snapshot(json!([pane("w1:p1", None)])),
+            &[app],
+            &placements(&[("w1:p1", "/src/app/.git", shared)]),
+        );
+        assert!(tree.ungrouped.is_empty(), "the pane must not be lost");
+        let synthesized = tree.repos[0]
+            .worktrees
+            .iter()
+            .find(|worktree| worktree.checkout_path == shared)
+            .expect("the row build made for the pane");
+        assert_eq!(synthesized.track, Some(Track::Gone));
+    }
+
+    #[test]
+    fn a_panes_own_row_is_read_from_the_checkout_the_pane_is_in() {
+        // The checkout half of the key at the synthesized site. The row herdr listed is
+        // guarded on both halves — `a_checkout_carries_what_git_said_about_the_branch_it_
+        // has_out` holds the checkout half there — and this one was guarded on the
+        // repository half alone, so a stale `[gone]` naming some other path of the same
+        // repository could land here. That is issue #31's shape moved inside one
+        // repository, and `domain::sweep::judge` offers a clean `gone` row for deletion by
+        // default.
+        let mut app = repo(
+            "me/app",
+            "/src/app",
+            vec![worktree("main", "/src/app", false)],
+        );
+        app.refs = Ok(vec![local_ref(
+            "feat/login",
+            Some("/wt/login"),
+            Some(Track::Gone),
+        )]);
+
+        let tree = build(
+            &snapshot(json!([pane("w1:p1", None)])),
+            &[app],
+            &placements(&[("w1:p1", "/src/app/.git", "/wt/shared")]),
+        );
+        let synthesized = tree.repos[0]
+            .worktrees
+            .iter()
+            .find(|worktree| worktree.checkout_path == "/wt/shared")
+            .expect("the row build made for the pane");
+        assert_eq!(
+            synthesized.track, None,
+            "git names no ref at the checkout this pane is in"
+        );
+    }
+
     #[test]
     fn a_checkout_carries_what_git_said_about_the_branch_it_has_out() {
         let mut input = repo(
