@@ -207,7 +207,19 @@ pub struct WorktreeSource {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Worktree {
-    /// `None` for a detached checkout.
+    /// `None` for a detached checkout — and `domain::tree::build` reads an empty string the
+    /// same way, which is a guard older than the use below and not a fact recorded about
+    /// herdr.
+    ///
+    /// `build` turns a track marker off on the strength of this field: absent or empty
+    /// means nothing is checked out there, so no ref of the repository's is about the row.
+    /// That herdr reports a checkout with nothing out that way is an assumption about its
+    /// API, and nothing here can hold it — there is no herdr in CI. If herdr ever names
+    /// something for such a checkout, the guard fails open silently and no test notices.
+    /// Only a run against a real herdr can confirm it, and the manual checklist in
+    /// `docs/en/troubleshooting.md` carries no item for it.
+    ///
+    /// herdr also sends `is_detached` beside this, and nothing reads it.
     #[serde(default)]
     pub branch: Option<String>,
     pub path: String,

@@ -782,8 +782,8 @@ fn a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out() {
     // clean `gone` row for deletion by default.
     //
     // This holds git's half. The other half — that herdr reports that path as a checkout
-    // with no branch — is an assumption about herdr's API (`port::Worktree::branch`, "None
-    // for a detached checkout") and there is no herdr in CI to hold it.
+    // with no branch — is an assumption about herdr's API, written down on
+    // `port::Worktree::branch`, and there is no herdr in CI to hold it.
     let (repo, _remote) = with_origin();
     let shared = a_checkout_at_another_entrys_path(&repo);
     // Both, because which entry repair binds to the directory is git's own business and
