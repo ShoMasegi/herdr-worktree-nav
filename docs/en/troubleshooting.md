@@ -36,8 +36,13 @@ checkout:` and then each of them as `<branch> → <upstream> <where it stands>`;
 of the repository's worktree registrations names that path, and which of them is stale is
 not something this page can tell you. The `track` after them is the marker the picker is
 drawing, or `not known` where it is drawing none — on the row itself, the same empty marker
-as `track level` and `upstream none`. Each checkout's working tree is walked in the open,
-one after another, so on many checkouts this takes a moment.
+as `track level` and `upstream none`. A row with no branch on it reads
+`no branch reported`, then `git names at this path:` with that same list where git names
+refs there — or `no ref at this checkout` where it names none but the picker drew a marker
+— then the picker's marker as `track <marker>` where it draws one; where git would not read
+the refs it says `refs not read`, and `refs not read on the second read` where only this
+page's own read failed. Each checkout's working tree is walked in the open, one after
+another, so on many checkouts this takes a moment.
 
 git's words arrive in English here and on the prompt line whatever language your git speaks
 in a terminal: the plugin runs git under `LC_ALL=C`, because it decides two things by reading
@@ -150,6 +155,15 @@ through this against a real session.
 - [ ] A checkout that is ahead of or behind its upstream says so in the first frame. One
       whose upstream has been deleted on the remote says `gone` — in both views; the arrows
       are the panes view only.
+- [ ] A checkout with nothing out at a path a second registration of the same repository
+      still names — the state `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out`
+      in `tests/git_adapter.rs` builds: two worktrees of pushed branches, one moved aside and
+      the other moved into its place then `git worktree repair`ed, both branches deleted on
+      the remote, the checkout detached. With no pane in it, its row draws no marker and is
+      not ticked under `Shift-S`. **CI cannot reach this path** — the guard
+      reads `branch` and `is_detached` from herdr's `worktree.list`, and that herdr reports
+      such a checkout with `branch` absent or empty, or `is_detached` set, is the assumption
+      this item confirms; git alone cannot show it.
 - [ ] Break a loose ref — `printf 'not-a-sha\n' > .git/refs/heads/<branch>` in a repository
       with checkouts open — and reopen the picker. The prompt line names the repository where
       the search hint was, with `refs unreadable:` and git's own words after it, and the rows

@@ -207,7 +207,11 @@ pub struct WorktreeSource {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Worktree {
-    /// `None` for a detached checkout.
+    /// `None` for a detached checkout. `domain::tree::build` also reads an empty string, or
+    /// `is_detached`, as nothing checked out, and draws no track marker on the strength of
+    /// it. That herdr reports such a checkout one of those ways is an assumption about its
+    /// API that nothing here can hold — there is no herdr in CI; the manual checklist in
+    /// `docs/en/troubleshooting.md` has an item for it.
     #[serde(default)]
     pub branch: Option<String>,
     pub path: String,
