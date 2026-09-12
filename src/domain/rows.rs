@@ -174,7 +174,7 @@ pub fn track_mark(track: Option<Track>) -> String {
         Some(Track::Ahead(ahead)) => format!("  \u{2191}{ahead}"),
         Some(Track::Behind(behind)) => format!("  \u{2193}{behind}"),
         Some(Track::Diverged { ahead, behind }) => format!("  \u{2191}{ahead}\u{2193}{behind}"),
-        // A branch level with what it is measured against, or measured against nothing.
+        // Nothing to draw; what an absent track leaves open is not this row's to say.
         None => String::new(),
     }
 }
