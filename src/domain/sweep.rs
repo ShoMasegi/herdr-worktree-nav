@@ -251,7 +251,13 @@ fn judge(
     // out, which is what makes the detached half of that true of those rows — so refs that
     // were not read leave nothing unknown about those that matters. The row `build` makes
     // for a pane herdr did not list has no branch either and does keep its track; it is
-    // refused above as `Running`, since it is built holding the pane it was made for.
+    // refused as `Running` here, since it is built holding the pane it was made for.
+    //
+    // Here, and not necessarily by the time anything reads the answer: `candidates` writes
+    // every repository's verdict under the checkout path alone, so where two repositories
+    // name one path the one listed later takes the key and the other's verdict — a refusal
+    // included — is gone. `a_second_repository_at_one_path_can_take_a_refusal_away` holds
+    // that, and it is issue #46.
     let could_have_decided = clean && worktree.branch.is_some();
     let refs_unread = could_have_decided && !repo.refs.is_read();
     let settled = match settled {
@@ -1085,6 +1091,77 @@ mod tests {
             Candidate::Available,
             "nobody asked gh about that repository at all"
         );
+    }
+
+    #[test]
+    fn a_second_repository_at_one_path_can_take_a_refusal_away() {
+        // `judge` refuses a checkout with a pane in it before it reads `gone`, and
+        // `domain::tree::build`'s comment above leans on that. The refusal does not survive
+        // `candidates`, which writes every repository's verdict under the checkout path
+        // alone — so where two repositories name one path, whichever is listed later wins,
+        // and a live checkout with an agent working in it comes up offered for deletion
+        // with a stale registration's `gone` as the reason.
+        //
+        // Held here because the comment in `judge` would otherwise say a safety that does
+        // not reach the caller. It is issue #46's mechanism, and this test goes when #46
+        // does: the fix is a key that carries the repository, and then both verdicts
+        // survive and this assertion stops being true.
+        let mut busy = worktree("a-branch", "/wt/shared");
+        busy.panes = vec![PaneNode {
+            pane_id: "w1:p1".into(),
+            workspace_id: "w1".into(),
+            tab_id: "w1:t1".into(),
+            display_name: Some("claude".into()),
+            agent_status: AgentStatus::Working,
+            focused: false,
+        }];
+        let mut stale = worktree("b-branch", "/wt/shared");
+        stale.track = Some(Track::Gone);
+
+        let live = RepoNode {
+            worktrees: vec![busy.clone()],
+            ..only_repo()
+        };
+        let old = RepoNode {
+            repo_key: "/src/old/.git".into(),
+            repo_root: "/src/old".into(),
+            display_name: "me/old".into(),
+            refs: Refs::Read,
+            worktrees: vec![stale.clone()],
+        };
+        let trees = clean(&["/wt/shared"]);
+        let settled = BTreeMap::new();
+
+        assert_eq!(
+            judge(&live, &busy, None, &facts(&trees, &settled)),
+            Candidate::Refused(Refusal::Running),
+            "on its own the live checkout is refused"
+        );
+
+        // `collect_repos` hands `build` its repositories in `repo_key` order, so which of
+        // the two writes last is decided by their keys rather than by chance — but it is
+        // still one of them rather than both.
+        for (repos, expected) in [
+            (
+                vec![live.clone(), old.clone()],
+                Candidate::Offered(Reason::Gone),
+            ),
+            (
+                vec![old.clone(), live.clone()],
+                Candidate::Refused(Refusal::Running),
+            ),
+        ] {
+            let names: Vec<String> = repos.iter().map(|repo| repo.display_name.clone()).collect();
+            let tree = Tree {
+                repos,
+                ungrouped: Vec::new(),
+            };
+            assert_eq!(
+                candidates(&tree, &facts(&trees, &settled))["/wt/shared"],
+                expected,
+                "listed as {names:?}"
+            );
+        }
     }
 
     #[test]
