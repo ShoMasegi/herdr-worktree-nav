@@ -170,31 +170,21 @@ pub fn report(
 /// it stands, then the picker's marker or `not known`: `domain::tree::tracks` declines to
 /// choose between such refs and this page has no better grounds. Issue #48 is the labels.
 fn branch_words(repo: &RepoNode, worktree: &WorktreeNode, refs: &RefsByRepo) -> String {
+    let read = RefsRead::of(repo, refs);
     let Some(branch) = worktree.branch.as_deref() else {
-        return "detached".to_string();
+        return detached_words(worktree, read);
     };
     let tree_track = || match worktree.track {
         Some(track) => rows::track_mark(Some(track)).trim_start().to_string(),
         None => "not known".to_string(),
     };
-    let read = match (&repo.refs, refs.get(&repo.repo_root)) {
-        (Refs::Unreadable(_), _) => return "upstream not read  track not read".to_string(),
-        (Refs::Read, Some(Err(_)) | None) => {
-            return format!("upstream not read  track {}", tree_track())
-        }
-        (Refs::Read, Some(Ok(read))) => read,
+    let read = match read {
+        RefsRead::NotRead => return "upstream not read  track not read".to_string(),
+        RefsRead::NotReadAgain => return format!("upstream not read  track {}", tree_track()),
+        RefsRead::Read(read) => read,
     };
     // By the checkout git says has the branch, which is how the tree matched them too.
-    let named: Vec<_> = read
-        .iter()
-        .filter(|git_ref| git_ref.kind == RefKind::Local)
-        .filter(|git_ref| {
-            git_ref
-                .worktree_path
-                .as_deref()
-                .is_some_and(|path| normalize_path(path) == worktree.checkout_path)
-        })
-        .collect();
+    let named = refs_at(read, &worktree.checkout_path);
     let git_ref = match named.as_slice() {
         [only] => only,
         [] => {
@@ -204,21 +194,9 @@ fn branch_words(repo: &RepoNode, worktree: &WorktreeNode, refs: &RefsByRepo) -> 
             )
         }
         more => {
-            let each: Vec<String> = more
-                .iter()
-                .map(|git_ref| {
-                    let upstream = git_ref.upstream.as_deref();
-                    format!(
-                        "{} \u{2192} {} {}",
-                        git_ref.name,
-                        upstream.unwrap_or("none"),
-                        standing(git_ref.track, upstream)
-                    )
-                })
-                .collect();
             return format!(
                 "more than one ref at this checkout: {}  track {}",
-                each.join(", "),
+                each_of(more),
                 tree_track()
             );
         }
@@ -226,6 +204,102 @@ fn branch_words(repo: &RepoNode, worktree: &WorktreeNode, refs: &RefsByRepo) -> 
     let upstream = git_ref.upstream.as_deref();
     let track = standing(worktree.track, upstream);
     format!("upstream {}  track {track}", upstream.unwrap_or("none"))
+}
+
+/// Which of the two walks failed: under `NotRead` the picker has no markers either, and
+/// under `NotReadAgain` — a second walk that failed or was never made — it has the ones this
+/// page cannot name.
+#[derive(Clone, Copy)]
+enum RefsRead<'a> {
+    NotRead,
+    NotReadAgain,
+    Read(&'a [GitRef]),
+}
+
+impl<'a> RefsRead<'a> {
+    fn of(repo: &RepoNode, refs: &'a RefsByRepo) -> Self {
+        match (&repo.refs, refs.get(&repo.repo_root)) {
+            (Refs::Unreadable(_), _) => Self::NotRead,
+            (Refs::Read, Some(Err(_)) | None) => Self::NotReadAgain,
+            (Refs::Read, Some(Ok(read))) => Self::Read(read),
+        }
+    }
+}
+
+/// The local refs git says have this checkout out.
+///
+/// By the checkout rather than by the branch name, which is how the tree matched them too —
+/// its refusal to choose between two included. `find` would take whichever came first and
+/// print an upstream the empty marker beside it does not stand for. Local only, as
+/// `domain::tree::tracks` is; `a_ref_git_lists_no_checkout_for_does_not_answer_for_one`
+/// holds it here.
+fn refs_at<'a>(read: &'a [GitRef], checkout_path: &str) -> Vec<&'a GitRef> {
+    read.iter()
+        .filter(|git_ref| git_ref.kind == RefKind::Local)
+        .filter(|git_ref| {
+            git_ref
+                .worktree_path
+                .as_deref()
+                .is_some_and(|path| normalize_path(path) == checkout_path)
+        })
+        .collect()
+}
+
+/// Each of them as `<branch> → <upstream> <where it stands>`, because the names alone are
+/// bare words a reader has nothing to do with. Not a tell: which entry is stale is a fact
+/// about git's worktree registrations and where an upstream went is a fact about the
+/// remote, and nothing ties the two together. What this compact form loses with the labels
+/// is issue #48.
+fn each_of(named: &[&GitRef]) -> String {
+    named
+        .iter()
+        .map(|git_ref| {
+            let upstream = git_ref.upstream.as_deref();
+            format!(
+                "{} \u{2192} {} {}",
+                git_ref.name,
+                upstream.unwrap_or("none"),
+                standing(git_ref.track, upstream)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// What the page says about a row with no branch on it.
+///
+/// Two rows reach here: the checkout herdr listed with nothing out, and the one herdr never
+/// listed, which `build` makes for a pane and where a branch may well be out (issue #52). A
+/// marker on such a row means the second — `build` draws none on the first — and its
+/// absence means nothing. So the refs git names at the path are named and not explained, and
+/// the marker the picker is drawing comes after them (issue #49).
+///
+/// No `upstream …` here: this row names no branch for one to be about, and the refs below
+/// carry their own.
+fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {
+    let mut out = "no branch reported".to_string();
+    match read {
+        RefsRead::NotRead => out.push_str("  refs not read"),
+        RefsRead::NotReadAgain => out.push_str("  refs not read on the second read"),
+        RefsRead::Read(read) => {
+            let named = refs_at(read, &worktree.checkout_path);
+            if !named.is_empty() {
+                let _ = write!(out, "  git names at this path: {}", each_of(&named));
+            } else if worktree.track.is_some() {
+                // The picker's walk named a ref here — that is where the marker came from —
+                // and this page's did not.
+                out.push_str("  no ref at this checkout");
+            }
+        }
+    }
+    if let Some(track) = worktree.track {
+        let _ = write!(
+            out,
+            "  track {}",
+            rows::track_mark(Some(track)).trim_start()
+        );
+    }
+    out
 }
 
 /// The words for a track: the marker where git reported one, else `level` beside an
@@ -387,7 +461,7 @@ me/app  [/src/app]
   - chore/deps  /wt/chore-deps
       upstream none  track \u{2191}2  working tree clean
   - detached  /wt/detached
-      detached  working tree not asked
+      no branch reported  working tree not asked
 
 me/site  [/src/site]
   refs unreadable: fatal: bad ref (`git for-each-ref …`)
@@ -880,6 +954,188 @@ me/site  [/src/site]
                  feat/login \u{2192} origin/feat/login level, \
                  scratch \u{2192} none \u{2191}2  \
                  track not known  working tree"
+            ),
+            "got:\n{}",
+            page(&tree, &refs)
+        );
+    }
+
+    #[test]
+    fn a_checkout_with_nothing_out_names_the_refs_git_still_has_at_its_path() {
+        // `detached` and nothing more was the whole of what this page said about such a
+        // row. Named the same way the multi-ref line names them, because it is the same
+        // fact — and named without saying what it means, because on this row the page
+        // cannot know: see `a_row_with_a_branch_out_also_reads_as_no_branch_reported`.
+        let tree = one_repo(Refs::Read, vec![worktree(None, "/wt/shared", None)]);
+        let mut deps = local("chore/deps", "/wt/shared", Some("origin/chore/deps"));
+        deps.track = Some(Track::Gone);
+        let refs = RefsByRepo::from([("/src/app".to_string(), Ok(vec![deps]))]);
+        assert!(
+            page(&tree, &refs).contains(
+                "      no branch reported  git names at this path: \
+                 chore/deps \u{2192} origin/chore/deps gone  working tree"
+            ),
+            "got:\n{}",
+            page(&tree, &refs)
+        );
+    }
+
+    #[test]
+    fn a_marker_on_a_checkout_with_nothing_out_is_on_the_page_too() {
+        // The row `domain::tree::build` makes for a pane herdr did not list keeps its
+        // track, so the picker draws `gone` beside a directory name about a branch nothing
+        // names — issue #49. The page names the marker, and that its own read found no ref
+        // here for it to be about.
+        let tree = one_repo(
+            Refs::Read,
+            vec![worktree(None, "/wt/shared", Some(Track::Gone))],
+        );
+        let refs = RefsByRepo::from([("/src/app".to_string(), Ok(Vec::new()))]);
+        assert!(
+            page(&tree, &refs).contains(
+                "      no branch reported  no ref at this checkout  track gone  working tree"
+            ),
+            "got:\n{}",
+            page(&tree, &refs)
+        );
+    }
+
+    #[test]
+    fn a_checkout_with_nothing_out_under_refs_that_were_not_read_says_so() {
+        // No `upstream not read`, which is what a row with a branch reads: there is no
+        // branch here for an upstream to be about. What is missing is the ref list, and
+        // that is what it says.
+        let tree = one_repo(
+            Refs::Unreadable("fatal: bad ref (`git for-each-ref …`)".into()),
+            vec![worktree(None, "/wt/shared", None)],
+        );
+        assert!(
+            page(&tree, &RefsByRepo::new())
+                .contains("      no branch reported  refs not read  working tree"),
+            "got:\n{}",
+            page(&tree, &RefsByRepo::new())
+        );
+    }
+
+    #[test]
+    fn a_checkout_with_nothing_out_says_which_read_of_the_refs_failed() {
+        // The picker read them once and drew from that; only this page's own second read
+        // failed, and the repository line above says exactly that. Saying `refs not read`
+        // here — which is what a repository nobody could read at all reads as, in the test
+        // above — puts the row three lines under a header that contradicts it.
+        let tree = one_repo(Refs::Read, vec![worktree(None, "/wt/shared", None)]);
+        let second_read_failed = RefsByRepo::from([(
+            "/src/app".to_string(),
+            Err("fatal: bad object HEAD (`git for-each-ref …`)".to_string()),
+        )]);
+        let page = page(&tree, &second_read_failed);
+        assert!(
+            page.contains("  refs unreadable on the second read: fatal: bad object HEAD"),
+            "got:\n{page}"
+        );
+        assert!(
+            page.contains(
+                "      no branch reported  refs not read on the second read  working tree"
+            ),
+            "got:\n{page}"
+        );
+    }
+
+    #[test]
+    fn a_row_with_a_branch_out_also_reads_as_no_branch_reported() {
+        // What `build` makes for a pane in a checkout herdr never listed: `branch: None`
+        // hard-coded, the track copied from git. Nothing says the checkout is branchless —
+        // `git worktree add` outside herdr leaves a branch out there — and git says as much
+        // on the same line. The ref list is named and not explained, because on the row
+        // herdr listed with nothing out the same list would be stale registrations. Issue
+        // #52 carries the shortage, #49 the marker half.
+        let tree = one_repo(
+            Refs::Read,
+            vec![worktree(
+                None,
+                "/wt/feature",
+                Some(Track::Ahead(NonZeroU32::new(1).unwrap())),
+            )],
+        );
+        let refs = RefsByRepo::from([(
+            "/src/app".to_string(),
+            Ok(vec![local(
+                "feat/login",
+                "/wt/feature",
+                Some("origin/feat/login"),
+            )]),
+        )]);
+        assert!(
+            page(&tree, &refs).contains(
+                "      no branch reported  git names at this path: \
+                 feat/login \u{2192} origin/feat/login level  track \u{2191}1  working tree"
+            ),
+            "got:\n{}",
+            page(&tree, &refs)
+        );
+    }
+
+    #[test]
+    fn a_marker_on_a_row_with_no_branch_survives_a_failed_second_read() {
+        // The picker read the refs once and drew from that; only this page's own second
+        // read failed. The row with a branch keeps the marker in that state, and so must
+        // this one — it is the marker issue #49 is about, on the row that can carry it.
+        let tree = one_repo(
+            Refs::Read,
+            vec![worktree(None, "/wt/shared", Some(Track::Gone))],
+        );
+        let second_read_failed = RefsByRepo::from([(
+            "/src/app".to_string(),
+            Err("fatal: bad object HEAD (`git for-each-ref …`)".to_string()),
+        )]);
+        assert!(
+            page(&tree, &second_read_failed).contains(
+                "      no branch reported  refs not read on the second read  track gone  working tree"
+            ),
+            "got:\n{}",
+            page(&tree, &second_read_failed)
+        );
+    }
+
+    #[test]
+    fn a_marker_on_a_row_with_no_branch_that_git_names_no_ref_at_says_so() {
+        // As above, with the repository's refs read and none of them at this path: the
+        // clause turns on what is at the checkout, not on whether the list is empty.
+        let tree = one_repo(
+            Refs::Read,
+            vec![worktree(None, "/wt/shared", Some(Track::Gone))],
+        );
+        let refs = RefsByRepo::from([(
+            "/src/app".to_string(),
+            Ok(vec![local("main", "/src/app", Some("origin/main"))]),
+        )]);
+        assert!(
+            page(&tree, &refs).contains(
+                "      no branch reported  no ref at this checkout  track gone  working tree"
+            ),
+            "got:\n{}",
+            page(&tree, &refs)
+        );
+    }
+
+    #[test]
+    fn two_refs_at_a_row_with_no_branch_are_both_named() {
+        // The list on this row is the same list the multi-ref line prints, all of it.
+        let tree = one_repo(Refs::Read, vec![worktree(None, "/wt/shared", None)]);
+        let mut deps = local("chore/deps", "/wt/shared", Some("origin/chore/deps"));
+        deps.track = Some(Track::Gone);
+        let refs = RefsByRepo::from([(
+            "/src/app".to_string(),
+            Ok(vec![
+                local("feat/login", "/wt/shared", Some("origin/feat/login")),
+                deps,
+            ]),
+        )]);
+        assert!(
+            page(&tree, &refs).contains(
+                "      no branch reported  git names at this path: \
+                 feat/login \u{2192} origin/feat/login level, \
+                 chore/deps \u{2192} origin/chore/deps gone  working tree"
             ),
             "got:\n{}",
             page(&tree, &refs)
