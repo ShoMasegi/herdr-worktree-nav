@@ -112,6 +112,7 @@ herdr 側は CI ではテストできません（サーバーが無いため）�
 - [ ] ピッカーが herdr の枠付き（タイトル `herdr-worktree-nav`）の中央寄せ popup として開き、周囲にセッションが見えたままで、**自分自身は一覧に出ない**
 - [ ] pane の無い worktree が `no pane` 付きで出て、`Enter` で開ける
 - [ ] upstream より進んでいる／遅れている checkout が最初のフレームからそう表示される。リモートで削除された upstream を持つものは `gone` と出る（`gone` は両方のビュー、矢印は panes ビューのみ）
+- [ ] 何も出ていない checkout が、同じリポジトリの別の登録がまだ名乗るパスにある状態 — `tests/git_adapter.rs` の `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out` が組む状態: push 済みブランチの worktree を 2 つ作り、片方を脇へ、もう片方をその場所へ動かして `git worktree repair`、両ブランチを remote で削除、その checkout を detach。pane を置かないとき、その行に印が付かず `Shift-S` でもチェックされない。**CI ではこの経路に届きません** — ガードは herdr の `worktree.list` の `branch` と `is_detached` を読んでおり、herdr がそういう checkout を `branch` 不在または空、あるいは `is_detached` で報告することがこの項目で確認する仮定です。git だけでは示せません
 - [ ] loose ref を壊し（checkout の開いているリポジトリで `printf 'not-a-sha\n' > .git/refs/heads/<branch>`）、ピッカーを開き直す。検索ヒントのあった場所にリポジトリ名と `refs unreadable:` と git 自身の言葉が出て、行は ahead/behind/`gone` を「間違った印」ではなく「印なし」で描く。ref を戻して `r` を押すと消える。**CI ではこの経路に届きません** — 実際の walk を実際の端末に描くテストはありません
 - [ ] checkout に未追跡ファイルを置くと、ピッカーを開いた少し後にその行へ `✱` が出る。全 checkout が答えるまでプロンプトの脇でスピナーが回る。ファイルをコミットまたは削除して `r` を押すと印が消える
 - [ ] `↑`/`↓` が pane と「何も動いていない checkout」にだけ止まる。リポジトリの見出しと、既に pane を持つ checkout は飛ばされ、表示自体は残る

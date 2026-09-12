@@ -150,6 +150,15 @@ through this against a real session.
 - [ ] A checkout that is ahead of or behind its upstream says so in the first frame. One
       whose upstream has been deleted on the remote says `gone` — in both views; the arrows
       are the panes view only.
+- [ ] A checkout with nothing out at a path a second registration of the same repository
+      still names — the state `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out`
+      in `tests/git_adapter.rs` builds: two worktrees of pushed branches, one moved aside and
+      the other moved into its place then `git worktree repair`ed, both branches deleted on
+      the remote, the checkout detached. With no pane in it, its row draws no marker and is
+      not ticked under `Shift-S`. **CI cannot reach this path** — the guard
+      reads `branch` and `is_detached` from herdr's `worktree.list`, and that herdr reports
+      such a checkout with `branch` absent or empty, or `is_detached` set, is the assumption
+      this item confirms; git alone cannot show it.
 - [ ] Break a loose ref — `printf 'not-a-sha\n' > .git/refs/heads/<branch>` in a repository
       with checkouts open — and reopen the picker. The prompt line names the repository where
       the search hint was, with `refs unreadable:` and git's own words after it, and the rows

@@ -112,7 +112,10 @@ impl Refs {
 /// One checkout of a repository: the primary one, or a linked worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeNode {
-    /// `None` for a detached checkout.
+    /// `None` for a checkout herdr listed with nothing out — and also for one herdr never
+    /// listed, which `domain::tree::build` synthesizes for a pane and where a branch may
+    /// well be out. A `track` on such a row means the second. Carrying the difference is
+    /// issue #52, and issue #49 is what it costs on the marker.
     pub branch: Option<String>,
     pub checkout_path: String,
     /// The main checkout rather than a linked worktree.
