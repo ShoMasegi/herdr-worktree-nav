@@ -126,7 +126,7 @@ pub struct WorktreeNode {
     /// listed, which `domain::tree::build` synthesizes for a pane and where a branch may
     /// well be out. Nothing here tells those apart, so everything downstream reads them as
     /// one: the picker draws `track` without asking, and `app::dump` calls both `detached`.
-    /// Carrying the difference is issue #28, and issue #49 is what it costs on the marker.
+    /// Carrying the difference is issue #52, and issue #49 is what it costs on the marker.
     pub branch: Option<String>,
     pub checkout_path: String,
     /// The main checkout rather than a linked worktree.

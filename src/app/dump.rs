@@ -285,7 +285,7 @@ fn each_of(named: &[&GitRef]) -> String {
 /// all — and a checkout herdr never named can have a branch out, `domain::tree::build`'s
 /// own comment naming the case (`git worktree add` run outside herdr). The word `detached`
 /// covers both, because nothing on a `WorktreeNode` tells them apart; that shortage is
-/// issue #28, and issue #49 is the marker half of it.
+/// issue #52, and issue #49 is the marker half of it.
 ///
 /// So the refs named here are named and not explained. Where herdr said nothing is out,
 /// git going on naming a ref at the path is a worktree registration that lost its
@@ -1025,7 +1025,7 @@ me/site  [/src/site]
         // `git worktree add` outside herdr leaves a branch out there — and git says as much
         // on the same line. The page cannot tell this row from the one herdr listed with
         // nothing out, so the ref list here is named and not explained; reading it as stale
-        // registrations to clear would send a reader to prune a live worktree. Issue #28
+        // registrations to clear would send a reader to prune a live worktree. Issue #52
         // carries the shortage, #49 the marker half.
         let tree = one_repo(
             Refs::Read,
