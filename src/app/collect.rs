@@ -227,7 +227,7 @@ mod tests {
 
     use anyhow::Result;
 
-    use super::{collect_repos, is_inside, read_refs};
+    use super::{collect_repos, is_inside, read_refs, resolve_placements};
     use crate::domain::tree::{PanePlacement, RepoInput};
     use crate::port::{
         GitPort, HerdrPort, PaneDestination, PaneSplit, Slug, Snapshot, Worktree, WorktreeCreate,
@@ -530,6 +530,127 @@ mod tests {
         // path, and neither is a reason to show nothing.
         for slug in [Ok(None), Err(())] {
             assert_eq!(named(slug), "app");
+        }
+    }
+
+    /// A git that answers only for paths outside `/src/app`, so a pane inside it has to
+    /// take herdr's route — and spells `repo_key` with a trailing slash, so
+    /// `identify_one`'s normalization has something to do.
+    struct IdentifiesWithASlash;
+
+    impl GitPort for IdentifiesWithASlash {
+        fn identify(&self, cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            if is_inside(cwd, "/src/app") {
+                return Ok(None);
+            }
+            Ok(Some(crate::port::RepoIdentity {
+                repo_key: "/src/app/.git/".to_string(),
+                checkout_path: cwd.to_string(),
+                branch: None,
+            }))
+        }
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
+            unreachable!("only identify is asked of this port")
+        }
+        fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
+            unreachable!("only identify is asked of this port")
+        }
+        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
+            unreachable!("only identify is asked of this port")
+        }
+        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("only identify is asked of this port")
+        }
+        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
+            unreachable!("only identify is asked of this port")
+        }
+        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!("only identify is asked of this port")
+        }
+        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
+            unreachable!("only identify is asked of this port")
+        }
+        fn head_ref(&self, _repo_root: &str) -> Result<String> {
+            unreachable!("only identify is asked of this port")
+        }
+    }
+
+    #[test]
+    fn one_repository_is_asked_about_once_however_many_panes_are_in_it() {
+        // Two `RepoInput`s for one repository would let a readable answer reach the
+        // checkouts of an unreadable node in `domain::tree::tracks`, whose key tells
+        // repositories apart and not spellings of one. This is where that cannot happen.
+        let port = Repository {
+            slug: Ok(Slug::owner_repo("ShoMasegi", "app")),
+        };
+        let two_panes = HashMap::from([
+            (
+                "w1:p1".to_string(),
+                PanePlacement {
+                    repo_key: "/src/app/.git".to_string(),
+                    checkout_path: "/src/app".to_string(),
+                },
+            ),
+            (
+                "w1:p2".to_string(),
+                PanePlacement {
+                    repo_key: "/src/app/.git".to_string(),
+                    checkout_path: "/wt/feat-login".to_string(),
+                },
+            ),
+        ]);
+        let repos = collect_repos(&port, &port, &two_panes);
+        assert_eq!(
+            repos.iter().map(|repo| &repo.repo_key).collect::<Vec<_>>(),
+            ["/src/app/.git"],
+            "one repository, asked about once"
+        );
+    }
+
+    #[test]
+    fn a_placement_carries_one_spelling_of_a_repository_key_whichever_answered() {
+        // The `BTreeMap` above compares the strings it is given, so two spellings of one
+        // repository would be two entries. Both places a `PanePlacement` is made normalize
+        // `repo_key` first. Here herdr and git each spell it with a slash, and one pane
+        // takes each route.
+        let snapshot: Snapshot = serde_json::from_value(serde_json::json!({
+            "version": "0.7.4",
+            "protocol": 16,
+            "workspaces": [{
+                "workspace_id": "w1",
+                "worktree": {
+                    "repo_key": "/src/app/.git/",
+                    "repo_name": "app",
+                    "repo_root": "/src/app",
+                    "checkout_path": "/src/app",
+                },
+            }],
+            "tabs": [],
+            "panes": [
+                {
+                    "pane_id": "w1:p1",
+                    "tab_id": "w1:t1",
+                    "workspace_id": "w1",
+                    "terminal_id": "t1",
+                    "cwd": "/src/app/src",
+                },
+                {
+                    "pane_id": "w1:p2",
+                    "tab_id": "w1:t1",
+                    "workspace_id": "w1",
+                    "terminal_id": "t2",
+                    "cwd": "/wt/feat-login",
+                },
+            ],
+        }))
+        .expect("snapshot fixture should deserialize");
+
+        let placements = resolve_placements(&snapshot, &IdentifiesWithASlash);
+        for pane in ["w1:p1", "w1:p2"] {
+            assert_eq!(
+                placements[pane].repo_key, "/src/app/.git",
+                "{pane} took its route and got one spelling: {placements:?}"
+            );
         }
     }
 
