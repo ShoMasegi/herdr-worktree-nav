@@ -283,26 +283,35 @@ fn each_of(named: &[&GitRef]) -> String {
         .join(", ")
 }
 
-/// What the page says about a checkout herdr reports nothing checked out at.
+/// What the page says about a row with no branch on it.
 ///
-/// `detached` and nothing more was the whole of it, and it left out the two things worth
-/// looking at. git can still be naming refs at the path, from worktree registrations that
-/// lost their directory — the state `git worktree prune` is for, and the state that puts a
-/// checkout here with no branch in the first place, which
-/// `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out` in
-/// `tests/git_adapter.rs` builds. And the picker can be drawing a marker on the row:
-/// `domain::tree::build` keeps the track on the row it makes for a pane herdr did not list,
-/// so `track gone` can appear beside a directory name about a branch nothing here names,
-/// which is issue #49. The row that has neither still reads `detached` alone.
+/// Which is not one kind of row. [`WorktreeNode::branch`] is `None` both where herdr listed
+/// the checkout and said nothing is out at it, and where herdr never named the checkout at
+/// all — and a checkout herdr never named can have a branch out, `domain::tree::build`'s
+/// own comment naming the case (`git worktree add` run outside herdr). The word `detached`
+/// covers both, because nothing on a `WorktreeNode` tells them apart; that shortage is
+/// issue #28, and issue #49 is the marker half of it.
 ///
-/// No `upstream …` here whatever git says: there is no branch out for one to be about, and
-/// the refs named below carry their own.
+/// So the refs named here are named and not explained. Where herdr said nothing is out,
+/// git going on naming a ref at the path is a worktree registration that lost its
+/// directory, which is what `git worktree prune` is for. Where herdr never said, the same
+/// line is git reporting the branch that is out. This page cannot tell you which it is
+/// looking at, and saying so is better than picking one — the prune reading, written here
+/// and on both troubleshooting pages until it was caught, sends a reader to prune a live
+/// worktree.
+///
+/// `detached` alone is still what a row with nothing to add reads as. No `upstream …` here
+/// whatever git says: this row names no branch for one to be about, and the refs below
+/// carry their own.
 fn detached_words(repo: &RepoNode, worktree: &WorktreeNode, refs: &RefsByRepo) -> String {
     let mut out = "detached".to_string();
     match (&repo.refs, refs.get(&repo.repo_root)) {
-        (Refs::Unreadable(_), _) | (Refs::Read, Some(Err(_)) | None) => {
-            out.push_str("  refs not read");
-        }
+        // Told apart the way `branch_words` tells them apart: under `Unreadable` the picker
+        // has no markers either, and under a failed second read it has the ones this page
+        // cannot name. Collapsing the two put `refs not read` on a row three lines under a
+        // header saying only the second read failed.
+        (Refs::Unreadable(_), _) => out.push_str("  refs not read"),
+        (Refs::Read, Some(Err(_)) | None) => out.push_str("  refs not read on the second read"),
         (Refs::Read, Some(Ok(read))) => {
             let named = refs_at(read, &worktree.checkout_path);
             if !named.is_empty() {
@@ -941,9 +950,9 @@ me/site  [/src/site]
     #[test]
     fn a_checkout_with_nothing_out_names_the_refs_git_still_has_at_its_path() {
         // `detached` and nothing more was the whole of what this page said about such a
-        // row, and the registrations that put a checkout here with no branch out are
-        // exactly what a reader has to go and clear. Named the same way the multi-ref line
-        // names them, because it is the same fact.
+        // row. Named the same way the multi-ref line names them, because it is the same
+        // fact — and named without saying what it means, because on this row the page
+        // cannot know: see `a_row_with_a_branch_out_also_reads_as_detached`.
         let tree = one_repo(Refs::Read, vec![worktree(None, "/wt/shared", None)]);
         let mut deps = local("chore/deps", "/wt/shared", Some("origin/chore/deps"));
         deps.track = Some(Track::Gone);
@@ -989,6 +998,63 @@ me/site  [/src/site]
             page(&tree, &RefsByRepo::new()).contains("      detached  refs not read  working tree"),
             "got:\n{}",
             page(&tree, &RefsByRepo::new())
+        );
+    }
+
+    #[test]
+    fn a_checkout_with_nothing_out_says_which_read_of_the_refs_failed() {
+        // The picker read them once and drew from that; only this page's own second read
+        // failed, and the repository line above says exactly that. Saying `refs not read`
+        // here — which is what a repository nobody could read at all reads as, in the test
+        // above — puts the row three lines under a header that contradicts it.
+        let tree = one_repo(Refs::Read, vec![worktree(None, "/wt/shared", None)]);
+        let second_read_failed = RefsByRepo::from([(
+            "/src/app".to_string(),
+            Err("fatal: bad object HEAD (`git for-each-ref …`)".to_string()),
+        )]);
+        let page = page(&tree, &second_read_failed);
+        assert!(
+            page.contains("  refs unreadable on the second read: fatal: bad object HEAD"),
+            "got:\n{page}"
+        );
+        assert!(
+            page.contains("      detached  refs not read on the second read  working tree"),
+            "got:\n{page}"
+        );
+    }
+
+    #[test]
+    fn a_row_with_a_branch_out_also_reads_as_detached() {
+        // What `build` makes for a pane in a checkout herdr never listed: `branch: None`
+        // hard-coded, the track copied from git. Nothing says the checkout is branchless —
+        // `git worktree add` outside herdr leaves a branch out there — and git says as much
+        // on the same line. The page cannot tell this row from the one herdr listed with
+        // nothing out, so the ref list here is named and not explained; reading it as stale
+        // registrations to clear would send a reader to prune a live worktree. Issue #28
+        // carries the shortage, #49 the marker half.
+        let tree = one_repo(
+            Refs::Read,
+            vec![worktree(
+                None,
+                "/wt/feature",
+                Some(Track::Ahead(NonZeroU32::new(1).unwrap())),
+            )],
+        );
+        let refs = RefsByRepo::from([(
+            "/src/app".to_string(),
+            Ok(vec![local(
+                "feat/login",
+                "/wt/feature",
+                Some("origin/feat/login"),
+            )]),
+        )]);
+        assert!(
+            page(&tree, &refs).contains(
+                "      detached  git names at this path: \
+                 feat/login \u{2192} origin/feat/login level  track \u{2191}1  working tree"
+            ),
+            "got:\n{}",
+            page(&tree, &refs)
         );
     }
 

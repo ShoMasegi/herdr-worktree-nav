@@ -37,12 +37,16 @@ of the repository's worktree registrations names one path, and git does not stop
 Which of them is stale is not something this page or `git worktree list` can tell you, and
 `git worktree prune` leaves one of them without saying which one it will keep. The `track`
 after them is the marker the picker is drawing, or `not known` where it is drawing none. A
-checkout with nothing checked out reads `detached`, and then `git names at this path:` with
-that same list where git names refs there anyway — registrations that lost their directory,
-and the same job to clear. Any marker the picker is drawing on such a row follows as
-`track <marker>`, and where the refs could not be read the line says `refs not read` rather
-than naming any. Each checkout's working tree is walked in the open, one after another, so
-on many checkouts this takes a moment.
+row with no branch on it reads `detached`, and then `git names at this path:` with that same
+list where git names refs there anyway. Read that list and nothing more: `detached` covers
+two rows the page cannot tell apart — a checkout herdr listed with nothing out, where a ref
+still naming the path is a worktree registration that lost its directory and `git worktree
+prune` is the job; and a checkout herdr never listed at all, where the same line is git
+reporting the branch that is out and there is nothing to clear. Any marker the picker is
+drawing on such a row follows as `track <marker>`. Where git would not read the refs the
+line says `refs not read`, and where only this page's own second read failed it says
+`refs not read on the second read`. Each checkout's working tree is walked in the open, one
+after another, so on many checkouts this takes a moment.
 
 git's words arrive in English here and on the prompt line whatever language your git speaks
 in a terminal: the plugin runs git under `LC_ALL=C`, because it decides two things by reading
