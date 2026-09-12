@@ -226,11 +226,6 @@ fn branch_words(repo: &RepoNode, worktree: &WorktreeNode, refs: &RefsByRepo) -> 
             )
         }
         more => {
-            // Each with what git said about it, because the names alone are bare words a
-            // reader has nothing to do with. Not a tell: which entry is stale is a fact
-            // about git's worktree registrations and where an upstream went is a fact
-            // about the remote, and nothing ties the two together. What this compact form
-            // loses with the labels is issue #48.
             return format!(
                 "more than one ref at this checkout: {}  track {}",
                 each_of(more),

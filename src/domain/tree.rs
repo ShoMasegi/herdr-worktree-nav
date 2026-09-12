@@ -577,11 +577,10 @@ mod tests {
         // stands between a non-local ref carrying a `%(worktreepath)` and the whole
         // checkout losing its marker: a second ref at a path is answered with nothing, so
         // one counted in error takes the marker away rather than merely overwriting it.
-        // git does not put a checkout on a remote ref — `app::dump` holds the same filter
-        // and pins the same shape in
-        // `a_ref_git_lists_no_checkout_for_does_not_answer_for_one` — and the adapter
-        // parses `%(worktreepath)` for both kinds before it decides which kind it has, so
-        // this is the only place saying so.
+        // Why a ref git puts no checkout on can reach here carrying one is in `tracks`'
+        // own paragraph. `app::dump` holds the same filter over the same refs and pins it
+        // in `a_ref_git_lists_no_checkout_for_does_not_answer_for_one`; this is the other
+        // one, and neither stood for the other.
         let shared = "/wt/shared";
         let mut app = repo(
             "me/app",
