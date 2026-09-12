@@ -31,8 +31,13 @@ markers, and `dump` reads them again for the upstream names — the repository s
 `refs unreadable on the second read:` and its checkouts keep the track the picker is drawing,
 with `upstream not read`. A checkout git lists no ref at says `no ref at this checkout for
 <branch>`: git and herdr disagree about what is checked out where, which is the thing to
-look at. Each checkout's working tree is walked in the open, one after another, so on many
-checkouts this takes a moment.
+look at. A checkout git names more than one ref at reads `more than one ref at this
+checkout:` and then each of them as `<branch> → <upstream> <where it stands>`; more than one
+of the repository's worktree registrations names that path, and which of them is stale is
+not something this page can tell you. The `track` after them is the marker the picker is
+drawing, or `not known` where it is drawing none — on the row itself, the same empty marker
+as `track level` and `upstream none`. Each checkout's working tree is walked in the open,
+one after another, so on many checkouts this takes a moment.
 
 git's words arrive in English here and on the prompt line whatever language your git speaks
 in a terminal: the plugin runs git under `LC_ALL=C`, because it decides two things by reading
