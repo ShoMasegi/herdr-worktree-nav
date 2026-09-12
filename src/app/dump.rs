@@ -243,8 +243,7 @@ fn branch_words(repo: &RepoNode, worktree: &WorktreeNode, refs: &RefsByRepo) -> 
 /// By the checkout rather than by the branch name, which is how the tree matched them too —
 /// its refusal to choose between two included. `find` would take whichever came first and
 /// print an upstream the empty marker beside it does not stand for. Local only, for the
-/// reason `domain::tree::tracks` is: git puts no checkout on a remote ref, and the adapter
-/// reads `%(worktreepath)` for both kinds before it decides which kind it has.
+/// reason `domain::tree::tracks`' doc gives.
 fn refs_at<'a>(read: &'a [GitRef], checkout_path: &str) -> Vec<&'a GitRef> {
     read.iter()
         .filter(|git_ref| git_ref.kind == RefKind::Local)
@@ -846,39 +845,9 @@ me/site  [/src/site]
     }
 
     #[test]
-    fn a_checkout_two_refs_claim_names_each_with_what_git_said_about_it() {
-        // `domain::tree` answers a checkout that two of a repository's refs name with
-        // nothing, so the picker draws no marker. Saying `level` here would turn a
-        // contradiction into a measurement. The names alone would still leave a reader with
-        // two branches and no way to tell which is the stale one; the upstreams do not.
-        let tree = one_repo(
-            Refs::Read,
-            vec![worktree(Some("feat/login"), "/wt/shared", None)],
-        );
-        let mut deps = local("chore/deps", "/wt/shared", Some("origin/chore/deps"));
-        deps.track = Some(Track::Gone);
-        let refs = RefsByRepo::from([(
-            "/src/app".to_string(),
-            Ok(vec![
-                local("feat/login", "/wt/shared", Some("origin/feat/login")),
-                deps,
-            ]),
-        )]);
-        assert!(
-            page(&tree, &refs).contains(
-                "      more than one ref at this checkout: \
-                 feat/login \u{2192} origin/feat/login level, \
-                 chore/deps \u{2192} origin/chore/deps gone  \
-                 track not known  working tree"
-            ),
-            "got:\n{}",
-            page(&tree, &refs)
-        );
-    }
-
-    #[test]
     fn a_ref_with_no_upstream_among_the_others_says_so_twice_over() {
-        // Three of them, and the last has never had an upstream configured. Both halves of
+        // Two of them would be the ordinary shape and are the first two entries here.
+        // Three, and the last has never had an upstream configured. Both halves of
         // its entry read `none`, meaning two different things: git named no upstream, and
         // git had nothing to report about where it stands against the one it would push to.
         // The single-ref line keeps them apart with the words `upstream` and `track`; this

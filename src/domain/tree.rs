@@ -66,20 +66,11 @@ pub struct RepoInput {
 /// before it decides which kind it has.
 ///
 /// Both halves of the key and both lookups go through `normalize_path`, so the match is one
-/// between paths rather than between spellings. Each of those, and the local-only filter,
-/// is held by a test rather than by this paragraph — one test per call, and
-/// `a_repository_key_herdr_and_the_placement_spell_differently_is_one_repository` for the
-/// pair on the repository half, which reads the same field at both ends and so goes on
-/// matching itself when both are deleted at once. The spellings that actually have to be
-/// reconciled arrive from two places, herdr's list and the pane's own `identify`, which is
-/// what that test builds.
-///
-/// The two ways of losing one are not the same. Drop a `normalize_path` and the key misses:
-/// the checkout draws no marker, which is also what a repository that said nothing about it
-/// looks like — except on `build`'s own `repo_key`, where `by_key` misses instead and the
-/// pane leaves the repository for `ungrouped` with its row. Drop the local-only filter and
-/// the key hits: the entry collapses, per the `and_modify` below, and the marker goes the
-/// same way for the opposite reason.
+/// between paths rather than between spellings. Each of those calls is held by a test named
+/// for the spelling it builds — `a_repository_key_…` and `a_panes_repository_key_…` for the
+/// repository half at its three sites, `a_checkout_spelled_…` for the path half — and
+/// `a_remote_ref_at_a_checkout_is_not_a_second_ref_of_the_repositorys` holds the local-only
+/// filter beside them.
 fn tracks(repos: &[RepoInput]) -> HashMap<(&str, &str), Track> {
     let mut found: HashMap<(&str, &str), Option<Track>> = HashMap::new();
     for repo in repos {
@@ -325,45 +316,15 @@ mod tests {
     }
 
     #[test]
-    fn a_checkout_with_no_branch_out_draws_on_no_ref() {
-        // git names a path from a worktree entry that lost its directory, and the checkout
-        // sitting at that path can have nothing checked out —
-        // `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out` in
-        // `tests/git_adapter.rs` builds exactly that. The row has no branch for a `[gone]`
-        // to be about, and `domain::sweep::judge` offers a clean `gone` row for deletion by
-        // default, so the marker must not reach it.
-        let shared = "/wt/shared";
-        let mut app = repo("me/app", "/src/app", vec![]);
-        app.worktrees = vec![serde_json::from_value(json!({
-            "branch": "",
-            "path": shared,
-            "label": "shared",
-            "is_bare": false,
-            "is_detached": true,
-            "is_linked_worktree": true,
-            "is_prunable": false,
-        }))
-        .expect("worktree fixture should deserialize")];
-        app.refs = Ok(vec![local_ref(
-            "chore/deps",
-            Some(shared),
-            Some(Track::Gone),
-        )]);
-
-        let row = &build(&snapshot(json!([])), &[app], &HashMap::new()).repos[0].worktrees[0];
-        assert_eq!(row.branch, None, "herdr says nothing is checked out there");
-        assert_eq!(
-            row.track, None,
-            "so no ref of this repository's is about it"
-        );
-    }
-
-    #[test]
     fn what_a_branchless_row_draws_turns_on_whether_herdr_listed_it() {
         // The two rows `build` makes, over one repository's identical git facts: a stale
         // registration goes on naming `/wt/shared` for `chore/deps`, whose upstream was
-        // deleted, and the checkout sitting there has nothing out. The row herdr listed is
-        // refused the marker, above. The row `build` makes for a pane herdr never
+        // deleted, and the checkout sitting there has nothing out —
+        // `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out` in
+        // `tests/git_adapter.rs` builds exactly that shape. The row herdr listed is refused
+        // the marker, and refusing it is not cosmetic: `domain::sweep::judge` offers a
+        // clean `gone` row for deletion by default. The row `build` makes for a pane herdr
+        // never
         // mentioned keeps it, because at that site there is nothing to make the call
         // with — not because a branch is out there. Both carry `branch: None` and nothing
         // afterwards can tell them apart, so the second draws `gone` beside a directory
