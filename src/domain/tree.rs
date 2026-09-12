@@ -97,14 +97,32 @@ pub fn build(
                 .filter(|worktree| !worktree.is_bare)
                 .map(|worktree| {
                     let checkout_path = normalize_path(&worktree.path);
+                    let branch = worktree
+                        .branch
+                        .clone()
+                        .filter(|b| !b.is_empty())
+                        .filter(|_| !worktree.is_detached);
+                    // herdr says nothing is checked out here — `branch` absent or empty, or
+                    // `is_detached` — so no ref of this repository's is about it. git can
+                    // still name the path from a registration that lost its directory,
+                    // carrying `[gone]`:
+                    // `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out`
+                    // in `tests/git_adapter.rs`. The row `build` makes below for a pane
+                    // herdr never listed keeps its track: nothing in `build`'s inputs tells
+                    // that checkout from one with nothing out (#49).
+                    let track = if branch.is_some() {
+                        tracks
+                            .get(&(normalize_path(&repo.repo_key), checkout_path))
+                            .copied()
+                    } else {
+                        None
+                    };
                     WorktreeNode {
-                        branch: worktree.branch.clone().filter(|b| !b.is_empty()),
+                        branch,
                         checkout_path: checkout_path.to_string(),
                         is_primary: !worktree.is_linked_worktree,
                         open_workspace_id: worktree.open_workspace_id.clone(),
-                        track: tracks
-                            .get(&(normalize_path(&repo.repo_key), checkout_path))
-                            .copied(),
+                        track,
                         panes: Vec::new(),
                     }
                 })
@@ -954,5 +972,88 @@ mod tests {
 
         let tree = build(&snapshot(json!([])), &[app], &HashMap::new());
         assert_eq!(tree.repos[0].worktrees[0].track, None);
+    }
+
+    #[test]
+    fn what_a_branchless_row_draws_turns_on_whether_herdr_listed_it() {
+        // The two rows `build` makes, over one repository's identical git facts: a stale
+        // registration goes on naming `/wt/shared` for `chore/deps`, whose upstream was
+        // deleted, and nothing is checked out there. The row herdr listed is refused the
+        // marker and the row `build` makes for a pane herdr never mentioned keeps it, each
+        // for the reason `build`'s own comment gives. Both carry `branch: None`; the second
+        // draws `gone` about a branch it never names — issue #49, pinned here so it stays a
+        // measured difference.
+        let shared = "/wt/shared";
+        let stale = || local_ref("chore/deps", Some(shared), Some(Track::Gone));
+
+        let mut listed = repo("me/app", "/src/app", vec![]);
+        listed.worktrees = vec![serde_json::from_value(json!({
+            "branch": "",
+            "path": shared,
+            "label": "shared",
+            "is_bare": false,
+            "is_detached": true,
+            "is_linked_worktree": true,
+            "is_prunable": false,
+        }))
+        .expect("worktree fixture should deserialize")];
+        listed.refs = Ok(vec![stale()]);
+        let listed = &build(&snapshot(json!([])), &[listed], &HashMap::new()).repos[0].worktrees[0];
+
+        let mut unlisted = repo(
+            "me/app",
+            "/src/app",
+            vec![worktree("main", "/src/app", false)],
+        );
+        unlisted.refs = Ok(vec![stale()]);
+        let tree = build(
+            &snapshot(json!([pane("w1:p1", None)])),
+            &[unlisted],
+            &placements(&[("w1:p1", "/src/app/.git", shared)]),
+        );
+        let unlisted = tree.repos[0]
+            .worktrees
+            .iter()
+            .find(|worktree| worktree.checkout_path == shared)
+            .expect("the row build made for the pane");
+
+        assert_eq!(
+            (listed.branch.as_deref(), unlisted.branch.as_deref()),
+            (None, None),
+            "neither row names a branch"
+        );
+        assert_eq!(
+            (listed.track, unlisted.track),
+            (None, Some(Track::Gone)),
+            "and only the one herdr spoke about is refused the marker"
+        );
+    }
+
+    #[test]
+    fn a_checkout_herdr_flags_detached_draws_no_track_whatever_it_names() {
+        // `branch` is not the only way herdr can say nothing is out: `is_detached` is beside
+        // it, and a herdr that fills `branch` for a detached checkout — with `HEAD`, a
+        // commit, anything — must not get past the guard.
+        let shared = "/wt/shared";
+        let mut app = repo("me/app", "/src/app", vec![]);
+        app.worktrees = vec![serde_json::from_value(json!({
+            "branch": "HEAD",
+            "path": shared,
+            "label": "shared",
+            "is_bare": false,
+            "is_detached": true,
+            "is_linked_worktree": true,
+            "is_prunable": false,
+        }))
+        .expect("worktree fixture should deserialize")];
+        app.refs = Ok(vec![local_ref(
+            "chore/deps",
+            Some(shared),
+            Some(Track::Gone),
+        )]);
+
+        let row = &build(&snapshot(json!([])), &[app], &HashMap::new()).repos[0].worktrees[0];
+        assert_eq!(row.branch, None, "detached wins over whatever herdr named");
+        assert_eq!(row.track, None);
     }
 }

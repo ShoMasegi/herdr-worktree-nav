@@ -889,3 +889,70 @@ fn a_worktree_whose_directory_moved_is_still_listed_at_the_path_it_had() {
         listed.worktree_path
     );
 }
+
+#[test]
+fn a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out() {
+    // Why `domain::tree::build` asks for a track only where herdr says something is checked
+    // out. Two entries name one path and the checkout sitting there is then detached, so
+    // one entry goes on naming a path with nothing out — while the ref that entry is for
+    // carries `[gone]`, because its upstream was deleted on the remote. Nothing but the
+    // guard keeps that `[gone]` off the branchless row, and `domain::sweep::judge` offers a
+    // clean `gone` row for deletion by default.
+    //
+    // This holds git's half. The other half — that herdr reports that path as a checkout
+    // with no branch — is an assumption about herdr's API, written down on
+    // `port::Worktree::branch`, and there is no herdr in CI to hold it.
+    let (repo, _remote) = with_origin();
+    let shared = a_checkout_at_another_entrys_path(&repo);
+    // Both, because which entry repair binds to the directory is git's own business and
+    // not the same everywhere: whichever one is left naming the path has to be the one
+    // carrying the marker. Where `feat/login` is the one left, the `chore/deps` half of
+    // this push and of the delete below is inert, and deleting it leaves the test green;
+    // it is here for the machines where the other one is left.
+    git(
+        repo.path(),
+        &["push", "-q", "-u", "origin", "feat/login", "chore/deps"],
+    );
+    // Deleting this leaves the test green, and it still has to be here: repair is what
+    // makes git list a second, branchless entry at `shared`, which is the half `build`
+    // reads. `GitCli` has no way to list worktrees, so nothing below can see it — the
+    // fixture is faithful to the state, and the assertions reach only the ref side of it.
+    git(repo.path(), &["worktree", "repair", &shared]);
+    git(
+        repo.path(),
+        &[
+            "push",
+            "-q",
+            "origin",
+            "--delete",
+            "feat/login",
+            "chore/deps",
+        ],
+    );
+    git(Path::new(&shared), &["checkout", "--detach"]);
+
+    let identity = GitCli
+        .identify(&shared)
+        .expect("git answered")
+        .expect("a repository");
+    assert_eq!(
+        identity.branch, None,
+        "nothing is checked out at {shared} any more"
+    );
+
+    let refs = GitCli
+        .local_refs(&path_str(repo.path()))
+        .expect("git listed what it could")
+        .refs;
+    let naming: Vec<(&str, Option<Track>)> = refs
+        .iter()
+        .filter(|r| r.kind == RefKind::Local && r.worktree_path.as_deref() == Some(shared.as_str()))
+        .map(|r| (r.name.as_str(), r.track))
+        .collect();
+    assert_eq!(naming.len(), 1, "one entry goes on naming it: {refs:?}");
+    assert_eq!(
+        naming[0].1,
+        Some(Track::Gone),
+        "and the ref it is for carries a marker: {refs:?}"
+    );
+}
