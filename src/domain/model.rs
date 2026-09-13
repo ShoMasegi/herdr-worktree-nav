@@ -149,6 +149,41 @@ impl WorktreeNode {
     }
 }
 
+/// A checkout's path, as the key its working-tree answer and its removal are kept under.
+///
+/// A newtype rather than the `String` on the node, so that a map keyed by some other string
+/// a node carries — `RepoNode::repo_root`, say — cannot be passed where one keyed by this is.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CheckoutPath(String);
+
+impl CheckoutPath {
+    pub fn of(worktree: &WorktreeNode) -> Self {
+        CheckoutPath(worktree.checkout_path.clone())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[cfg(test)]
+    pub fn for_test(path: &str) -> Self {
+        CheckoutPath(path.to_string())
+    }
+}
+
+/// Which repository a checkout belongs to, as the other half of a key beside [`CheckoutPath`].
+///
+/// A newtype rather than the `String` on the node, so that half cannot be left out of a
+/// key or filled from `repo_root` — the other string `RepoNode` carries.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RepoKey(String);
+
+impl RepoKey {
+    pub fn of(repo: &RepoNode) -> Self {
+        RepoKey(repo.repo_key.clone())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaneNode {
     pub pane_id: String,

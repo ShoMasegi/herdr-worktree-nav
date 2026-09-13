@@ -10,12 +10,13 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use anyhow::Result;
 
+use crate::domain::model::CheckoutPath;
 use crate::domain::removal::{self, Removal};
 use crate::port::{HerdrPort, RemovalOutcome, RemovalPort};
 
 /// One removal that has been started and has not reported back.
 struct InFlight {
-    checkout_path: String,
+    checkout_path: CheckoutPath,
     /// The branch, which is what a refusal names.
     label: String,
     /// How many panes were stopped before this started, which a refusal has to mention.
@@ -40,8 +41,8 @@ pub struct Finished {
 /// row as though nothing were happening to it — and let a second `Shift-D` reach it.
 pub struct Removals<'a> {
     port: &'a dyn RemovalPort,
-    sender: Sender<(String, Result<RemovalOutcome>)>,
-    receiver: Receiver<(String, Result<RemovalOutcome>)>,
+    sender: Sender<(CheckoutPath, Result<RemovalOutcome>)>,
+    receiver: Receiver<(CheckoutPath, Result<RemovalOutcome>)>,
     in_flight: Vec<InFlight>,
 }
 
@@ -123,12 +124,12 @@ impl<'a> Removals<'a> {
         let panes_closed = removal.panes().len();
         let running = self.port.start(
             removal.repo_root(),
-            checkout_path,
+            checkout_path.as_str(),
             removal.label(),
             panes_closed,
         )?;
         let sender = self.sender.clone();
-        let path = checkout_path.to_string();
+        let path = checkout_path.clone();
         // Not joined anywhere. Leaving the picker ends this thread with the process, and the
         // removal it was waiting on carries on without either of them.
         std::thread::spawn(move || {
@@ -136,7 +137,7 @@ impl<'a> Removals<'a> {
             let _ = sender.send((path, outcome));
         });
         self.in_flight.push(InFlight {
-            checkout_path: checkout_path.to_string(),
+            checkout_path: checkout_path.clone(),
             label: removal.label().to_string(),
             panes_closed,
         });
@@ -144,7 +145,7 @@ impl<'a> Removals<'a> {
     }
 
     /// The checkouts currently going, for the rows that stand for them.
-    pub fn paths(&self) -> Vec<String> {
+    pub fn paths(&self) -> Vec<CheckoutPath> {
         self.in_flight
             .iter()
             .map(|removal| removal.checkout_path.clone())
@@ -172,7 +173,7 @@ impl<'a> Removals<'a> {
             // Cannot happen: nothing sends without having been pushed first. The path is a
             // usable name for it either way, and dropping the answer would leave a spinner
             // turning over a removal that has finished.
-            None => (checkout_path, 0),
+            None => (checkout_path.as_str().to_string(), 0),
         };
         Some(Finished {
             label,
@@ -377,7 +378,13 @@ mod tests {
         removals
             .remove(&herdr, &removal("/wt/b", "feat/b", &["w2:p1"]))
             .unwrap();
-        assert_eq!(removals.paths(), ["/wt/a".to_string(), "/wt/b".to_string()]);
+        assert_eq!(
+            removals.paths(),
+            [
+                CheckoutPath::for_test("/wt/a"),
+                CheckoutPath::for_test("/wt/b")
+            ]
+        );
 
         // The second one answers first.
         port.finish("/wt/b", RemovalOutcome::Refused("no".into()));
@@ -391,7 +398,7 @@ mod tests {
         assert_eq!(finished.panes_closed, 1);
         assert_eq!(
             removals.paths(),
-            ["/wt/a".to_string()],
+            [CheckoutPath::for_test("/wt/a")],
             "the other is still going"
         );
 

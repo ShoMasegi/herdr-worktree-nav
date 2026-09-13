@@ -7,7 +7,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use std::collections::BTreeMap;
 
-use crate::domain::model::{Tree, WorkingTree};
+use crate::domain::model::{CheckoutPath, RepoKey, Tree, WorkingTree};
 use crate::domain::removal::Removal;
 use crate::domain::rows::{self, DisplayLine, Row, RowRef, StateFilter, ViewOptions};
 use crate::domain::sweep::{self, Changes, Mark, RepoRoot};
@@ -107,11 +107,11 @@ struct Sweeping {
 /// between them would draw exactly the same. The rows themselves would differ — one would
 /// carry `Some(Clean)` where the other carries `None` — which is why nothing but
 /// `domain::rows::marks` may read `Row::working_tree`.
-fn marked(answers: &BTreeMap<String, WorkingTree>) -> BTreeMap<&str, WorkingTree> {
+fn marked(answers: &BTreeMap<CheckoutPath, WorkingTree>) -> BTreeMap<&CheckoutPath, WorkingTree> {
     answers
         .iter()
         .filter(|(_, answer)| answer.is_drawn())
-        .map(|(path, answer)| (path.as_str(), *answer))
+        .map(|(path, answer)| (path, *answer))
         .collect()
 }
 
@@ -167,7 +167,7 @@ impl PanesState {
     /// One map rather than a list of the dirty ones and a list of who has answered, because
     /// the difference between "clean" and "not asked" is what decides whether somebody's
     /// panes may be closed — and two lists let a caller consult one and forget the other.
-    pub fn set_working_trees(&mut self, answers: BTreeMap<String, WorkingTree>) {
+    pub fn set_working_trees(&mut self, answers: BTreeMap<CheckoutPath, WorkingTree>) {
         if self.options.working_trees == answers {
             return;
         }
@@ -207,7 +207,7 @@ impl PanesState {
     /// The cursor holds its place rather than being sent back to the top: tidying up comes
     /// in batches, and the next thing to delete is usually the next row down. It only moves
     /// when the row it is on has just become one of these.
-    pub fn set_removing(&mut self, paths: Vec<String>) {
+    pub fn set_removing(&mut self, paths: Vec<CheckoutPath>) {
         if self.options.removing == paths {
             return;
         }
@@ -395,7 +395,7 @@ impl PanesState {
     /// Run on every rebuild rather than kept, because everything it decides on moves while
     /// the sweep is on screen: a working tree answers, a removal starts, `gh` lands, `r`
     /// reads the tree again. The user's changes are what is kept; the judgement is not.
-    fn judge(&self) -> Option<BTreeMap<String, Mark>> {
+    fn judge(&self) -> Option<BTreeMap<(RepoKey, CheckoutPath), Mark>> {
         let sweeping = self.sweep.as_ref()?;
         let candidates = sweep::candidates(
             &self.tree,
@@ -491,18 +491,18 @@ impl PanesState {
             .unwrap_or(0)
     }
 
-    /// Every checkout the sweep would remove, in path order.
+    /// Every checkout the sweep would remove, in repository and path order.
     ///
     /// The answer `Enter` will act on; it is not bound yet. Empty outside a sweep, which is
     /// not the same as "nothing is marked" but leads to the same place: nothing is removed.
-    pub fn chosen(&self) -> Vec<String> {
+    pub fn chosen(&self) -> Vec<(RepoKey, CheckoutPath)> {
         let Some(marks) = self.options.sweep.as_ref() else {
             return Vec::new();
         };
         marks
             .iter()
             .filter(|(_, mark)| mark.is_going())
-            .map(|(path, _)| path.clone())
+            .map(|(key, _)| key.clone())
             .collect()
     }
 
@@ -546,11 +546,15 @@ impl PanesState {
             return Action::Consumed;
         };
         let checkout = &self.tree.repos[repo].worktrees[worktree];
+        let key = (
+            RepoKey::of(&self.tree.repos[repo]),
+            CheckoutPath::of(checkout),
+        );
         let Some(mark) = self
             .options
             .sweep
             .as_ref()
-            .and_then(|marks| marks.get(&checkout.checkout_path))
+            .and_then(|marks| marks.get(&key))
         else {
             return Action::Consumed;
         };
@@ -565,7 +569,9 @@ impl PanesState {
         let answer = mark.clone();
         let checkout = self.tree.repos[repo].worktrees[worktree].clone();
         if let Some(sweeping) = self.sweep.as_mut() {
-            sweeping.changes.flip(&checkout, &answer);
+            sweeping
+                .changes
+                .flip(&self.tree.repos[repo], &checkout, &answer);
         }
         self.relist();
         Action::Consumed
@@ -703,7 +709,7 @@ impl PanesState {
             self.message = Some("that is the repository itself, not a worktree".into());
             return Action::Consumed;
         }
-        if self.options.removing.contains(&worktree.checkout_path) {
+        if self.options.removing.contains(&CheckoutPath::of(worktree)) {
             // A second one would race the first, and would close panes that the first is
             // already having removed out from under them.
             self.message = Some("that checkout is already being removed".into());
@@ -719,7 +725,7 @@ impl PanesState {
             // somebody's panes. Walking a working tree takes a moment and the answers land
             // after the first frame, so `None` is the ordinary state of the checkout the
             // picker opens on — the one the cursor is already sitting in.
-            let refusal = match self.options.working_trees.get(&worktree.checkout_path) {
+            let refusal = match self.options.working_trees.get(&CheckoutPath::of(worktree)) {
                 Some(WorkingTree::Clean) => None,
                 Some(WorkingTree::Dirty) => {
                     Some("that checkout is holding work nobody has committed")
@@ -940,12 +946,20 @@ impl PanesState {
 #[cfg(test)]
 mod tests {
 
+    /// The key a checkout of the fixture's one repository is judged under.
+    fn at(state: &PanesState, path: &str) -> (RepoKey, CheckoutPath) {
+        (
+            RepoKey::of(&state.tree.repos[0]),
+            CheckoutPath::for_test(path),
+        )
+    }
+
     /// The answers map, spelled out per checkout. These tests care which of the four shapes
     /// a checkout is in, which is the thing the map made sayable.
-    fn answers(pairs: &[(&str, WorkingTree)]) -> BTreeMap<String, WorkingTree> {
+    fn answers(pairs: &[(&str, WorkingTree)]) -> BTreeMap<CheckoutPath, WorkingTree> {
         pairs
             .iter()
-            .map(|(path, answer)| ((*path).to_string(), *answer))
+            .map(|(path, answer)| (CheckoutPath::for_test(path), *answer))
             .collect()
     }
     use super::*;
@@ -1058,11 +1072,11 @@ mod tests {
             panes: vec![pane("w3:p1", "codex", AgentStatus::Working)],
         });
         state.replace_tree(state.tree.clone());
-        state.set_working_trees(BTreeMap::from([
-            ("/src/app".to_string(), WorkingTree::Clean),
-            ("/wt/app/feat-login".to_string(), WorkingTree::Clean),
-            ("/wt/app/fix-crash".to_string(), WorkingTree::Clean),
-            ("/wt/app/feat-wip".to_string(), WorkingTree::Clean),
+        state.set_working_trees(answers(&[
+            ("/src/app", WorkingTree::Clean),
+            ("/wt/app/feat-login", WorkingTree::Clean),
+            ("/wt/app/fix-crash", WorkingTree::Clean),
+            ("/wt/app/feat-wip", WorkingTree::Clean),
         ]));
         assert_eq!(state.handle_key(key(KeyCode::Char('S'))), Action::Consumed);
         state
@@ -1102,7 +1116,7 @@ mod tests {
             None,
             "a pane is not a checkout and has nothing to sweep"
         );
-        assert_eq!(state.chosen(), vec!["/wt/app/fix-crash".to_string()]);
+        assert_eq!(state.chosen(), vec![at(&state, "/wt/app/fix-crash")]);
     }
 
     #[test]
@@ -1126,10 +1140,7 @@ mod tests {
             "nobody has answered for anything yet"
         );
 
-        state.set_working_trees(BTreeMap::from([(
-            "/wt/app/fix-crash".to_string(),
-            WorkingTree::Clean,
-        )]));
+        state.set_working_trees(answers(&[("/wt/app/fix-crash", WorkingTree::Clean)]));
         assert_eq!(
             mark_of(&state, "fix/crash"),
             Some(Mark::Going(Reason::Gone)),
@@ -1148,14 +1159,14 @@ mod tests {
         assert_eq!(
             state.chosen(),
             vec![
-                "/wt/app/feat-login".to_string(),
-                "/wt/app/fix-crash".to_string()
+                at(&state, "/wt/app/feat-login"),
+                at(&state, "/wt/app/fix-crash")
             ]
         );
 
         state.handle_key(key(KeyCode::Char(' ')));
         assert_eq!(mark_of(&state, "feat/login"), Some(Mark::Staying));
-        assert_eq!(state.chosen(), vec!["/wt/app/fix-crash".to_string()]);
+        assert_eq!(state.chosen(), vec![at(&state, "/wt/app/fix-crash")]);
     }
 
     #[test]
@@ -1172,7 +1183,7 @@ mod tests {
             mark_of(&state, "main"),
             Some(Mark::Refused(Refusal::Primary))
         );
-        assert!(!state.chosen().contains(&"/src/app".to_string()));
+        assert!(!state.chosen().contains(&at(&state, "/src/app")));
     }
 
     #[test]
@@ -1196,7 +1207,7 @@ mod tests {
         state.handle_key(key(KeyCode::Char('S')));
         assert_eq!(
             state.chosen(),
-            vec!["/wt/app/fix-crash".to_string()],
+            vec![at(&state, "/wt/app/fix-crash")],
             "the next sweep opens on what it suggests, not on what the last was talked into"
         );
     }
@@ -1224,7 +1235,7 @@ mod tests {
         assert!(row_labels(&state).contains(&"fix/crash".to_string()));
         assert_eq!(
             state.chosen(),
-            vec!["/wt/app/fix-crash".to_string()],
+            vec![at(&state, "/wt/app/fix-crash")],
             "and what is marked is on the screen it was marked on"
         );
     }
@@ -1359,14 +1370,14 @@ mod tests {
         // refusal that is about something happening right now rather than about what the
         // checkout is.
         let mut state = sweeping();
-        assert!(state.chosen().contains(&"/wt/app/fix-crash".to_string()));
+        assert!(state.chosen().contains(&at(&state, "/wt/app/fix-crash")));
 
-        state.set_removing(vec!["/wt/app/fix-crash".to_string()]);
+        state.set_removing(vec![CheckoutPath::for_test("/wt/app/fix-crash")]);
         assert_eq!(
             mark_of(&state, "fix/crash"),
             Some(Mark::Refused(Refusal::Removing))
         );
-        assert!(!state.chosen().contains(&"/wt/app/fix-crash".to_string()));
+        assert!(!state.chosen().contains(&at(&state, "/wt/app/fix-crash")));
 
         // And when it ends without removing anything — git refused it, say — the row goes
         // back to being the sweep's to offer.
@@ -1385,14 +1396,14 @@ mod tests {
         let mut state = sweeping();
         select(&mut state, "feat/login");
         state.handle_key(key(KeyCode::Char(' ')));
-        assert!(state.chosen().contains(&"/wt/app/feat-login".to_string()));
+        assert!(state.chosen().contains(&at(&state, "/wt/app/feat-login")));
 
         let mut moved = state.tree.clone();
         moved.repos[0].worktrees[1].branch = Some("release/v2".into());
         state.replace_tree(moved);
 
         assert!(
-            !state.chosen().contains(&"/wt/app/feat-login".to_string()),
+            !state.chosen().contains(&at(&state, "/wt/app/feat-login")),
             "release/v2 has never been on the screen with a mark against it"
         );
         assert_eq!(mark_of(&state, "release/v2"), Some(Mark::Staying));
@@ -1424,7 +1435,7 @@ mod tests {
             "the Space landed on the row the user was looking at"
         );
         assert!(
-            state.chosen().contains(&"/wt/app/feat-wip".to_string()),
+            state.chosen().contains(&at(&state, "/wt/app/feat-wip")),
             "and not on the one below it"
         );
     }
@@ -1451,7 +1462,7 @@ mod tests {
     #[test]
     fn a_tree_read_again_under_a_sweep_is_judged_again() {
         let mut state = sweeping();
-        assert!(state.chosen().contains(&"/wt/app/fix-crash".to_string()));
+        assert!(state.chosen().contains(&at(&state, "/wt/app/fix-crash")));
 
         // The upstream came back — somebody pushed the branch again — and the tree was read
         // again underneath the sweep.
@@ -1470,7 +1481,7 @@ mod tests {
         select(&mut state, "claude");
         assert_eq!(state.handle_key(key(KeyCode::Char(' '))), Action::Consumed);
         assert_eq!(state.message(), None);
-        assert_eq!(state.chosen(), vec!["/wt/app/fix-crash".to_string()]);
+        assert_eq!(state.chosen(), vec![at(&state, "/wt/app/fix-crash")]);
     }
 
     #[test]
@@ -1619,8 +1630,8 @@ mod tests {
         assert_eq!(
             state.chosen(),
             vec![
-                "/wt/app/feat-login".to_string(),
-                "/wt/app/fix-crash".to_string()
+                at(&state, "/wt/app/feat-login"),
+                at(&state, "/wt/app/fix-crash")
             ]
         );
     }
@@ -1679,7 +1690,7 @@ mod tests {
         // so nothing noticed.
         let mut state = state();
         select(&mut state, "fix/crash");
-        state.set_removing(vec!["/wt/app/feat-login".into()]);
+        state.set_removing(vec![CheckoutPath::for_test("/wt/app/feat-login")]);
         assert_eq!(cursor_label(&state), "fix/crash");
     }
 
@@ -1847,14 +1858,14 @@ mod tests {
 
         let asked = state.pending_removal().expect("a question should be up");
         assert_eq!(asked.label(), "fix/crash");
-        assert_eq!(asked.checkout_path(), "/wt/app/fix-crash");
+        assert_eq!(asked.checkout_path().as_str(), "/wt/app/fix-crash");
         assert_eq!(asked.repo_root(), "/src/app");
 
         let Action::RemoveWorktree(asked) = state.handle_key(key(KeyCode::Char('y'))) else {
             panic!("`y` is the answer that goes ahead");
         };
         assert_eq!(asked.repo_root(), "/src/app");
-        assert_eq!(asked.checkout_path(), "/wt/app/fix-crash");
+        assert_eq!(asked.checkout_path().as_str(), "/wt/app/fix-crash");
         assert_eq!(asked.label(), "fix/crash");
         assert!(asked.panes().is_empty(), "there were none to close");
         assert!(
@@ -1958,7 +1969,7 @@ mod tests {
         // a checkout being deleted underneath it.
         let mut state = state();
         select(&mut state, "fix/crash");
-        state.set_removing(vec!["/wt/app/fix-crash".into()]);
+        state.set_removing(vec![CheckoutPath::for_test("/wt/app/fix-crash")]);
 
         assert_ne!(
             state.selected().map(|row| row.label.as_str()),
@@ -1975,7 +1986,7 @@ mod tests {
     #[test]
     fn a_removal_that_finished_gives_the_row_back() {
         let mut state = state();
-        state.set_removing(vec!["/wt/app/fix-crash".into()]);
+        state.set_removing(vec![CheckoutPath::for_test("/wt/app/fix-crash")]);
         state.set_removing(Vec::new());
         select(&mut state, "fix/crash");
         state.handle_key(key(KeyCode::Char('D')));
@@ -2033,7 +2044,7 @@ mod tests {
         let Action::RemoveWorktree(asked) = state.handle_key(key(KeyCode::Char('y'))) else {
             panic!("`y` is the answer that goes ahead");
         };
-        assert_eq!(asked.checkout_path(), "/wt/app/feat-login");
+        assert_eq!(asked.checkout_path().as_str(), "/wt/app/feat-login");
         let closing: Vec<&str> = asked.panes().iter().map(|p| p.pane_id.as_str()).collect();
         assert_eq!(closing, ["w2:p1", "w2:p2"]);
     }
@@ -2095,7 +2106,7 @@ mod tests {
         // ground from under.
         let mut state = state();
         state.set_working_trees(answers(&[("/wt/app/feat-login", WorkingTree::Clean)]));
-        state.set_removing(vec!["/wt/app/feat-login".into()]);
+        state.set_removing(vec![CheckoutPath::for_test("/wt/app/feat-login")]);
         select(&mut state, "codex");
         state.handle_key(key(KeyCode::Char('D')));
         assert!(state.pending_removal().is_none());

@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 
-use crate::domain::model::{Tree, WorkingTree};
+use crate::domain::model::{CheckoutPath, Tree, WorkingTree};
 use crate::port::GitPort;
 
 /// Enough to hide the latency without filling a laptop with git processes. The same cap the
@@ -23,7 +23,7 @@ const MAX_IN_FLIGHT: usize = 8;
 
 /// One answer, tagged with the round of asking it belongs to. `None` is git declining to
 /// answer at all.
-type Reply = (u64, String, Option<bool>);
+type Reply = (u64, CheckoutPath, Option<bool>);
 
 /// What the picker knows about uncommitted work, and what it is still waiting to hear.
 ///
@@ -40,9 +40,9 @@ pub struct Dirty {
     /// Every checkout asked about in the current round. Keeping the clean answers as well
     /// as the dirty ones is what lets a second answer correct a first.
     /// `None` for a checkout that has been asked and has not answered.
-    answers: BTreeMap<String, Option<WorkingTree>>,
+    answers: BTreeMap<CheckoutPath, Option<WorkingTree>>,
     /// Asked for, waiting on a slot.
-    queued: VecDeque<String>,
+    queued: VecDeque<CheckoutPath>,
     in_flight: usize,
 }
 
@@ -67,23 +67,23 @@ impl Dirty {
     /// session's worth of deleted checkouts accumulates, and every one of them is an answer
     /// about a working tree that is no longer there.
     pub fn ask(&mut self, tree: &Tree) {
-        let listed: BTreeSet<&str> = tree
+        let listed: BTreeSet<CheckoutPath> = tree
             .repos
             .iter()
             .flat_map(|repo| &repo.worktrees)
-            .map(|worktree| worktree.checkout_path.as_str())
+            .map(CheckoutPath::of)
             .collect();
-        self.answers
-            .retain(|path, _| listed.contains(path.as_str()));
-        self.queued.retain(|path| listed.contains(path.as_str()));
+        self.answers.retain(|path, _| listed.contains(path));
+        self.queued.retain(|path| listed.contains(path));
 
         // In tree order rather than in the set's, so the walk fills the list in from the
         // top — which is where the reader is.
         for repo in &tree.repos {
             for worktree in &repo.worktrees {
-                if !self.answers.contains_key(&worktree.checkout_path) {
-                    self.answers.insert(worktree.checkout_path.clone(), None);
-                    self.queued.push_back(worktree.checkout_path.clone());
+                let path = CheckoutPath::of(worktree);
+                if !self.answers.contains_key(&path) {
+                    self.answers.insert(path.clone(), None);
+                    self.queued.push_back(path);
                 }
             }
         }
@@ -138,7 +138,7 @@ impl Dirty {
     /// stay different facts all the way to the caller — which is what
     /// `ui::state::PanesState::ask_to_remove` refuses on, and what
     /// `docs/adr/0011-what-may-be-swept.md` decides on.
-    pub fn answers(&self) -> BTreeMap<String, WorkingTree> {
+    pub fn answers(&self) -> BTreeMap<CheckoutPath, WorkingTree> {
         self.answers
             .iter()
             .filter_map(|(path, answer)| Some((path.clone(), (*answer)?)))
@@ -168,7 +168,7 @@ impl Dirty {
                 // A checkout git could not answer for gets no marker — no marker beats the
                 // wrong marker — but it is not recorded as clean, because that is a claim
                 // and this is the absence of one.
-                let dirty = git.is_dirty(&checkout_path).ok();
+                let dirty = git.is_dirty(checkout_path.as_str()).ok();
                 let _ = sender.send((generation, checkout_path, dirty));
             });
         }
@@ -197,7 +197,7 @@ mod tests {
         walk.answers()
             .into_iter()
             .filter(|(_, answer)| keep(*answer))
-            .map(|(path, _)| path)
+            .map(|(path, _)| path.as_str().to_string())
             .collect()
     }
     use super::*;
@@ -463,13 +463,17 @@ mod tests {
         git.answer("/wt/b", true);
         until("the dirty answer never arrived", || {
             dirty.drain();
-            dirty.answers().contains_key("/wt/b")
+            dirty
+                .answers()
+                .contains_key(&CheckoutPath::for_test("/wt/b"))
         });
 
         git.refuse("/wt/c");
         until("the refusal never arrived", || {
             dirty.drain();
-            dirty.answers().contains_key("/wt/c")
+            dirty
+                .answers()
+                .contains_key(&CheckoutPath::for_test("/wt/c"))
         });
     }
 
@@ -544,7 +548,11 @@ mod tests {
         until_answered(&mut dirty);
 
         assert_eq!(
-            dirty.answers().keys().collect::<Vec<_>>(),
+            dirty
+                .answers()
+                .keys()
+                .map(CheckoutPath::as_str)
+                .collect::<Vec<_>>(),
             vec!["/wt/b"],
             "a checkout the tree has forgotten does not come back through the queue"
         );

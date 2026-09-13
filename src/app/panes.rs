@@ -283,6 +283,7 @@ fn perform(herdr: &dyn HerdrPort, action: Action) -> Result<Exit> {
 mod tests {
     use super::*;
     use crate::app::fakes::{until, Recorder, Refuses, Started};
+    use crate::domain::model::{CheckoutPath, RepoKey};
     use crate::ui::state::PanesState;
     use anyhow::Result;
 
@@ -698,7 +699,10 @@ mod tests {
 
         assert_eq!(
             state.chosen(),
-            vec!["/wt/feat-login".to_string()],
+            vec![(
+                RepoKey::of(&state.tree().repos[0]),
+                CheckoutPath::for_test("/wt/feat-login")
+            )],
             "git had nothing to say about it; gh may only widen, and this is widening"
         );
     }
@@ -804,7 +808,7 @@ mod tests {
         );
 
         assert_eq!(recorder.did(), ["start /wt/feat-login after 0"]);
-        assert_eq!(removals.paths(), ["/wt/feat-login".to_string()]);
+        assert_eq!(removals.paths(), [CheckoutPath::for_test("/wt/feat-login")]);
         assert!(
             state.rows().iter().any(|row| row.is_removing),
             "and the row it is happening to says so"

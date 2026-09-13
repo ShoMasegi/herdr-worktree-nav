@@ -11,7 +11,7 @@
 //! question, because `app` starts the removal and should not reach up into `ui` for the
 //! value describing it.
 
-use crate::domain::model::{PaneNode, WorktreeNode};
+use crate::domain::model::{CheckoutPath, PaneNode, WorktreeNode};
 use crate::port::{Notification, NotificationSound, RemovalOutcome};
 
 /// A checkout to remove: what to say about it, and what has to stop first.
@@ -35,7 +35,7 @@ use crate::port::{Notification, NotificationSound, RemovalOutcome};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Removal {
     repo_root: String,
-    checkout_path: String,
+    checkout_path: CheckoutPath,
     label: String,
     panes: Vec<PaneNode>,
 }
@@ -45,7 +45,7 @@ impl Removal {
     pub fn of(repo_root: &str, worktree: &WorktreeNode) -> Self {
         Self {
             repo_root: repo_root.to_string(),
-            checkout_path: worktree.checkout_path.clone(),
+            checkout_path: CheckoutPath::of(worktree),
             label: worktree.label().to_string(),
             panes: worktree.panes.clone(),
         }
@@ -55,7 +55,7 @@ impl Removal {
         &self.repo_root
     }
 
-    pub fn checkout_path(&self) -> &str {
+    pub fn checkout_path(&self) -> &CheckoutPath {
         &self.checkout_path
     }
 

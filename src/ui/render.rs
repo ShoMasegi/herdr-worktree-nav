@@ -426,7 +426,7 @@ fn render_removal(
     const KEYS_Y: &str = "y delete";
     const KEYS_REST: &str = "     any other key cancels";
 
-    let path = abbreviate(removal.checkout_path(), home);
+    let path = abbreviate(removal.checkout_path().as_str(), home);
     // Uncommitted work is git's to protect and it does. What a working agent has in flight
     // has no other safety net, so the question names every pane that stops, in the words the
     // list behind the box uses for the same panes.
@@ -1714,15 +1714,15 @@ fn pad(text: &str, width: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::model::WorkingTree;
+    use crate::domain::model::{CheckoutPath, WorkingTree};
     use std::collections::BTreeMap;
 
     /// The answers map, spelled out per checkout. These tests care which of the four shapes
     /// a checkout is in, which is the thing the map made sayable.
-    fn answers(pairs: &[(&str, WorkingTree)]) -> BTreeMap<String, WorkingTree> {
+    fn answers(pairs: &[(&str, WorkingTree)]) -> BTreeMap<CheckoutPath, WorkingTree> {
         pairs
             .iter()
-            .map(|(path, answer)| ((*path).to_string(), *answer))
+            .map(|(path, answer)| (CheckoutPath::for_test(path), *answer))
             .collect()
     }
     use super::*;
@@ -2134,7 +2134,7 @@ mod tests {
         // stop on it and `Shift-D` could not reach it. It is the whole of what the picker
         // adds over the toast, and the row it is on has nothing left to decide about.
         let mut state = PanesState::new(tree(), None);
-        state.set_removing(vec!["/wt/fix-crash".into()]);
+        state.set_removing(vec![CheckoutPath::for_test("/wt/fix-crash")]);
         for width in [46u16, 53, 60, 92] {
             let drawn = screen(&state, width, 16);
             let row = drawn
@@ -2231,7 +2231,7 @@ mod tests {
             .collect();
         marked.set_settled(asked, None, false);
         let mut removing = PanesState::new(tree(), None);
-        removing.set_removing(vec!["/wt/fix-crash".into()]);
+        removing.set_removing(vec![CheckoutPath::for_test("/wt/fix-crash")]);
 
         for width in 24u16..=92 {
             let drawn = screen(&marked, width, 16);
@@ -2569,7 +2569,7 @@ mod tests {
         // the row has to say what is happening to it rather than simply going quiet. The
         // cursor has stepped off it: there is nothing left to do to it from here.
         let mut state = PanesState::new(tree(), None);
-        state.set_removing(vec!["/wt/fix-crash".into()]);
+        state.set_removing(vec![CheckoutPath::for_test("/wt/fix-crash")]);
         insta::assert_snapshot!(screen(&state, 92, 18));
     }
 
@@ -2782,7 +2782,7 @@ mod tests {
         // sideways under one is a list nobody can read while tidying up.
         let mut state = PanesState::new(tree(), None);
         let before = meta_column(state.rows(), 92);
-        state.set_removing(vec!["/wt/fix-crash".into()]);
+        state.set_removing(vec![CheckoutPath::for_test("/wt/fix-crash")]);
         assert_eq!(meta_column(state.rows(), 92), before);
     }
 
