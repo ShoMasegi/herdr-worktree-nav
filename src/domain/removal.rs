@@ -16,15 +16,16 @@ use crate::port::{Notification, NotificationSound, RemovalOutcome};
 
 /// A checkout to remove: what to say about it, and what has to stop first.
 ///
-/// One value rather than four arguments travelling together, because two of them must agree.
+/// One value rather than five arguments travelling together, because they have to agree.
 /// `app::removals::Removals::remove` closes the panes *this* names and then removes the
 /// checkout *this* names, so a pane list belonging to some other checkout removes a working
 /// tree out from under everything still running in it — the accident
-/// `docs/adr/0010-closing-the-panes-first.md` exists to prevent.
+/// `docs/adr/0010-closing-the-panes-first.md` exists to prevent. And `delete_branch` is set
+/// only where `label` is a branch, since it is what `git branch -d` is given.
 ///
-/// Every field is private and [`Removal::of`] is the only thing that fills them, together,
-/// from one `WorktreeNode`. So the pairing cannot be taken apart afterwards: there is no
-/// shorter list to substitute and no other checkout to repoint at.
+/// Every field is private and [`Removal::of`] and [`Removal::sweeping`] are the only things
+/// that fill them, together, from one `WorktreeNode`. So the pairing cannot be taken apart
+/// afterwards: there is no shorter list to substitute and no other checkout to repoint at.
 ///
 /// What that does *not* reach is a `WorktreeNode` that describes a checkout falsely, since
 /// its own fields are public — but such a node is a lie to the whole tree, and every row,
@@ -38,16 +39,30 @@ pub struct Removal {
     checkout_path: CheckoutPath,
     label: String,
     panes: Vec<PaneNode>,
+    delete_branch: bool,
 }
 
 impl Removal {
-    /// Everything removing this checkout needs, taken from the checkout itself.
+    /// Everything removing this checkout needs, taken from the checkout itself. The branch
+    /// stays: `Shift-D` keeps it — `docs/adr/0008-removing-a-worktree.md`.
     pub fn of(repo_root: &str, worktree: &WorktreeNode) -> Self {
         Self {
             repo_root: repo_root.to_string(),
             checkout_path: CheckoutPath::of(worktree),
             label: worktree.label().to_string(),
             panes: worktree.panes.clone(),
+            delete_branch: false,
+        }
+    }
+
+    /// The same, for a sweep, where the branch goes after the checkout
+    /// (`docs/adr/0011-what-may-be-swept.md`) — when there is one. A checkout with no branch
+    /// has nothing to delete, and its `label()` is a directory name, which must never reach
+    /// `git branch -d`.
+    pub fn sweeping(repo_root: &str, worktree: &WorktreeNode) -> Self {
+        Self {
+            delete_branch: worktree.branch.is_some(),
+            ..Self::of(repo_root, worktree)
         }
     }
 
@@ -69,12 +84,21 @@ impl Removal {
     pub fn panes(&self) -> &[PaneNode] {
         &self.panes
     }
+
+    /// Whether `git branch -d` on `label` follows the checkout. Only [`Removal::sweeping`]
+    /// sets it.
+    pub fn delete_branch(&self) -> bool {
+        self.delete_branch
+    }
 }
 
 /// What a report line starts with when the checkout went.
 const REMOVED: &str = "removed";
 /// What it starts with when git declined, followed by git's own words.
 const REFUSED: &str = "refused ";
+/// What it starts with when the checkout went and `git branch -d` then declined, followed by
+/// git's own words.
+const KEPT: &str = "kept ";
 
 /// The one line a detached removal writes for whoever started it.
 ///
@@ -84,11 +108,15 @@ const REFUSED: &str = "refused ";
 pub fn report_line(outcome: &RemovalOutcome) -> String {
     match outcome {
         RemovalOutcome::Removed => REMOVED.to_string(),
-        RemovalOutcome::Refused(reason) => {
-            let folded: Vec<&str> = reason.lines().map(str::trim).collect();
-            format!("{REFUSED}{}", folded.join(" "))
-        }
+        RemovalOutcome::Refused(reason) => format!("{REFUSED}{}", folded(reason)),
+        RemovalOutcome::BranchKept(reason) => format!("{KEPT}{}", folded(reason)),
     }
+}
+
+/// git's words on one line, which is all the channel carries.
+fn folded(reason: &str) -> String {
+    let lines: Vec<&str> = reason.lines().map(str::trim).collect();
+    lines.join(" ")
 }
 
 /// Read a report line back. `None` for anything else on that channel — a line the picker
@@ -99,8 +127,11 @@ pub fn parse_report(line: &str) -> Option<RemovalOutcome> {
     if line == REMOVED {
         return Some(RemovalOutcome::Removed);
     }
-    line.strip_prefix(REFUSED)
-        .map(|reason| RemovalOutcome::Refused(reason.to_string()))
+    if let Some(reason) = line.strip_prefix(REFUSED) {
+        return Some(RemovalOutcome::Refused(reason.to_string()));
+    }
+    line.strip_prefix(KEPT)
+        .map(|reason| RemovalOutcome::BranchKept(reason.to_string()))
 }
 
 /// The toast a finished removal shows.
@@ -131,6 +162,13 @@ pub fn notification(
             body: Some(refusal(reason, panes_closed)),
             // The one that has to reach someone who is no longer looking.
             sound: NotificationSound::Request,
+        },
+        RemovalOutcome::BranchKept(reason) => Notification {
+            title: format!("removed {label}, branch kept"),
+            body: Some(format!("{checkout_path} — {reason}")),
+            // The checkout the user asked about went, and the branch is visible in the
+            // branches view.
+            sound: NotificationSound::None,
         },
     }
 }
@@ -169,7 +207,8 @@ pub fn interrupted(pane_id: &str, reason: &str, closed: usize, total: usize) -> 
 /// What the picker puts on its prompt line, when it is still up to read the answer.
 ///
 /// Nothing on success: the row leaving the list is the report, and repeating it there would
-/// only say twice what the toast has already said once.
+/// only say twice what the toast has already said once. A branch that stayed is said, since
+/// the row leaving says nothing about it.
 pub fn message(label: &str, outcome: &RemovalOutcome, panes_closed: usize) -> Option<String> {
     match outcome {
         RemovalOutcome::Removed => None,
@@ -178,21 +217,106 @@ pub fn message(label: &str, outcome: &RemovalOutcome, panes_closed: usize) -> Op
             "could not remove {label}: {}",
             refusal(reason, panes_closed)
         )),
+        RemovalOutcome::BranchKept(reason) => {
+            Some(format!("removed {label}, branch kept: {reason}"))
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::model::WorktreeNode;
     use crate::port::{NotificationSound, RemovalOutcome};
 
     const REFUSAL: &str = "`git worktree remove /wt/fix-crash` failed: fatal: '/wt/fix-crash' \
                            contains modified or untracked files, use --force to delete it";
 
+    const KEPT_WHY: &str = "error: the branch 'fix/crash' is not fully merged \
+                            (`git branch -d fix/crash`)";
+
+    /// A checkout with nothing running in it, on `branch` or on nothing.
+    fn checkout(branch: Option<&str>) -> WorktreeNode {
+        WorktreeNode {
+            branch: branch.map(str::to_string),
+            checkout_path: "/wt/fix-crash".to_string(),
+            is_primary: false,
+            open_workspace_id: None,
+            track: None,
+            panes: Vec::new(),
+        }
+    }
+
     #[test]
     fn a_removal_that_worked_survives_the_trip_between_the_processes() {
         let line = report_line(&RemovalOutcome::Removed);
         assert_eq!(parse_report(&line), Some(RemovalOutcome::Removed));
+    }
+
+    #[test]
+    fn a_kept_branch_carries_gits_words_across_unchanged() {
+        let line = report_line(&RemovalOutcome::BranchKept(KEPT_WHY.to_string()));
+        assert_eq!(
+            parse_report(&line),
+            Some(RemovalOutcome::BranchKept(KEPT_WHY.to_string()))
+        );
+    }
+
+    #[test]
+    fn a_kept_branch_whose_reason_spans_lines_still_travels_as_one() {
+        // The same fold a refusal gets: however many lines the reason had, the channel is
+        // one.
+        let line = report_line(&RemovalOutcome::BranchKept(
+            "error: the branch 'fix/crash' is not fully merged\nhint: run 'git branch -D'"
+                .to_string(),
+        ));
+        assert_eq!(line.lines().count(), 1, "the channel is a single line");
+        assert_eq!(
+            parse_report(&line),
+            Some(RemovalOutcome::BranchKept(
+                "error: the branch 'fix/crash' is not fully merged hint: run 'git branch -D'"
+                    .to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_kept_branch_is_a_removal_that_says_so_without_a_sound() {
+        // The checkout the user asked about went; the branch is still in the branches view.
+        let notification = notification(
+            "fix/crash",
+            "~/.herdr/worktrees/app/fix-crash",
+            &RemovalOutcome::BranchKept(KEPT_WHY.to_string()),
+            2,
+        );
+        assert_eq!(notification.title, "removed fix/crash, branch kept");
+        assert_eq!(
+            notification.body.as_deref(),
+            Some(format!("~/.herdr/worktrees/app/fix-crash — {KEPT_WHY}").as_str()),
+            "the path that went, then git's words on the branch that did not"
+        );
+        assert_eq!(notification.sound, NotificationSound::None);
+        assert_eq!(
+            message(
+                "fix/crash",
+                &RemovalOutcome::BranchKept(KEPT_WHY.to_string()),
+                2
+            ),
+            Some(format!("removed fix/crash, branch kept: {KEPT_WHY}")),
+            "and the panes are not mentioned: the checkout went, so they were not closed for nothing"
+        );
+    }
+
+    #[test]
+    fn only_a_sweep_of_a_checkout_on_a_branch_asks_for_the_branch_to_go() {
+        // A checkout with no branch has a directory name for a label, and that name must
+        // never reach `git branch -d`.
+        assert!(Removal::sweeping("/src/app", &checkout(Some("fix/crash"))).delete_branch());
+        assert!(!Removal::sweeping("/src/app", &checkout(None)).delete_branch());
+        assert!(
+            !Removal::of("/src/app", &checkout(Some("fix/crash"))).delete_branch(),
+            "`Shift-D` keeps the branch"
+        );
     }
 
     #[test]

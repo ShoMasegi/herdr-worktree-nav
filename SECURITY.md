@@ -41,7 +41,9 @@ Specifically, herdr-worktree-nav:
   read its working tree, and while git is still reading it.
 - **That removal outlives the picker.** It runs as a second copy of this binary, in a session
   of its own, so closing the picker does not leave a half-deleted checkout behind. It removes
-  the one checkout it was given and then exits; it takes no further instructions and does
+  the one checkout it was given — and, when started with `delete-branch`, deletes its branch
+  with `git branch -d`, never `-D`, so a branch git does not consider merged stays; nothing in
+  the picker asks for that yet — and then exits; it takes no further instructions and does
   nothing else. It reports what happened as a herdr notification.
 - **Runs `gh pr list`** if `gh` is on your `PATH`: per repository, to annotate branches; and
   per repository again, over closed pull requests, when you enter a sweep with `Shift-S` —
@@ -51,7 +53,7 @@ Specifically, herdr-worktree-nav:
   something you see before anything acts on it, and nothing is removed that was not marked
   on the screen in front of you.
 
-Nothing here rewrites history, deletes a branch, changes a file in a working tree, or pushes.
+Nothing here rewrites history, changes a file in a working tree, or pushes.
 
 It stores nothing of its own on disk — not even a preference. It does not read your
 credentials, send anything anywhere, or run any command a repository supplies. Network access is

@@ -127,6 +127,7 @@ impl<'a> Removals<'a> {
             checkout_path.as_str(),
             removal.label(),
             panes_closed,
+            removal.delete_branch(),
         )?;
         let sender = self.sender.clone();
         let path = checkout_path.clone();
@@ -227,6 +228,7 @@ mod tests {
             checkout_path: &str,
             _label: &str,
             _panes_closed: usize,
+            _delete_branch: bool,
         ) -> Result<Box<dyn RunningRemoval>> {
             let (sender, receiver) = mpsc::channel();
             self.started
@@ -237,31 +239,33 @@ mod tests {
         }
     }
 
+    /// A checkout on `label`, with these panes in it. Nothing here reads a pane beyond its
+    /// id, so the rest is whatever a tree would have put there.
+    fn checkout(checkout_path: &str, label: &str, panes: &[&str]) -> WorktreeNode {
+        WorktreeNode {
+            branch: Some(label.to_string()),
+            checkout_path: checkout_path.to_string(),
+            is_primary: false,
+            open_workspace_id: None,
+            track: None,
+            panes: panes
+                .iter()
+                .map(|pane_id| PaneNode {
+                    pane_id: (*pane_id).to_string(),
+                    workspace_id: "w1".into(),
+                    tab_id: "t1".into(),
+                    display_name: None,
+                    agent_status: AgentStatus::default(),
+                    focused: false,
+                })
+                .collect(),
+        }
+    }
+
     /// A checkout to remove, named by the panes in it. Built the only way one can be —
-    /// through the checkout — so the pane list is the checkout's own. Nothing here reads a
-    /// pane beyond its id, so the rest is whatever a tree would have put there.
+    /// through the checkout — so the pane list is the checkout's own.
     fn removal(checkout_path: &str, label: &str, panes: &[&str]) -> Removal {
-        Removal::of(
-            "/src/app",
-            &WorktreeNode {
-                branch: Some(label.to_string()),
-                checkout_path: checkout_path.to_string(),
-                is_primary: false,
-                open_workspace_id: None,
-                track: None,
-                panes: panes
-                    .iter()
-                    .map(|pane_id| PaneNode {
-                        pane_id: (*pane_id).to_string(),
-                        workspace_id: "w1".into(),
-                        tab_id: "t1".into(),
-                        display_name: None,
-                        agent_status: AgentStatus::default(),
-                        focused: false,
-                    })
-                    .collect(),
-            },
-        )
+        Removal::of("/src/app", &checkout(checkout_path, label, panes))
     }
 
     #[test]
@@ -359,6 +363,31 @@ mod tests {
             Ok(())
         );
         assert_eq!(recorder.did(), ["start /wt/fix-crash after 0"]);
+    }
+
+    #[test]
+    fn a_sweep_asks_for_the_branch_to_go_and_shift_d_does_not() {
+        // The flag rides on the `Removal`, so what the port hears is what the constructor
+        // decided: `sweeping` on a checkout with a branch, and nothing else.
+        let recorder = Recorder::default();
+        let port = Started(&recorder);
+        let mut removals = Removals::new(&port);
+        let node = checkout("/wt/fix-crash", "fix/crash", &[]);
+
+        removals
+            .remove(&recorder, &Removal::sweeping("/src/app", &node))
+            .unwrap();
+        removals
+            .remove(&recorder, &Removal::of("/src/app", &node))
+            .unwrap();
+
+        assert_eq!(
+            recorder.did(),
+            [
+                "start /wt/fix-crash after 0 deleting the branch",
+                "start /wt/fix-crash after 0",
+            ]
+        );
     }
 
     #[test]

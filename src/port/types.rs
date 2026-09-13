@@ -284,4 +284,8 @@ impl NotificationSound {
 pub enum RemovalOutcome {
     Removed,
     Refused(String),
+    /// The checkout went, then `git branch -d` declined in its own words. They travel, and
+    /// there is no `-D` to retry with, for the reason `docs/adr/0011-what-may-be-swept.md`
+    /// gives under "Never `-D`".
+    BranchKept(String),
 }

@@ -320,6 +320,9 @@ mod tests {
         fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
             unreachable!()
         }
+        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!()
+        }
         fn head_ref(&self, _repo_root: &str) -> Result<String> {
             unreachable!()
         }
@@ -363,6 +366,9 @@ mod tests {
             unreachable!("only github_slug is asked of this port")
         }
         fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
             unreachable!("only github_slug is asked of this port")
         }
         fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
@@ -427,6 +433,9 @@ mod tests {
         fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
             unreachable!("the loop asks this port two things")
         }
+        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("the loop asks this port two things")
+        }
         fn head_ref(&self, _repo_root: &str) -> Result<String> {
             unreachable!("the loop asks this port two things")
         }
@@ -482,6 +491,9 @@ mod tests {
             unreachable!("the loop asks this port two things")
         }
         fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!("the loop asks this port two things")
+        }
+        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
             unreachable!("the loop asks this port two things")
         }
         fn head_ref(&self, _repo_root: &str) -> Result<String> {

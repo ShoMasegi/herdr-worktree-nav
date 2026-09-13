@@ -407,6 +407,16 @@ impl GitPort for GitCli {
         Ok(())
     }
 
+    fn delete_branch(&self, repo_root: &str, branch: &str) -> Result<()> {
+        // `-d` and not `-D`, with nothing here that escalates, for the reason
+        // `docs/adr/0011-what-may-be-swept.md` gives under "Never `-D`". That git refuses a
+        // squash-merged branch is held by
+        // `a_branch_git_does_not_call_merged_is_kept_and_git_says_why` in
+        // `tests/git_adapter.rs`.
+        GitCli::run_in_repo(repo_root, &["branch", "-d", branch])?;
+        Ok(())
+    }
+
     fn is_dirty(&self, checkout_path: &str) -> Result<bool> {
         // `--no-optional-locks` because of where this runs: on every checkout at once, in
         // the background, in the very working trees the session's agents are committing in.

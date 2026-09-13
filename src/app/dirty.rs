@@ -282,6 +282,9 @@ mod tests {
         fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
             unreachable!()
         }
+        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!()
+        }
         fn head_ref(&self, _repo_root: &str) -> Result<String> {
             unreachable!()
         }

@@ -133,9 +133,18 @@ impl RemovalPort for Started<'_> {
         checkout_path: &str,
         _label: &str,
         panes_closed: usize,
+        delete_branch: bool,
     ) -> Result<Box<dyn RunningRemoval>> {
-        self.0
-            .record(format!("start {checkout_path} after {panes_closed}"));
+        // A suffix rather than a word on every line, so a test that never asks for the
+        // branch reads the line it always read.
+        let branch = if delete_branch {
+            " deleting the branch"
+        } else {
+            ""
+        };
+        self.0.record(format!(
+            "start {checkout_path} after {panes_closed}{branch}"
+        ));
         Ok(Box::new(Done))
     }
 }
@@ -160,6 +169,7 @@ impl RemovalPort for Refuses {
         _checkout_path: &str,
         _label: &str,
         _panes_closed: usize,
+        _delete_branch: bool,
     ) -> Result<Box<dyn RunningRemoval>> {
         Err(anyhow!("could not spawn: no such file or directory"))
     }

@@ -337,6 +337,80 @@ fn removing_a_worktree_takes_the_checkout_and_leaves_the_branch() {
 }
 
 #[test]
+fn deleting_a_branch_git_calls_merged_takes_it() {
+    // `feat/login` sits at `main`'s commit, and its worktree comes and goes first because
+    // that is the order a sweep runs the two in.
+    let repo = repository();
+    let root = path_str(repo.path());
+    let elsewhere = tempfile::tempdir().unwrap();
+    let checkout = elsewhere.path().join("merged-worktree");
+    git(
+        repo.path(),
+        &["worktree", "add", checkout.to_str().unwrap(), "feat/login"],
+    );
+    GitCli
+        .remove_worktree(&root, checkout.to_str().unwrap())
+        .unwrap();
+
+    GitCli.delete_branch(&root, "feat/login").unwrap();
+
+    assert!(
+        !GitCli
+            .local_refs(&root)
+            .unwrap()
+            .refs
+            .iter()
+            .any(|r| r.name == "feat/login"),
+        "the branch is gone"
+    );
+}
+
+#[test]
+fn a_branch_git_does_not_call_merged_is_kept_and_git_says_why() {
+    // The case ADR 0011 names: the branch's change is on `main` by a squash merge, no commit
+    // of the branch is, and `-d` declines — which is the sweep's `branch kept`.
+    let repo = repository();
+    let root = path_str(repo.path());
+    let elsewhere = tempfile::tempdir().unwrap();
+    let checkout = elsewhere.path().join("squashed-worktree");
+    git(
+        repo.path(),
+        &["worktree", "add", checkout.to_str().unwrap(), "feat/login"],
+    );
+    std::fs::write(checkout.join("login.rs"), "fn login() {}\n").unwrap();
+    git(&checkout, &["add", "."]);
+    git(&checkout, &["commit", "-q", "-m", "login"]);
+    git(repo.path(), &["merge", "--squash", "feat/login"]);
+    git(repo.path(), &["commit", "-q", "-m", "squash"]);
+    assert!(
+        repo.path().join("login.rs").exists(),
+        "the squash put the change on main"
+    );
+    assert!(!GitCli.is_dirty(&root).unwrap(), "and committed it there");
+    GitCli
+        .remove_worktree(&root, checkout.to_str().unwrap())
+        .unwrap();
+
+    let error = GitCli
+        .delete_branch(&root, "feat/login")
+        .expect_err("git does not call a squash merge merged");
+    let error = format!("{error:#}");
+    assert!(
+        error.contains("not fully merged"),
+        "git's own reason should reach the user: {error}"
+    );
+    assert!(
+        GitCli
+            .local_refs(&root)
+            .unwrap()
+            .refs
+            .iter()
+            .any(|r| r.name == "feat/login"),
+        "and the branch is still there"
+    );
+}
+
+#[test]
 fn removing_a_worktree_with_uncommitted_work_refuses_and_says_why() {
     let repo = repository();
     let root = path_str(repo.path());
