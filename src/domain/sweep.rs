@@ -434,9 +434,9 @@ impl Changes {
 /// Which checkouts carry a mark right now, in repository and path order.
 ///
 /// The sweep's suggestion for every row the user has not spoken about, and the user's own
-/// answer for every row they have. This is the answer `Enter` will act on — it is not bound
-/// yet, and the footer leaves it out — so a refusal reaching it would be a checkout deleted that
-/// the picker had promised never to touch. It cannot: [`Changes::flip`] will not record one,
+/// answer for every row they have. This is the answer `Enter` acts on, so a refusal reaching
+/// it would be a checkout deleted that the picker had promised never to touch. It cannot:
+/// [`Changes::flip`] will not record one,
 /// and this filters again rather than trusting that, because a checkout somebody opens a
 /// pane in becomes `Refused(Running)` the next time the tree is read — which, while a sweep
 /// is on, is when a removal started before it reports back — with the user's answer still

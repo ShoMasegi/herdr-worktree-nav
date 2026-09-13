@@ -120,6 +120,9 @@ herdr 側は CI ではテストできません（サーバーが無いため）�
 - [ ] 別の space の pane で `Enter` を押すとそこへ移動し、popup が閉じた後もそこに留まる
 - [ ] `n` でカーソル位置の checkout に pane が追加される
 - [ ] `Shift-S` で sweep が開く。upstream が `gone` で working tree が clean な checkout に `[x]` が付き、pane が動いている checkout には箱が付かず、そこで `Space` を押すと `panes are running in it` と出る。sweep 中はカーソルがすべての checkout に止まる（sweep 外と違う点）。`Space` でマークが増減し、右の数字がそれに追随する
+- [ ] checkout を 2 つ以上マークして `Enter` を押すと、件数と行を並べた箱が出て、`y` で全部消え、各行は通知が届くまで `deleting` と読め、通知は checkout ごとに 1 つ届く。**CI ではこの経路に届きません** — 通知を出す herdr が無い
+- [ ] squash merge されたブランチの checkout をマークして消すと、checkout は消えてブランチは残り、通知とプロンプト行に git の `not fully merged` つきで `branch kept` と出る
+- [ ] `Shift-S` の後、`Enter` の前にマーク済み checkout で pane を開くと、箱にその行は無く、プロンプト行がマークが外れたと名指しする
 - [ ] `gh` が入っていてログイン済みなら、クローズ済み pull request のあるリポジトリで sweep に入ると `asking gh…` が出て、その後マージ済み pull request を持つブランチにマークが付き、行に `PR #<n> merged` が出る。**この経路は CI では通せない** — スイート内で `gh` を起動するものは何も無い
 - [ ] `gh` を `PATH` から外す、または GitHub リモートの無いリポジトリで試すと、sweep は git の判断だけで開き、該当行は `PR unknown` と出て、プロンプト行がどのリポジトリで何が起きたかを一度だけ言う。`PR unknown` の行で `Space` を押すとマークが付き、`PR unknown` は残る。`gh` を戻して `Esc`、そして `Shift-S` を押すと、`r` 無しで行が埋まる
 - [ ] ref を壊したまま、`LC_ALL` に手元の git が翻訳を持つロケールを設定したシェル（`locale-gen` 済みの `LC_ALL=de_DE.UTF-8` など）からピッカーを開く。プロンプト行は変わらず `refs unreadable:` と git の言葉を英語で出す。プラグインは起動する全ての git に `LC_ALL=C` を固定しており、翻訳された警告はアダプタが読めない警告になる

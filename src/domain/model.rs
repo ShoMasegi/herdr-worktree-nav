@@ -216,6 +216,24 @@ impl Tree {
             })
         })
     }
+
+    /// Locate the repository and checkout a key names, and nothing when the tree no longer
+    /// has it — a checkout marked in a sweep can be gone by the time `Enter`'s re-read is
+    /// back.
+    pub fn find_checkout(
+        &self,
+        (repo_key, path): &(RepoKey, CheckoutPath),
+    ) -> Option<(&RepoNode, &WorktreeNode)> {
+        let repo = self
+            .repos
+            .iter()
+            .find(|repo| RepoKey::of(repo) == *repo_key)?;
+        let worktree = repo
+            .worktrees
+            .iter()
+            .find(|worktree| CheckoutPath::of(worktree) == *path)?;
+        Some((repo, worktree))
+    }
 }
 
 /// Strip trailing slashes so paths from different herdr fields compare equal. herdr returns

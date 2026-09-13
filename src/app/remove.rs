@@ -64,19 +64,15 @@ impl Args {
 }
 
 /// Remove one checkout, tell the user, and tell whoever started this if they are still
-/// listening.
+/// listening. `delete_branch` asks for `git branch -d` on `label` once the checkout has
+/// gone, and only then: a refused removal never reaches the branch.
 ///
 /// `panes_closed` is what the picker stopped to get here. It is passed in rather than
 /// worked out because by the time this runs the panes are already gone: the grouping this
 /// process could rebuild for itself would be a grouping with nothing in it.
 ///
-/// `delete_branch` asks for `git branch -d` on `label` once the checkout has gone, and only
-/// then: a refused removal never reaches the branch.
-///
-/// git declining is an outcome rather than a failure — a checkout with uncommitted work is
-/// exactly what it is meant to protect, and a branch it will not call merged is what
-/// `docs/adr/0011-what-may-be-swept.md` keeps — so this returns `Ok` either way and the
-/// answer travels in the report instead of in an exit code.
+/// git declining is an outcome rather than a failure, so this returns `Ok` either way and
+/// the answer travels in the report instead of in an exit code.
 pub fn run(
     herdr: &dyn HerdrPort,
     git: &dyn GitPort,

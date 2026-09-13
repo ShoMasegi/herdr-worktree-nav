@@ -11,7 +11,7 @@
 //! question, because `app` starts the removal and should not reach up into `ui` for the
 //! value describing it.
 
-use crate::domain::model::{CheckoutPath, PaneNode, WorktreeNode};
+use crate::domain::model::{CheckoutPath, PaneNode, RepoKey, Tree, WorktreeNode};
 use crate::port::{Notification, NotificationSound, RemovalOutcome};
 
 /// A checkout to remove: what to say about it, and what has to stop first.
@@ -20,8 +20,7 @@ use crate::port::{Notification, NotificationSound, RemovalOutcome};
 /// `app::removals::Removals::remove` closes the panes *this* names and then removes the
 /// checkout *this* names, so a pane list belonging to some other checkout removes a working
 /// tree out from under everything still running in it — the accident
-/// `docs/adr/0010-closing-the-panes-first.md` exists to prevent. And `delete_branch` is set
-/// only where `label` is a branch, since it is what `git branch -d` is given.
+/// `docs/adr/0010-closing-the-panes-first.md` exists to prevent.
 ///
 /// Every field is private and [`Removal::of`] and [`Removal::sweeping`] are the only things
 /// that fill them, together, from one `WorktreeNode`. So the pairing cannot be taken apart
@@ -29,10 +28,10 @@ use crate::port::{Notification, NotificationSound, RemovalOutcome};
 ///
 /// What that does *not* reach is a `WorktreeNode` that describes a checkout falsely, since
 /// its own fields are public — but such a node is a lie to the whole tree, and every row,
-/// marker and count drawn from it is wrong long before this type sees it. The one production
-/// caller is `ui::state::PanesState::ask_to_remove`, which builds this from the row under
-/// the cursor; `PanesState::replace_tree` then withdraws the question if the tree changes
-/// while it is up, so a `y` never acts on a list the user was not shown.
+/// marker and count drawn from it is wrong long before this type sees it. The production
+/// callers are `ui::state::PanesState::ask_to_remove` and [`SweepRemoval::of`];
+/// `PanesState::replace_tree` withdraws either question if the tree changes while it is up,
+/// so a `y` never acts on a list the user was not shown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Removal {
     repo_root: String,
@@ -89,6 +88,47 @@ impl Removal {
     /// sets it.
     pub fn delete_branch(&self) -> bool {
         self.delete_branch
+    }
+}
+
+/// What a sweep's `y` removes: one [`Removal::sweeping`] per marked row, built from the tree
+/// the box was drawn over — ADR 0011's "nothing is deleted that was not on the screen with a
+/// mark against it" (`docs/adr/0011-what-may-be-swept.md`). A key the tree no longer has is
+/// skipped: there is nothing at it to remove.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SweepRemoval(Vec<Removal>);
+
+impl SweepRemoval {
+    pub fn of(tree: &Tree, chosen: &[(RepoKey, CheckoutPath)]) -> Self {
+        let removals = chosen
+            .iter()
+            .filter_map(|key| {
+                let (repo, worktree) = tree.find_checkout(key)?;
+                Some(Removal::sweeping(&repo.repo_root, worktree))
+            })
+            .collect();
+        Self(removals)
+    }
+
+    /// In the order the box lists them, which is repository and path order.
+    pub fn removals(&self) -> &[Removal] {
+        &self.0
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// How many of these delete a branch after the checkout: the rows that have one.
+    pub fn branches(&self) -> usize {
+        self.0
+            .iter()
+            .filter(|removal| removal.delete_branch())
+            .count()
     }
 }
 
@@ -245,6 +285,66 @@ mod tests {
             track: None,
             panes: Vec::new(),
         }
+    }
+
+    /// One repository: `fix/crash` on a branch, and a checkout with nothing out beside it.
+    fn tree() -> Tree {
+        Tree {
+            repos: vec![crate::domain::model::RepoNode {
+                repo_key: "/src/app/.git".into(),
+                repo_root: "/src/app".into(),
+                display_name: "me/app".into(),
+                refs: crate::domain::model::Refs::Read,
+                worktrees: vec![
+                    checkout(Some("fix/crash")),
+                    WorktreeNode {
+                        checkout_path: "/wt/scratch".to_string(),
+                        ..checkout(None)
+                    },
+                ],
+            }],
+            ungrouped: Vec::new(),
+        }
+    }
+
+    fn key(tree: &Tree, path: &str) -> (RepoKey, CheckoutPath) {
+        (RepoKey::of(&tree.repos[0]), CheckoutPath::for_test(path))
+    }
+
+    #[test]
+    fn a_sweep_skips_a_key_the_tree_no_longer_has() {
+        // Between the box and the `y` nothing replaces the tree without withdrawing the
+        // question; this is the last line of the same promise, for a key with nothing at it.
+        let tree = tree();
+        let sweep = SweepRemoval::of(
+            &tree,
+            &[key(&tree, "/wt/fix-crash"), key(&tree, "/wt/gone-already")],
+        );
+        let paths: Vec<&str> = sweep
+            .removals()
+            .iter()
+            .map(|removal| removal.checkout_path().as_str())
+            .collect();
+        assert_eq!(paths, ["/wt/fix-crash"]);
+        assert_eq!(sweep.len(), 1);
+        assert!(!sweep.is_empty());
+    }
+
+    #[test]
+    fn a_sweep_counts_a_branch_only_where_the_row_has_one() {
+        let tree = tree();
+        let sweep = SweepRemoval::of(
+            &tree,
+            &[key(&tree, "/wt/fix-crash"), key(&tree, "/wt/scratch")],
+        );
+        assert_eq!(sweep.len(), 2);
+        assert_eq!(
+            sweep.branches(),
+            1,
+            "the checkout with nothing out has none to delete"
+        );
+        assert!(sweep.removals()[0].delete_branch());
+        assert!(!sweep.removals()[1].delete_branch());
     }
 
     #[test]
@@ -476,5 +576,28 @@ mod tests {
             ),
             Some(format!("could not remove fix/crash: {REFUSAL}"))
         );
+    }
+
+    #[test]
+    fn a_sweep_removes_under_the_repository_its_key_names_when_two_list_one_path() {
+        // Issue #46's pair: a second repository listing the same path, and a key naming it.
+        let mut tree = tree();
+        tree.repos.push(crate::domain::model::RepoNode {
+            repo_key: "/src/old/.git".into(),
+            repo_root: "/src/old".into(),
+            display_name: "me/old".into(),
+            refs: crate::domain::model::Refs::Read,
+            worktrees: vec![checkout(Some("chore/deps"))],
+        });
+        let sweep = SweepRemoval::of(
+            &tree,
+            &[(
+                RepoKey::of(&tree.repos[1]),
+                CheckoutPath::for_test("/wt/fix-crash"),
+            )],
+        );
+        assert_eq!(sweep.len(), 1);
+        assert_eq!(sweep.removals()[0].repo_root(), "/src/old");
+        assert_eq!(sweep.removals()[0].label(), "chore/deps");
     }
 }

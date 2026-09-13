@@ -1424,4 +1424,38 @@ mod tests {
         assert_eq!(detail(&tree, RowRef::Pane(0, 0, 99)), "");
         assert_eq!(detail(&tree, RowRef::Ungrouped(99)), "");
     }
+
+    #[test]
+    fn a_mark_is_looked_up_by_the_rows_own_repository_and_not_by_its_path_alone() {
+        // Two repositories list one path — `me/site` once had a worktree where `me/app` has
+        // a live checkout — and each row shows its own repository's answer.
+        use crate::domain::sweep::{Half, Reason};
+        let mut tree = tree();
+        tree.repos[1].worktrees.push(WorktreeNode {
+            branch: Some("chore/deps".into()),
+            ..worktree("fix/crash", vec![])
+        });
+        let at = |repo: usize| {
+            (
+                RepoKey::of(&tree.repos[repo]),
+                CheckoutPath::for_test("/wt/fix-crash"),
+            )
+        };
+        let options = ViewOptions {
+            sweep: Some(BTreeMap::from([
+                (at(0), Mark::Unjudged(Half::Refs)),
+                (at(1), Mark::Going(Reason::Gone)),
+            ])),
+            ..Default::default()
+        };
+        let rows = flatten(&tree, &options);
+        assert_eq!(
+            find(&rows, "fix/crash").sweep,
+            Some(Mark::Unjudged(Half::Refs))
+        );
+        assert_eq!(
+            find(&rows, "chore/deps").sweep,
+            Some(Mark::Going(Reason::Gone))
+        );
+    }
 }

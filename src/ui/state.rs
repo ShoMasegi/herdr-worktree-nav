@@ -5,10 +5,10 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::domain::model::{CheckoutPath, RepoKey, Tree, WorkingTree};
-use crate::domain::removal::Removal;
+use crate::domain::removal::{Removal, SweepRemoval};
 use crate::domain::rows::{self, DisplayLine, Row, RowRef, StateFilter, ViewOptions};
 use crate::domain::sweep::{self, Changes, Mark, RepoRoot};
 use crate::port::SettledPullRequests;
@@ -47,7 +47,16 @@ pub enum Action {
     /// `docs/adr/0010-closing-the-panes-first.md`.
     RemoveWorktree(Removal),
     Reload,
+    /// Read the tree and the working trees again, then ask the sweep's question over what
+    /// is still marked. `gh` is not asked again: it only widens the sweep —
+    /// `docs/adr/0011-what-may-be-swept.md`.
+    SweepReload,
+    /// Delete every checkout a sweep's box listed, and the branch of each that has one.
+    RemoveWorktrees(SweepRemoval),
 }
+
+/// What the prompt line says when the tree changed under a question.
+pub const WITHDRAWN: &str = "the list changed while that was up — ask again";
 
 pub struct PanesState {
     tree: Tree,
@@ -61,6 +70,8 @@ pub struct PanesState {
     filtering: bool,
     /// A removal waiting on a yes. Nothing on disk has been touched yet.
     pending_removal: Option<Removal>,
+    /// The sweep's question waiting on a yes. Nothing on disk has been touched yet.
+    pending_sweep: Option<SweepRemoval>,
     message: Option<String>,
     /// Frame of the spinner on the rows being removed. Advanced by the loop that owns the
     /// clock, the same way the branches view does it — `domain` is not allowed to read one.
@@ -100,6 +111,10 @@ struct Sweeping {
     /// Whether the loop has been told this sweep was entered. One shot, read through
     /// [`PanesState::sweep_entered`].
     announced: bool,
+    /// What was marked when `Enter` was pressed, held while the loop reads the tree and
+    /// the working trees again. What is marked afterwards is the question; a row that lost
+    /// its mark is named on the prompt line.
+    confirming: Option<BTreeSet<(RepoKey, CheckoutPath)>>,
 }
 
 /// The answers a row puts a marker on. Clean and not-yet-answered are both absent here, and
@@ -129,6 +144,7 @@ impl PanesState {
             cursor: 0,
             filtering: false,
             pending_removal: None,
+            pending_sweep: None,
             message: None,
             tick: 0,
             waiting: false,
@@ -139,15 +155,19 @@ impl PanesState {
     }
 
     /// Replace the tree after a reload, keeping the cursor on the row it was on when that
-    /// row is still there.
-    pub fn replace_tree(&mut self, tree: Tree) {
+    /// row is still there. Answers whether a question on screen was taken back.
+    pub fn replace_tree(&mut self, tree: Tree) -> bool {
         // A question on screen is about the panes the tree had when it was asked. Another
         // removal finishing is the ordinary way for that to stop being true — tidying up
         // comes in batches — and a `y` against a list that has moved on would close panes
         // nobody was shown, or leave one behind that opened since. So the question goes
-        // back, and the user asks it again of the list they can now see.
-        if self.pending_removal.take().is_some() {
-            self.message = Some("the list changed while that was up — ask again".into());
+        // back, and the user asks it again of the list they can now see. The sweep's
+        // `confirming` is not taken: the re-read it waits on is what replaces the tree.
+        let removal = self.pending_removal.take().is_some();
+        let sweep = self.pending_sweep.take().is_some();
+        let withdrawn = removal || sweep;
+        if withdrawn {
+            self.message = Some(WITHDRAWN.into());
         }
         // The row, whichever kind it is. Anchored to a pane alone, a cursor on a checkout
         // was put back by line index against a list that had just got shorter — onto the
@@ -157,6 +177,7 @@ impl PanesState {
         self.tree = tree;
         self.relist();
         self.restore_cursor(anchor, at);
+        withdrawn
     }
 
     /// Say what git has said about each working tree so far. Arrives after the first frame,
@@ -299,14 +320,24 @@ impl PanesState {
     /// Take back a question that could not be asked. The picker calls this when the pane is
     /// too small to draw the box: leaving `y` armed over a question nobody saw would be
     /// asking it without asking it, and the key hint at the bottom says which keys answer,
-    /// never what is being answered.
+    /// never what is being answered. And when the re-read a sweep's question waits on
+    /// fails: asked anyway, it would be asked over the facts the re-read was for replacing.
     pub fn cancel_removal(&mut self) {
         self.pending_removal = None;
+        self.pending_sweep = None;
+        if let Some(sweeping) = self.sweep.as_mut() {
+            sweeping.confirming = None;
+        }
     }
 
     /// The removal being asked about, which the picker turns into a dialog.
     pub fn pending_removal(&self) -> Option<&Removal> {
         self.pending_removal.as_ref()
+    }
+
+    /// The sweep's removals being asked about, which the picker turns into a dialog.
+    pub fn pending_sweep(&self) -> Option<&SweepRemoval> {
+        self.pending_sweep.as_ref()
     }
 
     /// Say something in the search line until the next key. git says its piece over several
@@ -493,8 +524,9 @@ impl PanesState {
 
     /// Every checkout the sweep would remove, in repository and path order.
     ///
-    /// The answer `Enter` will act on; it is not bound yet. Empty outside a sweep, which is
-    /// not the same as "nothing is marked" but leads to the same place: nothing is removed.
+    /// The answer `Enter` acts on, read again after the re-read it asks for. Empty outside a
+    /// sweep, which is not the same as "nothing is marked" but leads to the same place:
+    /// nothing is removed.
     pub fn chosen(&self) -> Vec<(RepoKey, CheckoutPath)> {
         let Some(marks) = self.options.sweep.as_ref() else {
             return Vec::new();
@@ -514,6 +546,8 @@ impl PanesState {
     /// view would be marks they last saw some time ago.
     fn set_sweeping(&mut self, sweeping: bool) -> Action {
         self.sweep = sweeping.then(Sweeping::default);
+        // No question outlives the mode it was asked in.
+        self.pending_sweep = None;
         if sweeping {
             // Everything the sweep judges has to be on the screen it judged it on — ADR
             // 0011 says so in those words, and it is the promise `Enter` will act against.
@@ -533,6 +567,50 @@ impl PanesState {
         self.relist();
         self.restore_cursor(anchor, at);
         Action::Consumed
+    }
+
+    /// Put the sweep's question up, once the re-read `Enter` asked for has answered.
+    ///
+    /// Called every frame by the loop; nothing happens until `Enter` was pressed and the
+    /// walk is no longer waiting. The box lists what is marked *now*, and a row the re-read
+    /// unmarked is named on the prompt line: it was the user's decision, and a fact
+    /// overruled it — issue #25.
+    pub fn confirm_sweep_if_settled(&mut self) {
+        if self.waiting {
+            return;
+        }
+        let Some(before) = self
+            .sweep
+            .as_mut()
+            .and_then(|sweeping| sweeping.confirming.take())
+        else {
+            return;
+        };
+        let after = self.chosen();
+        let still: BTreeSet<&(RepoKey, CheckoutPath)> = after.iter().collect();
+        let dropped: Vec<String> = before
+            .iter()
+            .filter(|key| !still.contains(key))
+            .map(|key| self.label_of(key))
+            .collect();
+        if !dropped.is_empty() {
+            let named = format!("no longer marked: {}", dropped.join(", "));
+            self.message = Some(match after.is_empty() {
+                true => format!("{named} — nothing left to remove"),
+                false => named,
+            });
+        }
+        if !after.is_empty() {
+            self.pending_sweep = Some(SweepRemoval::of(&self.tree, &after));
+        }
+    }
+
+    /// What the row for this key is called, or its path when the tree no longer has it.
+    fn label_of(&self, key: &(RepoKey, CheckoutPath)) -> String {
+        match self.tree.find_checkout(key) {
+            Some((_, worktree)) => worktree.label().to_string(),
+            None => key.1.as_str().to_string(),
+        }
     }
 
     /// Add or remove the mark on the row under the cursor.
@@ -792,6 +870,19 @@ impl PanesState {
             };
         }
 
+        // The sweep's question, under the same rule.
+        if let Some(sweep) = self.pending_sweep.take() {
+            return match key.code {
+                KeyCode::Char('y') => {
+                    // The sweep ends with its question: what `y` removes is what the box
+                    // listed, and marks left behind would be marks the box was not about.
+                    self.set_sweeping(false);
+                    Action::RemoveWorktrees(sweep)
+                }
+                _ => Action::Consumed,
+            };
+        }
+
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             return match key.code {
                 KeyCode::Char('c') => Action::Quit,
@@ -829,6 +920,20 @@ impl PanesState {
                     return self.set_sweeping(false)
                 }
                 KeyCode::Char(' ') => return self.flip_mark(),
+                KeyCode::Enter => {
+                    let chosen = self.chosen();
+                    if chosen.is_empty() {
+                        self.message = Some("nothing is marked".into());
+                        return Action::Consumed;
+                    }
+                    // Not asked yet: the marks rest on facts from when the picker opened
+                    // or was last reloaded, and the loop reads them again first —
+                    // `confirm_sweep_if_settled` asks once the walk has answered. Issue #25.
+                    if let Some(sweeping) = self.sweep.as_mut() {
+                        sweeping.confirming = Some(chosen.into_iter().collect());
+                    }
+                    return Action::SweepReload;
+                }
                 KeyCode::Down | KeyCode::Char('j') => {
                     self.move_cursor(1);
                     return Action::Consumed;
@@ -1414,8 +1519,8 @@ mod tests {
         // A removal started before the sweep reports back, the loop reads the tree again,
         // and the list is one row shorter above the cursor. Put back by line index, the
         // cursor was on the next checkout down — and the `Space` the user had lined up
-        // marked, or unmarked, a checkout they never pointed at. In the next PR that is the
-        // list `Enter` deletes.
+        // marked, or unmarked, a checkout they never pointed at. That is the list `Enter`
+        // deletes.
         let mut state = sweeping();
         let mut tree = state.tree().clone();
         tree.repos[0].worktrees[3].panes.clear();
@@ -1504,7 +1609,6 @@ mod tests {
         for code in [
             KeyCode::Char('D'),
             KeyCode::Tab,
-            KeyCode::Enter,
             KeyCode::Char('r'),
             KeyCode::Char('n'),
             KeyCode::Char('/'),
@@ -1868,6 +1972,7 @@ mod tests {
         assert_eq!(asked.checkout_path().as_str(), "/wt/app/fix-crash");
         assert_eq!(asked.label(), "fix/crash");
         assert!(asked.panes().is_empty(), "there were none to close");
+        assert!(!asked.delete_branch(), "Shift-D keeps the branch");
         assert!(
             state.pending_removal().is_none(),
             "the question is answered"
@@ -2361,5 +2466,333 @@ mod tests {
         let release =
             KeyEvent::new_with_kind(KeyCode::Enter, KeyModifiers::NONE, KeyEventKind::Release);
         assert_eq!(state.handle_key(release), Action::Ignored);
+    }
+
+    /// `Enter`, and the frame on which the walk it asked for has answered.
+    fn ask(state: &mut PanesState) -> Action {
+        let action = state.handle_key(key(KeyCode::Enter));
+        state.set_waiting(false);
+        state.confirm_sweep_if_settled();
+        action
+    }
+
+    /// What the sweep's box lists, by label.
+    fn box_labels(state: &PanesState) -> Vec<&str> {
+        state
+            .pending_sweep()
+            .map(|sweep| sweep.removals().iter().map(|r| r.label()).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn enter_with_nothing_marked_says_so_and_asks_for_no_re_read() {
+        let mut state = sweeping();
+        select(&mut state, "fix/crash");
+        state.handle_key(key(KeyCode::Char(' ')));
+        assert!(state.chosen().is_empty());
+
+        assert_eq!(state.handle_key(key(KeyCode::Enter)), Action::Consumed);
+        assert_eq!(state.message(), Some("nothing is marked"));
+        state.set_waiting(false);
+        state.confirm_sweep_if_settled();
+        assert!(state.pending_sweep().is_none());
+    }
+
+    #[test]
+    fn enter_asks_for_a_re_read_before_it_asks_anything() {
+        let mut state = sweeping();
+        assert_eq!(state.handle_key(key(KeyCode::Enter)), Action::SweepReload);
+        assert!(
+            state.pending_sweep().is_none(),
+            "the box waits for the re-read"
+        );
+        assert!(state.is_sweeping());
+    }
+
+    #[test]
+    fn the_question_waits_for_the_walk_to_finish() {
+        let mut state = sweeping();
+        state.handle_key(key(KeyCode::Enter));
+        state.set_waiting(true);
+        state.confirm_sweep_if_settled();
+        assert!(state.pending_sweep().is_none(), "the walk is still out");
+
+        state.set_waiting(false);
+        state.confirm_sweep_if_settled();
+        assert_eq!(box_labels(&state), ["fix/crash"]);
+    }
+
+    #[test]
+    fn a_row_the_re_read_added_is_in_the_box() {
+        // fix/crash's working tree had not answered when `Enter` was pressed, and the
+        // re-read's walk says it is clean.
+        let mut state = state();
+        state.tree.repos[0].worktrees[1].panes.clear();
+        state.tree.repos[0].worktrees[1].open_workspace_id = None;
+        state.tree.repos[0].worktrees[2].track = Some(Track::Gone);
+        state.replace_tree(state.tree.clone());
+        state.set_working_trees(answers(&[("/wt/app/feat-login", WorkingTree::Clean)]));
+        state.handle_key(key(KeyCode::Char('S')));
+        select(&mut state, "feat/login");
+        state.handle_key(key(KeyCode::Char(' ')));
+        assert_eq!(state.chosen(), vec![at(&state, "/wt/app/feat-login")]);
+
+        state.handle_key(key(KeyCode::Enter));
+        state.set_working_trees(answers(&[
+            ("/wt/app/feat-login", WorkingTree::Clean),
+            ("/wt/app/fix-crash", WorkingTree::Clean),
+        ]));
+        state.set_waiting(false);
+        state.confirm_sweep_if_settled();
+
+        assert_eq!(box_labels(&state), ["feat/login", "fix/crash"]);
+        assert_eq!(
+            state.message(),
+            None,
+            "nothing was dropped, so nothing is said"
+        );
+    }
+
+    #[test]
+    fn y_removes_exactly_what_the_box_listed_and_leaves_the_sweep() {
+        let mut state = sweeping();
+        ask(&mut state);
+        assert_eq!(box_labels(&state), ["fix/crash"]);
+
+        let Action::RemoveWorktrees(sweep) = state.handle_key(key(KeyCode::Char('y'))) else {
+            panic!("`y` is the answer that goes ahead");
+        };
+        let paths: Vec<&str> = sweep
+            .removals()
+            .iter()
+            .map(|r| r.checkout_path().as_str())
+            .collect();
+        assert_eq!(paths, ["/wt/app/fix-crash"]);
+        assert!(
+            !state.is_sweeping(),
+            "the sweep is over once it is answered"
+        );
+        assert!(state.pending_sweep().is_none());
+        assert!(state.chosen().is_empty(), "and the marks went with it");
+    }
+
+    #[test]
+    fn any_other_key_takes_the_sweeps_question_back() {
+        for code in [
+            KeyCode::Char('n'),
+            KeyCode::Esc,
+            KeyCode::Enter,
+            KeyCode::Char('D'),
+            KeyCode::Down,
+            KeyCode::Char('Y'),
+            KeyCode::Char(' '),
+        ] {
+            let mut state = sweeping();
+            ask(&mut state);
+            assert_eq!(state.handle_key(key(code)), Action::Consumed, "{code:?}");
+            assert!(state.pending_sweep().is_none(), "{code:?}");
+            assert!(
+                state.is_sweeping(),
+                "{code:?}: the sweep stays; its question went"
+            );
+            assert_eq!(
+                state.chosen(),
+                vec![at(&state, "/wt/app/fix-crash")],
+                "{code:?}: and the marks stay with it"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tree_that_changes_under_the_sweeps_question_takes_it_back() {
+        let mut state = sweeping();
+        ask(&mut state);
+        assert!(state.pending_sweep().is_some());
+
+        state.replace_tree(state.tree.clone());
+        assert!(state.pending_sweep().is_none());
+        assert_eq!(
+            state.message(),
+            Some("the list changed while that was up — ask again")
+        );
+        assert_eq!(state.handle_key(key(KeyCode::Char('y'))), Action::Ignored);
+
+        // The re-read `Enter` asks for replaces the tree too, and that is not a change under
+        // the question: it comes before it.
+        let mut state = sweeping();
+        state.handle_key(key(KeyCode::Enter));
+        state.replace_tree(state.tree.clone());
+        state.set_waiting(false);
+        state.confirm_sweep_if_settled();
+        assert_eq!(box_labels(&state), ["fix/crash"]);
+    }
+
+    #[test]
+    fn only_a_swept_checkout_with_a_branch_deletes_one() {
+        // A checkout with nothing out: the sweep offers it nothing, the user marks it by
+        // hand, and its label is a directory name that must never reach `git branch -d`.
+        let mut state = sweeping();
+        state.tree.repos[0].worktrees.push(WorktreeNode {
+            branch: None,
+            checkout_path: "/wt/app/scratch".into(),
+            is_primary: false,
+            open_workspace_id: None,
+            track: None,
+            panes: vec![],
+        });
+        state.replace_tree(state.tree.clone());
+        state.set_working_trees(answers(&[
+            ("/src/app", WorkingTree::Clean),
+            ("/wt/app/feat-login", WorkingTree::Clean),
+            ("/wt/app/fix-crash", WorkingTree::Clean),
+            ("/wt/app/feat-wip", WorkingTree::Clean),
+            ("/wt/app/scratch", WorkingTree::Clean),
+        ]));
+        select(&mut state, "scratch");
+        state.handle_key(key(KeyCode::Char(' ')));
+        ask(&mut state);
+
+        let sweep = state.pending_sweep().expect("a question should be up");
+        let deleting: Vec<(&str, bool)> = sweep
+            .removals()
+            .iter()
+            .map(|r| (r.label(), r.delete_branch()))
+            .collect();
+        assert_eq!(deleting, [("fix/crash", true), ("scratch", false)]);
+        assert_eq!(sweep.branches(), 1);
+    }
+
+    #[test]
+    fn nothing_left_after_the_re_read_asks_nothing() {
+        let mut state = sweeping();
+        state.handle_key(key(KeyCode::Enter));
+        state.set_working_trees(answers(&[
+            ("/src/app", WorkingTree::Clean),
+            ("/wt/app/feat-login", WorkingTree::Clean),
+            ("/wt/app/fix-crash", WorkingTree::Dirty),
+            ("/wt/app/feat-wip", WorkingTree::Clean),
+        ]));
+        state.set_waiting(false);
+        state.confirm_sweep_if_settled();
+
+        assert!(state.pending_sweep().is_none());
+        assert_eq!(
+            state.message(),
+            Some("no longer marked: fix/crash — nothing left to remove")
+        );
+        assert!(state.is_sweeping(), "the sweep is still there to mark in");
+    }
+
+    #[test]
+    fn a_question_a_key_took_back_does_not_come_back_on_the_next_frame() {
+        // The loop asks `confirm_sweep_if_settled` on every frame, and a no is a no.
+        for code in [KeyCode::Esc, KeyCode::Char('n'), KeyCode::Down] {
+            let mut state = sweeping();
+            ask(&mut state);
+            assert_eq!(state.handle_key(key(code)), Action::Consumed, "{code:?}");
+            state.set_waiting(false);
+            state.confirm_sweep_if_settled();
+            assert!(
+                state.pending_sweep().is_none(),
+                "{code:?}: the question came back"
+            );
+        }
+    }
+
+    #[test]
+    fn a_row_dropped_by_the_re_read_is_named_by_the_repository_its_key_names() {
+        // Two repositories list one path, and the re-read finds a pane in the second's
+        // checkout.
+        let mut state = sweeping();
+        let mut tree = state.tree.clone();
+        tree.repos.push(RepoNode {
+            repo_key: "/src/old/.git".into(),
+            repo_root: "/src/old".into(),
+            display_name: "me/old".into(),
+            refs: Refs::Read,
+            worktrees: vec![WorktreeNode {
+                branch: Some("chore/deps".into()),
+                checkout_path: "/wt/app/fix-crash".into(),
+                is_primary: false,
+                open_workspace_id: None,
+                track: Some(Track::Gone),
+                panes: vec![],
+            }],
+        });
+        state.replace_tree(tree);
+        assert_eq!(state.chosen().len(), 2, "both rows at the path are offered");
+
+        state.handle_key(key(KeyCode::Enter));
+        let mut re_read = state.tree.clone();
+        re_read.repos[1].worktrees[0]
+            .panes
+            .push(pane("w5:p1", "codex", AgentStatus::Working));
+        state.replace_tree(re_read);
+        state.set_waiting(false);
+        state.confirm_sweep_if_settled();
+
+        assert_eq!(state.message(), Some("no longer marked: chore/deps"));
+        assert_eq!(box_labels(&state), ["fix/crash"]);
+    }
+
+    #[test]
+    fn a_checkout_that_left_the_tree_during_the_re_read_is_named_by_its_path() {
+        // Another session removed it between `Shift-S` and `Enter`, so there is no row left
+        // to take a label from.
+        let mut state = sweeping();
+        state.handle_key(key(KeyCode::Enter));
+        let mut without = state.tree.clone();
+        without.repos[0].worktrees.remove(2);
+        state.replace_tree(without);
+        state.set_waiting(false);
+        state.confirm_sweep_if_settled();
+
+        assert!(state.pending_sweep().is_none());
+        assert_eq!(
+            state.message(),
+            Some("no longer marked: /wt/app/fix-crash — nothing left to remove")
+        );
+    }
+
+    #[test]
+    fn a_message_already_on_the_prompt_line_survives_a_re_read_that_dropped_nothing() {
+        // A removal started earlier can report a refusal while the re-read is out.
+        let mut state = sweeping();
+        state.handle_key(key(KeyCode::Enter));
+        state.set_message("could not remove feat/wip: fatal: refused".into());
+        state.set_waiting(false);
+        state.confirm_sweep_if_settled();
+
+        assert_eq!(box_labels(&state), ["fix/crash"]);
+        assert_eq!(
+            state.message(),
+            Some("could not remove feat/wip: fatal: refused")
+        );
+    }
+
+    #[test]
+    fn every_row_the_re_read_dropped_is_named_in_path_order() {
+        // Two marks overruled by one re-read — a pane opened in one checkout, work written
+        // into the other — and both named, so neither loss is silent.
+        let mut state = sweeping();
+        select(&mut state, "feat/login");
+        state.handle_key(key(KeyCode::Char(' ')));
+        assert_eq!(state.chosen().len(), 2);
+
+        state.handle_key(key(KeyCode::Enter));
+        let mut busy = state.tree.clone();
+        busy.repos[0].worktrees[1]
+            .panes
+            .push(pane("w2:p1", "claude", AgentStatus::Working));
+        state.replace_tree(busy);
+        state.set_working_trees(answers(&[("/wt/app/fix-crash", WorkingTree::Dirty)]));
+        state.set_waiting(false);
+        state.confirm_sweep_if_settled();
+
+        assert!(state.pending_sweep().is_none());
+        assert_eq!(
+            state.message(),
+            Some("no longer marked: feat/login, fix/crash — nothing left to remove")
+        );
     }
 }
