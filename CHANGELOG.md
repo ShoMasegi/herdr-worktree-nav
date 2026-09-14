@@ -17,7 +17,11 @@ All notable changes to this project are documented here. The format follows
   `PR unknown` rather than nothing — before and after you mark them — and one whose refs git
   would not read is named there ahead of it, the rows it would have judged reading
   `refs unreadable`. `Space` marks and unmarks, and a mark keeps its reason at every width
-  the picker supports. `Enter` does not remove anything yet. See
+  the picker supports. `Enter` removes what is marked: it reads the list and the working
+  trees again first, asks once with the count, and then removes each checkout the way
+  `Shift-D` does and, where it has one, deletes its branch with `git branch -d` — never
+  `-D`, so a branch git does not call merged stays and the notification says `branch kept`
+  with git's words. See
   [ADR 0011](docs/adr/0011-what-may-be-swept.md).
 
 - **`Shift-D` deletes a checkout that has panes in it**, which is what a finished worktree

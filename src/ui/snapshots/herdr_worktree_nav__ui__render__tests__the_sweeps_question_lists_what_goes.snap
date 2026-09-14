@@ -1,0 +1,20 @@
+---
+source: src/ui/render.rs
+expression: "screen(&state, 92, 16)"
+---
+" / sweep                                                                           3 marked "
+"────────────────────────────────────────────────────────────────────────────────────────────"
+" ◆ ● me/app (1)                                                                             "
+"   ├── ● main           ┌──────────────────────────────────────────┐                        "
+" ◆ │  └── ● claude      │ Delete 3 checkouts and their branches?   │                        "
+"[x]├── · feat/login  gon│                                          │                        "
+"[x]├── · fix/crash  gone│   chore/deps  /wt/chore-deps             │                        "
+"[x]└── · chore/deps  gon│   feat/login  /wt/feat-login             │                        "
+"                        │   fix/crash   /wt/fix-crash              │                        "
+"                        │                                          │                        "
+"                        │   y delete     any other key cancels     │                        "
+"                        └──────────────────────────────────────────┘                        "
+"                                                                                            "
+"                                                                                            "
+" me/app · main · w1:p1 · working · /wt/main ────────────────────────────────────────────────"
+" y delete  any other key cancels                                                            "

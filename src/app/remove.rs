@@ -23,9 +23,13 @@ pub struct Args {
     pub checkout_path: String,
     pub label: String,
     /// How many panes the picker closed to get here. Absent means none, so running this by
-    /// hand stays three arguments; unreadable means none too, which understates rather than
-    /// invents and only ever costs the report one clause.
+    /// hand stays three arguments.
     pub panes_closed: usize,
+    /// Whether `git branch -d` follows the removal: the literal `delete-branch` anywhere
+    /// after the branch, or nothing. A word there that is neither a count nor the flag is an
+    /// error rather than a guess — a wire this side does not understand is not something to
+    /// decide a branch's fate on either way.
+    pub delete_branch: bool,
 }
 
 impl Args {
@@ -35,25 +39,40 @@ impl Args {
         else {
             anyhow::bail!("`remove` needs a repository root, a checkout path, and a branch name")
         };
+        // In either order, so `delete-branch` typed with no count before it is read as the
+        // flag rather than as a count that would not parse.
+        let mut panes_closed = 0;
+        let mut delete_branch = false;
+        for token in args {
+            match token.parse::<usize>() {
+                Ok(count) => panes_closed = count,
+                Err(_) if token == "delete-branch" => delete_branch = true,
+                Err(_) => anyhow::bail!(
+                    "`remove` does not understand `{token}`: after the branch come a pane \
+                     count, `delete-branch`, or nothing"
+                ),
+            }
+        }
         Ok(Self {
             repo_root,
             checkout_path,
             label,
-            panes_closed: args.next().and_then(|n| n.parse().ok()).unwrap_or(0),
+            panes_closed,
+            delete_branch,
         })
     }
 }
 
 /// Remove one checkout, tell the user, and tell whoever started this if they are still
-/// listening.
+/// listening. `delete_branch` asks for `git branch -d` on `label` once the checkout has
+/// gone, and only then: a refused removal never reaches the branch.
 ///
 /// `panes_closed` is what the picker stopped to get here. It is passed in rather than
 /// worked out because by the time this runs the panes are already gone: the grouping this
 /// process could rebuild for itself would be a grouping with nothing in it.
 ///
-/// git declining is an outcome rather than a failure — a checkout with uncommitted work is
-/// exactly what it is meant to protect — so this returns `Ok` either way and the answer
-/// travels in the report instead of in an exit code.
+/// git declining is an outcome rather than a failure, so this returns `Ok` either way and
+/// the answer travels in the report instead of in an exit code.
 pub fn run(
     herdr: &dyn HerdrPort,
     git: &dyn GitPort,
@@ -61,11 +80,9 @@ pub fn run(
     checkout_path: &str,
     label: &str,
     panes_closed: usize,
+    delete_branch: bool,
 ) -> Result<()> {
-    let outcome = match git.remove_worktree(repo_root, checkout_path) {
-        Ok(()) => RemovalOutcome::Removed,
-        Err(error) => RemovalOutcome::Refused(format!("{error:#}")),
-    };
+    let outcome = outcome(git, repo_root, checkout_path, label, delete_branch);
 
     // The toast first, and deliberately. It is the report that always happens, and the
     // write below is the one thing here that can end this process early: the picker may
@@ -81,6 +98,27 @@ pub fn run(
 
     let _ = writeln!(std::io::stdout(), "{}", removal::report_line(&outcome));
     Ok(())
+}
+
+/// What became of the checkout and, when asked, its branch. Apart from `run` so a test can
+/// read it: the line `run` writes goes down stdout, where a test cannot.
+fn outcome(
+    git: &dyn GitPort,
+    repo_root: &str,
+    checkout_path: &str,
+    label: &str,
+    delete_branch: bool,
+) -> RemovalOutcome {
+    if let Err(error) = git.remove_worktree(repo_root, checkout_path) {
+        return RemovalOutcome::Refused(format!("{error:#}"));
+    }
+    if !delete_branch {
+        return RemovalOutcome::Removed;
+    }
+    match git.delete_branch(repo_root, label) {
+        Ok(()) => RemovalOutcome::Removed,
+        Err(error) => RemovalOutcome::BranchKept(format!("{error:#}")),
+    }
 }
 
 #[cfg(test)]
@@ -140,12 +178,48 @@ mod tests {
         }
     }
 
-    /// Refuses the removal the way git refuses a checkout with work in it.
-    struct Refuses;
+    /// A removal refused: the words `removing_a_worktree_with_uncommitted_work_refuses_and_says_why`
+    /// in `tests/git_adapter.rs` asserts on.
+    const DIRTY: &str = "fatal: '/wt/feat-login' contains modified or untracked files";
+    /// A `-d` declined: the words `a_branch_git_does_not_call_merged_is_kept_and_git_says_why`
+    /// in `tests/git_adapter.rs` asserts on.
+    const NOT_MERGED: &str =
+        "error: the branch 'feat/login' is not fully merged (`git branch -d feat/login`)";
 
-    impl GitPort for Refuses {
-        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
-            anyhow::bail!("fatal: '/wt/feat-login' contains modified or untracked files")
+    /// A git that answers the two calls `run` can make as told, and keeps which ones it got.
+    struct Git {
+        remove: Result<(), &'static str>,
+        /// `None` is a `-d` the test says must never be asked for.
+        delete: Option<Result<(), &'static str>>,
+        asked: Mutex<Vec<String>>,
+    }
+
+    impl Git {
+        fn new(remove: Result<(), &'static str>, delete: Option<Result<(), &'static str>>) -> Self {
+            Self {
+                remove,
+                delete,
+                asked: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn asked(&self) -> Vec<String> {
+            self.asked.lock().unwrap().clone()
+        }
+    }
+
+    impl GitPort for Git {
+        fn remove_worktree(&self, _repo_root: &str, checkout_path: &str) -> Result<()> {
+            self.asked
+                .lock()
+                .unwrap()
+                .push(format!("remove {checkout_path}"));
+            self.remove.map_err(|said| anyhow::anyhow!("{said}"))
+        }
+        fn delete_branch(&self, _repo_root: &str, branch: &str) -> Result<()> {
+            self.asked.lock().unwrap().push(format!("delete {branch}"));
+            let answer = self.delete.expect("no `-d` was to be asked for");
+            answer.map_err(|said| anyhow::anyhow!("{said}"))
         }
         fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
             unreachable!()
@@ -173,6 +247,23 @@ mod tests {
         }
     }
 
+    /// The toast `run` shows for this git, with no panes closed.
+    fn toast(git: &Git, delete_branch: bool) -> Notification {
+        let herdr = Shown::default();
+        run(
+            &herdr,
+            git,
+            "/src/app",
+            "/wt/feat-login",
+            "feat/login",
+            0,
+            delete_branch,
+        )
+        .unwrap();
+        let shown = herdr.0.lock().unwrap();
+        shown[0].clone()
+    }
+
     #[test]
     fn running_it_by_hand_stays_three_arguments() {
         // The count is the picker's to supply; a person typing this has closed nothing.
@@ -183,16 +274,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(read.panes_closed, 0);
+        assert!(!read.delete_branch, "and asked for no branch to go");
 
-        // And a fourth argument that is not a number understates rather than invents. It
-        // costs the report one clause and never changes what is removed.
-        let odd = Args::read(
-            &mut ["/src/app", "/wt/x", "fix/crash", "later"]
-                .iter()
-                .map(|a| a.to_string()),
-        )
-        .unwrap();
-        assert_eq!(odd.panes_closed, 0);
+        // A fourth argument that is neither a count nor the flag is refused: read as a
+        // count of none it would have swallowed `delete-branch` typed in its place. A near
+        // miss of the flag is refused the same way, not read as the flag.
+        for odd in ["later", "delete-branches", "delete_branch"] {
+            assert!(
+                Args::read(
+                    &mut ["/src/app", "/wt/x", "fix/crash", odd]
+                        .iter()
+                        .map(|a| a.to_string())
+                )
+                .is_err(),
+                "{odd} should be refused"
+            );
+        }
 
         assert!(Args::read(&mut ["/src/app", "/wt/x"].iter().map(|a| a.to_string())).is_err());
     }
@@ -206,11 +303,12 @@ mod tests {
         let herdr = Shown::default();
         run(
             &herdr,
-            &Refuses,
+            &Git::new(Err(DIRTY), None),
             "/src/app",
             "/wt/feat-login",
             "feat/login",
             2,
+            false,
         )
         .unwrap();
 
@@ -219,6 +317,87 @@ mod tests {
         assert!(
             body.ends_with("— its 2 panes were closed first"),
             "got {body}"
+        );
+    }
+
+    #[test]
+    fn with_the_branch_asked_for_a_d_git_takes_is_reported_as_removed() {
+        // The checkout first, then the branch, and one plain `removed` for the pair.
+        let git = Git::new(Ok(()), Some(Ok(())));
+        let outcome = outcome(&git, "/src/app", "/wt/feat-login", "feat/login", true);
+        assert_eq!(git.asked(), ["remove /wt/feat-login", "delete feat/login"]);
+        assert_eq!(removal::report_line(&outcome), "removed");
+        assert_eq!(toast(&git, true).title, "removed feat/login");
+    }
+
+    #[test]
+    fn a_d_git_declines_keeps_the_branch_and_says_so_in_gits_words() {
+        // The checkout is gone by then, so this is neither a refusal nor a plain removal.
+        let git = Git::new(Ok(()), Some(Err(NOT_MERGED)));
+        let outcome = outcome(&git, "/src/app", "/wt/feat-login", "feat/login", true);
+        assert_eq!(outcome, RemovalOutcome::BranchKept(NOT_MERGED.to_string()));
+        assert!(
+            removal::report_line(&outcome).starts_with("kept "),
+            "got {}",
+            removal::report_line(&outcome)
+        );
+
+        let toast = toast(&git, true);
+        assert_eq!(toast.title, "removed feat/login, branch kept");
+        let body = toast.body.as_deref().expect("says why the branch stayed");
+        assert!(body.ends_with(NOT_MERGED), "git's words last: {body}");
+        assert_eq!(toast.sound, crate::port::NotificationSound::None);
+    }
+
+    #[test]
+    fn without_the_flag_the_branch_is_never_asked_about() {
+        // `Shift-D`'s removal: the fake's `-d` panics, so reaching it fails this.
+        let git = Git::new(Ok(()), None);
+        let outcome = outcome(&git, "/src/app", "/wt/feat-login", "feat/login", false);
+        assert_eq!(outcome, RemovalOutcome::Removed);
+        assert_eq!(toast(&git, false).title, "removed feat/login");
+        assert_eq!(
+            git.asked(),
+            // Twice: `outcome` for the report line and `run` for the toast, on one fake.
+            ["remove /wt/feat-login", "remove /wt/feat-login"]
+        );
+    }
+
+    #[test]
+    fn a_refused_removal_never_reaches_the_branch() {
+        // The checkout is still there with work in it, and its branch has to stay with it.
+        let git = Git::new(Err(DIRTY), None);
+        let outcome = outcome(&git, "/src/app", "/wt/feat-login", "feat/login", true);
+        assert_eq!(outcome, RemovalOutcome::Refused(DIRTY.to_string()));
+        assert_eq!(toast(&git, true).title, "could not remove feat/login");
+        assert_eq!(
+            git.asked(),
+            // Twice: `outcome` for the report line and `run` for the toast, on one fake.
+            ["remove /wt/feat-login", "remove /wt/feat-login"]
+        );
+    }
+
+    #[test]
+    fn the_flag_is_read_with_or_without_a_pane_count_before_it() {
+        // `main`'s usage line offers `[panes-closed] [delete-branch]` as two optional words,
+        // so the flag alone has to mean the flag; either order is the parser's own choice.
+        let read = |words: &[&str]| {
+            Args::read(&mut words.iter().map(|a| a.to_string())).expect("its own usage line")
+        };
+        let flag_alone = read(&["/src/app", "/wt/x", "fix/crash", "delete-branch"]);
+        assert_eq!(
+            (flag_alone.panes_closed, flag_alone.delete_branch),
+            (0, true)
+        );
+        let count_first = read(&["/src/app", "/wt/x", "fix/crash", "2", "delete-branch"]);
+        assert_eq!(
+            (count_first.panes_closed, count_first.delete_branch),
+            (2, true)
+        );
+        let flag_first = read(&["/src/app", "/wt/x", "fix/crash", "delete-branch", "2"]);
+        assert_eq!(
+            (flag_first.panes_closed, flag_first.delete_branch),
+            (2, true)
         );
     }
 }

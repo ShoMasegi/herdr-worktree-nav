@@ -14,7 +14,7 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 use std::collections::BTreeMap;
 
-use crate::domain::model::{PaneNode, Refs, Tree, WorkingTree};
+use crate::domain::model::{CheckoutPath, PaneNode, Refs, RepoKey, Tree, WorkingTree};
 use crate::domain::sweep::Mark;
 use crate::port::{AgentStatus, Track};
 
@@ -247,16 +247,16 @@ pub struct ViewOptions {
     /// Checkout paths whose removal has been started and has not reported back. Passed in
     /// for the same reason `home` is: which processes are running is not something this
     /// module is allowed to find out for itself.
-    pub removing: Vec<String>,
+    pub removing: Vec<CheckoutPath>,
     /// What git has said about each working tree so far. A checkout that has not answered
     /// is absent, which is a different fact from `Clean` and decides different things — see
     /// `domain::model::WorkingTree`.
-    pub working_trees: BTreeMap<String, WorkingTree>,
-    /// What a sweep would do with each checkout, by checkout path, or `None` when no sweep
-    /// is on. Worked out once by `domain::sweep::marks` and handed here, rather than
-    /// recomputed per row: the same answer decides what is drawn and what is deleted, and
-    /// two of it is one too many.
-    pub sweep: Option<BTreeMap<String, Mark>>,
+    pub working_trees: BTreeMap<CheckoutPath, WorkingTree>,
+    /// What a sweep would do with each checkout, by repository and checkout path, or `None`
+    /// when no sweep is on. Worked out once by `domain::sweep::marks` and handed here,
+    /// rather than recomputed per row: the same answer decides what is drawn and what is
+    /// deleted, and two of it is one too many.
+    pub sweep: Option<BTreeMap<(RepoKey, CheckoutPath), Mark>>,
 }
 
 impl ViewOptions {
@@ -351,6 +351,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                 if !worktree_matches && pane_rows.is_empty() {
                     continue;
                 }
+                let path = CheckoutPath::of(worktree);
                 let mut subtree = vec![Row {
                     reference: RowRef::Worktree(repo_index, worktree_index),
                     depth: 1,
@@ -358,18 +359,15 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                     meta: abbreviate(&worktree.checkout_path, options.home.as_deref()),
                     status: worktree_status,
                     is_idle: worktree.panes.is_empty(),
-                    is_removing: options
-                        .removing
-                        .iter()
-                        .any(|path| path == &worktree.checkout_path),
-                    working_tree: options.working_trees.get(&worktree.checkout_path).copied(),
+                    is_removing: options.removing.contains(&path),
+                    working_tree: options.working_trees.get(&path).copied(),
                     track: worktree.track,
                     is_current: false,
                     matched: worktree_matches,
                     sweep: options
                         .sweep
                         .as_ref()
-                        .and_then(|marks| marks.get(&worktree.checkout_path).cloned()),
+                        .and_then(|marks| marks.get(&(RepoKey::of(repo), path)).cloned()),
                 }];
                 subtree.append(&mut pane_rows);
                 subtrees.push((best, subtree));
@@ -860,8 +858,8 @@ mod tests {
     }
 
     /// The answers map with one checkout given an answer, which is all these need.
-    fn answered(working_tree: WorkingTree) -> BTreeMap<String, WorkingTree> {
-        BTreeMap::from([("/wt/fix-crash".to_string(), working_tree)])
+    fn answered(working_tree: WorkingTree) -> BTreeMap<CheckoutPath, WorkingTree> {
+        BTreeMap::from([(CheckoutPath::for_test("/wt/fix-crash"), working_tree)])
     }
 
     /// `None` is a checkout nobody has answered for, which is a third thing and not a
@@ -1004,7 +1002,7 @@ mod tests {
         // The removal runs in a process of its own, so the row has to say what is happening
         // to it for as long as the picker is up to draw it.
         let options = ViewOptions {
-            removing: vec!["/wt/fix-crash".into()],
+            removing: vec![CheckoutPath::for_test("/wt/fix-crash")],
             ..Default::default()
         };
         let rows = flatten(&tree(), &options);
@@ -1017,7 +1015,7 @@ mod tests {
         // There is nothing left to do to it: a second Shift-D would race the first, and
         // opening it would open something that is being deleted underneath.
         let options = ViewOptions {
-            removing: vec!["/wt/fix-crash".into()],
+            removing: vec![CheckoutPath::for_test("/wt/fix-crash")],
             ..Default::default()
         };
         let rows = flatten(&tree(), &options);
@@ -1425,5 +1423,39 @@ mod tests {
         assert_eq!(detail(&tree, RowRef::Worktree(0, 99)), "");
         assert_eq!(detail(&tree, RowRef::Pane(0, 0, 99)), "");
         assert_eq!(detail(&tree, RowRef::Ungrouped(99)), "");
+    }
+
+    #[test]
+    fn a_mark_is_looked_up_by_the_rows_own_repository_and_not_by_its_path_alone() {
+        // Two repositories list one path — `me/site` once had a worktree where `me/app` has
+        // a live checkout — and each row shows its own repository's answer.
+        use crate::domain::sweep::{Half, Reason};
+        let mut tree = tree();
+        tree.repos[1].worktrees.push(WorktreeNode {
+            branch: Some("chore/deps".into()),
+            ..worktree("fix/crash", vec![])
+        });
+        let at = |repo: usize| {
+            (
+                RepoKey::of(&tree.repos[repo]),
+                CheckoutPath::for_test("/wt/fix-crash"),
+            )
+        };
+        let options = ViewOptions {
+            sweep: Some(BTreeMap::from([
+                (at(0), Mark::Unjudged(Half::Refs)),
+                (at(1), Mark::Going(Reason::Gone)),
+            ])),
+            ..Default::default()
+        };
+        let rows = flatten(&tree, &options);
+        assert_eq!(
+            find(&rows, "fix/crash").sweep,
+            Some(Mark::Unjudged(Half::Refs))
+        );
+        assert_eq!(
+            find(&rows, "chore/deps").sweep,
+            Some(Mark::Going(Reason::Gone))
+        );
     }
 }

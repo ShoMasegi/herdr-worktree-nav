@@ -9,10 +9,10 @@ use crate::app::dirty::Dirty;
 use crate::app::home_dir;
 use crate::app::removals::Removals;
 use crate::app::Pending;
-use crate::domain::removal::{self, Removal};
+use crate::domain::removal::{self, Removal, SweepRemoval};
 use crate::port::{GitPort, HerdrPort, PaneSplit, SplitDirection, WorktreeOpen};
 use crate::ui::render::{self, Mode};
-use crate::ui::state::{Action, PanesState};
+use crate::ui::state::{Action, PanesState, WITHDRAWN};
 use crate::ui::theme::Theme;
 
 /// How long to wait for a key before turning the spinner on whatever is still coming. The
@@ -79,32 +79,7 @@ pub fn run(
             state.set_message("this pane is too small to ask that safely".into());
         }
 
-        // Whatever has reported back — including from before the last trip to the branches
-        // view, since the removals outlive both views and the picker itself.
-        while let Some(finished) = removals.finished() {
-            state.set_removing(removals.paths());
-            match finished.outcome {
-                Ok(outcome) => {
-                    // Nothing to say when it worked: the row leaving the list is the report,
-                    // and the toast has already said it to whoever was not looking.
-                    if let Some(message) =
-                        removal::message(&finished.label, &outcome, finished.panes_closed)
-                    {
-                        state.set_message(message);
-                    }
-                    // Errors here are not fatal: the picker keeps showing what it had.
-                    if let Ok((_, tree)) = collect::collect_tree(herdr, git) {
-                        state.replace_tree(tree);
-                        pending.dirty.ask(state.tree());
-                    }
-                }
-                // The panes are gone by now either way, so the report says so.
-                Err(error) => state.set_message(removal::refusal(
-                    &format!("{error:#}"),
-                    finished.panes_closed,
-                )),
-            }
-        }
+        drain_finished(&mut state, pending, removals, herdr, git);
 
         // With nothing in flight there is nothing to wake up for, so the loop blocks on the
         // key and draws no frames at all until one arrives.
@@ -116,20 +91,13 @@ pub fn run(
         };
         match state.handle_key(key) {
             Action::Consumed | Action::Ignored => {}
-            // `r` is the only thing that asks about the working trees again, so a reload
-            // that quietly does nothing is a reload the user reads as "still dirty, then".
-            Action::Reload => match collect::collect_tree(herdr, git) {
-                Ok((_, tree)) => {
-                    state.replace_tree(tree);
-                    // Reload means reload: whether a checkout is dirty is a fact about a
-                    // working tree the user has been editing since it was last asked, and a
-                    // pull request can land while the picker is up.
-                    pending.dirty.reask(state.tree());
-                    pending.settled.forget();
-                    state.set_working_trees(pending.dirty.answers());
-                }
-                Err(error) => state.set_message(format!("{error:#}")),
-            },
+            // `r` is the only thing outside a sweep that asks about the working trees
+            // again, so a reload that quietly does nothing is a reload the user reads as
+            // "still dirty, then".
+            Action::Reload => re_read(&mut state, pending, herdr, git, ReRead::Key),
+            // A sweep's `Enter`: the same re-read, and `show_answers` puts the question up
+            // once the walk has answered.
+            Action::SweepReload => re_read(&mut state, pending, herdr, git, ReRead::ForSweep),
             // Deleting is housekeeping, and housekeeping comes in batches: the picker stays
             // open on the list the deletion is changing rather than closing over it — and
             // the deletion itself goes to a process of its own, so that neither the loop
@@ -143,11 +111,132 @@ pub fn run(
                 git,
                 &removal,
             ),
+            Action::RemoveWorktrees(sweep) => start_sweep(&mut state, removals, herdr, &sweep),
             action => break action,
         }
     };
 
     perform(herdr, outcome)
+}
+
+/// Take in every removal that has reported back since the last frame — including from before
+/// the last trip to the branches view, since the removals outlive both views and the picker
+/// itself — and say on the prompt line what they said.
+///
+/// Out of the loop for the reason `show_answers` is: this is the arm with consequences. What
+/// it says and how it says it are held by `two_removals_reporting_in_one_frame_share_the_line`
+/// and `a_question_the_re_read_took_back_is_said_last`.
+fn drain_finished(
+    state: &mut PanesState,
+    pending: &mut Pending,
+    removals: &mut Removals,
+    herdr: &dyn HerdrPort,
+    git: &dyn GitPort,
+) {
+    // Several can report in one frame — a sweep starts them together — and each names
+    // its own checkout, so they share the line rather than overwrite it. A question the
+    // re-read below takes back is said on the same line, last: the reports have their
+    // toasts, and the withdrawal has nothing else.
+    let mut said: Vec<String> = Vec::new();
+    let mut withdrawn = false;
+    while let Some(finished) = removals.finished() {
+        state.set_removing(removals.paths());
+        match finished.outcome {
+            Ok(outcome) => {
+                // Nothing to say when it worked: the row leaving the list is the report,
+                // and the toast has already said it to whoever was not looking.
+                if let Some(message) =
+                    removal::message(&finished.label, &outcome, finished.panes_closed)
+                {
+                    said.push(message);
+                }
+                // Errors here are not fatal: the picker keeps showing what it had.
+                if let Ok((_, tree)) = collect::collect_tree(herdr, git) {
+                    withdrawn |= state.replace_tree(tree);
+                    pending.dirty.ask(state.tree());
+                }
+            }
+            // The panes are gone by now either way, so the report says so.
+            Err(error) => said.push(removal::refusal(
+                &format!("{error:#}"),
+                finished.panes_closed,
+            )),
+        }
+    }
+    if withdrawn {
+        said.push(WITHDRAWN.to_string());
+    }
+    if !said.is_empty() {
+        state.set_message(said.join("; "));
+    }
+}
+
+/// Why the tree and the working trees are being read again.
+enum ReRead {
+    /// `r`. `gh` is forgotten too, since a pull request can land while the picker is up.
+    Key,
+    /// A sweep's `Enter`. `gh` is kept, since it only widens the sweep —
+    /// `docs/adr/0011-what-may-be-swept.md`.
+    ForSweep,
+}
+
+/// Read the tree and the working trees again, and say on the prompt line when that fails.
+///
+/// Reload means reload: whether a checkout is dirty is a fact about a working tree the user
+/// has been editing since it was last asked.
+fn re_read(
+    state: &mut PanesState,
+    pending: &mut Pending,
+    herdr: &dyn HerdrPort,
+    git: &dyn GitPort,
+    why: ReRead,
+) {
+    match collect::collect_tree(herdr, git) {
+        Ok((_, tree)) => {
+            state.replace_tree(tree);
+            pending.dirty.reask(state.tree());
+            if matches!(why, ReRead::Key) {
+                pending.settled.forget();
+            }
+            state.set_working_trees(pending.dirty.answers());
+        }
+        Err(error) => {
+            // A sweep's question waiting on this goes with it — `cancel_removal` says why —
+            // and the line says so, since no box is the only other sign.
+            state.cancel_removal();
+            state.set_message(match why {
+                ReRead::Key => format!("{error:#}"),
+                ReRead::ForSweep => {
+                    format!("the list could not be read again, so nothing was asked: {error:#}")
+                }
+            });
+        }
+    }
+}
+
+/// Start every removal a sweep's `y` agreed to, in the order the box listed them.
+///
+/// Each that will not start is said on the prompt line, together — a refusal with no toast
+/// behind it, since the child never ran — and none stops the rest: ADR 0011 has a
+/// refused checkout reported on its own while the sweep carries on. No re-read afterwards:
+/// a swept checkout has no panes, so nothing on screen is known wrong the way it is after
+/// `start_removal` has closed some.
+fn start_sweep(
+    state: &mut PanesState,
+    removals: &mut Removals,
+    herdr: &dyn HerdrPort,
+    sweep: &SweepRemoval,
+) {
+    let mut refused: Vec<String> = Vec::new();
+    for removal in sweep.removals() {
+        if let Err(message) = removals.remove(herdr, removal) {
+            refused.push(message);
+        }
+    }
+    if !refused.is_empty() {
+        state.set_message(refused.join("; "));
+    }
+    state.set_removing(removals.paths());
 }
 
 /// Carry out a removal the user has said yes to, and put what happened on the screen.
@@ -194,8 +283,8 @@ fn start_removal(
     }
 }
 
-/// Tell the state what the walk and `gh` have said since the last frame, and answer whether
-/// either has more to come.
+/// Tell the state what the walk and `gh` have said since the last frame, put a sweep's
+/// question up once its walk has answered, and say whether either has more to come.
 ///
 /// Split out of the loop because everything the loop does is otherwise untestable — it needs
 /// a terminal and a keyboard — and this is the part with consequences. `set_working_trees` in
@@ -232,6 +321,7 @@ fn show_answers(state: &mut PanesState, pending: &mut Pending) -> bool {
     // Ignored outside a sweep, which is where the answers would have nowhere to be shown.
     let asking = settled.is_waiting(state.tree());
     state.set_settled(answered, trouble, asking);
+    state.confirm_sweep_if_settled();
 
     // Both, because the loop's clock has to run while either is out — and because a sweep
     // entered on a slow network is exactly when a frozen spinner reads as a finished answer.
@@ -273,18 +363,30 @@ fn perform(herdr: &dyn HerdrPort, action: Action) -> Result<Exit> {
         }
         Action::ShowBranches { repo_root } => Ok(Exit::ShowBranches { repo_root }),
         // Handled inside the loop, which is why the picker is still up after one.
-        Action::Consumed | Action::Ignored | Action::Reload | Action::RemoveWorktree { .. } => {
-            Ok(Exit::Closed)
-        }
+        Action::Consumed
+        | Action::Ignored
+        | Action::Reload
+        | Action::SweepReload
+        | Action::RemoveWorktree { .. }
+        | Action::RemoveWorktrees { .. } => Ok(Exit::Closed),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::fakes::{until, Recorder, Refuses, Started};
+    use crate::app::fakes::{until, Recorder, Refuses, RefusesFirst, Reports, Started};
+    use crate::app::settled::Settled;
+    use crate::domain::model::{CheckoutPath, RepoKey};
+    use crate::port::{
+        AgentStatus, GitRef, RefKind, RefWalk, RemovalOutcome, Slug, Snapshot, Track, Workspace,
+        WorkspaceWorktree, Worktree, WorktreeList, WorktreeSource,
+    };
     use crate::ui::state::PanesState;
     use anyhow::Result;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
 
     /// Answers every working tree at once and calls it clean, which is what makes the
     /// difference between "asked" and "answered" observable in one drain.
@@ -317,6 +419,9 @@ mod tests {
             unreachable!()
         }
         fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!()
+        }
+        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
             unreachable!()
         }
         fn head_ref(&self, _repo_root: &str) -> Result<String> {
@@ -362,6 +467,9 @@ mod tests {
             unreachable!("only github_slug is asked of this port")
         }
         fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!("only github_slug is asked of this port")
+        }
+        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
             unreachable!("only github_slug is asked of this port")
         }
         fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
@@ -426,6 +534,9 @@ mod tests {
         fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
             unreachable!("the loop asks this port two things")
         }
+        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("the loop asks this port two things")
+        }
         fn head_ref(&self, _repo_root: &str) -> Result<String> {
             unreachable!("the loop asks this port two things")
         }
@@ -483,6 +594,9 @@ mod tests {
         fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
             unreachable!("the loop asks this port two things")
         }
+        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("the loop asks this port two things")
+        }
         fn head_ref(&self, _repo_root: &str) -> Result<String> {
             unreachable!("the loop asks this port two things")
         }
@@ -510,6 +624,433 @@ mod tests {
             ratatui::crossterm::event::KeyCode::Char(key),
             ratatui::crossterm::event::KeyModifiers::NONE,
         ));
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    const FEAT_LOGIN: &str = "/wt/feat-login";
+    const FIX_CRASH: &str = "/wt/fix-crash";
+
+    /// A herdr that can describe its session and a git that answers for it — everything
+    /// `collect_tree` reads. One repository: its own checkout with a pane in it, and two
+    /// finished worktrees with none. The second reading can differ from the first in one of
+    /// the two ways issue #25 is about.
+    struct Session {
+        /// A pane opened in `feat/login` between the first reading and the second.
+        pane_opens: bool,
+        /// A file written into `feat/login` between the first walk and the second.
+        file_written: bool,
+        readings: Mutex<usize>,
+        walks: Mutex<BTreeMap<String, usize>>,
+    }
+
+    impl Session {
+        fn new(pane_opens: bool, file_written: bool) -> Self {
+            Self {
+                pane_opens,
+                file_written,
+                readings: Mutex::new(0),
+                walks: Mutex::new(BTreeMap::new()),
+            }
+        }
+
+        fn pane_is_open(&self) -> bool {
+            self.pane_opens && *self.readings.lock().unwrap() >= 2
+        }
+
+        /// How often the walk asked about this checkout.
+        fn walks_of(&self, checkout_path: &str) -> usize {
+            self.walks
+                .lock()
+                .unwrap()
+                .get(checkout_path)
+                .copied()
+                .unwrap_or(0)
+        }
+    }
+
+    fn snapshot_pane(id: &str, cwd: &str) -> crate::port::Pane {
+        let workspace = id.split(':').next().unwrap().to_string();
+        crate::port::Pane {
+            pane_id: id.into(),
+            tab_id: format!("{workspace}:t1"),
+            workspace_id: workspace,
+            terminal_id: String::new(),
+            cwd: Some(cwd.into()),
+            foreground_cwd: None,
+            focused: false,
+            agent: Some("codex".into()),
+            agent_status: AgentStatus::Idle,
+            title: None,
+            terminal_title_stripped: None,
+            label: None,
+        }
+    }
+
+    fn workspace(id: &str, checkout_path: &str, linked: bool) -> Workspace {
+        Workspace {
+            workspace_id: id.into(),
+            label: String::new(),
+            number: 0,
+            focused: false,
+            active_tab_id: None,
+            agent_status: AgentStatus::Unknown,
+            worktree: Some(WorkspaceWorktree {
+                repo_key: "/src/app/.git".into(),
+                repo_name: "app".into(),
+                repo_root: "/src/app".into(),
+                checkout_path: checkout_path.into(),
+                is_linked_worktree: linked,
+            }),
+        }
+    }
+
+    fn listed(branch: &str, path: &str, linked: bool, open_in: Option<&str>) -> Worktree {
+        Worktree {
+            branch: Some(branch.into()),
+            path: path.into(),
+            label: String::new(),
+            is_bare: false,
+            is_detached: false,
+            is_linked_worktree: linked,
+            is_prunable: false,
+            open_workspace_id: open_in.map(str::to_string),
+        }
+    }
+
+    fn gone(branch: &str, path: &str) -> GitRef {
+        GitRef {
+            name: branch.into(),
+            kind: RefKind::Local,
+            committed_at: None,
+            subject: None,
+            upstream: Some(format!("origin/{branch}")),
+            track: Some(Track::Gone),
+            worktree_path: Some(path.into()),
+        }
+    }
+
+    impl HerdrPort for Session {
+        fn snapshot(&self) -> Result<Snapshot> {
+            *self.readings.lock().unwrap() += 1;
+            let mut workspaces = vec![workspace("w1", "/src/app", false)];
+            let mut panes = vec![snapshot_pane("w1:p1", "/src/app")];
+            if self.pane_is_open() {
+                workspaces.push(workspace("w2", FEAT_LOGIN, true));
+                panes.push(snapshot_pane("w2:p1", FEAT_LOGIN));
+            }
+            Ok(Snapshot {
+                workspaces,
+                panes,
+                ..Snapshot::default()
+            })
+        }
+        fn worktree_list(&self, _cwd: &str) -> Result<WorktreeList> {
+            Ok(WorktreeList {
+                source: WorktreeSource {
+                    repo_key: "/src/app/.git".into(),
+                    repo_name: "app".into(),
+                    repo_root: "/src/app".into(),
+                    source_checkout_path: "/src/app".into(),
+                    source_workspace_id: None,
+                },
+                worktrees: vec![
+                    listed("main", "/src/app", false, Some("w1")),
+                    listed(
+                        "feat/login",
+                        FEAT_LOGIN,
+                        true,
+                        self.pane_is_open().then_some("w2"),
+                    ),
+                    listed("fix/crash", FIX_CRASH, true, None),
+                ],
+            })
+        }
+        fn worktree_create(
+            &self,
+            _req: &crate::port::WorktreeCreate,
+        ) -> Result<crate::port::WorktreeOpened> {
+            unreachable!("a re-read asks this port for the session and the worktrees")
+        }
+        fn worktree_open(&self, _req: &WorktreeOpen) -> Result<crate::port::WorktreeOpened> {
+            unreachable!("a re-read asks this port for the session and the worktrees")
+        }
+        fn pane_focus(&self, _pane_id: &str) -> Result<()> {
+            unreachable!("a re-read asks this port for the session and the worktrees")
+        }
+        fn pane_split(&self, _req: &PaneSplit) -> Result<crate::port::Pane> {
+            unreachable!("a re-read asks this port for the session and the worktrees")
+        }
+        fn pane_move(
+            &self,
+            _pane: &str,
+            _dest: &crate::port::PaneDestination,
+            _focus: bool,
+        ) -> Result<()> {
+            unreachable!("a re-read asks this port for the session and the worktrees")
+        }
+        fn pane_close(&self, _pane_id: &str) -> Result<()> {
+            unreachable!("a swept checkout has no panes to close")
+        }
+        fn workspace_focus(&self, _workspace_id: &str) -> Result<()> {
+            unreachable!("a re-read asks this port for the session and the worktrees")
+        }
+        fn tab_focus(&self, _tab_id: &str) -> Result<()> {
+            unreachable!("a re-read asks this port for the session and the worktrees")
+        }
+        fn plugin_pane_open(
+            &self,
+            _req: &crate::port::PluginPaneOpen,
+        ) -> Result<Option<crate::port::OpenRefusal>> {
+            unreachable!("a re-read asks this port for the session and the worktrees")
+        }
+        fn notify(&self, _notification: &crate::port::Notification) -> Result<()> {
+            unreachable!("a re-read asks this port for the session and the worktrees")
+        }
+    }
+
+    impl GitPort for Session {
+        fn is_dirty(&self, checkout_path: &str) -> Result<bool> {
+            let mut walks = self.walks.lock().unwrap();
+            let walked = walks.entry(checkout_path.to_string()).or_insert(0);
+            *walked += 1;
+            Ok(self.file_written && checkout_path == FEAT_LOGIN && *walked >= 2)
+        }
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
+            Ok(Slug::owner_repo("me", "app"))
+        }
+        fn local_refs(&self, _repo_root: &str) -> Result<RefWalk> {
+            Ok(RefWalk::of(vec![
+                gone("feat/login", FEAT_LOGIN),
+                gone("fix/crash", FIX_CRASH),
+            ]))
+        }
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            unreachable!("every pane is in a workspace herdr knows the checkout of")
+        }
+        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
+            unreachable!("a re-read asks this port three things")
+        }
+        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("a re-read asks this port three things")
+        }
+        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
+            unreachable!("a re-read asks this port three things")
+        }
+        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!("a re-read asks this port three things")
+        }
+        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("a re-read asks this port three things")
+        }
+        fn head_ref(&self, _repo_root: &str) -> Result<String> {
+            unreachable!("a re-read asks this port three things")
+        }
+    }
+
+    impl crate::port::GhPort for Session {
+        fn pull_requests(&self, _slug: &Slug) -> Vec<crate::port::PullRequest> {
+            unreachable!("the panes view does not decorate")
+        }
+        fn settled_pull_requests(
+            &self,
+            _slug: &Slug,
+        ) -> std::result::Result<crate::port::SettledPullRequests, String> {
+            Ok(crate::port::SettledPullRequests::All(Vec::new()))
+        }
+    }
+
+    /// Open the picker on `session` the way `run` does, enter a sweep with both finished
+    /// worktrees marked, and press `Enter`.
+    fn enter_pressed(session: &Arc<Session>) -> (PanesState, Pending) {
+        let (_, tree) = collect::collect_tree(&**session, &**session).expect("the first reading");
+        let mut state = PanesState::new(tree, None);
+        let mut pending = Pending {
+            dirty: Dirty::new(session.clone()),
+            settled: Settled::new(session.clone(), session.clone()),
+        };
+        pending.dirty.ask(state.tree());
+        press(&mut state, 'S');
+        settle(&mut state, &mut pending);
+        let chosen: Vec<String> = state
+            .chosen()
+            .into_iter()
+            .map(|(_, path)| path.as_str().to_string())
+            .collect();
+        assert_eq!(
+            chosen,
+            [FEAT_LOGIN, FIX_CRASH],
+            "both are gone, clean, and have nothing running in them"
+        );
+        assert_eq!(state.handle_key(key(KeyCode::Enter)), Action::SweepReload);
+        (state, pending)
+    }
+
+    /// `enter_pressed`, then the re-read it asked for and the walk that starts, driven to
+    /// the frame that puts the box up.
+    fn sweep_asked(session: &Arc<Session>) -> (PanesState, Pending) {
+        let (mut state, mut pending) = enter_pressed(session);
+        re_read(
+            &mut state,
+            &mut pending,
+            &**session,
+            &**session,
+            ReRead::ForSweep,
+        );
+        settle(&mut state, &mut pending);
+        (state, pending)
+    }
+
+    /// What the sweep's box lists, by path.
+    fn box_paths(state: &PanesState) -> Vec<String> {
+        state
+            .pending_sweep()
+            .map(|sweep| {
+                sweep
+                    .removals()
+                    .iter()
+                    .map(|removal| removal.checkout_path().as_str().to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_pane_opened_after_the_sweep_began_takes_that_checkout_off_the_list_before_anything_is_removed(
+    ) {
+        let session = Arc::new(Session::new(true, false));
+        let (mut state, _pending) = sweep_asked(&session);
+        assert_eq!(
+            box_paths(&state),
+            [FIX_CRASH],
+            "the checkout with the pane is off the list"
+        );
+        assert_eq!(state.message(), Some("no longer marked: feat/login"));
+
+        // And what `y` removes is what the box listed.
+        let recorder = Recorder::default();
+        let port = Started(&recorder);
+        let mut removals = Removals::new(&port);
+        let Action::RemoveWorktrees(sweep) = state.handle_key(key(KeyCode::Char('y'))) else {
+            panic!("`y` is the answer that goes ahead");
+        };
+        start_sweep(&mut state, &mut removals, &recorder, &sweep);
+        assert_eq!(
+            recorder.did(),
+            ["start /wt/fix-crash after 0 deleting the branch"]
+        );
+    }
+
+    #[test]
+    fn a_file_written_after_the_sweep_began_does_the_same() {
+        let session = Arc::new(Session::new(false, true));
+        let (state, _pending) = sweep_asked(&session);
+        assert_eq!(
+            session.walks_of(FEAT_LOGIN),
+            2,
+            "the working tree was walked again"
+        );
+        assert_eq!(box_paths(&state), [FIX_CRASH]);
+        assert_eq!(state.message(), Some("no longer marked: feat/login"));
+    }
+
+    #[test]
+    fn one_refusal_to_start_does_not_stop_the_rest_of_the_sweep() {
+        let session = Arc::new(Session::new(false, false));
+        let (mut state, _pending) = sweep_asked(&session);
+        assert_eq!(box_paths(&state), [FEAT_LOGIN, FIX_CRASH]);
+
+        let recorder = Recorder::default();
+        let port = RefusesFirst::new(&recorder);
+        let mut removals = Removals::new(&port);
+        let Action::RemoveWorktrees(sweep) = state.handle_key(key(KeyCode::Char('y'))) else {
+            panic!("`y` is the answer that goes ahead");
+        };
+        start_sweep(&mut state, &mut removals, &recorder, &sweep);
+
+        assert_eq!(
+            recorder.did(),
+            ["start /wt/fix-crash after 0 deleting the branch"],
+            "the second started although the first would not"
+        );
+        assert_eq!(
+            state.message(),
+            Some(
+                "could not start removing feat/login: could not spawn: no such file or \
+                 directory"
+            )
+        );
+        assert_eq!(removals.paths(), [CheckoutPath::for_test(FIX_CRASH)]);
+        assert!(
+            state.rows().iter().any(|row| row.is_removing),
+            "and the row that is going says so"
+        );
+    }
+
+    #[test]
+    fn a_re_read_that_fails_asks_nothing_over_the_old_facts() {
+        // `Enter` asked for the re-read so that the box is about the disk as it is; with
+        // herdr not answering, a box would be about the disk as it was.
+        let session = Arc::new(Session::new(false, false));
+        let (mut state, mut pending) = enter_pressed(&session);
+        re_read(
+            &mut state,
+            &mut pending,
+            &Recorder::default(),
+            &*session,
+            ReRead::ForSweep,
+        );
+        settle(&mut state, &mut pending);
+
+        assert!(state.pending_sweep().is_none());
+        assert_eq!(
+            state.message(),
+            Some("the list could not be read again, so nothing was asked: herdr is not answering")
+        );
+        assert_eq!(
+            state.handle_key(key(KeyCode::Char('y'))),
+            Action::Ignored,
+            "and `y` answers nothing"
+        );
+        assert_eq!(
+            state.handle_key(key(KeyCode::Enter)),
+            Action::SweepReload,
+            "asking again asks for the re-read again"
+        );
+    }
+
+    #[test]
+    fn enter_keeps_what_gh_said_and_r_does_not() {
+        // `gh` only widens the sweep (ADR 0011), so the re-read `Enter` asks for keeps its
+        // answers; `r` reads everything again, `gh` included.
+        let session = Arc::new(Session::new(false, false));
+        let (mut state, mut pending) = enter_pressed(&session);
+        assert_eq!(
+            pending.settled.answers(state.tree()).len(),
+            1,
+            "the sweep asked gh"
+        );
+
+        re_read(
+            &mut state,
+            &mut pending,
+            &*session,
+            &*session,
+            ReRead::ForSweep,
+        );
+        assert_eq!(
+            pending.settled.answers(state.tree()).len(),
+            1,
+            "and `Enter` kept it"
+        );
+
+        re_read(&mut state, &mut pending, &*session, &*session, ReRead::Key);
+        assert!(
+            pending.settled.answers(state.tree()).is_empty(),
+            "`r` forgets it"
+        );
     }
 
     /// Drive the loop's per-frame step until nothing is outstanding, the way `run` does.
@@ -698,7 +1239,10 @@ mod tests {
 
         assert_eq!(
             state.chosen(),
-            vec!["/wt/feat-login".to_string()],
+            vec![(
+                RepoKey::of(&state.tree().repos[0]),
+                CheckoutPath::for_test("/wt/feat-login")
+            )],
             "git had nothing to say about it; gh may only widen, and this is widening"
         );
     }
@@ -804,7 +1348,7 @@ mod tests {
         );
 
         assert_eq!(recorder.did(), ["start /wt/feat-login after 0"]);
-        assert_eq!(removals.paths(), ["/wt/feat-login".to_string()]);
+        assert_eq!(removals.paths(), [CheckoutPath::for_test("/wt/feat-login")]);
         assert!(
             state.rows().iter().any(|row| row.is_removing),
             "and the row it is happening to says so"
@@ -925,6 +1469,118 @@ mod tests {
             state.pending_removal().is_some(),
             "the walk answered, so the question can be asked: {:?}",
             state.message()
+        );
+    }
+
+    #[test]
+    fn every_refusal_to_start_is_on_the_prompt_line() {
+        // Two children that never ran have no toast to speak for them, so the line has to
+        // carry both — one overwriting the other would lose a checkout the box listed.
+        let session = Arc::new(Session::new(false, false));
+        let (mut state, _pending) = sweep_asked(&session);
+        let recorder = Recorder::default();
+        let mut removals = Removals::new(&Refuses);
+        let Action::RemoveWorktrees(sweep) = state.handle_key(key(KeyCode::Char('y'))) else {
+            panic!("`y` is the answer that goes ahead");
+        };
+        start_sweep(&mut state, &mut removals, &recorder, &sweep);
+
+        assert_eq!(
+            state.message(),
+            Some(
+                "could not start removing feat/login: could not spawn: no such file or \
+                 directory; could not start removing fix/crash: could not spawn: no such \
+                 file or directory"
+            )
+        );
+        assert!(removals.is_empty(), "nothing started");
+        assert!(!state.is_sweeping(), "and the sweep is over either way");
+    }
+
+    #[test]
+    fn a_reload_that_fails_says_only_what_failed() {
+        // `r` asks no question, so its failure has nothing to withdraw and says herdr's
+        // words alone.
+        let session = Arc::new(Session::new(false, false));
+        let (mut state, mut pending) = enter_pressed(&session);
+        re_read(
+            &mut state,
+            &mut pending,
+            &Recorder::default(),
+            &*session,
+            ReRead::Key,
+        );
+        assert_eq!(state.message(), Some("herdr is not answering"));
+    }
+
+    #[test]
+    fn two_removals_reporting_in_one_frame_share_the_line() {
+        // A sweep starts them together, so they can come home together; each names its own
+        // checkout and neither overwrites the other.
+        let session = Arc::new(Session::new(false, false));
+        let (mut state, mut pending) = sweep_asked(&session);
+        let port = Reports(RemovalOutcome::BranchKept("error: not fully merged".into()));
+        let mut removals = Removals::new(&port);
+        let Action::RemoveWorktrees(sweep) = state.handle_key(key(KeyCode::Char('y'))) else {
+            panic!("`y` is the answer that goes ahead");
+        };
+        start_sweep(&mut state, &mut removals, &Recorder::default(), &sweep);
+        until("both reported", || {
+            drain_finished(
+                &mut state,
+                &mut pending,
+                &mut removals,
+                &*session,
+                &*session,
+            );
+            removals.is_empty()
+        });
+
+        let line = state.message().expect("two kept branches are said");
+        for said in [
+            "removed feat/login, branch kept: error: not fully merged",
+            "removed fix/crash, branch kept: error: not fully merged",
+        ] {
+            assert!(line.contains(said), "{said:?} missing from {line:?}");
+        }
+        assert_eq!(
+            line.matches("; ").count(),
+            1,
+            "one line, two reports: {line:?}"
+        );
+    }
+
+    #[test]
+    fn a_question_the_re_read_took_back_is_said_last() {
+        // A removal started earlier reports while the sweep's box is up; the re-read that
+        // follows takes the box back, and that is the one thing on the line with no toast.
+        let session = Arc::new(Session::new(false, false));
+        let (mut state, mut pending) = sweep_asked(&session);
+        let port = Reports(RemovalOutcome::BranchKept("error: not fully merged".into()));
+        let mut removals = Removals::new(&port);
+        let earlier = Removal::sweeping("/src/app", &state.tree().repos[0].worktrees[1]);
+        removals.remove(&Recorder::default(), &earlier).unwrap();
+        until("it reported", || {
+            drain_finished(
+                &mut state,
+                &mut pending,
+                &mut removals,
+                &*session,
+                &*session,
+            );
+            removals.is_empty()
+        });
+
+        assert!(
+            state.pending_sweep().is_none(),
+            "the box went with the re-read"
+        );
+        assert_eq!(
+            state.message(),
+            Some(
+                "removed feat/login, branch kept: error: not fully merged; the list changed \
+                 while that was up — ask again"
+            )
         );
     }
 }

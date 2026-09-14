@@ -564,6 +564,9 @@ mod tests {
         fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
             unreachable!("only github_slug is asked of this port")
         }
+        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("only github_slug is asked of this port")
+        }
         fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
             unreachable!("only github_slug is asked of this port")
         }
@@ -619,6 +622,9 @@ mod tests {
             unreachable!("only local_refs is asked of this port")
         }
         fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!("only local_refs is asked of this port")
+        }
+        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
             unreachable!("only local_refs is asked of this port")
         }
         fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {

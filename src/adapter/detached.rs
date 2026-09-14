@@ -25,6 +25,7 @@ impl RemovalPort for DetachedRemovals {
         checkout_path: &str,
         label: &str,
         panes_closed: usize,
+        delete_branch: bool,
     ) -> Result<Box<dyn RunningRemoval>> {
         // This binary rather than `git` directly: the child has to reach herdr to report
         // itself, and doing that through the same ports the picker uses is what keeps the
@@ -34,7 +35,13 @@ impl RemovalPort for DetachedRemovals {
 
         let mut command = Command::new(exe);
         command
-            .args(arguments(repo_root, checkout_path, label, panes_closed))
+            .args(arguments(
+                repo_root,
+                checkout_path,
+                label,
+                panes_closed,
+                delete_branch,
+            ))
             .stdin(Stdio::null())
             // The report line comes back this way while the picker is still up to read it.
             .stdout(Stdio::piped())
@@ -71,14 +78,21 @@ fn arguments(
     checkout_path: &str,
     label: &str,
     panes_closed: usize,
-) -> [String; 5] {
-    [
+    delete_branch: bool,
+) -> Vec<String> {
+    let mut arguments = vec![
         "remove".to_string(),
         repo_root.to_string(),
         checkout_path.to_string(),
         label.to_string(),
         panes_closed.to_string(),
-    ]
+    ];
+    // Absent rather than `false`, so a removal that keeps the branch is the line it always
+    // was.
+    if delete_branch {
+        arguments.push("delete-branch".to_string());
+    }
+    arguments
 }
 
 struct Detached {
@@ -122,18 +136,29 @@ mod tests {
         // in different processes. Nothing but this test stops one of them gaining an
         // argument the other does not know about — and the whole of what would go missing
         // is the clause that tells somebody who closed the picker what closing cost them.
-        let written = arguments("/src/app", "/wt/feat-login", "feat/login", 2);
-        assert_eq!(written[0], "remove", "the mode comes first");
+        for delete_branch in [false, true] {
+            let written = arguments("/src/app", "/wt/feat-login", "feat/login", 2, delete_branch);
+            assert_eq!(written[0], "remove", "the mode comes first");
 
-        let read = Args::read(&mut written[1..].iter().cloned()).expect("its own output");
-        assert_eq!(
-            read,
-            Args {
-                repo_root: "/src/app".into(),
-                checkout_path: "/wt/feat-login".into(),
-                label: "feat/login".into(),
-                panes_closed: 2,
-            }
-        );
+            let read = Args::read(&mut written[1..].iter().cloned()).expect("its own output");
+            assert_eq!(
+                read,
+                Args {
+                    repo_root: "/src/app".into(),
+                    checkout_path: "/wt/feat-login".into(),
+                    label: "feat/login".into(),
+                    panes_closed: 2,
+                    delete_branch,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn a_sixth_word_the_child_does_not_know_is_refused_rather_than_read_either_way() {
+        // It is the token that decides whether a branch goes, so it is not read leniently.
+        let mut written = arguments("/src/app", "/wt/feat-login", "feat/login", 2, false);
+        written.push("delete-branc".to_string());
+        assert!(Args::read(&mut written[1..].iter().cloned()).is_err());
     }
 }

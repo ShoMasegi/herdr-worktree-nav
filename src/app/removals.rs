@@ -10,12 +10,13 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use anyhow::Result;
 
+use crate::domain::model::CheckoutPath;
 use crate::domain::removal::{self, Removal};
 use crate::port::{HerdrPort, RemovalOutcome, RemovalPort};
 
 /// One removal that has been started and has not reported back.
 struct InFlight {
-    checkout_path: String,
+    checkout_path: CheckoutPath,
     /// The branch, which is what a refusal names.
     label: String,
     /// How many panes were stopped before this started, which a refusal has to mention.
@@ -40,8 +41,8 @@ pub struct Finished {
 /// row as though nothing were happening to it — and let a second `Shift-D` reach it.
 pub struct Removals<'a> {
     port: &'a dyn RemovalPort,
-    sender: Sender<(String, Result<RemovalOutcome>)>,
-    receiver: Receiver<(String, Result<RemovalOutcome>)>,
+    sender: Sender<(CheckoutPath, Result<RemovalOutcome>)>,
+    receiver: Receiver<(CheckoutPath, Result<RemovalOutcome>)>,
     in_flight: Vec<InFlight>,
 }
 
@@ -123,12 +124,13 @@ impl<'a> Removals<'a> {
         let panes_closed = removal.panes().len();
         let running = self.port.start(
             removal.repo_root(),
-            checkout_path,
+            checkout_path.as_str(),
             removal.label(),
             panes_closed,
+            removal.delete_branch(),
         )?;
         let sender = self.sender.clone();
-        let path = checkout_path.to_string();
+        let path = checkout_path.clone();
         // Not joined anywhere. Leaving the picker ends this thread with the process, and the
         // removal it was waiting on carries on without either of them.
         std::thread::spawn(move || {
@@ -136,7 +138,7 @@ impl<'a> Removals<'a> {
             let _ = sender.send((path, outcome));
         });
         self.in_flight.push(InFlight {
-            checkout_path: checkout_path.to_string(),
+            checkout_path: checkout_path.clone(),
             label: removal.label().to_string(),
             panes_closed,
         });
@@ -144,7 +146,7 @@ impl<'a> Removals<'a> {
     }
 
     /// The checkouts currently going, for the rows that stand for them.
-    pub fn paths(&self) -> Vec<String> {
+    pub fn paths(&self) -> Vec<CheckoutPath> {
         self.in_flight
             .iter()
             .map(|removal| removal.checkout_path.clone())
@@ -172,7 +174,7 @@ impl<'a> Removals<'a> {
             // Cannot happen: nothing sends without having been pushed first. The path is a
             // usable name for it either way, and dropping the answer would leave a spinner
             // turning over a removal that has finished.
-            None => (checkout_path, 0),
+            None => (checkout_path.as_str().to_string(), 0),
         };
         Some(Finished {
             label,
@@ -226,6 +228,7 @@ mod tests {
             checkout_path: &str,
             _label: &str,
             _panes_closed: usize,
+            _delete_branch: bool,
         ) -> Result<Box<dyn RunningRemoval>> {
             let (sender, receiver) = mpsc::channel();
             self.started
@@ -236,31 +239,33 @@ mod tests {
         }
     }
 
+    /// A checkout on `label`, with these panes in it. Nothing here reads a pane beyond its
+    /// id, so the rest is whatever a tree would have put there.
+    fn checkout(checkout_path: &str, label: &str, panes: &[&str]) -> WorktreeNode {
+        WorktreeNode {
+            branch: Some(label.to_string()),
+            checkout_path: checkout_path.to_string(),
+            is_primary: false,
+            open_workspace_id: None,
+            track: None,
+            panes: panes
+                .iter()
+                .map(|pane_id| PaneNode {
+                    pane_id: (*pane_id).to_string(),
+                    workspace_id: "w1".into(),
+                    tab_id: "t1".into(),
+                    display_name: None,
+                    agent_status: AgentStatus::default(),
+                    focused: false,
+                })
+                .collect(),
+        }
+    }
+
     /// A checkout to remove, named by the panes in it. Built the only way one can be —
-    /// through the checkout — so the pane list is the checkout's own. Nothing here reads a
-    /// pane beyond its id, so the rest is whatever a tree would have put there.
+    /// through the checkout — so the pane list is the checkout's own.
     fn removal(checkout_path: &str, label: &str, panes: &[&str]) -> Removal {
-        Removal::of(
-            "/src/app",
-            &WorktreeNode {
-                branch: Some(label.to_string()),
-                checkout_path: checkout_path.to_string(),
-                is_primary: false,
-                open_workspace_id: None,
-                track: None,
-                panes: panes
-                    .iter()
-                    .map(|pane_id| PaneNode {
-                        pane_id: (*pane_id).to_string(),
-                        workspace_id: "w1".into(),
-                        tab_id: "t1".into(),
-                        display_name: None,
-                        agent_status: AgentStatus::default(),
-                        focused: false,
-                    })
-                    .collect(),
-            },
-        )
+        Removal::of("/src/app", &checkout(checkout_path, label, panes))
     }
 
     #[test]
@@ -361,6 +366,31 @@ mod tests {
     }
 
     #[test]
+    fn a_sweep_asks_for_the_branch_to_go_and_shift_d_does_not() {
+        // The flag rides on the `Removal`, so what the port hears is what the constructor
+        // decided: `sweeping` on a checkout with a branch, and nothing else.
+        let recorder = Recorder::default();
+        let port = Started(&recorder);
+        let mut removals = Removals::new(&port);
+        let node = checkout("/wt/fix-crash", "fix/crash", &[]);
+
+        removals
+            .remove(&recorder, &Removal::sweeping("/src/app", &node))
+            .unwrap();
+        removals
+            .remove(&recorder, &Removal::of("/src/app", &node))
+            .unwrap();
+
+        assert_eq!(
+            recorder.did(),
+            [
+                "start /wt/fix-crash after 0 deleting the branch",
+                "start /wt/fix-crash after 0",
+            ]
+        );
+    }
+
+    #[test]
     fn an_answer_is_matched_to_the_removal_that_asked_for_it() {
         // Several can be in flight at once, and they do not answer in the order they were
         // started. Getting this wrong names the wrong branch in the refusal and miscounts
@@ -377,7 +407,13 @@ mod tests {
         removals
             .remove(&herdr, &removal("/wt/b", "feat/b", &["w2:p1"]))
             .unwrap();
-        assert_eq!(removals.paths(), ["/wt/a".to_string(), "/wt/b".to_string()]);
+        assert_eq!(
+            removals.paths(),
+            [
+                CheckoutPath::for_test("/wt/a"),
+                CheckoutPath::for_test("/wt/b")
+            ]
+        );
 
         // The second one answers first.
         port.finish("/wt/b", RemovalOutcome::Refused("no".into()));
@@ -391,7 +427,7 @@ mod tests {
         assert_eq!(finished.panes_closed, 1);
         assert_eq!(
             removals.paths(),
-            ["/wt/a".to_string()],
+            [CheckoutPath::for_test("/wt/a")],
             "the other is still going"
         );
 

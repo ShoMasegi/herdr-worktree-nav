@@ -7,6 +7,7 @@
 //! the grammar of that log is owned here — a line can only be put into it by one of the two
 //! ports below, saying one of the two things they say.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use anyhow::{anyhow, Result};
@@ -46,8 +47,7 @@ pub fn until(what: &str, mut ready: impl FnMut() -> bool) {
 /// `snapshot` is the exception, and it is an exception because it refuses rather than
 /// answers. A caller that reaches it still fails; it just fails in a shape a test can assert
 /// on instead of a panic, which is what makes "the panes closed and the list could not be
-/// read again" reachable at all. The `Ok` half of that arm still needs a fake that can
-/// describe a tree, and no test here has one — see issue #18.
+/// read again" reachable at all. The `Ok` half of that arm is not put to a test here.
 #[derive(Default)]
 pub struct Recorder {
     did: Mutex<Vec<String>>,
@@ -133,9 +133,18 @@ impl RemovalPort for Started<'_> {
         checkout_path: &str,
         _label: &str,
         panes_closed: usize,
+        delete_branch: bool,
     ) -> Result<Box<dyn RunningRemoval>> {
-        self.0
-            .record(format!("start {checkout_path} after {panes_closed}"));
+        // A suffix rather than a word on every line, so a test that never asks for the
+        // branch reads the line it always read.
+        let branch = if delete_branch {
+            " deleting the branch"
+        } else {
+            ""
+        };
+        self.0.record(format!(
+            "start {checkout_path} after {panes_closed}{branch}"
+        ));
         Ok(Box::new(Done))
     }
 }
@@ -146,6 +155,64 @@ struct Done;
 impl RunningRemoval for Done {
     fn wait(self: Box<Self>) -> Result<RemovalOutcome> {
         Ok(RemovalOutcome::Removed)
+    }
+}
+
+/// A `RemovalPort` that refuses the first start it is asked for and records every one after,
+/// the way [`Started`] does. One refusal among many is what a sweep has to carry on past.
+pub struct RefusesFirst<'a> {
+    /// The one it defers to once it has refused.
+    rest: Started<'a>,
+    asked: AtomicBool,
+}
+
+impl<'a> RefusesFirst<'a> {
+    pub fn new(recorder: &'a Recorder) -> Self {
+        Self {
+            rest: Started(recorder),
+            asked: AtomicBool::new(false),
+        }
+    }
+}
+
+impl RemovalPort for RefusesFirst<'_> {
+    fn start(
+        &self,
+        repo_root: &str,
+        checkout_path: &str,
+        label: &str,
+        panes_closed: usize,
+        delete_branch: bool,
+    ) -> Result<Box<dyn RunningRemoval>> {
+        if !self.asked.swap(true, Ordering::SeqCst) {
+            return Err(anyhow!("could not spawn: no such file or directory"));
+        }
+        self.rest
+            .start(repo_root, checkout_path, label, panes_closed, delete_branch)
+    }
+}
+
+/// A `RemovalPort` whose every removal has already finished, with the outcome given.
+pub struct Reports(pub RemovalOutcome);
+
+impl RemovalPort for Reports {
+    fn start(
+        &self,
+        _repo_root: &str,
+        _checkout_path: &str,
+        _label: &str,
+        _panes_closed: usize,
+        _delete_branch: bool,
+    ) -> Result<Box<dyn RunningRemoval>> {
+        Ok(Box::new(Reported(self.0.clone())))
+    }
+}
+
+struct Reported(RemovalOutcome);
+
+impl RunningRemoval for Reported {
+    fn wait(self: Box<Self>) -> Result<RemovalOutcome> {
+        Ok(self.0)
     }
 }
 
@@ -160,6 +227,7 @@ impl RemovalPort for Refuses {
         _checkout_path: &str,
         _label: &str,
         _panes_closed: usize,
+        _delete_branch: bool,
     ) -> Result<Box<dyn RunningRemoval>> {
         Err(anyhow!("could not spawn: no such file or directory"))
     }

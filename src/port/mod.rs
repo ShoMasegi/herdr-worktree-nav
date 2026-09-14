@@ -155,13 +155,17 @@ pub trait RemovalPort {
     /// Start removing `checkout_path`. `label` is the branch, which is what the report
     /// names — the reader was waiting on a branch, not on a path. `panes_closed` is what was
     /// stopped to get here: the caller has to say, because by the time this runs the panes
-    /// are gone and there is nothing left to count.
+    /// are gone and there is nothing left to count. `delete_branch` is whether `git branch
+    /// -d` on `label` follows the checkout: what a sweep asks for
+    /// (`docs/adr/0011-what-may-be-swept.md`) and `Shift-D` does not
+    /// (`docs/adr/0008-removing-a-worktree.md`).
     fn start(
         &self,
         repo_root: &str,
         checkout_path: &str,
         label: &str,
         panes_closed: usize,
+        delete_branch: bool,
     ) -> Result<Box<dyn RunningRemoval>>;
 }
 
@@ -317,6 +321,12 @@ pub trait GitPort: Send + Sync {
     /// is left alone, and git refuses when the checkout has uncommitted work — neither of
     /// which this plugin overrides.
     fn remove_worktree(&self, repo_root: &str, checkout_path: &str) -> Result<()>;
+
+    /// `git branch -d`, and never `-D` — `docs/adr/0011-what-may-be-swept.md` says why. `Err`
+    /// is git declining, in its own words; that it declines a squash-merged branch is held by
+    /// `a_branch_git_does_not_call_merged_is_kept_and_git_says_why` in `tests/git_adapter.rs`
+    /// rather than claimed here.
+    fn delete_branch(&self, repo_root: &str, branch: &str) -> Result<()>;
 
     /// Whether this checkout is holding work that is not committed: modified tracked files,
     /// or untracked ones. The same question `git worktree remove` asks before it refuses,

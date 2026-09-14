@@ -12,7 +12,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::domain::model::{RepoNode, Tree, WorkingTree, WorktreeNode};
+use crate::domain::model::{CheckoutPath, RepoKey, RepoNode, Tree, WorkingTree, WorktreeNode};
 use crate::port::{PullRequestOutcome, SettledPullRequest, SettledPullRequests, Track};
 
 /// Why a checkout is offered for deletion. Shown beside the mark, because a mark whose
@@ -181,23 +181,24 @@ impl RepoRoot {
 pub struct Facts<'a> {
     /// What git said about each working tree, by checkout path. Absent is "not asked yet",
     /// which is not clean — see `domain::model::WorkingTree`.
-    pub working_trees: &'a BTreeMap<String, WorkingTree>,
+    pub working_trees: &'a BTreeMap<CheckoutPath, WorkingTree>,
     /// What `gh` said, by repository root. `None` for a repository `gh` could not be asked
     /// about — the reason belongs on the prompt line, not in a decision — and a repository
     /// absent from the map has not been asked at all.
     pub settled: &'a BTreeMap<RepoRoot, Option<SettledPullRequests>>,
     /// Checkout paths whose removal is already running.
-    pub removing: &'a [String],
+    pub removing: &'a [CheckoutPath],
 }
 
-/// What the sweep may do with every checkout in the tree, by checkout path.
-pub fn candidates(tree: &Tree, facts: &Facts) -> BTreeMap<String, Candidate> {
+/// What the sweep may do with every checkout in the tree, by repository and checkout path.
+pub fn candidates(tree: &Tree, facts: &Facts) -> BTreeMap<(RepoKey, CheckoutPath), Candidate> {
     let mut out = BTreeMap::new();
     for repo in &tree.repos {
         let settled = facts.settled.get(&RepoRoot::of(repo));
         for worktree in &repo.worktrees {
-            let path = &worktree.checkout_path;
-            out.insert(path.clone(), judge(repo, worktree, settled, facts));
+            let path = CheckoutPath::of(worktree);
+            let candidate = judge(repo, worktree, &path, settled, facts);
+            out.insert((RepoKey::of(repo), path), candidate);
         }
     }
     out
@@ -206,6 +207,7 @@ pub fn candidates(tree: &Tree, facts: &Facts) -> BTreeMap<String, Candidate> {
 fn judge(
     repo: &RepoNode,
     worktree: &WorktreeNode,
+    path: &CheckoutPath,
     settled: Option<&Option<SettledPullRequests>>,
     facts: &Facts,
 ) -> Candidate {
@@ -222,7 +224,7 @@ fn judge(
     if worktree.is_primary {
         return Candidate::Refused(Refusal::Primary);
     }
-    if facts.removing.contains(&worktree.checkout_path) {
+    if facts.removing.contains(path) {
         return Candidate::Refused(Refusal::Removing);
     }
     if !worktree.panes.is_empty() {
@@ -235,7 +237,7 @@ fn judge(
     // refuse. Marking one by default would be deleting on the strength of a silence.
     let clean = facts
         .working_trees
-        .get(&worktree.checkout_path)
+        .get(path)
         .is_some_and(|answer| answer.is_clean());
 
     if clean && worktree.track == Some(Track::Gone) {
@@ -339,12 +341,12 @@ fn finished_with<'a>(
 /// out. Clear the `gone` row, let the walk report it dirty, and the row comes back marked — a
 /// checkout the user said no to, going.
 ///
-/// Keyed by checkout path rather than by row index, because the row list is rebuilt
-/// underneath this every time a working tree answers. An index would move; a path stays with
-/// the checkout it names, and a path whose checkout has left the tree simply stops matching
-/// anything.
+/// Keyed by repository and checkout path rather than by row index, because the row list is
+/// rebuilt underneath this every time a working tree answers. An index would move; a path
+/// stays with the checkout it names, and a path whose checkout has left the tree simply stops
+/// matching anything.
 #[derive(Debug, Default, Clone)]
-pub struct Changes(BTreeMap<String, Decision>);
+pub struct Changes(BTreeMap<(RepoKey, CheckoutPath), Decision>);
 
 /// One answer, and what it was about.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -377,13 +379,13 @@ impl Changes {
     ///
     /// The `Mark` is also what the answer is read off. What a row is now is what it was not,
     /// and it is written down as that rather than as "flipped" — see the note on the type.
-    pub fn flip(&mut self, worktree: &WorktreeNode, mark: &Mark) -> Option<bool> {
+    pub fn flip(&mut self, repo: &RepoNode, worktree: &WorktreeNode, mark: &Mark) -> Option<bool> {
         if !mark.is_markable() {
             return None;
         }
         let going = !mark.is_going();
         self.0.insert(
-            worktree.checkout_path.clone(),
+            (RepoKey::of(repo), CheckoutPath::of(worktree)),
             Decision {
                 branch: worktree.branch.clone(),
                 going,
@@ -402,49 +404,53 @@ impl Changes {
     /// Applied where the marks are made rather than where the tree is set, so there is no
     /// call site that has to remember it.
     pub fn still_about(&self, tree: &Tree) -> Changes {
-        let listed: BTreeMap<&str, Option<&str>> = tree
+        let listed: BTreeMap<(RepoKey, CheckoutPath), Option<&str>> = tree
             .repos
             .iter()
-            .flat_map(|repo| &repo.worktrees)
-            .map(|worktree| (worktree.checkout_path.as_str(), worktree.branch.as_deref()))
+            .flat_map(|repo| {
+                repo.worktrees.iter().map(move |worktree| {
+                    (
+                        (RepoKey::of(repo), CheckoutPath::of(worktree)),
+                        worktree.branch.as_deref(),
+                    )
+                })
+            })
             .collect();
         Changes(
             self.0
                 .iter()
-                .filter(|(path, decision)| {
-                    listed.get(path.as_str()) == Some(&decision.branch.as_deref())
-                })
-                .map(|(path, decision)| (path.clone(), decision.clone()))
+                .filter(|(key, decision)| listed.get(key) == Some(&decision.branch.as_deref()))
+                .map(|(key, decision)| (key.clone(), decision.clone()))
                 .collect(),
         )
     }
 
     /// What the user said about this row, or `None` where they have said nothing.
-    fn said(&self, path: &str) -> Option<bool> {
-        self.0.get(path).map(|decision| decision.going)
+    fn said(&self, key: &(RepoKey, CheckoutPath)) -> Option<bool> {
+        self.0.get(key).map(|decision| decision.going)
     }
 }
 
-/// Which checkouts carry a mark right now, in path order.
+/// Which checkouts carry a mark right now, in repository and path order.
 ///
 /// The sweep's suggestion for every row the user has not spoken about, and the user's own
-/// answer for every row they have. This is the answer `Enter` will act on — it is not bound
-/// yet, and the footer leaves it out — so a refusal reaching it would be a checkout deleted that
-/// the picker had promised never to touch. It cannot: [`Changes::flip`] will not record one,
+/// answer for every row they have. This is the answer `Enter` acts on, so a refusal reaching
+/// it would be a checkout deleted that the picker had promised never to touch. It cannot:
+/// [`Changes::flip`] will not record one,
 /// and this filters again rather than trusting that, because a checkout somebody opens a
 /// pane in becomes `Refused(Running)` the next time the tree is read — which, while a sweep
 /// is on, is when a removal started before it reports back — with the user's answer still
 /// written down against it.
 pub fn chosen<'a>(
-    candidates: &'a BTreeMap<String, Candidate>,
+    candidates: &'a BTreeMap<(RepoKey, CheckoutPath), Candidate>,
     changes: &Changes,
-) -> BTreeSet<&'a str> {
+) -> BTreeSet<&'a (RepoKey, CheckoutPath)> {
     candidates
         .iter()
-        .filter(|(path, candidate)| {
-            candidate.is_markable() && changes.said(path).unwrap_or(candidate.is_offered())
+        .filter(|(key, candidate)| {
+            candidate.is_markable() && changes.said(key).unwrap_or(candidate.is_offered())
         })
-        .map(|(path, _)| path.as_str())
+        .map(|(key, _)| key)
         .collect()
 }
 
@@ -540,25 +546,25 @@ impl Mark {
     }
 }
 
-/// What every checkout shows while a sweep is on, by checkout path.
+/// What every checkout shows while a sweep is on, by repository and checkout path.
 ///
 /// Worked out once per rebuild rather than per row: `chosen` is the answer `Enter` acts on,
 /// and a row that recomputed it would be a second implementation of the same rule, free to
 /// disagree with the one that deletes things.
 pub fn marks(
-    candidates: &BTreeMap<String, Candidate>,
+    candidates: &BTreeMap<(RepoKey, CheckoutPath), Candidate>,
     changes: &Changes,
-) -> BTreeMap<String, Mark> {
+) -> BTreeMap<(RepoKey, CheckoutPath), Mark> {
     let going = chosen(candidates, changes);
     candidates
         .iter()
-        .map(|(path, candidate)| {
+        .map(|(key, candidate)| {
             // Flat, so that every pairing of what the sweep found and what the user said is
             // an arm of its own. The nested `match` this was had a wildcard on its inside. A
             // fifth `Candidate` did stop the compiler — at the outer arm — but the smallest
             // edit that satisfied it left the inner wildcard to answer for the new variant,
             // with `Going(None)`: a box with nothing beside it, and no second stop to say so.
-            let going = going.contains(path.as_str());
+            let going = going.contains(key);
             let mark = match candidate {
                 Candidate::Refused(refusal) => Mark::Refused(*refusal),
                 Candidate::Offered(reason) if going => Mark::Going(reason.clone()),
@@ -569,7 +575,7 @@ pub fn marks(
                 // longer why this row is doing anything, so it stops being shown.
                 Candidate::Offered(_) | Candidate::Available => Mark::Staying,
             };
-            (path.clone(), mark)
+            (key.clone(), mark)
         })
         .collect()
 }
@@ -609,6 +615,11 @@ mod tests {
         tree
     }
 
+    /// The key a checkout of the one repository is judged under.
+    fn at(path: &str) -> (RepoKey, CheckoutPath) {
+        (RepoKey::of(&only_repo()), CheckoutPath::for_test(path))
+    }
+
     fn tree_of(worktrees: Vec<WorktreeNode>) -> Tree {
         Tree {
             repos: vec![RepoNode {
@@ -619,10 +630,10 @@ mod tests {
         }
     }
 
-    fn clean(paths: &[&str]) -> BTreeMap<String, WorkingTree> {
+    fn clean(paths: &[&str]) -> BTreeMap<CheckoutPath, WorkingTree> {
         paths
             .iter()
-            .map(|path| ((*path).to_string(), WorkingTree::Clean))
+            .map(|path| (CheckoutPath::for_test(path), WorkingTree::Clean))
             .collect()
     }
 
@@ -660,13 +671,13 @@ mod tests {
         }
     }
 
-    fn judged(tree: &Tree, facts: &Facts) -> BTreeMap<String, Candidate> {
+    fn judged(tree: &Tree, facts: &Facts) -> BTreeMap<(RepoKey, CheckoutPath), Candidate> {
         candidates(tree, facts)
     }
 
     /// The everything-is-fine case: one clean checkout, nothing running, nobody asked `gh`.
     fn facts<'a>(
-        working_trees: &'a BTreeMap<String, WorkingTree>,
+        working_trees: &'a BTreeMap<CheckoutPath, WorkingTree>,
         settled: &'a BTreeMap<RepoRoot, Option<SettledPullRequests>>,
     ) -> Facts<'a> {
         Facts {
@@ -683,8 +694,11 @@ mod tests {
         let trees = clean(&["/wt/fix-crash"]);
         let none = BTreeMap::new();
         let judged = judged(&tree_of(vec![wt]), &facts(&trees, &none));
-        assert_eq!(judged["/wt/fix-crash"], Candidate::Offered(Reason::Gone));
-        assert_eq!(judged["/wt/fix-crash"].label_for_test(), "gone");
+        assert_eq!(
+            judged[&at("/wt/fix-crash")],
+            Candidate::Offered(Reason::Gone)
+        );
+        assert_eq!(judged[&at("/wt/fix-crash")].label_for_test(), "gone");
     }
 
     #[test]
@@ -697,7 +711,7 @@ mod tests {
         let nothing = BTreeMap::new();
         let none = BTreeMap::new();
         let judged = judged(&tree_of(vec![wt]), &facts(&nothing, &none));
-        assert_eq!(judged["/wt/fix-crash"], Candidate::Available);
+        assert_eq!(judged[&at("/wt/fix-crash")], Candidate::Available);
     }
 
     #[test]
@@ -707,10 +721,13 @@ mod tests {
         // offering to delete whatever was in there on the strength of a failed question.
         let mut wt = worktree("fix/crash", "/wt/fix-crash");
         wt.track = Some(Track::Gone);
-        let unreadable = BTreeMap::from([("/wt/fix-crash".to_string(), WorkingTree::Unreadable)]);
+        let unreadable = BTreeMap::from([(
+            CheckoutPath::for_test("/wt/fix-crash"),
+            WorkingTree::Unreadable,
+        )]);
         let none = BTreeMap::new();
         let judged = judged(&tree_of(vec![wt]), &facts(&unreadable, &none));
-        assert_eq!(judged["/wt/fix-crash"], Candidate::Available);
+        assert_eq!(judged[&at("/wt/fix-crash")], Candidate::Available);
     }
 
     #[test]
@@ -722,7 +739,7 @@ mod tests {
         let trees = clean(&["/wt/detached"]);
         let unavailable = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
         let judged = judged(&tree_of(vec![wt]), &facts(&trees, &unavailable));
-        assert_eq!(judged["/wt/detached"], Candidate::Available);
+        assert_eq!(judged[&at("/wt/detached")], Candidate::Available);
     }
 
     #[test]
@@ -731,11 +748,11 @@ mod tests {
         // what would have been lost. What the sweep will not do is suggest it.
         let mut wt = worktree("fix/crash", "/wt/fix-crash");
         wt.track = Some(Track::Gone);
-        let dirty = BTreeMap::from([("/wt/fix-crash".to_string(), WorkingTree::Dirty)]);
+        let dirty = BTreeMap::from([(CheckoutPath::for_test("/wt/fix-crash"), WorkingTree::Dirty)]);
         let none = BTreeMap::new();
         let judged = judged(&tree_of(vec![wt]), &facts(&dirty, &none));
-        assert_eq!(judged["/wt/fix-crash"], Candidate::Available);
-        assert!(judged["/wt/fix-crash"].is_markable());
+        assert_eq!(judged[&at("/wt/fix-crash")], Candidate::Available);
+        assert!(judged[&at("/wt/fix-crash")].is_markable());
     }
 
     #[test]
@@ -763,18 +780,21 @@ mod tests {
             &Facts {
                 working_trees: &trees,
                 settled: &none,
-                removing: &["/wt/fix-crash".to_string()],
+                removing: &[CheckoutPath::for_test("/wt/fix-crash")],
             },
         );
 
         // Every one of them is clean with a gone upstream, so only the refusal keeps them out.
-        assert_eq!(judged["/src/app"], Candidate::Refused(Refusal::Primary));
         assert_eq!(
-            judged["/wt/feat-login"],
+            judged[&at("/src/app")],
+            Candidate::Refused(Refusal::Primary)
+        );
+        assert_eq!(
+            judged[&at("/wt/feat-login")],
             Candidate::Refused(Refusal::Running)
         );
         assert_eq!(
-            judged["/wt/fix-crash"],
+            judged[&at("/wt/fix-crash")],
             Candidate::Refused(Refusal::Removing)
         );
         assert!(judged.values().all(|c| !c.is_markable()));
@@ -789,13 +809,16 @@ mod tests {
         let settled = asked(vec![merged(123, "feat/login")]);
         let judged = judged(&tree_of(vec![wt]), &facts(&trees, &settled));
         assert_eq!(
-            judged["/wt/feat-login"],
+            judged[&at("/wt/feat-login")],
             Candidate::Offered(Reason::PullRequest {
                 number: 123,
                 outcome: PullRequestOutcome::Merged,
             })
         );
-        assert_eq!(judged["/wt/feat-login"].label_for_test(), "PR #123 merged");
+        assert_eq!(
+            judged[&at("/wt/feat-login")].label_for_test(),
+            "PR #123 merged"
+        );
     }
 
     #[test]
@@ -809,7 +832,7 @@ mod tests {
         let settled = asked(vec![merged(7, "fix/crash")]);
         let judged = judged(&tree_of(vec![wt]), &facts(&trees, &settled));
         assert_eq!(
-            judged["/wt/fix-crash"],
+            judged[&at("/wt/fix-crash")],
             Candidate::Offered(Reason::Gone),
             "git said it first"
         );
@@ -839,16 +862,16 @@ mod tests {
             &facts(&trees, &unavailable),
         );
         assert_eq!(
-            judged["/wt/feat-login"],
+            judged[&at("/wt/feat-login")],
             Candidate::Unjudged(Half::PullRequests)
         );
         assert_eq!(
-            judged["/wt/fix-crash"],
+            judged[&at("/wt/fix-crash")],
             Candidate::Offered(Reason::Gone),
             "git answered this one, so there was nothing to be unsure about"
         );
         assert_eq!(
-            judged["/wt/tidy"],
+            judged[&at("/wt/tidy")],
             Candidate::Refused(Refusal::Running),
             "a pull request was never going to decide this one"
         );
@@ -877,25 +900,31 @@ mod tests {
             focused: false,
         }];
         let mut trees = clean(&["/wt/feat-login", "/wt/detached", "/wt/tidy"]);
-        trees.insert("/wt/fix-crash".to_string(), WorkingTree::Dirty);
+        trees.insert(CheckoutPath::for_test("/wt/fix-crash"), WorkingTree::Dirty);
         let not_asked = BTreeMap::new();
 
         let judged = judged(
             &tree_unread(vec![judgeable, holding_work, detached, running]),
             &facts(&trees, &not_asked),
         );
-        assert_eq!(judged["/wt/feat-login"], Candidate::Unjudged(Half::Refs));
         assert_eq!(
-            judged["/wt/fix-crash"],
+            judged[&at("/wt/feat-login")],
+            Candidate::Unjudged(Half::Refs)
+        );
+        assert_eq!(
+            judged[&at("/wt/fix-crash")],
             Candidate::Available,
             "git would refuse it anyway, so nothing unknown about it matters"
         );
         assert_eq!(
-            judged["/wt/detached"],
+            judged[&at("/wt/detached")],
             Candidate::Available,
             "nothing to be gone from"
         );
-        assert_eq!(judged["/wt/tidy"], Candidate::Refused(Refusal::Running));
+        assert_eq!(
+            judged[&at("/wt/tidy")],
+            Candidate::Refused(Refusal::Running)
+        );
     }
 
     #[test]
@@ -916,14 +945,14 @@ mod tests {
             &facts(&trees, &asked(vec![merged(7, "feat/login")])),
         );
         assert_eq!(
-            found["/wt/feat-login"],
+            found[&at("/wt/feat-login")],
             Candidate::Offered(Reason::PullRequest {
                 number: 7,
                 outcome: PullRequestOutcome::Merged,
             })
         );
         assert_eq!(
-            found["/wt/fix-crash"],
+            found[&at("/wt/fix-crash")],
             Candidate::Unjudged(Half::Refs),
             "the whole list, and not in it — which is an answer from gh and none from git"
         );
@@ -931,7 +960,7 @@ mod tests {
         let unavailable = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
         let neither = judged(&tree_unread(both.clone()), &facts(&trees, &unavailable));
         assert_eq!(
-            neither["/wt/feat-login"],
+            neither[&at("/wt/feat-login")],
             Candidate::Unjudged(Half::Refs),
             "both halves missing: git's is the one named"
         );
@@ -940,7 +969,10 @@ mod tests {
             &tree_unread(both.clone()),
             &facts(&trees, &told(vec![merged(1, "some/other")], false)),
         );
-        assert_eq!(window["/wt/feat-login"], Candidate::Unjudged(Half::Refs));
+        assert_eq!(
+            window[&at("/wt/feat-login")],
+            Candidate::Unjudged(Half::Refs)
+        );
 
         // And a window that does reach the branch offers it, whatever git could not read:
         // the same widening as from the whole list. Pinned separately because the arms are
@@ -950,7 +982,7 @@ mod tests {
             &facts(&trees, &told(vec![merged(7, "feat/login")], false)),
         );
         assert_eq!(
-            reached["/wt/feat-login"],
+            reached[&at("/wt/feat-login")],
             Candidate::Offered(Reason::PullRequest {
                 number: 7,
                 outcome: PullRequestOutcome::Merged,
@@ -967,7 +999,7 @@ mod tests {
             &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
             &facts(&trees, &asked(Vec::new())),
         );
-        assert_eq!(answered["/wt/feat-login"], Candidate::Available);
+        assert_eq!(answered[&at("/wt/feat-login")], Candidate::Available);
 
         let unavailable = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
         let could_not = judged(
@@ -975,7 +1007,7 @@ mod tests {
             &facts(&trees, &unavailable),
         );
         assert_eq!(
-            could_not["/wt/feat-login"],
+            could_not[&at("/wt/feat-login")],
             Candidate::Unjudged(Half::PullRequests)
         );
     }
@@ -992,7 +1024,7 @@ mod tests {
             &facts(&trees, &truncated),
         );
         assert_eq!(
-            partial["/wt/feat-login"],
+            partial[&at("/wt/feat-login")],
             Candidate::Unjudged(Half::PullRequests)
         );
 
@@ -1002,7 +1034,7 @@ mod tests {
             &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
             &facts(&trees, &whole),
         );
-        assert_eq!(complete["/wt/feat-login"], Candidate::Available);
+        assert_eq!(complete[&at("/wt/feat-login")], Candidate::Available);
     }
 
     #[test]
@@ -1015,7 +1047,7 @@ mod tests {
             &facts(&trees, &truncated),
         );
         assert_eq!(
-            judged["/wt/feat-login"],
+            judged[&at("/wt/feat-login")],
             Candidate::Offered(Reason::PullRequest {
                 number: 4,
                 outcome: PullRequestOutcome::Merged,
@@ -1034,7 +1066,7 @@ mod tests {
             &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
             &facts(&trees, &none),
         );
-        assert_eq!(judged["/wt/feat-login"], Candidate::Available);
+        assert_eq!(judged[&at("/wt/feat-login")], Candidate::Available);
     }
 
     #[test]
@@ -1048,7 +1080,10 @@ mod tests {
             &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
             &facts(&trees, &abandoned),
         );
-        assert_eq!(judged["/wt/feat-login"].label_for_test(), "PR #4 closed");
+        assert_eq!(
+            judged[&at("/wt/feat-login")].label_for_test(),
+            "PR #4 closed"
+        );
     }
 
     #[test]
@@ -1075,9 +1110,15 @@ mod tests {
         };
         let trees = clean(&["/wt/app-login", "/wt/site-login"]);
         let judged = candidates(&tree, &facts(&trees, &asked(vec![merged(1, "feat/login")])));
-        assert!(judged["/wt/app-login"].is_offered(), "its own repository");
+        assert!(
+            judged[&at("/wt/app-login")].is_offered(),
+            "its own repository"
+        );
         assert_eq!(
-            judged["/wt/site-login"],
+            judged[&(
+                RepoKey::of(&tree.repos[1]),
+                CheckoutPath::for_test("/wt/site-login")
+            )],
             Candidate::Available,
             "nobody asked gh about that repository at all"
         );
@@ -1091,7 +1132,7 @@ mod tests {
             &tree_of(vec![worktree("login", "/wt/login")]),
             &facts(&trees, &asked(vec![merged(5, "feat/login")])),
         );
-        assert_eq!(judged["/wt/login"], Candidate::Available);
+        assert_eq!(judged[&at("/wt/login")], Candidate::Available);
     }
 
     #[test]
@@ -1101,14 +1142,18 @@ mod tests {
         // refuse the removal anyway — but the sweep's job is not to suggest what git will
         // refuse, it is to suggest what is finished with.
         for answer in [WorkingTree::Dirty, WorkingTree::Unreadable] {
-            let trees = BTreeMap::from([("/wt/feat-login".to_string(), answer)]);
+            let trees = BTreeMap::from([(CheckoutPath::for_test("/wt/feat-login"), answer)]);
             let judged = judged(
                 &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
                 &facts(&trees, &asked(vec![merged(4, "feat/login")])),
             );
-            assert_eq!(judged["/wt/feat-login"], Candidate::Available, "{answer:?}");
+            assert_eq!(
+                judged[&at("/wt/feat-login")],
+                Candidate::Available,
+                "{answer:?}"
+            );
             assert!(
-                judged["/wt/feat-login"].is_markable(),
+                judged[&at("/wt/feat-login")].is_markable(),
                 "still the user's to mark"
             );
         }
@@ -1136,7 +1181,10 @@ mod tests {
                 &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
                 &facts(&trees, &asked(order)),
             );
-            assert_eq!(judged["/wt/feat-login"].label_for_test(), "PR #2 merged");
+            assert_eq!(
+                judged[&at("/wt/feat-login")].label_for_test(),
+                "PR #2 merged"
+            );
         }
     }
 
@@ -1156,7 +1204,10 @@ mod tests {
                 ]),
             ),
         );
-        assert_eq!(judged["/wt/feat-login"].label_for_test(), "PR #2 merged");
+        assert_eq!(
+            judged[&at("/wt/feat-login")].label_for_test(),
+            "PR #2 merged"
+        );
     }
 
     #[test]
@@ -1174,7 +1225,10 @@ mod tests {
                 ]),
             ),
         );
-        assert_eq!(judged["/wt/feat-login"].label_for_test(), "PR #9 closed");
+        assert_eq!(
+            judged[&at("/wt/feat-login")].label_for_test(),
+            "PR #9 closed"
+        );
     }
 
     #[test]
@@ -1194,20 +1248,21 @@ mod tests {
             &tree_of(vec![worktree("patch-1", "/wt/patch-1")]),
             &facts(&trees, &from_a_fork),
         );
-        assert_eq!(judged["/wt/patch-1"], Candidate::Available);
+        assert_eq!(judged[&at("/wt/patch-1")], Candidate::Available);
     }
 
     #[test]
     fn a_row_git_would_refuse_anyway_is_not_called_unjudged() {
         // `gh` failing is only worth saying where its answer could have changed something.
         // A working tree holding work was never going to be offered whatever GitHub said.
-        let dirty = BTreeMap::from([("/wt/feat-login".to_string(), WorkingTree::Dirty)]);
+        let dirty =
+            BTreeMap::from([(CheckoutPath::for_test("/wt/feat-login"), WorkingTree::Dirty)]);
         let unavailable = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
         let judged = judged(
             &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
             &facts(&dirty, &unavailable),
         );
-        assert_eq!(judged["/wt/feat-login"], Candidate::Available);
+        assert_eq!(judged[&at("/wt/feat-login")], Candidate::Available);
     }
 
     #[test]
@@ -1220,11 +1275,11 @@ mod tests {
         let holding_work = judged(
             &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
             &facts(
-                &BTreeMap::from([("/wt/feat-login".to_string(), WorkingTree::Dirty)]),
+                &BTreeMap::from([(CheckoutPath::for_test("/wt/feat-login"), WorkingTree::Dirty)]),
                 &told(vec![merged(4, "something/else")], false),
             ),
         );
-        assert_eq!(holding_work["/wt/feat-login"], Candidate::Available);
+        assert_eq!(holding_work[&at("/wt/feat-login")], Candidate::Available);
 
         let nothing_answered = BTreeMap::new();
         let unanswered = judged(
@@ -1232,7 +1287,7 @@ mod tests {
             &facts(&nothing_answered, &told(vec![], false)),
         );
         assert_eq!(
-            unanswered["/wt/feat-login"],
+            unanswered[&at("/wt/feat-login")],
             Candidate::Available,
             "a checkout git has not answered for yet is not a checkout gh failed on"
         );
@@ -1261,10 +1316,13 @@ mod tests {
             &Facts {
                 working_trees: &clean(&["/src/app"]),
                 settled: &none,
-                removing: &["/src/app".to_string()],
+                removing: &[CheckoutPath::for_test("/src/app")],
             },
         );
-        assert_eq!(judged["/src/app"], Candidate::Refused(Refusal::Primary));
+        assert_eq!(
+            judged[&at("/src/app")],
+            Candidate::Refused(Refusal::Primary)
+        );
 
         // And the pair below it, which asserting only the top of the order leaves free. A
         // checkout being removed that still has panes in it says "already being removed":
@@ -1284,11 +1342,11 @@ mod tests {
             &Facts {
                 working_trees: &clean(&["/wt/feat-login"]),
                 settled: &none,
-                removing: &["/wt/feat-login".to_string()],
+                removing: &[CheckoutPath::for_test("/wt/feat-login")],
             },
         );
         assert_eq!(
-            judged["/wt/feat-login"],
+            judged[&at("/wt/feat-login")],
             Candidate::Refused(Refusal::Removing)
         );
     }
@@ -1302,27 +1360,68 @@ mod tests {
         assert_eq!(RepoRoot::of(&only_repo()), RepoRoot("/src/app".to_string()));
     }
 
+    #[test]
+    fn one_repositorys_judgement_never_lands_on_anothers_checkout_at_the_same_path() {
+        // Issue #46: two repositories name one path — `me/old` a worktree it once had there,
+        // `me/app` a live checkout whose refs git would not read. Keyed by the path alone,
+        // the stale `Offered(Gone)` took the live row.
+        let mut stale = worktree("chore/deps", "/wt/shared");
+        stale.track = Some(Track::Gone);
+        let tree = Tree {
+            repos: vec![
+                RepoNode {
+                    refs: Refs::Unreadable("fatal: bad ref".to_string()),
+                    worktrees: vec![worktree("feat/x", "/wt/shared")],
+                    ..only_repo()
+                },
+                RepoNode {
+                    repo_key: "/src/old/.git".into(),
+                    repo_root: "/src/old".into(),
+                    display_name: "me/old".into(),
+                    refs: Refs::Read,
+                    worktrees: vec![stale],
+                },
+            ],
+            ungrouped: Vec::new(),
+        };
+        let trees = clean(&["/wt/shared"]);
+        let none = BTreeMap::new();
+        let judged = candidates(&tree, &facts(&trees, &none));
+        assert_eq!(judged.len(), 2, "one entry per checkout, not one per path");
+        assert_eq!(
+            judged[&(
+                RepoKey::of(&tree.repos[0]),
+                CheckoutPath::of(&tree.repos[0].worktrees[0])
+            )],
+            Candidate::Unjudged(Half::Refs)
+        );
+        assert_eq!(
+            judged[&(
+                RepoKey::of(&tree.repos[1]),
+                CheckoutPath::of(&tree.repos[1].worktrees[0])
+            )],
+            Candidate::Offered(Reason::Gone)
+        );
+    }
+
     /// What `Space` does, through the same two steps the picker takes: judge every row, then
     /// flip the one the cursor is on by what it shows.
     fn flip(
         changes: &mut Changes,
-        candidates: &BTreeMap<String, Candidate>,
+        candidates: &BTreeMap<(RepoKey, CheckoutPath), Candidate>,
         path: &str,
     ) -> Option<bool> {
         let shown = marks(candidates, changes);
-        changes.flip(&worktree("b", path), &shown[path])
+        changes.flip(&only_repo(), &worktree("b", path), &shown[&at(path)])
     }
 
     /// The four answers side by side, since what `Space` does depends on which one a row is.
-    fn one_of_each() -> BTreeMap<String, Candidate> {
+    fn one_of_each() -> BTreeMap<(RepoKey, CheckoutPath), Candidate> {
         BTreeMap::from([
-            ("/wt/gone".to_string(), Candidate::Offered(Reason::Gone)),
-            (
-                "/wt/unjudged".to_string(),
-                Candidate::Unjudged(Half::PullRequests),
-            ),
-            ("/wt/available".to_string(), Candidate::Available),
-            ("/src/app".to_string(), Candidate::Refused(Refusal::Primary)),
+            (at("/wt/gone"), Candidate::Offered(Reason::Gone)),
+            (at("/wt/unjudged"), Candidate::Unjudged(Half::PullRequests)),
+            (at("/wt/available"), Candidate::Available),
+            (at("/src/app"), Candidate::Refused(Refusal::Primary)),
         ])
     }
 
@@ -1331,7 +1430,7 @@ mod tests {
         let candidates = one_of_each();
         assert_eq!(
             chosen(&candidates, &Changes::default()),
-            BTreeSet::from(["/wt/gone"])
+            BTreeSet::from([&at("/wt/gone")])
         );
     }
 
@@ -1355,7 +1454,7 @@ mod tests {
         );
         assert_eq!(
             chosen(&candidates, &changes),
-            BTreeSet::from(["/wt/available"])
+            BTreeSet::from([&at("/wt/available")])
         );
 
         // And back, because the same key has to undo itself — a user who marks the wrong row
@@ -1365,7 +1464,10 @@ mod tests {
             Some(false)
         );
         assert_eq!(flip(&mut changes, &candidates, "/wt/gone"), Some(true));
-        assert_eq!(chosen(&candidates, &changes), BTreeSet::from(["/wt/gone"]));
+        assert_eq!(
+            chosen(&candidates, &changes),
+            BTreeSet::from([&at("/wt/gone")])
+        );
     }
 
     #[test]
@@ -1376,19 +1478,19 @@ mod tests {
         let mut candidates = one_of_each();
         let mut changes = Changes::default();
         flip(&mut changes, &candidates, "/wt/available");
-        assert!(chosen(&candidates, &changes).contains("/wt/available"));
+        assert!(chosen(&candidates, &changes).contains(&at("/wt/available")));
 
         // `gh` answers: that branch's pull request is merged. The sweep now suggests what
         // the user already said.
         candidates.insert(
-            "/wt/available".to_string(),
+            at("/wt/available"),
             Candidate::Offered(Reason::PullRequest {
                 number: 7,
                 outcome: PullRequestOutcome::Merged,
             }),
         );
         assert!(
-            chosen(&candidates, &changes).contains("/wt/available"),
+            chosen(&candidates, &changes).contains(&at("/wt/available")),
             "gh agreeing with the user cannot take the user's mark away"
         );
     }
@@ -1401,12 +1503,12 @@ mod tests {
         let mut candidates = one_of_each();
         let mut changes = Changes::default();
         flip(&mut changes, &candidates, "/wt/gone");
-        assert!(!chosen(&candidates, &changes).contains("/wt/gone"));
+        assert!(!chosen(&candidates, &changes).contains(&at("/wt/gone")));
 
         // The walk answers: that working tree is dirty, so the sweep stops offering it.
-        candidates.insert("/wt/gone".to_string(), Candidate::Available);
+        candidates.insert(at("/wt/gone"), Candidate::Available);
         assert!(
-            !chosen(&candidates, &changes).contains("/wt/gone"),
+            !chosen(&candidates, &changes).contains(&at("/wt/gone")),
             "a checkout the user said no to does not come back marked"
         );
     }
@@ -1420,7 +1522,7 @@ mod tests {
         let mut changes = Changes::default();
         assert_eq!(flip(&mut changes, &candidates, "/src/app"), None);
         assert!(
-            !chosen(&candidates, &changes).contains("/src/app"),
+            !chosen(&candidates, &changes).contains(&at("/src/app")),
             "and nothing was recorded to leak into the answer"
         );
     }
@@ -1433,21 +1535,25 @@ mod tests {
         // has already said yes to. That yes is then about a branch nobody has seen, on the
         // list `Enter` acts on.
         let tree = tree_of(vec![worktree("feat/login", "/wt/feat-login")]);
-        let candidates = BTreeMap::from([("/wt/feat-login".to_string(), Candidate::Available)]);
+        let candidates = BTreeMap::from([(at("/wt/feat-login"), Candidate::Available)]);
         let mut changes = Changes::default();
-        changes.flip(&worktree("feat/login", "/wt/feat-login"), &Mark::Staying);
-        assert!(chosen(&candidates, &changes.still_about(&tree)).contains("/wt/feat-login"));
+        changes.flip(
+            &only_repo(),
+            &worktree("feat/login", "/wt/feat-login"),
+            &Mark::Staying,
+        );
+        assert!(chosen(&candidates, &changes.still_about(&tree)).contains(&at("/wt/feat-login")));
 
         // Same path, different branch.
         let moved = tree_of(vec![worktree("release/v2", "/wt/feat-login")]);
         assert!(
-            !chosen(&candidates, &changes.still_about(&moved)).contains("/wt/feat-login"),
+            !chosen(&candidates, &changes.still_about(&moved)).contains(&at("/wt/feat-login")),
             "the answer was about feat/login, and feat/login is not there any more"
         );
 
         // And a checkout that leaves the tree and comes back the same takes its answer with
         // it: what the user said is still true of what they said it about.
-        assert!(chosen(&candidates, &changes.still_about(&tree)).contains("/wt/feat-login"));
+        assert!(chosen(&candidates, &changes.still_about(&tree)).contains(&at("/wt/feat-login")));
     }
 
     #[test]
@@ -1456,21 +1562,21 @@ mod tests {
         // the row shows the difference either way.
         let mut detached = worktree("feat/login", "/wt/feat-login");
         detached.branch = None;
-        let candidates = BTreeMap::from([("/wt/feat-login".to_string(), Candidate::Available)]);
+        let candidates = BTreeMap::from([(at("/wt/feat-login"), Candidate::Available)]);
 
         let mut changes = Changes::default();
-        changes.flip(&detached, &Mark::Staying);
+        changes.flip(&only_repo(), &detached, &Mark::Staying);
         assert!(chosen(
             &candidates,
             &changes.still_about(&tree_of(vec![detached.clone()]))
         )
-        .contains("/wt/feat-login"));
+        .contains(&at("/wt/feat-login")));
         assert!(
             !chosen(
                 &candidates,
                 &changes.still_about(&tree_of(vec![worktree("feat/login", "/wt/feat-login")]))
             )
-            .contains("/wt/feat-login"),
+            .contains(&at("/wt/feat-login")),
             "a branch was checked out where there was none"
         );
     }
@@ -1478,11 +1584,18 @@ mod tests {
     #[test]
     fn an_answer_about_a_checkout_that_left_the_tree_is_not_kept() {
         let mut changes = Changes::default();
-        changes.flip(&worktree("feat/login", "/wt/feat-login"), &Mark::Staying);
-        assert!(changes.said("/wt/feat-login").is_some());
+        changes.flip(
+            &only_repo(),
+            &worktree("feat/login", "/wt/feat-login"),
+            &Mark::Staying,
+        );
+        assert!(changes.said(&at("/wt/feat-login")).is_some());
 
         let empty = tree_of(Vec::new());
-        assert!(changes.still_about(&empty).said("/wt/feat-login").is_none());
+        assert!(changes
+            .still_about(&empty)
+            .said(&at("/wt/feat-login"))
+            .is_none());
     }
 
     #[test]
@@ -1494,20 +1607,17 @@ mod tests {
         let mut candidates = one_of_each();
         let mut changes = Changes::default();
         flip(&mut changes, &candidates, "/wt/available");
-        assert!(chosen(&candidates, &changes).contains("/wt/available"));
+        assert!(chosen(&candidates, &changes).contains(&at("/wt/available")));
 
-        candidates.insert(
-            "/wt/available".to_string(),
-            Candidate::Refused(Refusal::Running),
-        );
+        candidates.insert(at("/wt/available"), Candidate::Refused(Refusal::Running));
         assert!(
-            !chosen(&candidates, &changes).contains("/wt/available"),
+            !chosen(&candidates, &changes).contains(&at("/wt/available")),
             "somebody started working in it; the mark goes with the judgement"
         );
     }
 
     #[test]
-    fn a_flip_is_remembered_against_a_path_and_not_against_a_row() {
+    fn a_flip_is_remembered_against_a_checkout_and_not_against_a_row() {
         // The list is rebuilt underneath the sweep every time a working tree answers, so a
         // remembered row index would end up on a different checkout. And a checkout that
         // leaves the tree takes its flip with it rather than passing it to whatever sorts
@@ -1516,19 +1626,19 @@ mod tests {
         let mut changes = Changes::default();
         flip(&mut changes, &candidates, "/wt/available");
 
-        candidates.remove("/wt/available");
+        candidates.remove(&at("/wt/available"));
         assert_eq!(
             chosen(&candidates, &changes),
-            BTreeSet::from(["/wt/gone"]),
+            BTreeSet::from([&at("/wt/gone")]),
             "the flip left with the checkout it named, and the rest is untouched"
         );
 
         // And a checkout made afterwards does not inherit it by sorting into the same place.
-        candidates.insert("/wt/available".to_string(), Candidate::Available);
-        candidates.insert("/wt/aaa-first".to_string(), Candidate::Available);
+        candidates.insert(at("/wt/available"), Candidate::Available);
+        candidates.insert(at("/wt/aaa-first"), Candidate::Available);
         assert_eq!(
             chosen(&candidates, &changes),
-            BTreeSet::from(["/wt/gone", "/wt/available"]),
+            BTreeSet::from([&at("/wt/gone"), &at("/wt/available")]),
             "though a path used again is the one thing a path cannot tell apart"
         );
     }
@@ -1539,39 +1649,42 @@ mod tests {
         let shown = marks(&candidates, &Changes::default());
 
         assert_eq!(
-            shown["/wt/gone"],
+            shown[&at("/wt/gone")],
             Mark::Going(Reason::Gone),
             "nothing goes without its reason attached"
         );
         assert_eq!(
-            shown["/wt/gone"].note(),
+            shown[&at("/wt/gone")].note(),
             None,
             "and its reason is the upstream marker the row already draws — `judge` offers \
              `Gone` only where the track is gone, so saying it again would put the same \
              word on the row twice"
         );
-        assert_eq!(shown["/wt/available"], Mark::Staying);
-        assert_eq!(shown["/wt/available"].note(), None);
-        assert_eq!(shown["/wt/unjudged"], Mark::Unjudged(Half::PullRequests));
+        assert_eq!(shown[&at("/wt/available")], Mark::Staying);
+        assert_eq!(shown[&at("/wt/available")].note(), None);
         assert_eq!(
-            shown["/wt/unjudged"].note().as_deref(),
+            shown[&at("/wt/unjudged")],
+            Mark::Unjudged(Half::PullRequests)
+        );
+        assert_eq!(
+            shown[&at("/wt/unjudged")].note().as_deref(),
             Some("PR unknown"),
             "a row gh could not judge says so rather than looking like one with nothing to \
              find"
         );
-        assert_eq!(shown["/src/app"], Mark::Refused(Refusal::Primary));
+        assert_eq!(shown[&at("/src/app")], Mark::Refused(Refusal::Primary));
         assert_eq!(
-            shown["/src/app"].note(),
+            shown[&at("/src/app")].note(),
             None,
             "a refusal is said by the absence of a box, not by a sentence where the label goes"
         );
         assert_eq!(
-            shown["/src/app"].refusal(),
+            shown[&at("/src/app")].refusal(),
             Some("the repository itself"),
             "and answered on the prompt line to whoever pressed Space"
         );
         assert_eq!(
-            shown["/wt/gone"].refusal(),
+            shown[&at("/wt/gone")].refusal(),
             None,
             "nothing else has one to give"
         );
@@ -1589,7 +1702,7 @@ mod tests {
             &facts(&clean(&["/wt/feat-login"]), &BTreeMap::new()),
         );
         assert_eq!(
-            judged["/wt/feat-login"],
+            judged[&at("/wt/feat-login")],
             Candidate::Offered(Reason::Gone),
             "gone is offered for a track that is gone, and for nothing else"
         );
@@ -1598,7 +1711,7 @@ mod tests {
     #[test]
     fn a_pull_request_is_named_on_the_row_it_decided() {
         let candidates = BTreeMap::from([(
-            "/wt/feat-login".to_string(),
+            at("/wt/feat-login"),
             Candidate::Offered(Reason::PullRequest {
                 number: 123,
                 outcome: PullRequestOutcome::Merged,
@@ -1606,7 +1719,7 @@ mod tests {
         )]);
         let shown = marks(&candidates, &Changes::default());
         assert_eq!(
-            shown["/wt/feat-login"].note().as_deref(),
+            shown[&at("/wt/feat-login")].note().as_deref(),
             Some("PR #123 merged"),
             "the number is what makes the reason checkable"
         );
@@ -1621,8 +1734,8 @@ mod tests {
         flip(&mut changes, &candidates, "/wt/available");
 
         let shown = marks(&candidates, &changes);
-        assert_eq!(shown["/wt/available"], Mark::GoingByHand);
-        assert_eq!(shown["/wt/available"].note(), None);
+        assert_eq!(shown[&at("/wt/available")], Mark::GoingByHand);
+        assert_eq!(shown[&at("/wt/available")].note(), None);
     }
 
     #[test]
@@ -1638,18 +1751,24 @@ mod tests {
 
         let shown = marks(&candidates, &changes);
         assert_eq!(
-            shown["/wt/unjudged"],
+            shown[&at("/wt/unjudged")],
             Mark::GoingUnjudged(Half::PullRequests)
         );
-        assert!(shown["/wt/unjudged"].is_going());
-        assert_eq!(shown["/wt/unjudged"].note().as_deref(), Some("PR unknown"));
+        assert!(shown[&at("/wt/unjudged")].is_going());
+        assert_eq!(
+            shown[&at("/wt/unjudged")].note().as_deref(),
+            Some("PR unknown")
+        );
 
         // And it comes off again. `is_markable` is what `flip` asks before it records
         // anything, and a variant left out of its `true` arm is a mark the user can put on
         // and never take off — on the one row where what is being acted on is nobody knows.
         flip(&mut changes, &candidates, "/wt/unjudged");
         let shown = marks(&candidates, &changes);
-        assert_eq!(shown["/wt/unjudged"], Mark::Unjudged(Half::PullRequests));
+        assert_eq!(
+            shown[&at("/wt/unjudged")],
+            Mark::Unjudged(Half::PullRequests)
+        );
     }
 
     #[test]
@@ -1657,23 +1776,23 @@ mod tests {
         // Two halves, two words, and the mark carries the half through: fixed in different
         // places, so the row has to say which one to go and fix.
         let candidates = BTreeMap::from([
-            ("/wt/refs".to_string(), Candidate::Unjudged(Half::Refs)),
-            (
-                "/wt/prs".to_string(),
-                Candidate::Unjudged(Half::PullRequests),
-            ),
+            (at("/wt/refs"), Candidate::Unjudged(Half::Refs)),
+            (at("/wt/prs"), Candidate::Unjudged(Half::PullRequests)),
         ]);
         let mut changes = Changes::default();
         let shown = marks(&candidates, &changes);
-        assert_eq!(shown["/wt/refs"], Mark::Unjudged(Half::Refs));
-        assert_eq!(shown["/wt/refs"].note().as_deref(), Some("refs unreadable"));
-        assert_eq!(shown["/wt/prs"].note().as_deref(), Some("PR unknown"));
+        assert_eq!(shown[&at("/wt/refs")], Mark::Unjudged(Half::Refs));
+        assert_eq!(
+            shown[&at("/wt/refs")].note().as_deref(),
+            Some("refs unreadable")
+        );
+        assert_eq!(shown[&at("/wt/prs")].note().as_deref(), Some("PR unknown"));
 
         flip(&mut changes, &candidates, "/wt/refs");
         let shown = marks(&candidates, &changes);
-        assert_eq!(shown["/wt/refs"], Mark::GoingUnjudged(Half::Refs));
+        assert_eq!(shown[&at("/wt/refs")], Mark::GoingUnjudged(Half::Refs));
         assert_eq!(
-            shown["/wt/refs"].note().as_deref(),
+            shown[&at("/wt/refs")].note().as_deref(),
             Some("refs unreadable"),
             "marked by hand, it still says nobody judged it — and which half"
         );
@@ -1687,8 +1806,8 @@ mod tests {
         flip(&mut changes, &candidates, "/wt/gone");
 
         let shown = marks(&candidates, &changes);
-        assert_eq!(shown["/wt/gone"], Mark::Staying);
-        assert_eq!(shown["/wt/gone"].note(), None);
+        assert_eq!(shown[&at("/wt/gone")], Mark::Staying);
+        assert_eq!(shown[&at("/wt/gone")].note(), None);
     }
 
     #[test]
@@ -1701,26 +1820,24 @@ mod tests {
         flip(&mut changes, &candidates, "/wt/available");
         flip(&mut changes, &candidates, "/wt/gone");
 
-        let going: BTreeSet<String> = marks(&candidates, &changes)
+        let going: BTreeSet<(RepoKey, CheckoutPath)> = marks(&candidates, &changes)
             .into_iter()
             .filter(|(_, mark)| mark.is_going())
             .map(|(path, _)| path)
             .collect();
-        let taken: BTreeSet<String> = chosen(&candidates, &changes)
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let taken: BTreeSet<(RepoKey, CheckoutPath)> =
+            chosen(&candidates, &changes).into_iter().cloned().collect();
         assert_eq!(going, taken);
     }
 
     #[test]
     fn space_is_refused_on_exactly_the_rows_that_show_a_refusal() {
         let candidates = one_of_each();
-        for (path, mark) in marks(&candidates, &Changes::default()) {
+        for (key, mark) in marks(&candidates, &Changes::default()) {
             assert_eq!(
                 mark.is_markable(),
-                candidates[&path].is_markable(),
-                "{path} disagrees with itself about whether Space does anything"
+                candidates[&key].is_markable(),
+                "{key:?} disagrees with itself about whether Space does anything"
             );
         }
     }
@@ -1762,7 +1879,7 @@ mod tests {
         let trees = clean(&["/wt/detached"]);
         let settled = asked(vec![merged(9, "feat/login")]);
         let judged = judged(&tree_of(vec![wt]), &facts(&trees, &settled));
-        assert_eq!(judged["/wt/detached"], Candidate::Available);
+        assert_eq!(judged[&at("/wt/detached")], Candidate::Available);
     }
 
     impl Candidate {

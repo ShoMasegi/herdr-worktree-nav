@@ -18,7 +18,7 @@ use ratatui::Frame;
 use crate::domain::model::{PaneNode, RepoNode};
 use crate::domain::order::Order;
 use crate::domain::preview::{Preview, PreviewPane};
-use crate::domain::removal::Removal;
+use crate::domain::removal::{Removal, SweepRemoval};
 use crate::domain::resolve::{BranchEntry, BranchState};
 use crate::domain::rows::{self, abbreviate, marks, marks_reserve, DisplayLine, Row, UNNAMED_PANE};
 use crate::port::LayoutRect;
@@ -194,12 +194,11 @@ const HELP_PANES: &[&str] = &[
 /// While a deletion is waiting on a yes. Says what the dialog says, in case the dialog is
 /// too small a pane to have drawn everything.
 const HELP_PANES_REMOVE: &[&str] = &["y delete  any other key cancels", "y delete"];
-/// While a sweep is on. `\u{21b5}` is not offered: it removes what is marked, and that is
-/// not wired up yet.
+/// While a sweep is on.
 const HELP_PANES_SWEEP: &[&str] = &[
-    "space mark  \u{2191}\u{2193} move  \u{2190}\u{2192} repo  shift+s done  esc done",
-    "space mark  \u{2191}\u{2193} move  esc done",
-    "space mark  esc done",
+    "space mark  \u{2191}\u{2193} move  \u{2190}\u{2192} repo  \u{21b5} delete marked  shift+s done  esc done",
+    "space mark  \u{2191}\u{2193} move  \u{21b5} delete  esc done",
+    "space mark  \u{21b5} delete  esc done",
 ];
 const HELP_PANES_SEARCH: &[&str] = &[
     "\u{21b5} keep search  ctrl+u clear  esc cancel  \u{2191}\u{2193} move  \u{2190}\u{2192} repo",
@@ -238,20 +237,23 @@ fn layout(frame: &Frame) -> Option<Panel> {
 /// question in. The loop takes the question back when that happens — see `render_removal`.
 pub fn draw(frame: &mut Frame, state: &PanesState, theme: &Theme, _mode: Mode) -> bool {
     let Some(panel) = layout(frame) else {
-        return state.pending_removal().is_none();
+        return state.pending_removal().is_none() && state.pending_sweep().is_none();
     };
 
     frame.render_widget(search_line(state, theme, panel.search.width), panel.search);
     render_rule(frame, panel.rule, theme);
     render_rows(frame, state, theme, panel.body);
-    let asked = match state.pending_removal() {
-        Some(removal) => render_removal(frame, removal, state.home(), theme, panel.body),
-        None => true,
+    // One question at a time: `Shift-D` is not answered during a sweep, and only `y` on a
+    // sweep's question ends the sweep.
+    let asked = match (state.pending_removal(), state.pending_sweep()) {
+        (Some(removal), _) => render_removal(frame, removal, state.home(), theme, panel.body),
+        (None, Some(sweep)) => render_sweep_removal(frame, sweep, state.home(), theme, panel.body),
+        (None, None) => true,
     };
     render_detail(frame, &state.detail(), theme, panel.detail);
 
     let variants = match (
-        state.pending_removal().is_some(),
+        state.pending_removal().is_some() || state.pending_sweep().is_some(),
         state.is_sweeping(),
         state.is_filtering(),
     ) {
@@ -404,6 +406,79 @@ fn footer(variants: &[&'static str], theme: &Theme, width: u16) -> Paragraph<'st
     Paragraph::new(Line::from(Span::styled(format!(" {text}"), theme.dim())))
 }
 
+/// The keys under either question, and the one that answers it.
+const KEYS_Y: &str = "y delete";
+const KEYS_REST: &str = "     any other key cancels";
+
+/// The line those keys are drawn on.
+fn keys_line(theme: &Theme) -> Line<'static> {
+    Line::from(vec![
+        Span::raw("  "),
+        Span::styled(
+            KEYS_Y,
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(KEYS_REST, theme.dim()),
+    ])
+}
+
+/// How wide a question box whose longest line is `widest` gets over `body`.
+///
+/// Border, padding and a column of air on each side, and a ceiling: a worktree path is long
+/// enough to turn a dialog into a banner across a wide pane. What will not fit loses its
+/// middle, and the breadcrumb under the list still carries the whole thing.
+fn question_width(widest: usize, body: Rect) -> u16 {
+    const MAX_WIDTH: usize = 80;
+    (widest + 6).min(body.width as usize).min(MAX_WIDTH) as u16
+}
+
+/// Draw the first of `candidates` that fits, centred over `body`, and say whether one did.
+///
+/// The candidates run from the roomiest to the barest, so the first that fits is the most a
+/// short pane can hold. `false` when none of them does, or when `title_width` will not fit:
+/// a box too narrow for the question is as bad as no box — `Delete this checkout and close
+/// 2 panes?` clipped to `Delete this checkout` is a complete sentence and a false one. The
+/// caller takes a `false` as "this cannot be asked", and cancels. `width` is
+/// [`question_width`]'s, which is what keeps it inside `body`.
+fn question_box(
+    frame: &mut Frame,
+    theme: &Theme,
+    body: Rect,
+    width: u16,
+    title_width: usize,
+    candidates: Vec<Vec<Line>>,
+) -> bool {
+    if width < 8 || (width as usize) < title_width + 6 {
+        return false;
+    }
+    let Some(lines) = candidates
+        .into_iter()
+        .find(|lines| lines.len() + 2 <= body.height as usize)
+    else {
+        return false;
+    };
+    let height = (lines.len() + 2) as u16;
+
+    let area = Rect::new(
+        body.x + (body.width - width) / 2,
+        body.y + (body.height - height) / 2,
+        width,
+        height,
+    );
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::bordered()
+                .border_style(Style::default().fg(theme.accent))
+                .padding(ratatui::widgets::Padding::horizontal(1)),
+        ),
+        area,
+    );
+    true
+}
+
 /// The question a deletion asks, as a box over the list.
 ///
 /// A dialog rather than a line in the search field: this is the one thing the picker does
@@ -423,10 +498,7 @@ fn render_removal(
     const TITLE: &str = "Delete this checkout?";
     const CLOSING: &str = "  these panes close:";
 
-    const KEYS_Y: &str = "y delete";
-    const KEYS_REST: &str = "     any other key cancels";
-
-    let path = abbreviate(removal.checkout_path(), home);
+    let path = abbreviate(removal.checkout_path().as_str(), home);
     // Uncommitted work is git's to protect and it does. What a working agent has in flight
     // has no other safety net, so the question names every pane that stops, in the words the
     // list behind the box uses for the same panes.
@@ -484,11 +556,7 @@ fn render_removal(
     .chain((!closing.is_empty()).then(|| CLOSING.chars().count()))
     .max()
     .unwrap_or(0);
-    // Two columns of border and two of padding on each side, and a ceiling: a worktree path
-    // is long enough to turn a dialog into a banner across a wide pane. What will not fit
-    // loses its middle, and the breadcrumb under the list still carries the whole thing.
-    const MAX_WIDTH: usize = 80;
-    let width = (widest + 6).min(body.width as usize).min(MAX_WIDTH) as u16;
+    let width = question_width(widest, body);
 
     let blank = Line::from("");
     let title = Line::from(Span::styled(
@@ -501,16 +569,7 @@ fn render_removal(
         format!("  {}", middle_elide(&path, inner_width)),
         theme.dim(),
     ));
-    let keys = Line::from(vec![
-        Span::raw("  "),
-        Span::styled(
-            KEYS_Y,
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(KEYS_REST, theme.dim()),
-    ]);
+    let keys = keys_line(theme);
 
     // The panes, each with the glyph its row carries, so the one that is working is as
     // obvious here as it is in the list behind the box.
@@ -549,7 +608,7 @@ fn render_removal(
         true => vec![blank.clone()],
         false => [vec![blank.clone()], panes.clone(), vec![blank.clone()]].concat(),
     };
-    let candidates = [
+    let candidates = vec![
         [
             vec![title.clone(), blank.clone(), branch.clone(), path.clone()],
             spaced,
@@ -565,36 +624,116 @@ fn render_removal(
         [vec![title, branch], panes, vec![keys.clone()]].concat(),
         vec![counted_line, keys],
     ];
-    // A box too narrow for the question is as bad as no box: `Delete this checkout and close
-    // 2 panes?` clipped to `Delete this checkout` is a complete sentence and a false one.
-    // The caller takes a `false` from here as "this cannot be asked", and cancels.
-    if width < 8 || (width as usize) < counted.chars().count() + 6 {
-        return false;
-    }
-    let Some(lines) = candidates
-        .into_iter()
-        .find(|lines| lines.len() + 2 <= body.height as usize)
-    else {
-        return false;
-    };
-    let height = (lines.len() + 2) as u16;
-
-    let area = Rect::new(
-        body.x + (body.width - width) / 2,
-        body.y + (body.height - height) / 2,
+    question_box(
+        frame,
+        theme,
+        body,
         width,
-        height,
-    );
-    frame.render_widget(Clear, area);
-    frame.render_widget(
-        Paragraph::new(lines).block(
-            Block::bordered()
-                .border_style(Style::default().fg(theme.accent))
-                .padding(ratatui::widgets::Padding::horizontal(1)),
-        ),
-        area,
-    );
-    true
+        counted.chars().count(),
+        candidates,
+    )
+}
+
+/// What a sweep's question starts with: the count, and how many branches go after.
+fn sweep_title(sweep: &SweepRemoval) -> String {
+    let checkouts = match sweep.len() {
+        1 => "1 checkout".to_string(),
+        many => format!("{many} checkouts"),
+    };
+    match (sweep.len(), sweep.branches()) {
+        (_, 0) => format!("Delete {checkouts}?"),
+        (1, _) => format!("Delete {checkouts} and its branch?"),
+        (all, branches) if all == branches => format!("Delete {checkouts} and their branches?"),
+        (_, 1) => format!("Delete {checkouts} and 1 branch?"),
+        (_, branches) => format!("Delete {checkouts} and {branches} branches?"),
+    }
+}
+
+/// The question a sweep asks: the same box as `render_removal`, under the same contract —
+/// `false` when it could not be drawn, and the caller takes the question back. A row per
+/// checkout, as many as fit, then `+N more`; the title carries the count, so the smallest
+/// box still says how many go.
+fn render_sweep_removal(
+    frame: &mut Frame,
+    sweep: &SweepRemoval,
+    home: Option<&str>,
+    theme: &Theme,
+    body: Rect,
+) -> bool {
+    let title = sweep_title(sweep);
+    let label_column = sweep
+        .removals()
+        .iter()
+        .map(|removal| removal.label().chars().count())
+        .max()
+        .unwrap_or(0);
+    let paths: Vec<String> = sweep
+        .removals()
+        .iter()
+        .map(|removal| abbreviate(removal.checkout_path().as_str(), home))
+        .collect();
+    let widest = [
+        title.chars().count(),
+        KEYS_Y.chars().count() + KEYS_REST.chars().count(),
+    ]
+    .into_iter()
+    .chain(
+        paths
+            .iter()
+            .map(|path| label_column + path.chars().count() + 4),
+    )
+    .max()
+    .unwrap_or(0);
+    let width = question_width(widest, body);
+    let inner_width = width.saturating_sub(6) as usize;
+    let path_budget = inner_width.saturating_sub(label_column + 2);
+
+    let blank = Line::from("");
+    let title_width = title.chars().count();
+    let title = Line::from(Span::styled(
+        title,
+        Style::default().add_modifier(Modifier::BOLD),
+    ));
+    let keys = keys_line(theme);
+    let rows: Vec<Line> = sweep
+        .removals()
+        .iter()
+        .zip(&paths)
+        .map(|(removal, path)| {
+            Line::from(vec![
+                Span::raw(format!("  {}  ", pad(removal.label(), label_column))),
+                Span::styled(middle_elide(path, path_budget), theme.dim()),
+            ])
+        })
+        .collect();
+
+    // The air goes first, then rows from the bottom with their number in their place, and
+    // last the rows altogether: the title has said how many the whole time.
+    let mut candidates = vec![
+        [
+            vec![title.clone(), blank.clone()],
+            rows.clone(),
+            vec![blank, keys.clone()],
+        ]
+        .concat(),
+        [vec![title.clone()], rows.clone(), vec![keys.clone()]].concat(),
+    ];
+    for shown in (1..rows.len()).rev() {
+        let more = Line::from(Span::styled(
+            format!("  +{} more", rows.len() - shown),
+            theme.dim(),
+        ));
+        candidates.push(
+            [
+                vec![title.clone()],
+                rows[..shown].to_vec(),
+                vec![more, keys.clone()],
+            ]
+            .concat(),
+        );
+    }
+    candidates.push(vec![title, keys]);
+    question_box(frame, theme, body, width, title_width, candidates)
 }
 
 fn render_rows(frame: &mut Frame, state: &PanesState, theme: &Theme, area: Rect) {
@@ -1714,15 +1853,15 @@ fn pad(text: &str, width: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::model::WorkingTree;
+    use crate::domain::model::{CheckoutPath, RepoKey, WorkingTree};
     use std::collections::BTreeMap;
 
     /// The answers map, spelled out per checkout. These tests care which of the four shapes
     /// a checkout is in, which is the thing the map made sayable.
-    fn answers(pairs: &[(&str, WorkingTree)]) -> BTreeMap<String, WorkingTree> {
+    fn answers(pairs: &[(&str, WorkingTree)]) -> BTreeMap<CheckoutPath, WorkingTree> {
         pairs
             .iter()
-            .map(|(path, answer)| ((*path).to_string(), *answer))
+            .map(|(path, answer)| (CheckoutPath::for_test(path), *answer))
             .collect()
     }
     use super::*;
@@ -2134,7 +2273,7 @@ mod tests {
         // stop on it and `Shift-D` could not reach it. It is the whole of what the picker
         // adds over the toast, and the row it is on has nothing left to decide about.
         let mut state = PanesState::new(tree(), None);
-        state.set_removing(vec!["/wt/fix-crash".into()]);
+        state.set_removing(vec![CheckoutPath::for_test("/wt/fix-crash")]);
         for width in [46u16, 53, 60, 92] {
             let drawn = screen(&state, width, 16);
             let row = drawn
@@ -2231,7 +2370,7 @@ mod tests {
             .collect();
         marked.set_settled(asked, None, false);
         let mut removing = PanesState::new(tree(), None);
-        removing.set_removing(vec!["/wt/fix-crash".into()]);
+        removing.set_removing(vec![CheckoutPath::for_test("/wt/fix-crash")]);
 
         for width in 24u16..=92 {
             let drawn = screen(&marked, width, 16);
@@ -2569,7 +2708,7 @@ mod tests {
         // the row has to say what is happening to it rather than simply going quiet. The
         // cursor has stepped off it: there is nothing left to do to it from here.
         let mut state = PanesState::new(tree(), None);
-        state.set_removing(vec!["/wt/fix-crash".into()]);
+        state.set_removing(vec![CheckoutPath::for_test("/wt/fix-crash")]);
         insta::assert_snapshot!(screen(&state, 92, 18));
     }
 
@@ -2626,6 +2765,156 @@ mod tests {
         }
         press(&mut state, KeyCode::Char('D'));
         insta::assert_snapshot!(screen(&state, 92, 10));
+    }
+
+    /// One repository: the session's own checkout with a pane in it, and `finished` linked
+    /// worktrees, each on a branch whose upstream is gone and with nothing running in it.
+    fn finished_tree(finished: &[&str]) -> Tree {
+        let mut worktrees = vec![worktree(
+            "main",
+            true,
+            vec![pane("w1:p1", Some("claude"), AgentStatus::Working, true)],
+        )];
+        worktrees.extend(finished.iter().map(|branch| WorktreeNode {
+            track: Some(Track::Gone),
+            ..worktree(branch, false, vec![])
+        }));
+        Tree {
+            repos: vec![RepoNode {
+                repo_key: "/src/app/.git".into(),
+                repo_root: "/src/app".into(),
+                display_name: "me/app".into(),
+                refs: Refs::Read,
+                worktrees,
+            }],
+            ungrouped: vec![],
+        }
+    }
+
+    /// A sweep over `tree` with every working tree clean.
+    fn sweeping_over(tree: Tree) -> PanesState {
+        let clean: BTreeMap<CheckoutPath, WorkingTree> = tree.repos[0]
+            .worktrees
+            .iter()
+            .map(|worktree| (CheckoutPath::of(worktree), WorkingTree::Clean))
+            .collect();
+        let mut state = PanesState::new(tree, None);
+        state.set_working_trees(clean);
+        press(&mut state, KeyCode::Char('S'));
+        state
+    }
+
+    /// `Enter`, and the frame on which the walk it asked for has answered.
+    fn ask(state: &mut PanesState) {
+        press(state, KeyCode::Enter);
+        state.set_waiting(false);
+        state.confirm_sweep_if_settled();
+        assert!(state.pending_sweep().is_some(), "a question should be up");
+    }
+
+    #[test]
+    fn the_sweeps_question_lists_what_goes() {
+        let mut state = sweeping_over(finished_tree(&["feat/login", "fix/crash", "chore/deps"]));
+        ask(&mut state);
+        insta::assert_snapshot!(screen(&state, 92, 16));
+    }
+
+    #[test]
+    fn a_short_pane_lists_what_fits_and_counts_the_rest() {
+        // The title carries the count, so the rows that do not fit are a number rather
+        // than a silence.
+        let mut state = sweeping_over(finished_tree(&[
+            "feat/a", "feat/b", "feat/c", "feat/d", "feat/e", "feat/f", "feat/g", "feat/h",
+        ]));
+        ask(&mut state);
+        insta::assert_snapshot!(screen(&state, 92, 12));
+    }
+
+    #[test]
+    fn a_checkout_with_no_branch_changes_the_count_of_branches() {
+        // Marked by hand — the sweep offers nothing it cannot judge — and its label is the
+        // directory, which `git branch -d` is never given.
+        let mut tree = finished_tree(&["feat/login", "fix/crash"]);
+        tree.repos[0].worktrees.push(WorktreeNode {
+            branch: None,
+            checkout_path: "/wt/scratch".into(),
+            is_primary: false,
+            open_workspace_id: None,
+            track: None,
+            panes: vec![],
+        });
+        let mut state = sweeping_over(tree);
+        for _ in 0..16 {
+            if state.detail().contains("scratch") {
+                break;
+            }
+            press(&mut state, KeyCode::Char('j'));
+        }
+        assert!(state.detail().contains("scratch"), "the cursor reached it");
+        press(&mut state, KeyCode::Char(' '));
+        ask(&mut state);
+        insta::assert_snapshot!(screen(&state, 92, 14));
+    }
+
+    #[test]
+    fn a_pane_too_small_for_the_sweeps_question_asks_none() {
+        // The same floor as a deletion's question: two lines and a border, and a width the
+        // title fits in.
+        let mut state = sweeping_over(finished_tree(&["feat/login", "fix/crash"]));
+        ask(&mut state);
+
+        let mut short = Terminal::new(TestBackend::new(92, 7)).unwrap();
+        short
+            .draw(|frame| {
+                assert!(
+                    !draw(frame, &state, &theme(), Mode::Panes),
+                    "too short for even the title"
+                );
+            })
+            .unwrap();
+
+        let mut narrow = Terminal::new(TestBackend::new(30, 40)).unwrap();
+        narrow
+            .draw(|frame| {
+                assert!(
+                    !draw(frame, &state, &theme(), Mode::Panes),
+                    "`Delete 2 checkouts` clipped out of the title is a false sentence"
+                );
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn the_sweeps_question_counts_in_the_singular_and_says_when_no_branch_goes() {
+        let mut tree = finished_tree(&["fix/crash", "feat/login"]);
+        tree.repos[0].worktrees.push(WorktreeNode {
+            branch: None,
+            checkout_path: "/wt/scratch".into(),
+            is_primary: false,
+            open_workspace_id: None,
+            track: None,
+            panes: vec![],
+        });
+        let sweep = |paths: &[&str]| {
+            let keys: Vec<_> = paths
+                .iter()
+                .map(|path| (RepoKey::of(&tree.repos[0]), CheckoutPath::for_test(path)))
+                .collect();
+            SweepRemoval::of(&tree, &keys)
+        };
+        assert_eq!(
+            sweep_title(&sweep(&["/wt/fix-crash"])),
+            "Delete 1 checkout and its branch?"
+        );
+        assert_eq!(sweep_title(&sweep(&["/wt/scratch"])), "Delete 1 checkout?");
+        assert_eq!(
+            sweep_title(&sweep(&["/wt/fix-crash", "/wt/scratch"])),
+            "Delete 2 checkouts and 1 branch?"
+        );
+        assert_eq!(
+            sweep_title(&sweep(&["/wt/fix-crash", "/wt/feat-login"])),
+            "Delete 2 checkouts and their branches?"
+        );
     }
 
     #[test]
@@ -2782,7 +3071,7 @@ mod tests {
         // sideways under one is a list nobody can read while tidying up.
         let mut state = PanesState::new(tree(), None);
         let before = meta_column(state.rows(), 92);
-        state.set_removing(vec!["/wt/fix-crash".into()]);
+        state.set_removing(vec![CheckoutPath::for_test("/wt/fix-crash")]);
         assert_eq!(meta_column(state.rows(), 92), before);
     }
 
@@ -3128,5 +3417,57 @@ mod tests {
         search(&mut state, "chore");
         state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         insta::assert_snapshot!(branches_screen(&state, 92, 12));
+    }
+
+    #[test]
+    fn a_pane_too_small_to_lay_out_at_all_draws_no_question() {
+        let mut state = sweeping_over(finished_tree(&["feat/login", "fix/crash"]));
+        ask(&mut state);
+        let mut tiny = Terminal::new(TestBackend::new(3, 3)).unwrap();
+        tiny.draw(|frame| {
+            assert!(
+                !draw(frame, &state, &theme(), Mode::Panes),
+                "nothing was drawn, so nothing may be answered"
+            );
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn a_pane_with_room_for_the_rows_but_not_the_air_lists_them_all() {
+        let mut state = sweeping_over(finished_tree(&["feat/login", "fix/crash", "chore/deps"]));
+        ask(&mut state);
+        insta::assert_snapshot!(screen(&state, 92, 11));
+    }
+
+    #[test]
+    fn a_pane_with_room_for_one_row_lists_it_and_counts_the_rest() {
+        let mut state = sweeping_over(finished_tree(&["feat/login", "fix/crash", "chore/deps"]));
+        ask(&mut state);
+        insta::assert_snapshot!(screen(&state, 92, 10));
+    }
+
+    #[test]
+    fn a_pane_with_room_for_the_title_alone_still_asks() {
+        // The title carries the count, so the smallest box still says how many go.
+        let mut state = sweeping_over(finished_tree(&["feat/login", "fix/crash", "chore/deps"]));
+        ask(&mut state);
+        let mut short = Terminal::new(TestBackend::new(92, 9)).unwrap();
+        short
+            .draw(|frame| assert!(draw(frame, &state, &theme(), Mode::Panes)))
+            .unwrap();
+        insta::assert_snapshot!(screen(&state, 92, 9));
+    }
+
+    #[test]
+    fn a_wide_pane_still_caps_the_box_at_eighty_columns() {
+        // The path is what would turn the box into a banner, and it loses its middle instead.
+        let mut tree = finished_tree(&["feat/login"]);
+        tree.repos[0].worktrees[1].checkout_path =
+            "/wt/a-directory-whose-name-runs-on-and-on-and-on-and-on-and-on-and-on/feat-login"
+                .into();
+        let mut state = sweeping_over(tree);
+        ask(&mut state);
+        insta::assert_snapshot!(screen(&state, 120, 14));
     }
 }

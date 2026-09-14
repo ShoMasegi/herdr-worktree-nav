@@ -184,6 +184,14 @@ through this against a real session.
       is clean carry `[x]`; ones with panes running in them carry no box, and `Space` on one
       says `panes are running in it`. The cursor stops on every checkout, unlike outside a
       sweep. `Space` adds and removes a mark and the count on the right follows it.
+- [ ] With two or more checkouts marked, `Enter` shows a box with the count and the rows,
+      `y` removes them all, each row reads `deleting` until its notification arrives, and
+      one notification arrives per checkout. **CI cannot reach this path** — there is no
+      herdr to show a notification.
+- [ ] A marked checkout whose branch was squash-merged is removed and its branch stays: the
+      notification and the prompt line read `branch kept` with git's `not fully merged`.
+- [ ] Open a pane in a marked checkout after `Shift-S` and before `Enter`: the box does not
+      list it, and the prompt line names it as no longer marked.
 - [ ] With `gh` installed and logged in, entering the sweep in a repository with closed pull
       requests shows `asking gh…` and then marks any branch whose pull request was merged,
       with `PR #<n> merged` on the row. **CI cannot reach this path** — nothing in the suite

@@ -77,7 +77,19 @@ the sweep should cost exactly what agreeing with it extra does. `Shift-S` again,
 leaves, and leaving forgets the marks: the next sweep opens on what it would suggest now, not
 on what the last one was talked into.
 
-`Enter` does not remove them yet.
+`Enter` removes them. First it reads the list and every working tree again: the marks were
+judged on facts from when the picker opened or was last reloaded, and a checkout somebody
+has opened a pane in since, or written a file into, comes off the list here rather than
+being removed on the strength of an old answer — the prompt line names each one it drops.
+Then a box says how many checkouts go and lists them as far as the pane allows, and `y` is
+the only key that removes anything. Each checkout is removed the way `Shift-D` removes one —
+`git worktree remove`, no `--force`, in a process of its own that outlives the picker and
+reports as a herdr notification — and then its branch, where it has one, is deleted with
+`git branch -d`. Never `-D`: a branch git does not consider merged stays, which is what a
+squash merge leaves behind, and the notification and the prompt line say `branch kept` with
+git's words. A checkout git refuses is reported on its own and the rest carry on. After `y`
+the picker is back in the ordinary view, each row reading `deleting` until its process
+reports.
 
 #### Without `gh`
 
@@ -90,8 +102,8 @@ again on the way in; one it answered for is not, and neither is one with no GitH
 there is nothing to ask. With more than one repository in trouble the prompt line names the
 first and counts the rest, and a refusal — the one you can do something about — is named ahead
 of a missing remote. Entering again re-asks `gh` and nothing else: which working trees are
-clean and which checkouts have panes in them were read when the picker opened, and `r`,
-outside a sweep, is what reads them again.
+clean and which checkouts have panes in them were read when the picker opened; `r`, outside a
+sweep, reads them again, and so does `Enter` inside one, before it asks.
 
 While `gh` is still out the prompt line spins on `asking gh…`. Until it answers, the rows are
 showing what git decided on its own, which is the smaller half.
