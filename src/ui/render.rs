@@ -426,9 +426,11 @@ fn keys_line(theme: &Theme) -> Line<'static> {
 
 /// How wide a question box whose longest line is `widest` gets over `body`.
 ///
-/// Border, padding and a column of air on each side, and a ceiling: a worktree path is long
-/// enough to turn a dialog into a banner across a wide pane. What will not fit loses its
-/// middle, and the breadcrumb under the list still carries the whole thing.
+/// Border and padding on each side, two columns more, and a ceiling. The two are for the
+/// keys line: every other line is measured with the indent it carries, and that one is not.
+/// The ceiling is because a worktree path is long enough to turn a dialog into a banner
+/// across a wide pane; what will not fit loses its middle, and the breadcrumb under the list
+/// still carries the whole thing.
 fn question_width(widest: usize, body: Rect) -> u16 {
     const MAX_WIDTH: usize = 80;
     (widest + 6).min(body.width as usize).min(MAX_WIDTH) as u16
