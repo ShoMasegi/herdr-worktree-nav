@@ -10,6 +10,6 @@ pub mod herdr_config;
 pub mod herdr_socket;
 
 pub use detached::DetachedRemovals;
-pub use gh_cli::GhCli;
+pub use gh_cli::{GhCli, GH_BUDGET};
 pub use git_cli::GitCli;
 pub use herdr_socket::SocketHerdr;

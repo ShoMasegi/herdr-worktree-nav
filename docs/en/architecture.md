@@ -227,5 +227,5 @@ getting wrong lives.
 | `ui` state | key handling is a pure state → action mapping, so the keymap is covered directly |
 | `ui` drawing | `TestBackend` + `insta` snapshots of the rendered buffer |
 | `adapter` git | real repositories in a `tempfile::TempDir` |
-| `adapter` gh | nothing in CI runs `gh`, so each call is split into the command it builds and the answer it reads, and both halves are tested with no process at all — twice a malformed argument list shipped past a green suite. What no test reaches is `.output()` and the redirections around it: `Command` has no getter for `stderr`, so sending it to `null` — which would cost the user gh's own words on every refusal — needs a `gh` on `PATH` that a test put there. |
+| `adapter` gh | nothing in CI runs `gh`, so each call is split into the command it builds and the answer it reads, and both halves are tested with no process at all — twice a malformed argument list shipped past a green suite. The process itself, and the redirections around it, are reached by `tests/gh_cli.rs` with a `gh` it puts on `PATH`: one that never answers, which the budget gives up on, and one that refuses on `stderr`, whose words have to reach the sentence the user sees. |
 | `adapter` herdr | not testable in CI — there is no server. See [Troubleshooting](troubleshooting.md) for the manual checklist. |

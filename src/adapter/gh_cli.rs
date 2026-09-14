@@ -9,8 +9,11 @@
 //! it says "could not ask" instead of "nothing to report". See `GhPort::settled_pull_requests`
 //! and `docs/adr/0011-what-may-be-swept.md`.
 
+use std::io::Read;
 use std::process::{Command, Output, Stdio};
-use std::time::Duration;
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
@@ -167,7 +170,7 @@ fn open_command(slug: &Slug) -> Command {
 /// The process, made but not run.
 ///
 /// The third thing split out of this call, and for the reason the first two were: what is
-/// left inside `settled_pull_requests` is `.output()` and nothing else. Both bugs this call
+/// left inside `settled_pull_requests` is [`output_within`] and nothing else. Both bugs this call
 /// has shipped were in what it asked, and what it asks is now pinned — the program and the
 /// argument list are both assertable, and asserted.
 ///
@@ -177,7 +180,14 @@ fn open_command(slug: &Slug) -> Command {
 /// `gh`. What that costs is not nothing: [`settled_answer`] reads `stderr` to find the
 /// sentence the user is shown, so a `stderr` sent to `null` makes every word of it
 /// unreachable and turns every refusal into "gh would not answer". Reaching it needs a `gh`
-/// on `PATH` that a test put there.
+/// on `PATH` that a test put there — `a_gh_on_the_path_is_given_the_budget_and_no_more` in
+/// `tests/gh_cli.rs` is that test.
+///
+/// `stdin` is the one redirection no test here can hold either way: what a test binary
+/// inherits is the harness's, and that is a terminal on one machine and `/dev/null` on the
+/// next, so a `gh` waiting for a line either blocks or does not depending on where the suite
+/// is run. It stays pinned to `null` because the alternate screen is up and a `gh` asking to
+/// authenticate would be asking nobody.
 fn settled_command(slug: &Slug) -> Command {
     let mut command = Command::new("gh");
     command
@@ -248,22 +258,93 @@ pub struct GhCli;
 
 impl GhPort for GhCli {
     fn pull_requests(&self, slug: &Slug) -> Vec<PullRequest> {
-        let Ok(output) = open_command(slug).output() else {
-            return Vec::new();
-        };
-        open_answer(&output)
+        // A `gh` that ran out of time is one more way of having nothing to say here.
+        match output_within(&mut open_command(slug), GH_BUDGET) {
+            Ok(Some(output)) => open_answer(&output),
+            Ok(None) | Err(_) => Vec::new(),
+        }
     }
 
     fn settled_pull_requests(&self, slug: &Slug) -> Result<SettledPullRequests, String> {
-        let output = settled_command(slug)
-            .output()
-            .map_err(|error| format!("gh could not be run: {error}"))?;
-        settled_answer(&output)
+        match output_within(&mut settled_command(slug), GH_BUDGET) {
+            Ok(Some(output)) => settled_answer(&output),
+            Ok(None) => Err(format!("gh did not answer within {GH_BUDGET:?}")),
+            Err(error) => Err(format!("gh could not be run: {error}")),
+        }
     }
 }
 
-/// How long a caller should wait for `gh` before giving up on the annotation.
+/// How long either call waits for `gh` before giving up on it. A `gh` on a network that has
+/// gone away, or at an auth prompt nobody can see under the alternate screen, never exits on
+/// its own, and `Command::output` would wait with it for ever — issue #26.
 pub const GH_BUDGET: Duration = Duration::from_secs(5);
+
+/// How often [`output_within`] looks for the process having exited.
+const POLL: Duration = Duration::from_millis(25);
+
+/// Run `command` and read what it wrote, unless `budget` runs out first — then the answer is
+/// `None`. `Err` is the process not starting at all.
+///
+/// The budget covers the whole call, the reading included. Two things can outlast the
+/// question: the process, which is killed; and the pipes, which the process can leave open
+/// behind it by starting something of its own — a read to EOF then waits for that child,
+/// and waiting for it is what this exists to stop. Whatever `gh` leaves running is not this
+/// process's to kill and is not waited for either: the reader is abandoned with its pipe
+/// and the answer is `None`. `output_within_gives_up_on_a_pipe_a_departed_process_left_open`
+/// is that case.
+///
+/// The pipes are read on threads rather than in turn, because a process that fills one
+/// blocks on it and a caller reading the other first would deadlock — which is the thing
+/// `Command::output` does for itself and this has to do for itself too.
+fn output_within(command: &mut Command, budget: Duration) -> std::io::Result<Option<Output>> {
+    let deadline = Instant::now() + budget;
+    let mut child = command.stdout(Stdio::piped()).spawn()?;
+    let stdout = child.stdout.take().map(read_to_end);
+    let stderr = child.stderr.take().map(read_to_end);
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(None);
+        }
+        thread::sleep(POLL);
+    };
+    // What the pipes hold is only an answer if all of it arrived, so a read that runs out of
+    // budget is the same `None` a process that never exited gets.
+    let (Some(stdout), Some(stderr)) = (collected(stdout, deadline), collected(stderr, deadline))
+    else {
+        return Ok(None);
+    };
+    Ok(Some(Output {
+        status,
+        stdout,
+        stderr,
+    }))
+}
+
+/// What one pipe held, or `None` when it had not ended by `deadline`. A pipe nobody opened
+/// is empty rather than late.
+fn collected(reader: Option<Receiver<Vec<u8>>>, deadline: Instant) -> Option<Vec<u8>> {
+    match reader {
+        None => Some(Vec::new()),
+        Some(reader) => reader
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .ok(),
+    }
+}
+
+fn read_to_end(mut pipe: impl Read + Send + 'static) -> Receiver<Vec<u8>> {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = pipe.read_to_end(&mut bytes);
+        let _ = sender.send(bytes);
+    });
+    receiver
+}
 
 #[cfg(test)]
 mod tests {
@@ -309,9 +390,8 @@ mod tests {
     fn what_is_actually_started_is_gh_with_the_arguments_above() {
         // The list being right has never been the whole of it: twice a correct list sat
         // beside a call that did not use it. What is left in `settled_pull_requests` after
-        // this is `.output()`, and `stderr` is piped because `settled_answer` reads it — a
-        // `stderr` sent to `null` costs the user gh's own words on every refusal without
-        // failing anything.
+        // this is `output_within`, and `stderr` is piped because `settled_answer` reads it —
+        // `tests/gh_cli.rs` is where a `stderr` sent to `null` would fail.
         let command = settled_command(&slug());
         assert_eq!(command.get_program(), "gh");
         assert_eq!(
@@ -664,5 +744,50 @@ mod answering {
             matches!(answer, SettledPullRequests::All(_)),
             "one fewer than the window is gh saying it reached the end"
         );
+    }
+
+    /// A command whose own process ends at once and leaves something of its own holding the
+    /// pipe. `sh` rather than a fixture: the shape is a process that outlives its parent,
+    /// and every machine that runs this suite has one.
+    fn exits_leaving_a_child_on_the_pipe() -> Command {
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "sleep 5 & exit 0"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::piped());
+        command
+    }
+
+    #[test]
+    fn output_within_gives_up_on_a_pipe_a_departed_process_left_open() {
+        // Reading to EOF would wait for the child, and the child is not the question. What
+        // the budget is worth is that this returns, not what it returns.
+        let budget = Duration::from_millis(200);
+        let asked = Instant::now();
+        let answer = output_within(&mut exits_leaving_a_child_on_the_pipe(), budget)
+            .expect("sh should start");
+        let waited = asked.elapsed();
+
+        assert!(answer.is_none(), "half an answer is not one");
+        assert!(
+            waited < Duration::from_secs(2),
+            "it gave up rather than waiting for the child: {waited:?}"
+        );
+    }
+
+    #[test]
+    fn output_within_reads_more_than_a_pipe_holds() {
+        // The pipes are read on threads because a process that fills one blocks on it. A
+        // quarter of a megabyte is several times over any pipe buffer.
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "yes 0123456789abcdef | head -c 262144"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::piped());
+        let output = output_within(&mut command, Duration::from_secs(10))
+            .expect("sh should start")
+            .expect("it exits well inside the budget");
+
+        assert_eq!(output.stdout.len(), 262_144);
     }
 }

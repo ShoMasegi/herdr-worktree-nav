@@ -62,6 +62,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **A `gh` that never answers no longer spins the sweep for ever.** Each call to `gh` is
+  given five seconds — the reading included — and then given up on: the sweep's rows read
+  `PR unknown`, the prompt line says `gh did not answer within 5s`, and entering the sweep
+  again asks again. The branches view loses the annotation for that repository and nothing
+  else.
 - **`Shift-D` no longer holds the picker while it deletes.** `git worktree remove` walks a
   whole working tree before it deletes it, which is seconds on a repository of any size, and
   it used to run between one keypress and the next — so the picker froze for it. `y` now
