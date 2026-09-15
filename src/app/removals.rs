@@ -6,7 +6,11 @@
 //! picker needs while it happens to still be up: which rows are going, and what to say
 //! about the ones that come back refused.
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+#[cfg(test)]
+use std::sync::Arc;
 
 use anyhow::Result;
 
@@ -44,6 +48,14 @@ pub struct Removals<'a> {
     sender: Sender<(CheckoutPath, Result<RemovalOutcome>)>,
     receiver: Receiver<(CheckoutPath, Result<RemovalOutcome>)>,
     in_flight: Vec<InFlight>,
+    /// How many answers have been put in the channel, counted after the send rather than
+    /// when they are read. Nothing in the picker reads it: what a frame does is decided by
+    /// what [`finished`](Self::finished) hands over, and waiting for a number would be the
+    /// loop waiting on a removal, which is the one thing it must not do. A test that needs
+    /// two answers in one drain has no other way to know they are both there — reading one
+    /// to find out takes it.
+    #[cfg(test)]
+    reported: Arc<AtomicUsize>,
 }
 
 impl<'a> Removals<'a> {
@@ -54,6 +66,8 @@ impl<'a> Removals<'a> {
             sender,
             receiver,
             in_flight: Vec::new(),
+            #[cfg(test)]
+            reported: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -131,11 +145,15 @@ impl<'a> Removals<'a> {
         )?;
         let sender = self.sender.clone();
         let path = checkout_path.clone();
+        #[cfg(test)]
+        let reported = Arc::clone(&self.reported);
         // Not joined anywhere. Leaving the picker ends this thread with the process, and the
         // removal it was waiting on carries on without either of them.
         std::thread::spawn(move || {
             let outcome = running.wait();
             let _ = sender.send((path, outcome));
+            #[cfg(test)]
+            reported.fetch_add(1, Ordering::SeqCst);
         });
         self.in_flight.push(InFlight {
             checkout_path: checkout_path.clone(),
@@ -157,6 +175,12 @@ impl<'a> Removals<'a> {
     /// false — with nothing to wait for, blocking on a key draws no frames at all.
     pub fn is_empty(&self) -> bool {
         self.in_flight.is_empty()
+    }
+
+    /// How many answers are in the channel. See the field.
+    #[cfg(test)]
+    pub fn reported(&self) -> usize {
+        self.reported.load(Ordering::SeqCst)
     }
 
     /// The next removal to have reported back, if any. Never blocks.

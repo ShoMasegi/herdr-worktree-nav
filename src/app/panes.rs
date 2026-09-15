@@ -123,9 +123,10 @@ pub fn run(
 /// the last trip to the branches view, since the removals outlive both views and the picker
 /// itself — and say on the prompt line what they said.
 ///
-/// Out of the loop for the reason `show_answers` is: this is the arm with consequences. What
-/// it says and how it says it are held by `two_removals_reporting_in_one_frame_share_the_line`
-/// and `a_question_the_re_read_took_back_is_said_last`.
+/// Out of the loop for the reason `show_answers` is: this is the arm with consequences. That
+/// reports share the line is held by `two_removals_reporting_in_one_frame_share_the_line`,
+/// and that a withdrawal is said after them by `a_question_the_re_read_took_back_is_said_last`
+/// and `a_question_taken_back_by_the_first_of_two_reports_is_still_said_last`.
 fn drain_finished(
     state: &mut PanesState,
     pending: &mut Pending,
@@ -1581,6 +1582,78 @@ mod tests {
                 "removed feat/login, branch kept: error: not fully merged; the list changed \
                  while that was up — ask again"
             )
+        );
+    }
+
+    #[test]
+    fn a_question_taken_back_by_the_first_of_two_reports_is_still_said_last() {
+        // The first re-read takes the box back and the second has nothing to take: the
+        // notice belongs to the frame, not to the last report in it.
+        let session = Arc::new(Session::new(false, false));
+        let (mut state, mut pending) = sweep_asked(&session);
+        let port = Reports(RemovalOutcome::BranchKept("error: not fully merged".into()));
+        let mut removals = Removals::new(&port);
+        let earlier: Vec<Removal> = state.tree().repos[0].worktrees[1..=2]
+            .iter()
+            .map(|worktree| Removal::sweeping("/src/app", worktree))
+            .collect();
+        for removal in &earlier {
+            removals.remove(&Recorder::default(), removal).unwrap();
+        }
+        // Both answers in the channel before the one drain: reading one to find out would
+        // take it, so the count is what a test can wait on.
+        until("both reported", || removals.reported() == 2);
+        drain_finished(
+            &mut state,
+            &mut pending,
+            &mut removals,
+            &*session,
+            &*session,
+        );
+
+        assert!(removals.is_empty(), "both came home in the one drain");
+        let line = state
+            .message()
+            .expect("two reports and a withdrawal are said");
+        assert!(
+            line.ends_with(WITHDRAWN),
+            "the withdrawal comes last: {line:?}"
+        );
+        assert_eq!(
+            line.matches("; ").count(),
+            2,
+            "three things on one line: {line:?}"
+        );
+    }
+
+    #[test]
+    fn a_refused_removal_stops_its_row_spinning_when_it_reports() {
+        // The `deleting` note and its spinner are for a process still running; git's
+        // refusal is the end of it.
+        let session = Arc::new(Session::new(false, false));
+        let (mut state, mut pending) = sweep_asked(&session);
+        let port = Reports(RemovalOutcome::Refused("fatal: refused".into()));
+        let mut removals = Removals::new(&port);
+        let Action::RemoveWorktrees(sweep) = state.handle_key(key(KeyCode::Char('y'))) else {
+            panic!("`y` is the answer that goes ahead");
+        };
+        start_sweep(&mut state, &mut removals, &Recorder::default(), &sweep);
+        assert!(state.rows().iter().any(|row| row.is_removing));
+        until("both reported", || {
+            drain_finished(
+                &mut state,
+                &mut pending,
+                &mut removals,
+                &*session,
+                &*session,
+            );
+            removals.is_empty()
+        });
+
+        assert!(
+            !state.rows().iter().any(|row| row.is_removing),
+            "a refused row is an ordinary row again: {:?}",
+            state.message()
         );
     }
 }
