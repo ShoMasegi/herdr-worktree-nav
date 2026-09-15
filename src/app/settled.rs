@@ -229,9 +229,10 @@ impl Settled {
     /// [`trouble`](Self::trouble): a call still out for a repository that has left the list
     /// is not one the user can see a spinner for.
     ///
-    /// A call that never comes home keeps this true for as long as the picker is up and the
-    /// repository is listed. That is what a budget on the call is for, and
-    /// `adapter::gh_cli` does not yet apply one.
+    /// A call that never comes home would keep this true for as long as the picker is up and
+    /// the repository is listed; `adapter::gh_cli` gives up on one after `GH_BUDGET` and
+    /// answers with a refusal instead — `a_gh_on_the_path_is_given_the_budget_and_no_more`
+    /// in `tests/gh_cli.rs`.
     pub fn is_waiting(&self, tree: &Tree) -> bool {
         tree.repos
             .iter()
