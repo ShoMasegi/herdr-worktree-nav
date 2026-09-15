@@ -65,6 +65,11 @@ cargo insta review
   every workflow has to install that one. If `RUSTUP_TOOLCHAIN` is set in your shell it wins
   over the file — unset it, or you are linting against something CI will not.
 
+Two testing rules live in [the architecture page](docs/en/architecture.md#testing) because
+they cost something to learn: a function whose failure is a value its success can also have
+needs a test that watches it succeed, and a mutation is measured with
+`cargo test --all-targets` and nothing narrower.
+
 ## Things worth knowing before changing behaviour
 
 herdr's own API shapes some decisions in ways that are not obvious from the code. Three of

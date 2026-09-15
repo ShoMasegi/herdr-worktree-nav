@@ -229,3 +229,17 @@ getting wrong lives.
 | `adapter` git | real repositories in a `tempfile::TempDir` |
 | `adapter` gh | nothing in CI runs `gh`, so each call is split into the command it builds and the answer it reads, and both halves are tested with no process at all — twice a malformed argument list shipped past a green suite. The process itself, and the redirections around it, are reached by `tests/gh_cli.rs` with a `gh` it puts on `PATH`: one that never answers, which the budget gives up on, and one that refuses on `stderr`, whose words have to reach the sentence the user sees. |
 | `adapter` herdr | not testable in CI — there is no server. See [Troubleshooting](troubleshooting.md) for the manual checklist. |
+
+Two rules about that table, both paid for.
+
+**A function whose failure is a value its success can also have needs one test that watches
+it succeed.** An empty list, a `None`, an empty string: a test that only ever sees the empty
+answer cannot tell it from a function that always answers that way. `GhPort::pull_requests`
+returns an empty list when `gh` is missing, when it refuses, when its output cannot be read
+*and* when the repository simply has no pull requests — and "always empty" passed the whole
+suite until a test watched it name one.
+
+**A mutation is measured with `cargo test --all-targets` and nothing narrower.** A mutant
+that survived a run of one target is not a finding; it is the instrument pointed at the wrong
+thing. Running `--test gh_cli` alone is how "this exit check has no test" reached a pull
+request body, about a line one unit test holds.
