@@ -424,16 +424,26 @@ fn keys_line(theme: &Theme) -> Line<'static> {
     ])
 }
 
-/// How wide a question box whose longest line is `widest` gets over `body`.
+/// A question box's own columns: a border and a padding column on each side, and the two
+/// that the lines inside it are indented by.
 ///
-/// Border and padding on each side, two columns more, and a ceiling. The two are for the
-/// keys line: every other line is measured with the indent it carries, and that one is not.
-/// The ceiling is because a worktree path is long enough to turn a dialog into a banner
-/// across a wide pane; what will not fit loses its middle, and the breadcrumb under the list
-/// still carries the whole thing.
+/// [`question_width`] adds it to the longest line, and the two functions that build a box
+/// take it off again to find what a line has room for. The same six either way, and right
+/// rather than generous on the keys line, which is the one line measured without the indent
+/// it is drawn with.
+/// `a_question_box_is_its_longest_line_and_what_the_box_spends` is where the number is.
+const BOX_CHROME: usize = 6;
+
+/// The widest a question box gets, however long the line inside it is. A worktree path is
+/// long enough to turn a dialog into a banner across a wide pane; what will not fit loses
+/// its middle, and the breadcrumb under the list still carries the whole thing.
+const BOX_MAX_WIDTH: usize = 80;
+
+/// How wide a question box whose longest line is `widest` gets over `body`.
 fn question_width(widest: usize, body: Rect) -> u16 {
-    const MAX_WIDTH: usize = 80;
-    (widest + 6).min(body.width as usize).min(MAX_WIDTH) as u16
+    (widest + BOX_CHROME)
+        .min(body.width as usize)
+        .min(BOX_MAX_WIDTH) as u16
 }
 
 /// Draw the first of `candidates` that fits, centred over `body`, and say whether one did.
@@ -452,7 +462,7 @@ fn question_box(
     title_width: usize,
     candidates: Vec<Vec<Line>>,
 ) -> bool {
-    if width < 8 || (width as usize) < title_width + 6 {
+    if width < 8 || (width as usize) < title_width + BOX_CHROME {
         return false;
     }
     let Some(lines) = candidates
@@ -566,7 +576,7 @@ fn render_removal(
         Style::default().add_modifier(Modifier::BOLD),
     ));
     let branch = Line::from(Span::raw(format!("  {}", removal.label())));
-    let inner_width = width.saturating_sub(6) as usize;
+    let inner_width = (width as usize).saturating_sub(BOX_CHROME);
     let path = Line::from(Span::styled(
         format!("  {}", middle_elide(&path, inner_width)),
         theme.dim(),
@@ -687,7 +697,7 @@ fn render_sweep_removal(
     .max()
     .unwrap_or(0);
     let width = question_width(widest, body);
-    let inner_width = width.saturating_sub(6) as usize;
+    let inner_width = (width as usize).saturating_sub(BOX_CHROME);
     let path_budget = inner_width.saturating_sub(label_column + 2);
 
     let blank = Line::from("");
@@ -3471,5 +3481,72 @@ mod tests {
         let mut state = sweeping_over(tree);
         ask(&mut state);
         insta::assert_snapshot!(screen(&state, 120, 14));
+    }
+
+    #[test]
+    fn a_question_box_is_its_longest_line_and_what_the_box_spends() {
+        // The columns the box spends on itself: a border and a padding column on each side,
+        // and the two its lines are indented by — which the longest line is measured with,
+        // except the keys line, which is measured without and drawn with. 38 is the title
+        // `the_sweeps_question_lists_what_goes` draws, and 44 the box it draws it in.
+        let wide = Rect::new(0, 0, 200, 40);
+        assert_eq!(question_width(38, wide), 44);
+    }
+
+    #[test]
+    fn a_question_box_is_never_wider_than_the_pane_or_eighty_columns() {
+        assert_eq!(question_width(200, Rect::new(0, 0, 30, 40)), 30);
+        assert_eq!(question_width(200, Rect::new(0, 0, 200, 40)), 80);
+        assert_eq!(
+            question_width(74, Rect::new(0, 0, 200, 40)),
+            80,
+            "80 exactly"
+        );
+        assert_eq!(
+            question_width(73, Rect::new(0, 0, 200, 40)),
+            79,
+            "and just under"
+        );
+    }
+
+    #[test]
+    fn a_pane_one_column_short_of_the_title_and_the_box_asks_nothing() {
+        // The box is its title and what the box spends, and a column less would clip the
+        // title into a shorter sentence that is not the one being answered.
+        let mut state = sweeping_over(finished_tree(&["feat/login", "fix/crash", "chore/deps"]));
+        ask(&mut state);
+        assert_eq!(
+            question_width(38, Rect::new(0, 0, 44, 16)),
+            44,
+            "the title's own width"
+        );
+
+        for (width, asked) in [(44, true), (43, false)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 16)).unwrap();
+            terminal
+                .draw(|frame| {
+                    assert_eq!(
+                        draw(frame, &state, &theme(), Mode::Panes),
+                        asked,
+                        "at {width} columns"
+                    );
+                })
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn a_pane_narrower_than_the_box_spends_asks_nothing_rather_than_panicking() {
+        // The room a line has is the width less what the box spends, and in a pane this
+        // narrow that is below zero long before the width floor turns the question away.
+        let mut state = sweeping_over(finished_tree(&["feat/login"]));
+        ask(&mut state);
+
+        let mut terminal = Terminal::new(TestBackend::new(5, 16)).unwrap();
+        terminal
+            .draw(|frame| {
+                assert!(!draw(frame, &state, &theme(), Mode::Panes));
+            })
+            .unwrap();
     }
 }
