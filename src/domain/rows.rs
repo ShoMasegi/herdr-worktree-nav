@@ -241,6 +241,9 @@ pub const UNNAMED_PANE: &str = "shell";
 pub struct ViewOptions {
     pub query: String,
     pub state_filter: Option<StateFilter>,
+    /// Whether the ordinary panes view omits worktrees that contain no pane.
+    /// A sweep still includes them because they are its main candidates.
+    pub hide_worktrees_without_panes: bool,
     /// The user's home directory, so paths can be shown as `~/...`. Passed in rather than
     /// read, because this module does not touch the environment.
     pub home: Option<String>,
@@ -312,6 +315,12 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
         let mut subtrees: Vec<(u32, Vec<Row>)> = Vec::new();
         {
             for (worktree_index, worktree) in repo.worktrees.iter().enumerate() {
+                if options.hide_worktrees_without_panes
+                    && options.sweep.is_none()
+                    && worktree.panes.is_empty()
+                {
+                    continue;
+                }
                 let worktree_haystack = format!("{} {}", repo.display_name, worktree.label());
                 let worktree_status =
                     aggregate(worktree.panes.iter().map(|pane| pane.agent_status));
@@ -374,6 +383,13 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
             }
         }
 
+        if subtrees.is_empty()
+            && options.hide_worktrees_without_panes
+            && options.sweep.is_none()
+            && panes.is_empty()
+        {
+            continue;
+        }
         if filtering && !repo_matches && subtrees.is_empty() {
             continue;
         }
@@ -855,6 +871,46 @@ mod tests {
         assert!(find(&rows, "fix/crash").is_idle);
         assert_eq!(find(&rows, "fix/crash").meta, "/wt/fix-crash");
         assert!(!find(&rows, "main").is_idle);
+    }
+
+    #[test]
+    fn worktrees_without_panes_can_be_hidden() {
+        let rows = flatten(
+            &tree(),
+            &ViewOptions {
+                hide_worktrees_without_panes: true,
+                ..Default::default()
+            },
+        );
+        assert!(!labels(&rows).contains(&"  fix/crash".to_string()));
+        assert!(labels(&rows).contains(&"    codex".to_string()));
+    }
+
+    #[test]
+    fn a_repository_with_no_panes_disappears_with_its_worktrees() {
+        let mut tree = tree();
+        tree.repos[1].worktrees[0].panes.clear();
+        let rows = flatten(
+            &tree,
+            &ViewOptions {
+                hide_worktrees_without_panes: true,
+                ..Default::default()
+            },
+        );
+        assert!(!labels(&rows).contains(&"me/site (0)".to_string()));
+    }
+
+    #[test]
+    fn a_sweep_shows_worktrees_without_panes_even_when_the_ordinary_view_hides_them() {
+        let rows = flatten(
+            &tree(),
+            &ViewOptions {
+                hide_worktrees_without_panes: true,
+                sweep: Some(BTreeMap::new()),
+                ..Default::default()
+            },
+        );
+        assert!(labels(&rows).contains(&"  fix/crash".to_string()));
     }
 
     /// The answers map with one checkout given an answer, which is all these need.

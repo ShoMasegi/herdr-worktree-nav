@@ -10,5 +10,6 @@ pub mod progress;
 pub mod removal;
 pub mod resolve;
 pub mod rows;
+pub mod settings;
 pub mod sweep;
 pub mod tree;

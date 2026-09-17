@@ -2,7 +2,22 @@
 
 [English](../en/configuration.md)
 
-herdr-worktree-nav は独自の設定ファイルを持ちません。参照するのは herdr の設定か、リポジトリの状態だけです。これは意図的な設計です。worktree の置き場所について 2 つのツールが食い違うことのほうが、ツマミが少ないことより有害だからです。
+herdr-worktree-nav は独自の設定ファイルを 1 つだけ任意で読みます。このファイルへ書き込むことはありません。worktree の置き場所や見た目などの共通動作は、引き続き herdr が管理します。
+
+## プラグインの設定
+
+プラグインの設定ファイルは、herdr がこのプラグイン用に用意するディレクトリ内の `config.toml` です。通常のパスは `~/.config/herdr/plugins/config/herdr-worktree-nav/config.toml` です。
+
+```toml
+[panes]
+worktree_nav_show_no_panes = false
+```
+
+既定値は `true` で、現在の動作を維持します。Panes ビューを開いた時点では pane を持たない worktree を隠したい場合、`false` にします。
+
+ピッカーを開いている間は `p` でこの設定を反転できます。Branches ビューへ切り替えて戻っても状態は維持されます。プラグインは反転後の値をファイルへ書き込みません。
+
+未知のキーや不正な TOML がある場合、プロンプト行に `plugin config.toml:` と理由を出して既定値で開きます。設定名の誤記が何の表示もなく無視されることを防ぎつつ、ピッカー自体は止めません。
 
 ## キーバインド
 
@@ -95,7 +110,7 @@ gh pr list --json number,title,headRefName,isDraft
 | `HERDR_SOCKET_PATH` | API ソケット。無い場合は説明を出して終了します。 |
 | `HERDR_PLUGIN_CONTEXT_JSON` | アクションがどの pane・どのリポジトリから呼ばれたか |
 | `HERDR_PLUGIN_ROOT` | pane エントリポイントからバイナリを特定するため |
-| `HERDR_PLUGIN_CONFIG_DIR` | herdr 本体の `config.toml` の場所を特定し、上記 2 設定を読むために使います |
+| `HERDR_PLUGIN_CONFIG_DIR` | プラグインの設定ファイルと herdr 本体の `config.toml` の場所を特定します |
 
 アクションは、pane プロセスが自力では知り得ない次の 2 つを、開く pane に渡します。
 

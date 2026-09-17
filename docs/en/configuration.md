@@ -2,9 +2,28 @@
 
 [日本語](../ja/configuration.md)
 
-herdr-worktree-nav has no configuration file of its own. Everything it honours is either
-herdr's configuration or the state of your repository, which is deliberate: two tools
-disagreeing about where worktrees go is worse than one tool having fewer knobs.
+herdr-worktree-nav reads one optional configuration file of its own. It never writes this
+file. Herdr still controls shared behavior such as the worktree directory and appearance.
+
+## Plugin preferences
+
+The plugin file is `config.toml` in Herdr's configuration directory for this plugin. Its
+usual path is `~/.config/herdr/plugins/config/herdr-worktree-nav/config.toml`.
+
+```toml
+[panes]
+worktree_nav_show_no_panes = false
+```
+
+The default value is `true`, which preserves the current behavior. Set the value to `false`
+if each panes view must start with worktrees without panes hidden.
+
+Press `p` to reverse this preference while the picker is open. The toggle stays active
+across a switch to the branches view. The plugin does not write the new value to the file.
+
+An unknown key or invalid TOML is reported on the prompt line as `plugin config.toml:` and
+then the reason, and the picker opens with the defaults. That keeps a misspelled preference
+from having no visible effect, without taking the picker down.
 
 ## Keybindings
 
@@ -116,7 +135,7 @@ herdr sets these; you do not.
 | `HERDR_SOCKET_PATH` | the API socket. Without it the binary exits with an explanation. |
 | `HERDR_PLUGIN_CONTEXT_JSON` | which pane and repository the action was invoked from |
 | `HERDR_PLUGIN_ROOT` | locating the binary from the pane entrypoints |
-| `HERDR_PLUGIN_CONFIG_DIR` | locating herdr's own `config.toml`, to read the two settings above |
+| `HERDR_PLUGIN_CONFIG_DIR` | finds the plugin file and herdr's own `config.toml` |
 
 The action passes two of its own to the pane it opens, because a pane process cannot work
 them out for itself:

@@ -18,7 +18,7 @@ use ratatui::DefaultTerminal;
 
 use std::sync::Arc;
 
-use crate::adapter::herdr_config;
+use crate::adapter::{herdr_config, plugin_config};
 use crate::app::context::{Context, FROM_PANE, REPO_ROOT};
 use crate::app::dirty::Dirty;
 use crate::app::removals::Removals;
@@ -104,6 +104,7 @@ pub fn run_picker(
     // Borrowed from herdr's own configuration so the pickers look like its navigator
     // rather than like a different program.
     let theme = Theme::new(herdr_config::load());
+    let loaded = plugin_config::load();
     let summoned = Summoned {
         pane: from_pane,
         repo_root,
@@ -121,6 +122,7 @@ pub fn run_picker(
         gh,
         remover,
         &theme,
+        loaded,
         start,
         summoned,
     );
@@ -139,6 +141,7 @@ fn views(
     gh: Arc<dyn GhPort>,
     remover: &dyn RemovalPort,
     theme: &Theme,
+    loaded: plugin_config::Loaded,
     start: Entrypoint,
     mut summoned: Summoned,
 ) -> Result<()> {
@@ -156,6 +159,8 @@ fn views(
         settled: Settled::new(Arc::clone(&git), Arc::clone(&gh)),
     };
     let mut view = start;
+    let mut show_worktrees_without_panes = loaded.settings.panes.worktree_nav_show_no_panes;
+    let mut config_complaint = loaded.complaint;
     loop {
         match view {
             Entrypoint::Branches => {
@@ -181,14 +186,22 @@ fn views(
                     &*git,
                     &mut removals,
                     &mut pending,
-                    summoned.pane.as_deref(),
-                    theme,
+                    panes::Options {
+                        initial_pane: summoned.pane.as_deref(),
+                        theme,
+                        show_worktrees_without_panes,
+                        config_complaint: config_complaint.take(),
+                    },
                 )? {
                     panes::Exit::Closed => return Ok(()),
-                    panes::Exit::ShowBranches { repo_root } => {
+                    panes::Exit::ShowBranches {
+                        repo_root,
+                        show_worktrees_without_panes: show,
+                    } => {
                         // `None` when the cursor was not in a repository; the branches picker
                         // then simply starts with nothing preselected.
                         summoned.repo_root = repo_root;
+                        show_worktrees_without_panes = show;
                         view = Entrypoint::Branches;
                     }
                 }

@@ -27,7 +27,17 @@ pub enum Exit {
     /// repository list either way.
     ShowBranches {
         repo_root: Option<String>,
+        show_worktrees_without_panes: bool,
     },
+}
+
+/// Values that control one panes view without access to its event loop.
+pub struct Options<'a> {
+    pub initial_pane: Option<&'a str>,
+    pub theme: &'a Theme,
+    pub show_worktrees_without_panes: bool,
+    /// Named on the prompt line the first time this view needs the file.
+    pub config_complaint: Option<String>,
 }
 
 /// Run the picker to completion on the terminal the picker already holds. `run_picker` puts
@@ -39,11 +49,14 @@ pub fn run(
     git: &dyn GitPort,
     removals: &mut Removals,
     pending: &mut Pending,
-    initial_pane: Option<&str>,
-    theme: &Theme,
+    options: Options<'_>,
 ) -> Result<Exit> {
     let (_, tree) = collect::collect_tree(herdr, git)?;
     let mut state = PanesState::new(tree, home_dir());
+    state.set_show_worktrees_without_panes(options.show_worktrees_without_panes);
+    if let Some(complaint) = options.config_complaint {
+        state.set_message(complaint);
+    }
     // Both outlive this view: a removal started before a trip through the branches view is
     // still going, and a working tree walked once does not need walking again. Only
     // `set_removing` has to be seeded, because `show_answers` never touches it — the
@@ -52,7 +65,7 @@ pub fn run(
     // first draw.
     pending.dirty.ask(state.tree());
     state.set_removing(removals.paths());
-    if let Some(pane_id) = initial_pane {
+    if let Some(pane_id) = options.initial_pane {
         state.focus_pane(pane_id);
     }
 
@@ -71,7 +84,7 @@ pub fn run(
             last_tick = std::time::Instant::now();
         }
         let mut asked = true;
-        terminal.draw(|frame| asked = render::draw(frame, &state, theme, Mode::Panes))?;
+        terminal.draw(|frame| asked = render::draw(frame, &state, options.theme, Mode::Panes))?;
         if !asked {
             // The pane is too small to put the question in. Taking it back is the only
             // honest answer: the alternative is `y` armed over a box nobody ever saw.
@@ -116,7 +129,7 @@ pub fn run(
         }
     };
 
-    perform(herdr, outcome)
+    perform(herdr, outcome, state.shows_worktrees_without_panes())
 }
 
 /// Take in every removal that has reported back since the last frame — including from before
@@ -329,7 +342,11 @@ fn show_answers(state: &mut PanesState, pending: &mut Pending) -> bool {
     reading || asking
 }
 
-fn perform(herdr: &dyn HerdrPort, action: Action) -> Result<Exit> {
+fn perform(
+    herdr: &dyn HerdrPort,
+    action: Action,
+    show_worktrees_without_panes: bool,
+) -> Result<Exit> {
     match action {
         Action::Quit => Ok(Exit::Closed),
         // Focus, then exit. herdr tears the overlay down once this process ends, and the
@@ -362,7 +379,10 @@ fn perform(herdr: &dyn HerdrPort, action: Action) -> Result<Exit> {
             })?;
             Ok(Exit::Closed)
         }
-        Action::ShowBranches { repo_root } => Ok(Exit::ShowBranches { repo_root }),
+        Action::ShowBranches { repo_root } => Ok(Exit::ShowBranches {
+            repo_root,
+            show_worktrees_without_panes,
+        }),
         // Handled inside the loop, which is why the picker is still up after one.
         Action::Consumed
         | Action::Ignored
