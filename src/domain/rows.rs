@@ -383,11 +383,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
             }
         }
 
-        if subtrees.is_empty()
-            && options.hide_worktrees_without_panes
-            && options.sweep.is_none()
-            && panes.is_empty()
-        {
+        if options.hide_worktrees_without_panes && options.sweep.is_none() && panes.is_empty() {
             continue;
         }
         if filtering && !repo_matches && subtrees.is_empty() {

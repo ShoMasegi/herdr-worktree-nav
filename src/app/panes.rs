@@ -129,7 +129,7 @@ pub fn run(
         }
     };
 
-    perform(herdr, outcome, state.shows_worktrees_without_panes())
+    finish(herdr, outcome, &state)
 }
 
 /// Take in every removal that has reported back since the last frame — including from before
@@ -391,6 +391,11 @@ fn perform(
         | Action::RemoveWorktree { .. }
         | Action::RemoveWorktrees { .. } => Ok(Exit::Closed),
     }
+}
+
+/// Carry view state into the exit that the parent loop keeps across a view switch.
+fn finish(herdr: &dyn HerdrPort, action: Action, state: &PanesState) -> Result<Exit> {
+    perform(herdr, action, state.shows_worktrees_without_panes())
 }
 
 #[cfg(test)]
@@ -1131,6 +1136,21 @@ mod tests {
                 }],
             }],
             ungrouped: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_branches_exit_carries_the_runtime_no_pane_toggle() {
+        let mut state = PanesState::new(no_pane_tree(), None);
+        state.handle_key(key(KeyCode::Char('p')));
+        let action = state.handle_key(key(KeyCode::Tab));
+
+        match finish(&Recorder::default(), action, &state).unwrap() {
+            Exit::ShowBranches {
+                show_worktrees_without_panes,
+                ..
+            } => assert!(!show_worktrees_without_panes),
+            Exit::Closed => panic!("Tab must switch to the branches view"),
         }
     }
 

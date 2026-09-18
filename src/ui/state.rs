@@ -310,10 +310,11 @@ impl PanesState {
 
     /// Whether worktrees that contain no pane are visible.
     pub fn shows_worktrees_without_panes(&self) -> bool {
+        // ViewOptions stores the hide rule, but this API describes visible rows.
         !self.options.hide_worktrees_without_panes
     }
 
-    /// Set the initial visibility from the plugin configuration.
+    /// Set visibility from the plugin configuration or the runtime `p` toggle.
     pub fn set_show_worktrees_without_panes(&mut self, show: bool) {
         if self.shows_worktrees_without_panes() == show {
             return;
@@ -572,10 +573,10 @@ impl PanesState {
             // under `/login` marked and counted checkouts nothing on screen mentioned.
             //
             // Clearing is the version of that a reader can hold: with no query and no state
-            // filter, `flatten` drops nothing, so what is judged and what is drawn are the
-            // same list by construction rather than by a second filter agreeing with the
-            // first. `/` and the state keys are `Ignored` while a sweep is on, so it cannot
-            // become filtered again underneath one.
+            // filter, `flatten`'s only other drop is the no-pane hide. That hide requires
+            // `options.sweep.is_none()`, so a sweep disables it. What is judged and what is
+            // drawn are the same list by construction. `/` and the state keys are `Ignored`
+            // while a sweep is on, so it cannot become filtered again underneath one.
             self.options.query.clear();
             self.options.state_filter = None;
         }
@@ -2396,6 +2397,16 @@ mod tests {
         state.handle_key(key(KeyCode::Char('p')));
         assert!(!state.shows_worktrees_without_panes());
         assert!(!row_labels(&state).contains(&"fix/crash".to_string()));
+    }
+
+    #[test]
+    fn p_keeps_the_cursor_on_a_still_visible_pane() {
+        let mut state = state();
+        // This pane follows the row that disappears, so this also checks the cursor repair.
+        select(&mut state, "zsh");
+
+        assert_eq!(state.handle_key(key(KeyCode::Char('p'))), Action::Consumed);
+        assert_eq!(cursor_label(&state), "zsh");
     }
 
     #[test]

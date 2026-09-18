@@ -12,7 +12,9 @@
 use std::process::ExitCode;
 
 use anyhow::{bail, Result};
-use herdr_worktree_nav::adapter::{herdr_config, DetachedRemovals, GhCli, GitCli, SocketHerdr};
+use herdr_worktree_nav::adapter::{
+    herdr_config, plugin_config, DetachedRemovals, GhCli, GitCli, SocketHerdr,
+};
 use herdr_worktree_nav::app::{action, collect, dump, remove, run_picker, Entrypoint};
 
 fn main() -> ExitCode {
@@ -90,12 +92,14 @@ fn pane(start: Entrypoint) -> Result<()> {
 fn dump() -> Result<()> {
     let herdr = SocketHerdr::from_env()?;
     let (snapshot, tree) = collect::collect_tree(&herdr, &GitCli)?;
+    let plugin_config = plugin_config::load();
 
     print!(
         "{}",
         dump::report(
             &snapshot,
             &herdr_config::load(),
+            &plugin_config,
             &tree,
             &dump::read_refs(&GitCli, &tree),
             &dump::read_working_trees(&GitCli, &tree),

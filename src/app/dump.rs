@@ -13,6 +13,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
+use crate::adapter::plugin_config::Loaded;
 use crate::app::one_line;
 use crate::domain::chrome::Chrome;
 use crate::domain::model::{normalize_path, Refs, RepoNode, Tree, WorktreeNode};
@@ -81,6 +82,7 @@ pub fn read_working_trees(git: &dyn GitPort, tree: &Tree) -> WorkingTrees {
 pub fn report(
     snapshot: &Snapshot,
     chrome: &Chrome,
+    plugin_config: &Loaded,
     tree: &Tree,
     refs: &RefsByRepo,
     working_trees: &WorkingTrees,
@@ -95,6 +97,22 @@ pub fn report(
         out,
         "chrome: accent {:?}, indicators {:?}",
         chrome.accent, chrome.indicators
+    );
+    match &plugin_config.path {
+        Some(path) => {
+            let _ = writeln!(out, "plugin config: {}", path.display());
+        }
+        None => {
+            let _ = writeln!(out, "plugin config: missing, defaults");
+        }
+    }
+    if let Some(complaint) = &plugin_config.complaint {
+        let _ = writeln!(out, "plugin config problem: {complaint}");
+    }
+    let _ = writeln!(
+        out,
+        "[panes].worktree_nav_show_no_panes: {}",
+        plugin_config.settings.panes.worktree_nav_show_no_panes
     );
     let _ = writeln!(
         out,
@@ -324,9 +342,11 @@ fn working_tree_words(answer: Option<&Result<bool, String>>) -> String {
 mod tests {
     use super::*;
     use crate::domain::model::{PaneNode, WorktreeNode};
+    use crate::domain::settings::{Panes, Settings};
     use crate::port::{AgentStatus, Track};
     use serde_json::json;
     use std::num::NonZeroU32;
+    use std::path::PathBuf;
 
     fn snapshot() -> Snapshot {
         serde_json::from_value(json!({
@@ -345,6 +365,18 @@ mod tests {
             }],
         }))
         .expect("snapshot fixture should deserialize")
+    }
+
+    fn plugin_config(path: Option<&str>, show_no_panes: bool, complaint: Option<&str>) -> Loaded {
+        Loaded {
+            settings: Settings {
+                panes: Panes {
+                    worktree_nav_show_no_panes: show_no_panes,
+                },
+            },
+            complaint: complaint.map(str::to_string),
+            path: path.map(PathBuf::from),
+        }
     }
 
     fn worktree(branch: Option<&str>, path: &str, track: Option<Track>) -> WorktreeNode {
@@ -439,6 +471,7 @@ mod tests {
         let page = report(
             &snapshot(),
             &Chrome::default(),
+            &plugin_config(Some("/plugin/config.toml"), false, None),
             &tree,
             &refs,
             &working_trees,
@@ -446,6 +479,8 @@ mod tests {
         let expected = "\
 herdr 0.7.4 (protocol 16)
 chrome: accent Named(Cyan), indicators Dots
+plugin config: /plugin/config.toml
+[panes].worktree_nav_show_no_panes: false
 1 panes in 2 repos
 
 me/app  [/src/app]
@@ -468,6 +503,55 @@ me/site  [/src/site]
 ";
         assert_eq!(page, expected, "got:\n{page}");
     }
+
+    #[test]
+    fn a_missing_plugin_file_is_reported_as_defaults() {
+        let tree = Tree {
+            repos: Vec::new(),
+            ungrouped: Vec::new(),
+        };
+        let page = report(
+            &snapshot(),
+            &Chrome::default(),
+            &plugin_config(None, true, None),
+            &tree,
+            &RefsByRepo::new(),
+            &WorkingTrees::new(),
+        );
+        assert!(
+            page.contains("plugin config: missing, defaults\n"),
+            "{page}"
+        );
+        assert!(
+            page.contains("[panes].worktree_nav_show_no_panes: true\n"),
+            "{page}"
+        );
+    }
+
+    #[test]
+    fn a_rejected_plugin_file_names_the_problem() {
+        let tree = Tree {
+            repos: Vec::new(),
+            ungrouped: Vec::new(),
+        };
+        let page = report(
+            &snapshot(),
+            &Chrome::default(),
+            &plugin_config(
+                Some("/plugin/config.toml"),
+                true,
+                Some("plugin config.toml: unknown field `pane`"),
+            ),
+            &tree,
+            &RefsByRepo::new(),
+            &WorkingTrees::new(),
+        );
+        assert!(
+            page.contains("plugin config problem: plugin config.toml: unknown field `pane`\n"),
+            "{page}"
+        );
+    }
+
     /// A git that answers both of this page's questions, and records what it was asked.
     struct Asked {
         walks: std::sync::Mutex<Vec<String>>,
@@ -556,6 +640,7 @@ me/site  [/src/site]
         let page = report(
             &snapshot(),
             &Chrome::default(),
+            &plugin_config(None, true, None),
             &tree,
             &refs,
             &read_working_trees(&git, &tree),
@@ -643,6 +728,7 @@ me/site  [/src/site]
         let page = report(
             &snapshot(),
             &Chrome::default(),
+            &plugin_config(None, true, None),
             &tree,
             &refs,
             &read_working_trees(&git, &tree),
@@ -677,6 +763,7 @@ me/site  [/src/site]
         report(
             &snapshot(),
             &Chrome::default(),
+            &plugin_config(None, true, None),
             tree,
             refs,
             &WorkingTrees::new(),

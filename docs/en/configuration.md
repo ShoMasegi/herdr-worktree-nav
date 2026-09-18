@@ -3,12 +3,26 @@
 [日本語](../ja/configuration.md)
 
 herdr-worktree-nav reads one optional configuration file of its own. It never writes this
-file. Herdr still controls shared behavior such as the worktree directory and appearance.
+file. herdr still controls shared behavior such as the worktree directory and appearance.
 
 ## Plugin preferences
 
-The plugin file is `config.toml` in Herdr's configuration directory for this plugin. Its
-usual path is `~/.config/herdr/plugins/config/herdr-worktree-nav/config.toml`.
+Find the configuration directory for this plugin:
+
+```sh
+herdr plugin config-dir herdr-worktree-nav
+```
+
+Create `config.toml` in the directory that the command prints. These commands create an
+empty file at the usual location:
+
+```sh
+config_dir="$(herdr plugin config-dir herdr-worktree-nav)"
+mkdir -p "$config_dir"
+touch "$config_dir/config.toml"
+```
+
+The usual path is `~/.config/herdr/plugins/config/herdr-worktree-nav/config.toml`.
 
 ```toml
 [panes]
@@ -24,6 +38,9 @@ across a switch to the branches view. The plugin does not write the new value to
 An unknown key or invalid TOML is reported on the prompt line as `plugin config.toml:` and
 then the reason, and the picker opens with the defaults. That keeps a misspelled preference
 from having no visible effect, without taking the picker down.
+
+The picker reads this file when its process starts. After each change, close the picker and
+open it again. `herdr server reload-config` does not reload this plugin file.
 
 ## Keybindings
 
@@ -48,7 +65,8 @@ while `prefix+g` is herdr's own `goto`, `prefix+shift+g` is `new_worktree`, `pre
 `workspace_picker`, and `prefix+b` toggles the sidebar. A binding here wins, so one that
 collides silently costs you a herdr command you already had.
 
-Reload with `herdr server reload-config`.
+After a keybinding change, run `herdr server reload-config`. This command reloads herdr's
+main `config.toml`, not the plugin file above.
 
 Both actions are available from herdr's action menu without a binding, and directly:
 

@@ -39,6 +39,13 @@ if [ "$gits" != "1" ]; then
     grep -rn 'Command::new("git")' src/ >&2 || true
 fi
 
+# 2b. The plugin reads files but never writes them. Tests use temporary files through
+#     NamedTempFile, which does not weaken the source rule.
+if grep -rnE 'fs::write|File::create|OpenOptions' src/ >/dev/null 2>&1; then
+    fail "src/ must not write files:"
+    grep -rnE 'fs::write|File::create|OpenOptions' src/ >&2
+fi
+
 # 3. The manifest and the crate agree on the version, so a release cannot ship a binary
 #    whose fetch-or-build.sh looks for a different tag.
 manifest=$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' herdr-plugin.toml | head -n 1)

@@ -4,9 +4,9 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use crate::domain::settings::{self, Settings};
+use crate::PLUGIN_ID;
 
 const CONFIG_FILE: &str = "config.toml";
-const PLUGIN_ID: &str = "herdr-worktree-nav";
 /// How the prompt line names this file, so it is not mixed up with herdr's own `config.toml`.
 const PROMPT_FILE: &str = "plugin config.toml";
 
@@ -14,6 +14,8 @@ const PROMPT_FILE: &str = "plugin config.toml";
 pub struct Loaded {
     pub settings: Settings,
     pub complaint: Option<String>,
+    /// The file that supplied the settings. `None` means that no file exists.
+    pub path: Option<PathBuf>,
 }
 
 /// Load the plugin settings. A missing file uses the documented defaults. A file that
@@ -21,33 +23,44 @@ pub struct Loaded {
 /// a typo must not take the picker down.
 pub fn load() -> Loaded {
     let Some(path) = config_path() else {
-        return Loaded::ok(Settings::default());
+        return Loaded::missing();
     };
     load_from(&path)
 }
 
 impl Loaded {
-    fn ok(settings: Settings) -> Self {
+    fn missing() -> Self {
+        Self {
+            settings: Settings::default(),
+            complaint: None,
+            path: None,
+        }
+    }
+
+    fn ok(path: &Path, settings: Settings) -> Self {
         Self {
             settings,
             complaint: None,
+            path: Some(path.to_path_buf()),
         }
     }
 
-    fn unreadable(error: impl std::fmt::Display) -> Self {
+    fn unreadable(path: &Path, error: impl std::fmt::Display) -> Self {
         Self {
             settings: Settings::default(),
             complaint: Some(format!("could not read {PROMPT_FILE}: {error}")),
+            path: Some(path.to_path_buf()),
         }
     }
 
-    fn invalid(contents: &str, error: toml::de::Error) -> Self {
+    fn invalid(path: &Path, contents: &str, error: toml::de::Error) -> Self {
         // The prompt line is one row. A short file label, then the reason without the
         // caret drawing — a cut must not leave only a path. A syntax error has no key
         // in the reason, so the line number is what locates it.
         Self {
             settings: Settings::default(),
             complaint: Some(format_invalid(contents, error)),
+            path: Some(path.to_path_buf()),
         }
     }
 }
@@ -76,13 +89,13 @@ fn load_from(path: &Path) -> Loaded {
     let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(error) if error.kind() == ErrorKind::NotFound => {
-            return Loaded::ok(Settings::default());
+            return Loaded::missing();
         }
-        Err(error) => return Loaded::unreadable(error),
+        Err(error) => return Loaded::unreadable(path, error),
     };
     match settings::parse(&contents) {
-        Ok(settings) => Loaded::ok(settings),
-        Err(error) => Loaded::invalid(&contents, error),
+        Ok(settings) => Loaded::ok(path, settings),
+        Err(error) => Loaded::invalid(path, &contents, error),
     }
 }
 
@@ -130,6 +143,7 @@ mod tests {
         let loaded = load_from(&dir.path().join(CONFIG_FILE));
         assert_eq!(loaded.settings, Settings::default());
         assert!(loaded.complaint.is_none());
+        assert!(loaded.path.is_none());
     }
 
     #[test]
@@ -140,6 +154,7 @@ mod tests {
         let loaded = load_from(file.path());
         assert!(!loaded.settings.panes.worktree_nav_show_no_panes);
         assert!(loaded.complaint.is_none());
+        assert_eq!(loaded.path.as_deref(), Some(file.path()));
     }
 
     #[test]

@@ -17,9 +17,20 @@ herdr-worktree-nav dump
 Panes ビューが描画するはずのツリーと、各 checkout について git が言ったことを出力します。
 
 ```
+herdr 0.7.4 (protocol 16)
+chrome: accent Named(Cyan), indicators Dots
+plugin config: /Users/me/.config/herdr/plugins/config/herdr-worktree-nav/config.toml
+[panes].worktree_nav_show_no_panes: false
+1 panes in 2 repos
+
+me/app  [/Users/me/Workspace/app]
   - fix/crash  /Users/me/.herdr/worktrees/app/fix-crash
       upstream origin/fix/crash  track gone  working tree clean
 ```
+
+プラグインについての 2 行には、ファイルと有効な設定値が出ます。ファイルが無い場合、1 行目は `plugin config: missing, defaults` になります。
+
+プラグインファイルを読めない場合や TOML が不正な場合、dump は `plugin config problem:` と理由を出します。ピッカーは閉じません。既定値で開き、プロンプト行に `plugin config.toml: …` と出します。そのファイルを直し、ピッカーを閉じてから開き直してください。
 
 `track level` は upstream と揃っているブランチ、`upstream none` は揃う相手の upstream が無いブランチで、行の上ではどちらも同じ「印なし」です。`working tree unreadable:` には、行が `?` を出す場面の git の言葉がそのまま付きます。git が refs を読めなかったリポジトリは名前の下に `refs unreadable:` と git の言葉を出し、その checkout は `not read` と読めます。このページ自身の 2 回目の refs 読み取りだけが失敗した場合——ピッカーはマーカーのために一度読み、`dump` は upstream 名のためにもう一度読みます——リポジトリは `refs unreadable on the second read:` と言い、その checkout はピッカーが描いている track をそのまま持って `upstream not read` と読めます。git がその checkout に ref を挙げていない場合は `no ref at this checkout for <branch>` と言います。何がどこに checkout されているかについて git と herdr の言い分が食い違っているということで、そこを見に行くのが筋です。git がその checkout に 2 本以上の ref を挙げた場合は `more than one ref at this checkout:` に続けて 1 本ずつ `<branch> → <upstream> <位置>` と並べます。そのリポジトリの worktree 登録が 2 つ以上そのパスを名乗っているということで、どれが古いかはこのページには分かりません。その後ろの `track` は、ピッカーが描いている印か、描いていなければ `not known` です。行の上ではこれも `track level` や `upstream none` と同じ「印なし」です。ブランチの載っていない行は `no branch reported` と読め、git がそのパスに ref を挙げていれば続けて `git names at this path:` と同じ並びが出ます（挙げていないのにピッカーが印を描いていれば `no ref at this checkout`）。ピッカーが印を描いていれば `track <marker>` が後ろに付きます。git が refs を読めなかった場合は `refs not read`、このページ自身の 2 回目の読み取りだけが失敗した場合は `refs not read on the second read` と出ます。作業ツリーは checkout ごとに順番にその場で歩くので、checkout が多いと少し時間が掛かります。
 

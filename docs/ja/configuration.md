@@ -6,7 +6,21 @@ herdr-worktree-nav は独自の設定ファイルを 1 つだけ任意で読み�
 
 ## プラグインの設定
 
-プラグインの設定ファイルは、herdr がこのプラグイン用に用意するディレクトリ内の `config.toml` です。通常のパスは `~/.config/herdr/plugins/config/herdr-worktree-nav/config.toml` です。
+このプラグイン用の設定ディレクトリを確認します。
+
+```sh
+herdr plugin config-dir herdr-worktree-nav
+```
+
+コマンドが出力したディレクトリに `config.toml` を作成します。次のコマンドは通常の場所に空のファイルを作成します。
+
+```sh
+config_dir="$(herdr plugin config-dir herdr-worktree-nav)"
+mkdir -p "$config_dir"
+touch "$config_dir/config.toml"
+```
+
+通常のパスは `~/.config/herdr/plugins/config/herdr-worktree-nav/config.toml` です。
 
 ```toml
 [panes]
@@ -18,6 +32,8 @@ worktree_nav_show_no_panes = false
 ピッカーを開いている間は `p` でこの設定を反転できます。Branches ビューへ切り替えて戻っても状態は維持されます。プラグインは反転後の値をファイルへ書き込みません。
 
 未知のキーや不正な TOML がある場合、プロンプト行に `plugin config.toml:` と理由を出して既定値で開きます。設定名の誤記が何の表示もなく無視されることを防ぎつつ、ピッカー自体は止めません。
+
+ピッカーはプロセスの開始時にこのファイルを読みます。変更後はピッカーを閉じ、開き直してください。`herdr server reload-config` はこのプラグインファイルを再読み込みしません。
 
 ## キーバインド
 
@@ -39,7 +55,7 @@ description = "open a branch as a worktree"
 
 herdr が既に使っているキーは避けてください。0.7.4 では `prefix+f` と `prefix+shift+b` が空いています。一方 `prefix+g` は herdr 自身の `goto`、`prefix+shift+g` は `new_worktree`、`prefix+w` は `workspace_picker`、`prefix+b` はサイドバーの開閉です。ここでの設定が優先されるため、衝突すると元からあった herdr のコマンドが黙って使えなくなります。
 
-`herdr server reload-config` で反映します。
+キーバインドの変更後は `herdr server reload-config` を実行します。このコマンドは herdr 本体の `config.toml` を再読み込みします。上記のプラグインファイルは再読み込みしません。
 
 どちらのアクションもキー割り当て無しで herdr のアクションメニューから使えるほか、直接実行もできます。
 
