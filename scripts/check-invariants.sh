@@ -64,5 +64,21 @@ else
     done
 fi
 
+# 5. A doc that names something names something that exists. A sentence saying "held by
+#    `some_test_name`" is a claim that something elsewhere carries it, and the way that
+#    claim rots is a rename: the sentence goes on pointing, at nothing, and the next reader
+#    takes it on trust. Only doc comments and the pages that ship are read — an ordinary
+#    `//` line is prose about the code beside it, not a pointer away from it. Four or more
+#    underscore-separated words is what tells a name of ours from a word: herdr's
+#    `no_foreground_client` has three. A name is satisfied by anything in src or tests
+#    called that, not only by an `fn`, since a doc can as fairly name a field or a const —
+#    what it may not do is name nothing.
+for name in $( { grep -rh '//[/!]' src/ tests/ --include=*.rs
+                 cat docs/en/*.md docs/ja/*.md ./*.md 2>/dev/null; } \
+               | grep -o '`[a-z][a-z_0-9]*`' | tr -d '`' \
+               | awk -F'_' 'NF >= 4 && $NF != ""' | sort -u ); do
+    grep -rq "\b$name\b" src tests || fail "a doc names \`$name\`, and nothing in src or tests is called that"
+done
+
 [ "$status" -eq 0 ] && printf 'invariants ok (version %s, rust %s)\n' "$manifest" "$pinned"
 exit "$status"
