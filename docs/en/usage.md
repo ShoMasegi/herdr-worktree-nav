@@ -107,8 +107,8 @@ reports.
 The sweep runs on git alone. It marks fewer rows, and it says so: a checkout it would have
 asked `gh` about reads `PR unknown` rather than looking like one with nothing to find, and
 goes on reading it if you mark it by hand. The prompt line names the repository and says why,
-once — no `gh` on the machine, no GitHub remote, `gh` not logged in, and `gh`'s own words when
-it refused. Fix the cause and enter the sweep again: a repository `gh` refused is asked about
+once — no `gh` on the machine, no GitHub remote, `gh` not logged in, `gh`'s own words when it
+refused, and git's own words when it could not name the repository at all. Fix the cause and enter the sweep again: a repository `gh` refused is asked about
 again on the way in; one it answered for is not, and neither is one with no GitHub remote, since
 there is nothing to ask. With more than one repository in trouble the prompt line names the
 first and counts the rest, and a refusal — the one you can do something about — is named ahead

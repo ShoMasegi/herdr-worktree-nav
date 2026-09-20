@@ -4,7 +4,7 @@ Status: accepted
 
 ## Context
 
-Three things this plugin decides are decided by reading git's own words rather than its exit
+Four things this plugin decides are decided by reading git's own words rather than its exit
 code.
 
 Whether a pane's directory is a repository at all: git answers `fatal: not a git repository
@@ -14,7 +14,10 @@ literal. Whether a ref was dropped from a walk: `for-each-ref` leaves the ref ou
 that prefix and the neighbouring one for a ref with an illegal name. Whether `status` could
 open every directory it was asked about: it leaves the directory's contents out, says
 `warning: could not open directory 'x/': Permission denied` on stderr, and exits 0 —
-`unread_paths` matches that prefix.
+`unread_paths` matches that prefix. Whether a repository simply has no `origin`: `remote
+get-url origin` says `error: No such remote 'origin'` on stderr and exits 2 — `no_such_remote`
+matches that exit and both halves of that sentence, so every other way the call can fail goes
+up as a refusal instead of as "this repository has no remote".
 
 git ships translations of each message and picks one from the environment. That environment
 is whatever herdr was started in, which nothing here chooses and nothing here can predict.
@@ -70,6 +73,8 @@ LC_ALL=C            fatal: not a git repository (or any of the parent directorie
 LC_ALL=de_DE.UTF-8  Schwerwiegend: Kein Git-Repository (oder irgendeines der …): .git
 LC_ALL=C            warning: could not open directory 'notes/': Permission denied
 LC_ALL=de_DE.UTF-8  Warnung: konnte Verzeichnis 'notes/' nicht öffnen: Permission denied
+LC_ALL=C            error: No such remote 'origin'
+LC_ALL=de_DE.UTF-8  Fehler: Remote-Repository 'origin' nicht gefunden
 ```
 
 `GIT_TRACE`, `GIT_TRACE_PERFORMANCE` and `GIT_TRACE2` are read from that same environment and

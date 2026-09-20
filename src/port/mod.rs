@@ -294,7 +294,12 @@ pub trait GitPort: Send + Sync {
     /// is not inside a work tree — that is an ordinary answer, not an error.
     fn identify(&self, cwd: &str) -> Result<Option<RepoIdentity>>;
 
-    /// `owner/repo` when `origin` points at GitHub, otherwise `None`.
+    /// `owner/repo` when `origin` points at GitHub; `None` when there is no `origin`, or it
+    /// points elsewhere.
+    ///
+    /// `Err` is git failing to name the repository at all — a `.git/config` it could not
+    /// read, a root that has gone — which is not the same silence as no remote: the sweep
+    /// says which, since one is worth fixing and the other is not.
     ///
     /// The only source of a [`Slug`] in this crate, which is what makes the two `gh` calls
     /// unable to be asked about a directory.
