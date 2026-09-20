@@ -334,10 +334,13 @@ When git will not answer at all, the row says `?` rather than nothing:
 ```
 
 An unread working tree is the absence of an answer, not the answer `clean`, and without the
-marker such a row is indistinguishable from one that was answered for. Both shapes of failure
-need it: a `safe.directory` refusal, or a `git` that is not on the path herdr launched the
+marker such a row is indistinguishable from one that was answered for. Every shape of failure
+needs it: a `safe.directory` refusal, or a `git` that is not on the path herdr launched the
 plugin with, fails the same way for every checkout at once — while a worktree whose directory
-has gone out from under git fails for exactly one, on a list where every other row is fine.
+has gone out from under git, or one holding a directory git cannot open, fails for exactly
+one, on a list where every other row is fine. The last of those is the quiet one: git reports
+the directory and then answers for the rest of the working tree as though it were not there,
+so the marker is what stands between a day of untracked work and a sweep that reads `clean`.
 It takes the room already kept for `✱`, so nothing moves.
 
 The other way git can fail is on the refs themselves: the one `for-each-ref` that ahead,

@@ -23,10 +23,11 @@ pub struct GitCli;
 
 /// What git printed when it exited 0.
 ///
-/// Both streams, because a clean exit is not always a whole answer: `for-each-ref` drops a
-/// ref it cannot read, says so on stderr, and exits 0 — see `local_refs`. Every other call
-/// here reads a clean exit's `stdout` and ignores its `stderr`; a non-zero exit's `stderr`
-/// is what `run` turns into the error.
+/// Both streams, because a clean exit is not always a whole answer. `for-each-ref` drops a
+/// ref it cannot read, says so on stderr, and exits 0 — see `local_refs` — and `status`
+/// leaves out everything under a directory it cannot open the same way — see `is_dirty`.
+/// Those two read both streams; the rest read a clean exit's `stdout` alone, and a non-zero
+/// exit's `stderr` is what `run` turns into the error.
 struct Said {
     stdout: String,
     stderr: String,
@@ -34,10 +35,11 @@ struct Said {
 
 /// The locale every git this plugin starts runs under.
 ///
-/// Two things here are decided by reading git's own words — whether the path is a repository
-/// at all ([`NOT_A_REPOSITORY`]) and whether a ref was dropped from a walk ([`dropped_refs`])
-/// — and both are English literals, while git ships translations of both messages and picks
-/// one from the environment herdr launched the plugin in.
+/// Three things here are decided by reading git's own words — whether the path is a
+/// repository at all ([`NOT_A_REPOSITORY`]), whether a ref was dropped from a walk
+/// ([`dropped_refs`]) and whether `status` could open every directory ([`unread_paths`]) —
+/// and all are English literals, while git ships translations of each message and picks one
+/// from the environment herdr launched the plugin in.
 ///
 /// Why this variable, why one git, and what it costs a reader who does not read English:
 /// `docs/adr/0015-reading-git-in-one-language.md`, which carries the transcript it was
@@ -140,6 +142,35 @@ fn dropped_refs(stderr: &str) -> Option<String> {
     match dropped.is_empty() {
         true => None,
         false => Some(dropped.join(" ")),
+    }
+}
+
+/// What git said while leaving part of a working tree out of `status`, or nothing.
+///
+/// The one thing `status --porcelain` prints when it cannot look, measured against git
+/// 2.55.0: a directory it cannot open gives `warning: could not open directory 'notes/':
+/// Permission denied`, once per directory, exits 0, and lists nothing under it — tracked or
+/// untracked. Where a tracked file is under it git prints a second line beside the warning,
+/// `deep/inner/u: Permission denied`, with no prefix; the warning is what is matched, since
+/// it is the line that is there every time.
+///
+/// Measured and not matched, because the answer is whole: a tracked file that is itself
+/// unreadable is still reported from the index (` M`), and a tracked directory that has gone
+/// is ` D`, with nothing on stderr either way.
+///
+/// In git's English, which git translates and [`GIT_LOCALE`] is what keeps it in. One prefix
+/// rather than "stderr said something", for the reason `dropped_refs` gives: a trace
+/// variable writes to stderr on every call. Every matching line is kept, and not passed
+/// through [`refusal`], for the same reasons as there.
+fn unread_paths(stderr: &str) -> Option<String> {
+    let unread: Vec<&str> = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("warning: could not open directory "))
+        .collect();
+    match unread.is_empty() {
+        true => None,
+        false => Some(unread.join(" ")),
     }
 }
 
@@ -463,6 +494,15 @@ impl GitPort for GitCli {
                 "--porcelain",
             ],
         )?;
+        // A clean exit is not a whole answer here either. A directory git could not open is
+        // reported on stderr and everything under it is simply absent from stdout, so an
+        // empty stdout beside that warning is not `clean` — it is the answer git could not
+        // give, about the one working tree a sweep would then act on. `Err`, because a
+        // `bool` has nowhere to carry the words: `app::dirty` reads it as
+        // `WorkingTree::Unreadable`, and `dump` prints what git said.
+        if let Some(words) = unread_paths(&status.stderr) {
+            bail!("{words}");
+        }
         Ok(!status.stdout.trim().is_empty())
     }
 
@@ -484,7 +524,7 @@ impl GitPort for GitCli {
 mod tests {
     use super::{
         could_not_run, dropped_refs, github_slug_from_url, parse_track, read_track, refusal,
-        GitCli, Slug, TrackField, GIT_LOCALE,
+        unread_paths, GitCli, Slug, TrackField, GIT_LOCALE,
     };
     use crate::port::Track;
     use std::num::NonZeroU32;
@@ -666,6 +706,56 @@ mod tests {
         assert_eq!(
             dropped_refs("warning: ignoring broken ref refs/heads/wip\r").as_deref(),
             Some("warning: ignoring broken ref refs/heads/wip")
+        );
+    }
+
+    #[test]
+    fn only_the_words_git_leaves_a_directory_out_with_are_read_as_an_unread_one() {
+        // The same rule as for a dropped ref: stderr is where git puts everything that is
+        // not an answer, so one prefix and not "stderr said something".
+        assert_eq!(
+            unread_paths("warning: could not open directory 'notes/': Permission denied\n")
+                .as_deref(),
+            Some("warning: could not open directory 'notes/': Permission denied")
+        );
+        for said in [
+            "",
+            "11:35:24.293334 git.c:502  trace: built-in: git status\n",
+            "warning: ignoring broken ref refs/heads/wip\n",
+            // The second line git prints beside the warning for a tracked file under the
+            // directory. Alone it is not the answer — it never comes alone — and the
+            // warning it accompanies is the line that is matched.
+            "deep/inner/u: Permission denied\n",
+        ] {
+            assert_eq!(
+                unread_paths(said),
+                None,
+                "not an unread directory: {said:?}"
+            );
+        }
+
+        // Both lines git prints for a tracked file under such a directory: the warning is
+        // kept and the bare line is not, so what reaches the reader is one shape of sentence.
+        assert_eq!(
+            unread_paths(
+                "deep/inner/u: Permission denied\n\
+                 warning: could not open directory 'deep/inner/': Permission denied\n"
+            )
+            .as_deref(),
+            Some("warning: could not open directory 'deep/inner/': Permission denied")
+        );
+
+        // Two directories are two warnings, joined with a space for the one line.
+        assert_eq!(
+            unread_paths(
+                "warning: could not open directory 'notes/': Permission denied\n\
+                 warning: could not open directory 'deep/inner/': Permission denied\n"
+            )
+            .as_deref(),
+            Some(
+                "warning: could not open directory 'notes/': Permission denied \
+                 warning: could not open directory 'deep/inner/': Permission denied"
+            )
         );
     }
 
