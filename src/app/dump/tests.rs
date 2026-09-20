@@ -561,10 +561,26 @@ fn panes_in_no_repository_are_listed_last_under_their_own_heading() {
         agent_status: AgentStatus::Unknown,
         focused: false,
     }];
-    let page = page(&tree, &RefsByRepo::new());
+    let bare = page(&tree, &RefsByRepo::new());
     assert!(
-        page.ends_with("\nnot in any repository:\n      w9:p9\n"),
-        "got:\n{page}"
+        bare.ends_with("\nnot in any repository:\n      w9:p9\n"),
+        "got:\n{bare}"
+    );
+
+    // With a reason, where there is one. herdr not seeing into the pane and git not
+    // answering about it end up under the same heading, and this page exists to tell
+    // one from the other.
+    tree.trouble.unplaced.insert(
+        "w9:p9".to_string(),
+        "git could not be run: no such file or directory (`git rev-parse`)".to_string(),
+    );
+    let with_reason = page(&tree, &RefsByRepo::new());
+    assert!(
+        with_reason.ends_with(
+            "\nnot in any repository:\n      w9:p9\n          git could not be run: \
+             no such file or directory (`git rev-parse`)\n"
+        ),
+        "got:\n{with_reason}"
     );
 }
 

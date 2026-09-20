@@ -5,7 +5,7 @@
 //! binary on threads that share it. Everything else here needs a real git.
 //!
 //! The failure is the one `docs/en/usage.md` names — a `git` that is not on the path herdr
-//! launched the plugin with, which fails for every checkout at once — and the only one whose
+//! launched the plugin with, which fails for every call at once — and the only one whose
 //! words come from the OS rather than from git.
 
 use herdr_worktree_nav::adapter::GitCli;
@@ -29,6 +29,23 @@ fn a_git_that_cannot_be_started_reaches_the_prompt_line_words_first() {
     );
     assert!(
         words.ends_with("refs/heads refs/remotes`)"),
+        "the call after them, and whole: {words}"
+    );
+
+    // And the call the picker makes before it has any repository to ask about. This is the
+    // one that fails first with no git at all, and the only one whose failure can be told
+    // from "this pane is not in a repository" — `app::collect::identify_one` reads the
+    // difference, and the prompt line says which.
+    let error = GitCli
+        .identify("/src/app")
+        .expect_err("there is no git to answer");
+    let words = format!("{error:#}");
+    assert!(
+        words.starts_with("git could not be run: "),
+        "the same way round: {words}"
+    );
+    assert!(
+        words.ends_with("--show-toplevel`)"),
         "the call after them, and whole: {words}"
     );
 }

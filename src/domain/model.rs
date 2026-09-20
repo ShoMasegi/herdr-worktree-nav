@@ -1,6 +1,8 @@
 //! The model both pickers display: repositories, their worktrees, and the panes sitting in
 //! each one.
 
+use std::collections::BTreeMap;
+
 use crate::port::{AgentStatus, Track};
 
 /// A repository, identified the way herdr identifies it.
@@ -209,6 +211,11 @@ pub struct PaneNode {
 pub struct Trouble {
     /// Repositories herdr refused to list the worktrees of.
     pub unlisted: Vec<Unlisted>,
+    /// Panes git could not be asked about: the pane id, and git's own words. A `git` that is
+    /// not on the path herdr launched the plugin with fails for every one of them at once,
+    /// and the whole session then draws under `not in any repository` — which is what herdr
+    /// not seeing into a pane also looks like, and the two are nothing alike to fix.
+    pub unplaced: BTreeMap<String, String>,
 }
 
 /// A repository herdr would not list, in herdr's own words.

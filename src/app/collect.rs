@@ -16,13 +16,14 @@ use crate::port::{GitPort, HerdrPort, Snapshot};
 /// Fetch everything and build the tree.
 pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapshot, Tree)> {
     let snapshot = herdr.snapshot()?;
-    let placements = resolve_placements(&snapshot, git);
+    let (placements, unplaced) = resolve_placements(&snapshot, git);
     let (mut repos, unlisted) = collect_repos(herdr, git, &placements);
     read_refs(git, &mut repos);
     // After `build` rather than through it: assembling the tree from what was read and
     // recording what could not be are different questions, and `build` is the pure half.
     let mut tree = tree::build(&snapshot, &repos, &placements);
     tree.trouble.unlisted = unlisted;
+    tree.trouble.unplaced = unplaced;
     Ok((snapshot, tree))
 }
 
@@ -74,13 +75,22 @@ fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
     });
 }
 
-/// Work out which repository and checkout each pane sits in.
+/// Work out which repository and checkout each pane sits in, and which panes git would not
+/// answer for.
 ///
 /// Two shortcuts keep this cheap. Panes are resolved per working directory rather than per
 /// pane, because several panes usually share one; and when herdr already knows a workspace
 /// is a worktree, its answer is reused instead of running git — but only for panes that are
 /// still somewhere under that checkout, since a pane is free to `cd` into another repository.
-fn resolve_placements(snapshot: &Snapshot, git: &dyn GitPort) -> HashMap<String, PanePlacement> {
+///
+/// A git that refused is kept apart from a path that is simply not in a repository. They
+/// looked the same from here and they are nothing alike: the second is an ordinary pane in an
+/// ordinary directory, and the first is every pane in the session at once when `git` is not
+/// on the path herdr launched the plugin with. Issue #33.
+fn resolve_placements(
+    snapshot: &Snapshot,
+    git: &dyn GitPort,
+) -> (HashMap<String, PanePlacement>, BTreeMap<String, String>) {
     let workspace_worktrees: HashMap<&str, PanePlacement> = snapshot
         .workspaces
         .iter()
@@ -115,6 +125,7 @@ fn resolve_placements(snapshot: &Snapshot, git: &dyn GitPort) -> HashMap<String,
     }
 
     let resolved = identify_all(git, &unresolved);
+    let mut unplaced = BTreeMap::new();
 
     for pane in &snapshot.panes {
         if placements.contains_key(&pane.pane_id) {
@@ -123,22 +134,29 @@ fn resolve_placements(snapshot: &Snapshot, git: &dyn GitPort) -> HashMap<String,
         let Some(cwd) = pane.effective_cwd() else {
             continue;
         };
-        if let Some(Some(placement)) = resolved.get(cwd) {
-            placements.insert(pane.pane_id.clone(), placement.clone());
+        match resolved.get(cwd) {
+            Some(Ok(Some(placement))) => {
+                placements.insert(pane.pane_id.clone(), placement.clone());
+            }
+            // git answered, and the answer is that this path is not in a repository. An
+            // ordinary pane in an ordinary directory; the section at the bottom is for it.
+            Some(Ok(None)) | None => {}
+            Some(Err(words)) => {
+                unplaced.insert(pane.pane_id.clone(), words.clone());
+            }
         }
     }
 
-    placements
+    (placements, unplaced)
 }
 
 /// Resolve every distinct working directory, several at a time.
 ///
 /// A `git rev-parse` is a few milliseconds; a user with many panes open across many
 /// repositories would feel them added up, and the picker has to open instantly.
-fn identify_all<'a>(
-    git: &dyn GitPort,
-    cwds: &HashSet<&'a str>,
-) -> BTreeMap<&'a str, Option<PanePlacement>> {
+type Placed = Result<Option<PanePlacement>, String>;
+
+fn identify_all<'a>(git: &dyn GitPort, cwds: &HashSet<&'a str>) -> BTreeMap<&'a str, Placed> {
     /// Enough to hide the latency without flooding a laptop with git processes.
     const MAX_IN_FLIGHT: usize = 8;
 
@@ -146,16 +164,21 @@ fn identify_all<'a>(
     let mut resolved = BTreeMap::new();
 
     for chunk in cwds.chunks(MAX_IN_FLIGHT) {
-        let results: Vec<Option<PanePlacement>> = std::thread::scope(|scope| {
+        let results: Vec<Placed> = std::thread::scope(|scope| {
             let handles: Vec<_> = chunk
                 .iter()
                 .map(|cwd| scope.spawn(move || identify_one(git, cwd)))
                 .collect();
             handles
                 .into_iter()
-                // A panicking git resolution must not take the picker down with it; the
-                // pane just ends up ungrouped.
-                .map(|handle| handle.join().unwrap_or(None))
+                // A panicking git resolution must not take the picker down with it. The
+                // pane ends up ungrouped and says why, the way `read_refs` does for a walk
+                // whose thread did not finish.
+                .map(|handle| {
+                    handle
+                        .join()
+                        .unwrap_or_else(|_| Err("the thread asking git did not finish".into()))
+                })
                 .collect()
         });
         for (cwd, placement) in chunk.iter().zip(results) {
@@ -165,14 +188,19 @@ fn identify_all<'a>(
     resolved
 }
 
-fn identify_one(git: &dyn GitPort, cwd: &str) -> Option<PanePlacement> {
-    // A path that is not in a repository, and a git that failed, are the same thing here:
-    // the pane is simply not grouped.
-    let identity = git.identify(cwd).ok().flatten()?;
-    Some(PanePlacement {
+/// `Ok(None)` is git saying the path is not in a repository. `Err` is git not saying —
+/// refused, or not started at all — which is a different thing to tell the user and the
+/// difference between one odd pane and a session that cannot be grouped.
+fn identify_one(git: &dyn GitPort, cwd: &str) -> Placed {
+    let identity = match git.identify(cwd) {
+        Ok(Some(identity)) => identity,
+        Ok(None) => return Ok(None),
+        Err(error) => return Err(one_line(&format!("{error:#}"))),
+    };
+    Ok(Some(PanePlacement {
         repo_key: normalize_path(&identity.repo_key).to_string(),
         checkout_path: normalize_path(&identity.checkout_path).to_string(),
-    })
+    }))
 }
 
 /// Whether `path` is `root` or sits underneath it.
@@ -254,7 +282,8 @@ mod tests {
     /// session and the ref walk below, everything `collect_tree` reads as well.
     ///
     /// `collect_repos` is handed its placements, so it cannot reach `snapshot` whatever this
-    /// answers; the other methods stay `unreachable!()`.
+    /// answers; the other methods stay `unreachable!()`. The git half refuses `identify`,
+    /// which is what the session below has one pane needing.
     struct Repository {
         slug: Result<Option<Slug>, ()>,
     }
@@ -414,20 +443,38 @@ mod tests {
                         is_linked_worktree: false,
                     }),
                 }],
-                panes: vec![Pane {
-                    pane_id: "w1:p1".into(),
-                    tab_id: "w1:t1".into(),
-                    workspace_id: "w1".into(),
-                    terminal_id: String::new(),
-                    cwd: Some("/src/refused".into()),
-                    foreground_cwd: None,
-                    focused: false,
-                    agent: None,
-                    agent_status: AgentStatus::Unknown,
-                    title: None,
-                    terminal_title_stripped: None,
-                    label: None,
-                }],
+                panes: vec![
+                    Pane {
+                        pane_id: "w1:p1".into(),
+                        tab_id: "w1:t1".into(),
+                        workspace_id: "w1".into(),
+                        terminal_id: String::new(),
+                        cwd: Some("/src/refused".into()),
+                        foreground_cwd: None,
+                        focused: false,
+                        agent: None,
+                        agent_status: AgentStatus::Unknown,
+                        title: None,
+                        terminal_title_stripped: None,
+                        label: None,
+                    },
+                    // In no workspace herdr knows a worktree of, so git is asked about it —
+                    // and this git will not answer.
+                    Pane {
+                        pane_id: "w9:p9".into(),
+                        tab_id: "w9:t1".into(),
+                        workspace_id: "w9".into(),
+                        terminal_id: String::new(),
+                        cwd: Some("/home/me".into()),
+                        foreground_cwd: None,
+                        focused: false,
+                        agent: None,
+                        agent_status: AgentStatus::Unknown,
+                        title: None,
+                        terminal_title_stripped: None,
+                        label: None,
+                    },
+                ],
                 ..Snapshot::default()
             })
         }
@@ -440,6 +487,11 @@ mod tests {
                 Ok(slug) => Ok(slug.clone()),
                 Err(()) => Err(anyhow::anyhow!("fatal: not a git repository")),
             }
+        }
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            Err(anyhow::anyhow!(
+                "git could not be run: no such file or directory (`git rev-parse`)"
+            ))
         }
         fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
             // Reached only through `collect_tree`; a repository that was never listed is
@@ -596,6 +648,18 @@ mod tests {
             [("refused", "herdr rejected worktree.list: internal error")],
             "and the tree carries what herdr said about it"
         );
+        assert_eq!(
+            tree.trouble
+                .unplaced
+                .iter()
+                .map(|(pane, words)| (pane.as_str(), words.as_str()))
+                .collect::<Vec<_>>(),
+            [(
+                "w9:p9",
+                "git could not be run: no such file or directory (`git rev-parse`)"
+            )],
+            "and what git said about the pane it could not place"
+        );
     }
 
     #[test]
@@ -635,7 +699,7 @@ mod tests {
         }))
         .expect("snapshot fixture should deserialize");
 
-        let placements = resolve_placements(&snapshot, &IdentifiesWithASlash);
+        let (placements, _) = resolve_placements(&snapshot, &IdentifiesWithASlash);
         for pane in ["w1:p1", "w1:p2"] {
             assert_eq!(
                 placements[pane].repo_key, "/src/app/.git",
@@ -643,6 +707,64 @@ mod tests {
             );
         }
     }
+
+    /// A git that will not start at all — what a `PATH` without git looks like from here.
+    /// It answers for nothing, and the same way every time.
+    struct NoGit;
+
+    impl FakeGit for NoGit {
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            Err(anyhow::anyhow!(
+                "git could not be run: no such file or directory (`git rev-parse`)"
+            ))
+        }
+    }
+    fake_git!(NoGit);
+
+    #[test]
+    fn a_pane_git_would_not_answer_about_is_kept_apart_from_one_that_is_simply_outside() {
+        // Read as one answer, a `git` that is not on the path draws the whole session
+        // under "not in any repository" — the one thing the troubleshooting page says
+        // means herdr could not see into the pane. Issue #33.
+        let snapshot: Snapshot = serde_json::from_value(serde_json::json!({
+            "version": "0.7.4",
+            "protocol": 16,
+            "workspaces": [],
+            "tabs": [],
+            "panes": [{
+                "pane_id": "w1:p1",
+                "tab_id": "w1:t1",
+                "workspace_id": "w1",
+                "terminal_id": "t1",
+                "cwd": "/home/me",
+            }],
+        }))
+        .expect("snapshot fixture should deserialize");
+
+        let (placements, unplaced) = resolve_placements(&snapshot, &NoGit);
+        assert!(placements.is_empty(), "git answered for nothing");
+        assert_eq!(
+            unplaced.get("w1:p1").map(String::as_str),
+            Some("git could not be run: no such file or directory (`git rev-parse`)"),
+            "and said why, in git's own words"
+        );
+
+        // The other half of the same call: a path git says is not in a repository is an
+        // ordinary pane, and has nothing to say about it.
+        let (placements, unplaced) = resolve_placements(&snapshot, &IdentifiesNothing);
+        assert!(placements.is_empty());
+        assert!(unplaced.is_empty(), "git answered, and the answer was no");
+    }
+
+    /// A git that answers, and says every path is outside a repository.
+    struct IdentifiesNothing;
+
+    impl FakeGit for IdentifiesNothing {
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            Ok(None)
+        }
+    }
+    fake_git!(IdentifiesNothing);
 
     #[test]
     fn recognises_a_pane_that_is_still_inside_its_workspace_checkout() {

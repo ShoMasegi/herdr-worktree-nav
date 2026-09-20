@@ -15,6 +15,8 @@
 //! Getting the two the wrong way round is what issues #64 and #35 are about, and
 //! `docs/en/error-handling.md` is where the distinction is written down.
 
+use std::collections::BTreeMap;
+
 use crate::domain::model::{Refs, Tree};
 
 /// One thing the picker has to say about the list it is showing.
@@ -30,6 +32,11 @@ pub enum Condition {
     /// The reading that built the list failed, so the rows may be behind. Carries the words
     /// of whatever refused, which the picker has no better account of.
     Stale(String),
+    /// git could not be asked which repository these panes are in, so they draw as though
+    /// they were in none. Counted by what git said rather than listed one per pane: a `git`
+    /// that is not on the path fails for every pane in the session with one sentence, and
+    /// what a reader needs is the words and how much of the session they cost.
+    Unplaced { panes: usize, words: String },
     /// herdr would not list this repository's worktrees, so it has no rows at all. Carries
     /// herdr's own words and the name [`Unlisted::name`](crate::domain::model::Unlisted::name)
     /// makes out of the key, which is the only name this side has.
@@ -44,12 +51,13 @@ pub enum Condition {
 
 /// Everything that is wrong right now, worst first.
 ///
-/// A repository with no rows at all comes before a repository whose rows are missing their
-/// markers, and that comes before what `gh` said. "Which rows exist" is the larger question:
-/// a reader who cannot see a repository at all is not helped by being told about another
-/// one's refs. Then the track markers, which are about every row of the repository and are
-/// true sweep or no sweep; `gh` is asked only during a sweep, and only about the half git
-/// could not decide.
+/// After a list that may be behind: panes that could not be placed at all, then a repository
+/// with no rows at all, then a repository whose rows are missing their markers, then what
+/// `gh` said. Each is a larger question than the one after it — a reader whose whole session
+/// is ungrouped is not helped by being told about one repository's refs, and one who cannot
+/// see a repository at all is not helped by being told about another one's markers. The
+/// markers are about every row of the repository and are true sweep or no sweep; `gh` is
+/// asked only during a sweep, and only about the half git could not decide.
 ///
 /// `stale` and `sweep_trouble` are passed in rather than read off the tree. The first is
 /// about the reading that built it, which a tree cannot report about itself; the second is
@@ -64,6 +72,21 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
         .map(|words| Condition::Stale(words.to_string()))
         .into_iter()
         .collect();
+    // Counted by what git said rather than listed one per pane: a `git` that is not on the
+    // path fails for every pane in the session, and the same sentence once per pane is not
+    // more information than the sentence and a number.
+    let mut by_words: BTreeMap<&str, usize> = BTreeMap::new();
+    for words in tree.trouble.unplaced.values() {
+        *by_words.entry(words.as_str()).or_default() += 1;
+    }
+    conditions.extend(
+        by_words
+            .into_iter()
+            .map(|(words, panes)| Condition::Unplaced {
+                panes,
+                words: words.to_string(),
+            }),
+    );
     conditions.extend(
         tree.trouble
             .unlisted
@@ -164,6 +187,74 @@ mod tests {
             vec![Condition::SweepTrouble(
                 "me/app: gh could not be run".into()
             )]
+        );
+    }
+
+    #[test]
+    fn panes_git_would_not_answer_about_are_counted_by_what_it_said() {
+        // A `git` that is not on the path fails for every pane at once, and one condition
+        // is the whole of it. What a reader needs is the words and how much of the session
+        // they cost, not the same line once per pane.
+        let mut tree = tree(vec![repo("me/app", Refs::Read)]);
+        assert_eq!(conditions(&tree, None, None), Vec::new());
+
+        let refused = "git could not be run: no such file or directory (`git rev-parse`)";
+        for pane in ["w1:p1", "w2:p1"] {
+            tree.trouble
+                .unplaced
+                .insert(pane.to_string(), refused.to_string());
+        }
+        assert_eq!(
+            conditions(&tree, None, None),
+            vec![Condition::Unplaced {
+                panes: 2,
+                words: refused.into(),
+            }]
+        );
+
+        // A pane that failed for another reason is its own condition: two shapes of
+        // failure are two things to fix.
+        let dubious = "fatal: detected dubious ownership (`git rev-parse`)";
+        tree.trouble
+            .unplaced
+            .insert("w3:p1".to_string(), dubious.to_string());
+        assert_eq!(
+            conditions(&tree, None, None),
+            vec![
+                Condition::Unplaced {
+                    panes: 1,
+                    words: dubious.into(),
+                },
+                Condition::Unplaced {
+                    panes: 2,
+                    words: refused.into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_session_that_could_not_be_grouped_is_gathered_ahead_of_everything_else() {
+        // Each of these is a larger question than the one after it. A reader whose whole
+        // session is ungrouped is not helped by being told about one repository's refs.
+        let mut tree = tree(vec![repo(
+            "me/app",
+            Refs::Unreadable("fatal: index file corrupt".into()),
+        )]);
+        tree.trouble.unlisted.push(Unlisted {
+            repo_key: "/src/old/.git".into(),
+            words: "herdr rejected worktree.list: internal error".into(),
+        });
+        tree.trouble.unplaced.insert(
+            "w1:p1".to_string(),
+            "git could not be run: no such file or directory (`git rev-parse`)".into(),
+        );
+        assert_eq!(
+            conditions(&tree, None, None)[0],
+            Condition::Unplaced {
+                panes: 1,
+                words: "git could not be run: no such file or directory (`git rev-parse`)".into(),
+            }
         );
     }
 
