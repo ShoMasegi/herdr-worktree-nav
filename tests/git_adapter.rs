@@ -485,6 +485,46 @@ fn recognises_a_github_origin_and_ignores_anything_else() {
 }
 
 #[test]
+fn a_config_git_cannot_read_is_not_a_missing_remote() {
+    // Every way git failed to name the repository used to reach the sweep as "no GitHub
+    // remote to ask about" — a reader whose `.git/config` git cannot parse was told to look
+    // at their remotes. Issue #27.
+    let repo = repository();
+    let root = path_str(repo.path());
+    let config = repo.path().join(".git").join("config");
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str("[remote \"origin\"\n");
+    std::fs::write(&config, text).unwrap();
+
+    let error = GitCli
+        .github_slug(&root)
+        .expect_err("git could not read its own config");
+    let words = format!("{error:#}");
+    assert!(
+        words.starts_with("fatal: bad config line"),
+        "git's own words, first: {words}"
+    );
+}
+
+#[test]
+fn a_repository_root_that_has_gone_is_not_a_missing_remote() {
+    // A mount dropped, or another session removed the checkout: git cannot change to it,
+    // and that is not "no remote" either.
+    let gone = tempfile::tempdir().unwrap();
+    let root = path_str(gone.path());
+    drop(gone);
+
+    let error = GitCli
+        .github_slug(&root)
+        .expect_err("there is no repository there to name");
+    let words = format!("{error:#}");
+    assert!(
+        words.starts_with("fatal: cannot change to"),
+        "git's own words, first: {words}"
+    );
+}
+
+#[test]
 fn head_ref_names_the_branch_and_falls_back_to_a_commit_when_detached() {
     let repo = repository();
     let root = path_str(repo.path());

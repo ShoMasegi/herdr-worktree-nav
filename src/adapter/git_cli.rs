@@ -19,6 +19,16 @@ const GIT_FATAL: i32 = 128;
 /// and the second, measured against 2.55.0, is not.
 const NOT_A_REPOSITORY: [&str; 2] = ["not a git repository", "cannot change to"];
 
+/// What `remote get-url` says when the remote is not configured: exit 2, with
+/// `error: No such remote 'origin'` on stderr, measured against git 2.55.0. The one answer
+/// `github_slug` gets that is ordinary rather than a failure — a repository with no `origin`
+/// is a repository with no `origin` — and both halves are matched, for the reason
+/// [`NOT_A_REPOSITORY`] is not matched by its exit code alone.
+///
+/// git's own English, translated (`Fehler: Remote-Repository 'origin' nicht gefunden`), which
+/// [`GIT_LOCALE`] keeps in place.
+const NO_SUCH_REMOTE: (i32, &str) = (2, "No such remote");
+
 pub struct GitCli;
 
 /// What git printed when it exited 0.
@@ -35,11 +45,12 @@ struct Said {
 
 /// The locale every git this plugin starts runs under.
 ///
-/// Three things here are decided by reading git's own words — whether the path is a
+/// Four things here are decided by reading git's own words — whether the path is a
 /// repository at all ([`NOT_A_REPOSITORY`]), whether a ref was dropped from a walk
-/// ([`dropped_refs`]) and whether `status` could open every directory ([`unread_paths`]) —
-/// and all are English literals, while git ships translations of each message and picks one
-/// from the environment herdr launched the plugin in.
+/// ([`dropped_refs`]), whether `status` could open every directory ([`unread_paths`]) and
+/// whether a repository simply has no `origin` ([`NO_SUCH_REMOTE`]) — and all are English
+/// literals, while git ships translations of each message and picks one from the environment
+/// herdr launched the plugin in.
 ///
 /// Why this variable, why one git, and what it costs a reader who does not read English:
 /// `docs/adr/0015-reading-git-in-one-language.md`, which carries the transcript it was
@@ -58,14 +69,22 @@ impl GitCli {
         command
     }
 
+    /// Start git in `dir` and wait for it. `Err` is a git that could not be started at all.
+    ///
+    /// What every call reads its answer from. `run` reads it for the calls that want "not a
+    /// repository" told apart from a refusal, which is all of them but one; `github_slug`
+    /// reads it itself, because the answer it has to tell apart is a different one.
+    fn output(dir: &str, args: &[&str]) -> Result<Output> {
+        Self::command(dir)
+            .args(args)
+            .output()
+            .map_err(|error| anyhow!("{}", could_not_run(args, &error)))
+    }
+
     /// Run git in `dir`. Returns `None` when git said the path is not a repository; any
     /// other non-zero exit is an error carrying git's words.
     fn run(dir: &str, args: &[&str]) -> Result<Option<Said>> {
-        let output: Output = Self::command(dir)
-            .args(args)
-            .output()
-            .map_err(|error| anyhow!("{}", could_not_run(args, &error)))?;
-
+        let output = Self::output(dir, args)?;
         let stderr = String::from_utf8_lossy(&output.stderr);
         if output.status.success() {
             return Ok(Some(Said {
@@ -172,6 +191,17 @@ fn unread_paths(stderr: &str) -> Option<String> {
         true => None,
         false => Some(unread.join(" ")),
     }
+}
+
+/// Whether git's answer to `remote get-url` is the ordinary "there is no such remote" rather
+/// than a failure to name the repository at all.
+///
+/// Both halves, for the reason `run` gives for [`NOT_A_REPOSITORY`]: an exit code alone
+/// diagnoses by number, and git's numbers say almost nothing — `remote get-url` exits 2 for
+/// this and 128 for everything from an unparseable config to a root that has gone. The words
+/// alone would be no better the day another subcommand's error carries them.
+fn no_such_remote(code: Option<i32>, stderr: &str) -> bool {
+    code == Some(NO_SUCH_REMOTE.0) && stderr.contains(NO_SUCH_REMOTE.1)
 }
 
 /// What a git that could not be started reads as: the same shape as a refusal, with the
@@ -334,11 +364,25 @@ impl GitPort for GitCli {
     }
 
     fn github_slug(&self, repo_root: &str) -> Result<Option<Slug>> {
-        // A repository with no `origin` is normal, so a failure here is not an error.
-        let Ok(Some(url)) = GitCli::run(repo_root, &["remote", "get-url", "origin"]) else {
+        let args = ["remote", "get-url", "origin"];
+        let output = GitCli::output(repo_root, &args)?;
+        if output.status.success() {
+            return Ok(github_slug_from_url(&String::from_utf8_lossy(
+                &output.stdout,
+            )));
+        }
+        // A repository with no `origin` is ordinary, and it is the one non-zero exit here
+        // that is not a failure. Every other one is git failing to answer — a `.git/config`
+        // it cannot parse, a repository root that has gone — and reading them all as "no
+        // remote" sends the user whose repository is gone to look at their remotes, which
+        // is issue #27. What `repo_root` names is a repository herdr listed, so here "not a
+        // repository" is git failing to name it, not an ordinary answer, and it goes up
+        // with the rest.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if no_such_remote(output.status.code(), &stderr) {
             return Ok(None);
-        };
-        Ok(github_slug_from_url(&url.stdout))
+        }
+        bail!("{}", refusal(&args, &stderr));
     }
 
     fn local_refs(&self, repo_root: &str) -> Result<RefWalk> {
@@ -523,8 +567,8 @@ impl GitPort for GitCli {
 #[cfg(test)]
 mod tests {
     use super::{
-        could_not_run, dropped_refs, github_slug_from_url, parse_track, read_track, refusal,
-        unread_paths, GitCli, Slug, TrackField, GIT_LOCALE,
+        could_not_run, dropped_refs, github_slug_from_url, no_such_remote, parse_track, read_track,
+        refusal, unread_paths, GitCli, Slug, TrackField, GIT_LOCALE,
     };
     use crate::port::Track;
     use std::num::NonZeroU32;
@@ -757,6 +801,33 @@ mod tests {
                  warning: could not open directory 'deep/inner/': Permission denied"
             )
         );
+    }
+
+    #[test]
+    fn a_repository_with_no_origin_is_told_from_one_git_could_not_name() {
+        // Measured against git 2.55.0: `remote get-url origin` exits 2 saying `No such
+        // remote` where there is none, and 128 for a config it cannot parse or a root that
+        // has gone. Both halves are read, the way `run` reads `NOT_A_REPOSITORY`.
+        assert!(no_such_remote(Some(2), "error: No such remote 'origin'\n"));
+
+        for (code, stderr) in [
+            // The two fatals this used to swallow, which are what issue #27 is about.
+            (Some(128), "fatal: bad config line 9 in file .git/config\n"),
+            (
+                Some(128),
+                "fatal: cannot change to '/wt/gone': No such file or directory\n",
+            ),
+            // The words on their own, and the number on its own. Neither is the answer.
+            (Some(128), "error: No such remote 'origin'\n"),
+            (Some(2), "error: something else entirely\n"),
+            // Killed by a signal: no code at all.
+            (None, "error: No such remote 'origin'\n"),
+        ] {
+            assert!(
+                !no_such_remote(code, stderr),
+                "not a missing remote: {code:?} {stderr:?}"
+            );
+        }
     }
 
     #[test]
