@@ -22,14 +22,18 @@ use crate::domain::model::{Refs, Tree};
 /// A value rather than a sentence: which of these hold is derived every frame, and what
 /// each one reads as on a prompt line that may have no room for it is
 /// [`ui::words`](crate::ui::words)'s to decide. There is deliberately no severity here yet.
-/// Both conditions produced today are about one repository, so an ordering field would be a
-/// guess; the order is the order they are gathered in, and [`conditions`] says what that
-/// order means.
+/// Every condition produced today is about one repository or about the reading as a whole,
+/// so an ordering field would be a guess; the order is the order they are gathered in, and
+/// [`conditions`] says what that order means.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Condition {
     /// The reading that built the list failed, so the rows may be behind. Carries the words
     /// of whatever refused, which the picker has no better account of.
     Stale(String),
+    /// herdr would not list this repository's worktrees, so it has no rows at all. Carries
+    /// herdr's own words and the name [`Unlisted::name`](crate::domain::model::Unlisted::name)
+    /// makes out of the key, which is the only name this side has.
+    Unlisted { repo: String, words: String },
     /// git would not read this repository's refs, so every track marker in it is missing.
     RefsUnreadable { repo: String, words: String },
     /// What could not be asked of `gh` in this sweep, already counted by
@@ -40,12 +44,12 @@ pub enum Condition {
 
 /// Everything that is wrong right now, worst first.
 ///
-/// git not reading a repository's refs comes before what `gh` said, and that is the order
-/// they are gathered in. The first is about the track markers on every row of the
-/// repository and is true sweep or no sweep; `gh` is asked only during a sweep, and only
-/// about the half git could not decide. A condition that is about the whole session rather
-/// than one repository belongs in front of both — issues #33 and #56 are the two that will
-/// want that, and this is the function they add a line to.
+/// A repository with no rows at all comes before a repository whose rows are missing their
+/// markers, and that comes before what `gh` said. "Which rows exist" is the larger question:
+/// a reader who cannot see a repository at all is not helped by being told about another
+/// one's refs. Then the track markers, which are about every row of the repository and are
+/// true sweep or no sweep; `gh` is asked only during a sweep, and only about the half git
+/// could not decide.
 ///
 /// `stale` and `sweep_trouble` are passed in rather than read off the tree. The first is
 /// about the reading that built it, which a tree cannot report about itself; the second is
@@ -60,6 +64,15 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
         .map(|words| Condition::Stale(words.to_string()))
         .into_iter()
         .collect();
+    conditions.extend(
+        tree.trouble
+            .unlisted
+            .iter()
+            .map(|repo| Condition::Unlisted {
+                repo: repo.name().to_string(),
+                words: repo.words.clone(),
+            }),
+    );
     conditions.extend(tree.repos.iter().filter_map(|repo| match &repo.refs {
         Refs::Read => None,
         Refs::Unreadable(words) => Some(Condition::RefsUnreadable {
@@ -74,7 +87,7 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{RepoNode, Tree};
+    use crate::domain::model::{RepoNode, Tree, Unlisted};
 
     fn repo(name: &str, refs: Refs) -> RepoNode {
         RepoNode {
@@ -151,6 +164,52 @@ mod tests {
             vec![Condition::SweepTrouble(
                 "me/app: gh could not be run".into()
             )]
+        );
+    }
+
+    #[test]
+    fn a_repository_herdr_would_not_list_is_named_with_herdrs_words() {
+        // It has no rows to say it with — that is what "not listed" means — so a condition
+        // is the only place it can be said at all.
+        let mut tree = tree(vec![repo("me/app", Refs::Read)]);
+        tree.trouble.unlisted.push(Unlisted {
+            repo_key: "/src/old/.git".into(),
+            words: "herdr rejected worktree.list: internal error".into(),
+        });
+        assert_eq!(
+            conditions(&tree, None, None),
+            vec![Condition::Unlisted {
+                repo: "old".into(),
+                words: "herdr rejected worktree.list: internal error".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_repository_that_is_not_there_is_gathered_ahead_of_one_whose_refs_were_not_read() {
+        // "Which rows exist" before "what the rows say": a reader who cannot see a
+        // repository at all is not helped by being told about another one's markers.
+        let mut tree = tree(vec![repo(
+            "me/app",
+            Refs::Unreadable("fatal: index file corrupt".into()),
+        )]);
+        tree.trouble.unlisted.push(Unlisted {
+            repo_key: "/src/old/.git".into(),
+            words: "herdr rejected worktree.list: internal error".into(),
+        });
+        assert_eq!(
+            conditions(&tree, None, None),
+            vec![
+                Condition::Unlisted {
+                    repo: "old".into(),
+                    words: "herdr rejected worktree.list: internal error".into(),
+                },
+                Condition::RefsUnreadable {
+                    repo: "me/app".into(),
+                    words: "fatal: index file corrupt".into(),
+                },
+            ],
+            "neither hides the other, and the larger question is first"
         );
     }
 

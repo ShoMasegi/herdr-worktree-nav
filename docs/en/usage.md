@@ -365,6 +365,14 @@ closes it again. A pane too short for all of them shows what fits and counts the
 same answer the line gives for the same reason; `herdr-worktree-nav dump` is the copy with
 nothing left out. `r` reads the refs again.
 
+herdr can fail the same way, one step earlier. Asked for a repository's worktrees and
+refusing, it leaves the picker with no repository at all — no rows to carry a marker and no
+heading to hang one off — so the line names it there too, as `app: not listed:` with herdr's
+own words, ahead of any repository whose refs went unread. A sweep is where that matters
+most: the re-read `Enter` asks for can lose a whole repository between the marks going on and
+the question being asked, and the rows that go are then named by their bare paths with this
+sentence saying why. `dump` prints the same under a `not listed:` heading of its own.
+
 `r` asks again. It is the only thing that does: the answers are otherwise kept for as long as
 the picker is open, `Tab` to the branches view and back included.
 

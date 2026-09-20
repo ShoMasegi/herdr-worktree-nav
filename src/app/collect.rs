@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use anyhow::Result;
 
 use crate::app::one_line;
-use crate::domain::model::{normalize_path, Tree};
+use crate::domain::model::{normalize_path, Tree, Unlisted};
 use crate::domain::tree::{self, PanePlacement, RepoInput};
 use crate::port::{GitPort, HerdrPort, Snapshot};
 
@@ -17,9 +17,12 @@ use crate::port::{GitPort, HerdrPort, Snapshot};
 pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapshot, Tree)> {
     let snapshot = herdr.snapshot()?;
     let placements = resolve_placements(&snapshot, git);
-    let mut repos = collect_repos(herdr, git, &placements);
+    let (mut repos, unlisted) = collect_repos(herdr, git, &placements);
     read_refs(git, &mut repos);
-    let tree = tree::build(&snapshot, &repos, &placements);
+    // After `build` rather than through it: assembling the tree from what was read and
+    // recording what could not be are different questions, and `build` is the pure half.
+    let mut tree = tree::build(&snapshot, &repos, &placements);
+    tree.trouble.unlisted = unlisted;
     Ok((snapshot, tree))
 }
 
@@ -180,11 +183,17 @@ fn is_inside(path: &str, root: &str) -> bool {
 }
 
 /// Ask herdr for the worktrees of every repository a pane was found in.
+///
+/// A repository herdr refuses to list comes back as the second half rather than as nothing.
+/// Dropped, it takes every checkout and every pane in it off the screen — and with a sweep's
+/// `Enter` reading the tree again before it asks, that happens between the marks going on and
+/// the question being asked, so what the user saw was `no longer marked:` with bare paths and
+/// no account of why. Issue #56.
 fn collect_repos(
     herdr: &dyn HerdrPort,
     git: &dyn GitPort,
     placements: &HashMap<String, PanePlacement>,
-) -> Vec<RepoInput> {
+) -> (Vec<RepoInput>, Vec<Unlisted>) {
     // One checkout per repo is enough to ask about: herdr resolves the whole repository
     // from any path inside it. BTreeMap keeps the result deterministic.
     let mut probe_paths: BTreeMap<&str, &str> = BTreeMap::new();
@@ -194,27 +203,36 @@ fn collect_repos(
             .or_insert(&placement.checkout_path);
     }
 
-    probe_paths
-        .into_iter()
-        .filter_map(|(repo_key, probe)| {
-            let listed = herdr.worktree_list(probe).ok()?;
-            let repo_root = normalize_path(&listed.source.repo_root).to_string();
-            let display_name = git
-                .github_slug(&repo_root)
-                .ok()
-                .flatten()
-                .map(|slug| slug.as_str().to_string())
-                .unwrap_or_else(|| listed.source.repo_name.clone());
-            Some(RepoInput {
-                repo_key: repo_key.to_string(),
-                repo_root,
-                display_name,
-                worktrees: listed.worktrees,
-                // Read next, all at once — `read_refs`.
-                refs: Ok(Vec::new()),
-            })
-        })
-        .collect()
+    let mut repos = Vec::new();
+    let mut unlisted = Vec::new();
+    for (repo_key, probe) in probe_paths {
+        let listed = match herdr.worktree_list(probe) {
+            Ok(listed) => listed,
+            Err(error) => {
+                unlisted.push(Unlisted {
+                    repo_key: repo_key.to_string(),
+                    words: one_line(&format!("{error:#}")),
+                });
+                continue;
+            }
+        };
+        let repo_root = normalize_path(&listed.source.repo_root).to_string();
+        let display_name = git
+            .github_slug(&repo_root)
+            .ok()
+            .flatten()
+            .map(|slug| slug.as_str().to_string())
+            .unwrap_or_else(|| listed.source.repo_name.clone());
+        repos.push(RepoInput {
+            repo_key: repo_key.to_string(),
+            repo_root,
+            display_name,
+            worktrees: listed.worktrees,
+            // Read next, all at once — `read_refs`.
+            refs: Ok(Vec::new()),
+        });
+    }
+    (repos, unlisted)
 }
 
 #[cfg(test)]
@@ -224,12 +242,19 @@ mod tests {
 
     use anyhow::Result;
 
-    use super::{collect_repos, is_inside, read_refs, resolve_placements};
+    use super::{collect_repos, collect_tree, is_inside, read_refs, resolve_placements};
     use crate::domain::tree::{PanePlacement, RepoInput};
-    use crate::port::{Slug, Snapshot, Worktree, WorktreeList, WorktreeSource};
+    use crate::port::{
+        AgentStatus, Pane, Slug, Snapshot, Workspace, WorkspaceWorktree, Worktree, WorktreeList,
+        WorktreeSource,
+    };
 
     /// A herdr that knows one repository, and a git that may or may not know its name on
-    /// GitHub. Between them they are everything `collect_repos` reads.
+    /// GitHub. Between them they are everything `collect_repos` reads — and, with the
+    /// session and the ref walk below, everything `collect_tree` reads as well.
+    ///
+    /// `collect_repos` is handed its placements, so it cannot reach `snapshot` whatever this
+    /// answers; the other methods stay `unreachable!()`.
     struct Repository {
         slug: Result<Option<Slug>, ()>,
     }
@@ -351,7 +376,12 @@ mod tests {
     }
 
     impl FakeHerdr for Repository {
-        fn worktree_list(&self, _cwd: &str) -> Result<WorktreeList> {
+        fn worktree_list(&self, cwd: &str) -> Result<WorktreeList> {
+            // One probe path herdr will not answer for, so the other half of this call is
+            // reachable without a second fake. Every other path is the one repository.
+            if cwd.contains("refused") {
+                anyhow::bail!("herdr rejected worktree.list: internal error");
+            }
             Ok(WorktreeList {
                 source: WorktreeSource {
                     repo_key: "/src/app/.git".into(),
@@ -365,6 +395,42 @@ mod tests {
                 worktrees: Vec::<Worktree>::new(),
             })
         }
+        fn snapshot(&self) -> Result<Snapshot> {
+            // One pane, in a workspace herdr already knows the worktree of, so no git is
+            // asked to place it — and in the one repository this herdr will not list.
+            Ok(Snapshot {
+                workspaces: vec![Workspace {
+                    workspace_id: "w1".into(),
+                    label: String::new(),
+                    number: 0,
+                    focused: false,
+                    active_tab_id: None,
+                    agent_status: AgentStatus::Unknown,
+                    worktree: Some(WorkspaceWorktree {
+                        repo_key: "/src/refused/.git".into(),
+                        repo_name: "refused".into(),
+                        repo_root: "/src/refused".into(),
+                        checkout_path: "/src/refused".into(),
+                        is_linked_worktree: false,
+                    }),
+                }],
+                panes: vec![Pane {
+                    pane_id: "w1:p1".into(),
+                    tab_id: "w1:t1".into(),
+                    workspace_id: "w1".into(),
+                    terminal_id: String::new(),
+                    cwd: Some("/src/refused".into()),
+                    foreground_cwd: None,
+                    focused: false,
+                    agent: None,
+                    agent_status: AgentStatus::Unknown,
+                    title: None,
+                    terminal_title_stripped: None,
+                    label: None,
+                }],
+                ..Snapshot::default()
+            })
+        }
     }
     fake_herdr!(Repository);
 
@@ -374,6 +440,11 @@ mod tests {
                 Ok(slug) => Ok(slug.clone()),
                 Err(()) => Err(anyhow::anyhow!("fatal: not a git repository")),
             }
+        }
+        fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
+            // Reached only through `collect_tree`; a repository that was never listed is
+            // never walked, so this answers for the ones that were.
+            Ok(crate::port::RefWalk::of(Vec::new()))
         }
     }
     fake_git!(Repository);
@@ -390,7 +461,7 @@ mod tests {
 
     fn named(slug: Result<Option<Slug>, ()>) -> String {
         let port = Repository { slug };
-        let repos = collect_repos(&port, &port, &one_pane_in("/src/app"));
+        let (repos, _) = collect_repos(&port, &port, &one_pane_in("/src/app"));
         repos
             .into_iter()
             .next()
@@ -460,11 +531,70 @@ mod tests {
                 },
             ),
         ]);
-        let repos = collect_repos(&port, &port, &two_panes);
+        let (repos, _) = collect_repos(&port, &port, &two_panes);
         assert_eq!(
             repos.iter().map(|repo| &repo.repo_key).collect::<Vec<_>>(),
             ["/src/app/.git"],
             "one repository, asked about once"
+        );
+    }
+
+    #[test]
+    fn a_repository_herdr_would_not_list_is_kept_with_its_words_and_takes_nothing_with_it() {
+        // Dropped, it takes every checkout and every pane in it off the screen, and the
+        // prompt line has nothing to name — `Refs::Unreadable` hangs off the repository
+        // node, which is exactly what does not exist here. Issue #56.
+        let port = Repository { slug: Ok(None) };
+        let two_repos = HashMap::from([
+            (
+                "w1:p1".to_string(),
+                PanePlacement {
+                    repo_key: "/src/app/.git".to_string(),
+                    checkout_path: "/src/app".to_string(),
+                },
+            ),
+            (
+                "w2:p1".to_string(),
+                PanePlacement {
+                    repo_key: "/src/old/.git".to_string(),
+                    checkout_path: "/src/refused".to_string(),
+                },
+            ),
+        ]);
+
+        let (repos, unlisted) = collect_repos(&port, &port, &two_repos);
+
+        assert_eq!(
+            repos.iter().map(|repo| &repo.repo_key).collect::<Vec<_>>(),
+            ["/src/app/.git"],
+            "the repository that answered is untouched"
+        );
+        assert_eq!(unlisted.len(), 1, "and the other is kept, not dropped");
+        assert_eq!(unlisted[0].repo_key, "/src/old/.git");
+        assert_eq!(
+            unlisted[0].words, "herdr rejected worktree.list: internal error",
+            "herdr's own words, on one line"
+        );
+    }
+
+    #[test]
+    fn a_reading_hands_the_tree_what_it_could_not_list() {
+        // The other half of the same issue: `collect_repos` keeping the words is worth
+        // nothing until they are on the tree, which is the one thing above this that can
+        // say them. Deleted, every test below still passes and the picker says nothing.
+        let port = Repository { slug: Ok(None) };
+
+        let (_, tree) = collect_tree(&port, &port).expect("herdr described its session");
+
+        assert!(tree.repos.is_empty(), "the one repository was not listed");
+        assert_eq!(
+            tree.trouble
+                .unlisted
+                .iter()
+                .map(|repo| (repo.name(), repo.words.as_str()))
+                .collect::<Vec<_>>(),
+            [("refused", "herdr rejected worktree.list: internal error")],
+            "and the tree carries what herdr said about it"
         );
     }
 

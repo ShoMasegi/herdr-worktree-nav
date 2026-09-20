@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::domain::model::{normalize_path, PaneNode, Refs, RepoNode, Tree, WorktreeNode};
+use crate::domain::model::{normalize_path, PaneNode, Refs, RepoNode, Tree, Trouble, WorktreeNode};
 use crate::port::{GitRef, RefKind, Snapshot, Track, Worktree};
 
 /// A repository the caller has identified, together with the worktrees herdr reported for it.
@@ -202,6 +202,9 @@ pub fn build(
     Tree {
         repos: nodes,
         ungrouped,
+        // What the reading could not do is not this function's to know: it is handed what
+        // was read. `app::collect` records the rest onto the tree afterwards.
+        trouble: Trouble::default(),
     }
 }
 

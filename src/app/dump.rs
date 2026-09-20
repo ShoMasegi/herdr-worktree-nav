@@ -160,6 +160,14 @@ pub fn report(
             }
         }
     }
+    if !tree.trouble.unlisted.is_empty() {
+        // A repository with no section above, because herdr would not say what is in it.
+        let _ = writeln!(out, "\nnot listed:");
+        for repo in &tree.trouble.unlisted {
+            let _ = writeln!(out, "  {}  [{}]", repo.name(), repo.repo_key);
+            let _ = writeln!(out, "      {}", repo.words);
+        }
+    }
     if !tree.ungrouped.is_empty() {
         let _ = writeln!(out, "\nnot in any repository:");
         for pane in &tree.ungrouped {

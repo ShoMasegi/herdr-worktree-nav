@@ -174,9 +174,19 @@ impl PanesState {
             .collect();
         if !dropped.is_empty() {
             let named = format!("no longer marked: {}", dropped.join(", "));
-            self.message = Some(match after.is_empty() {
-                true => format!("{named} — nothing left to remove"),
-                false => named,
+            // A row usually goes because a pane opened in it or a file was written, and the
+            // rows themselves show that. It can also go because the repository it was in is
+            // not there to be read any more, and then the bare paths are the whole of what
+            // is left — `nothing left to remove` reads as a sweep that found nothing rather
+            // than one that lost its ground. Only a listing that failed can take rows away,
+            // so no other condition is named here.
+            let unlisted = self.conditions().into_iter().find(|condition| {
+                matches!(condition, crate::domain::notice::Condition::Unlisted { .. })
+            });
+            self.message = Some(match (unlisted, after.is_empty()) {
+                (Some(condition), _) => format!("{named} — {}", words::condition(&condition)),
+                (None, true) => format!("{named} — nothing left to remove"),
+                (None, false) => named,
             });
         }
         if !after.is_empty() {

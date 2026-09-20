@@ -198,12 +198,52 @@ pub struct PaneNode {
     pub focused: bool,
 }
 
+/// What the reading could not do, kept on the tree the way [`Refs`] is kept on a repository.
+///
+/// [`Refs::Unreadable`] is the one place this model had for "the tool would not answer", and
+/// it hangs off a [`RepoNode`] — which is exactly the node that does not exist when herdr
+/// will not list the repository at all. So the fact has nowhere to go and the repository
+/// simply leaves the tree, with every checkout and every pane in it going too and nothing
+/// anywhere saying why. Here it travels with the tree, and the prompt line says it once.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Trouble {
+    /// Repositories herdr refused to list the worktrees of.
+    pub unlisted: Vec<Unlisted>,
+}
+
+/// A repository herdr would not list, in herdr's own words.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unlisted {
+    /// What herdr was asked about. The only name this side has: `repo_root` and the display
+    /// name both come out of the listing that did not happen.
+    pub repo_key: String,
+    /// herdr's own words.
+    pub words: String,
+}
+
+impl Unlisted {
+    /// What to call the repository on screen. The directory its key sits in —
+    /// `/src/app/.git` is `app` — since that is the name a reader would recognise, and the
+    /// whole key where there is no such directory.
+    pub fn name(&self) -> &str {
+        let key = normalize_path(&self.repo_key);
+        let root = key.strip_suffix("/.git").unwrap_or(key);
+        match root.rsplit_once('/') {
+            Some((_, name)) if !name.is_empty() => name,
+            _ => &self.repo_key,
+        }
+    }
+}
+
 /// Everything the panes view shows.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Tree {
     pub repos: Vec<RepoNode>,
     /// Panes that are not inside any git work tree. Hidden by default.
     pub ungrouped: Vec<PaneNode>,
+    /// What this reading could not read at all. Not a property of anything on screen, which
+    /// is the point: it is about what is missing from it.
+    pub trouble: Trouble,
 }
 
 impl Tree {
@@ -262,6 +302,26 @@ mod tests {
         assert_eq!(normalize_path("/a/b///"), "/a/b");
         assert_eq!(normalize_path("/"), "/");
         assert_eq!(normalize_path(""), "");
+    }
+
+    #[test]
+    fn a_repository_that_was_never_listed_is_named_by_the_directory_its_key_sits_in() {
+        // The listing is where `me/app` and the repository root would both have come from,
+        // so the key is all there is. `/src/app/.git` is `app` to a reader; the key itself
+        // is not, and is only right where there is nothing better.
+        let named = |key: &str| Unlisted {
+            repo_key: key.to_string(),
+            words: String::new(),
+        };
+        assert_eq!(named("/src/app/.git").name(), "app");
+        assert_eq!(named("/src/app/.git/").name(), "app");
+        // A bare repository, and a worktree's own `.git` file resolved to a common dir that
+        // is not called `.git`: the last segment is still the name a reader recognises.
+        assert_eq!(named("/src/app.git").name(), "app.git");
+        assert_eq!(named("/src/app").name(), "app");
+        // Nothing better to say than what herdr was asked about.
+        assert_eq!(named(".git").name(), ".git");
+        assert_eq!(named("").name(), "");
     }
 
     #[test]

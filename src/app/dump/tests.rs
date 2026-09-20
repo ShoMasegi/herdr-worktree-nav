@@ -1,6 +1,6 @@
 use super::*;
 use crate::app::fakes::{fake_git, FakeGit};
-use crate::domain::model::{PaneNode, WorktreeNode};
+use crate::domain::model::{PaneNode, Unlisted, WorktreeNode};
 use crate::domain::settings::{Panes, Settings};
 use crate::port::{AgentStatus, Track};
 use serde_json::json;
@@ -103,6 +103,7 @@ fn every_answer_a_row_leaves_out_is_on_the_page() {
             },
         ],
         ungrouped: Vec::new(),
+        ..Default::default()
     };
     let refs = RefsByRepo::from([(
         "/src/app".to_string(),
@@ -167,6 +168,7 @@ fn a_missing_plugin_file_is_reported_as_defaults() {
     let tree = Tree {
         repos: Vec::new(),
         ungrouped: Vec::new(),
+        ..Default::default()
     };
     let page = report(
         &snapshot(),
@@ -191,6 +193,7 @@ fn a_rejected_plugin_file_names_the_problem() {
     let tree = Tree {
         repos: Vec::new(),
         ungrouped: Vec::new(),
+        ..Default::default()
     };
     let page = report(
         &snapshot(),
@@ -379,6 +382,7 @@ fn one_repo(refs: Refs, worktrees: Vec<WorktreeNode>) -> Tree {
             worktrees,
         }],
         ungrouped: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -523,6 +527,26 @@ fn a_checkout_git_lists_no_ref_at_is_not_called_a_branch_nobody_pushed() {
         ),
         "got:\n{}",
         page(&tree, &refs)
+    );
+}
+
+#[test]
+fn a_repository_herdr_would_not_list_has_a_heading_of_its_own() {
+    // It has no section above — that is what "not listed" means — so the page would
+    // otherwise say nothing about a repository the reader can see panes for.
+    let mut tree = one_repo(Refs::Read, Vec::new());
+    tree.trouble.unlisted.push(Unlisted {
+        repo_key: "/src/old/.git".into(),
+        words: "herdr rejected worktree.list: internal error".into(),
+    });
+    let page = page(&tree, &RefsByRepo::new());
+    assert!(
+        page.contains("\nnot listed:\n  old  [/src/old/.git]\n"),
+        "got:\n{page}"
+    );
+    assert!(
+        page.contains("      herdr rejected worktree.list: internal error\n"),
+        "got:\n{page}"
     );
 }
 

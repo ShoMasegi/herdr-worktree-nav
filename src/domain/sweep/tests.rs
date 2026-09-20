@@ -43,6 +43,7 @@ fn tree_of(worktrees: Vec<WorktreeNode>) -> Tree {
             ..only_repo()
         }],
         ungrouped: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -509,6 +510,7 @@ fn one_repositorys_pull_requests_never_judge_anothers_checkouts() {
             },
         ],
         ungrouped: Vec::new(),
+        ..Default::default()
     };
     let trees = clean(&["/wt/app-login", "/wt/site-login"]);
     let judged = candidates(&tree, &facts(&trees, &asked(vec![merged(1, "feat/login")])));
@@ -778,6 +780,7 @@ fn one_repositorys_judgement_never_lands_on_anothers_checkout_at_the_same_path()
             },
         ],
         ungrouped: Vec::new(),
+        ..Default::default()
     };
     let trees = clean(&["/wt/shared"]);
     let none = BTreeMap::new();

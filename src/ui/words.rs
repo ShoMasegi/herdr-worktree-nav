@@ -140,6 +140,7 @@ pub fn order(order: Order) -> String {
 pub fn condition(condition: &Condition) -> String {
     match condition {
         Condition::Stale(words) => words.clone(),
+        Condition::Unlisted { repo, words } => format!("{repo}: not listed: {words}"),
         Condition::RefsUnreadable { repo, words } => format!("{repo}: refs unreadable: {words}"),
         Condition::SweepTrouble(words) => words.clone(),
     }
@@ -570,6 +571,13 @@ mod tests {
 
     #[test]
     fn a_condition_says_which_repository_could_not_be_read() {
+        assert_eq!(
+            condition(&Condition::Unlisted {
+                repo: "old".into(),
+                words: "herdr rejected worktree.list: internal error".into(),
+            }),
+            "old: not listed: herdr rejected worktree.list: internal error"
+        );
         assert_eq!(
             condition(&Condition::RefsUnreadable {
                 repo: "me/app".into(),
