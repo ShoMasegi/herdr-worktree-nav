@@ -339,6 +339,11 @@ pub trait GitPort: Send + Sync {
     /// takes what deleting by hand would have taken — which is the whole of what it
     /// promises. `docs/en/usage.md` says it where a user will meet it.
     ///
+    /// `Err` is git not answering — refusing the call, or exiting clean having said it could
+    /// not open a directory, under which everything is left out of the answer. Neither is
+    /// `false`: a working tree git could not look at is not one with nothing in it, and
+    /// `false` is the one answer a sweep acts on.
+    ///
     /// One process per checkout, and the only thing here that cannot be folded into an
     /// existing call — so it is asked in the background rather than in front of the first
     /// frame.

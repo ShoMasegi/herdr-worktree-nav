@@ -708,6 +708,54 @@ fn a_checkout_git_will_not_look_at_is_an_error_rather_than_a_clean_one() {
     assert!(GitCli.is_dirty(&path_str(empty.path())).is_err());
 }
 
+/// Puts a directory's permissions back when the test is over, so `TempDir` can remove it.
+struct ReadableAgain<'a>(&'a Path);
+
+impl Drop for ReadableAgain<'_> {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o755));
+    }
+}
+
+#[test]
+fn a_directory_git_could_not_read_is_not_a_clean_working_tree() {
+    // `status --porcelain` exits 0 with a directory it cannot open reported on stderr and
+    // everything under it absent from stdout. Read from stdout alone, a checkout holding a
+    // day of work under such a directory was clean: no marker on the row, and offered by a
+    // sweep for deletion on the strength of a silence. Issue #42.
+    use std::os::unix::fs::PermissionsExt;
+    let repo = repository();
+    let root = path_str(repo.path());
+    let notes = repo.path().join("notes");
+    std::fs::create_dir(&notes).unwrap();
+    std::fs::write(notes.join("work.txt"), "a day of work\n").unwrap();
+    assert!(
+        GitCli.is_dirty(&root).unwrap(),
+        "readable, the untracked file counts"
+    );
+
+    std::fs::set_permissions(&notes, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _put_back = ReadableAgain(&notes);
+    // Root reads a directory with no permissions, and so does a filesystem that ignores
+    // them; git then has nothing to warn about, and this test would pass having measured
+    // nothing. It fails instead, and says why.
+    assert!(
+        std::fs::read_dir(&notes).is_err(),
+        "this user can read a directory with mode 000, so git will not be refused and \
+         there is nothing here to measure — run this as a user permissions apply to"
+    );
+
+    let error = GitCli
+        .is_dirty(&root)
+        .expect_err("git could not look, and said so");
+    let words = format!("{error:#}");
+    assert!(
+        words.starts_with("warning: could not open directory 'notes/'"),
+        "git's own words, first: {words}"
+    );
+}
+
 #[test]
 fn a_ref_git_cannot_read_is_named_and_every_other_ref_is_still_listed() {
     // git drops a broken loose ref with a warning and exits 0. Read as a clean exit that is
