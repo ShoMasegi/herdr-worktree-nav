@@ -79,9 +79,11 @@ price of not using `worktree.remove --workspace`: there is no call that takes th
 that refuses to close therefore stops the removal with some of its siblings already gone.
 That is the right way round — a checkout removed out from under half its panes is worse than
 one not removed — but it is a state the user has to be told about in so many words, because
-the panes that did close are gone and nothing else on screen will say so. A pane that has
-already gone by itself is not a refusal: it is the state the call asks for, and stopping on
-it would kill the panes before it for nothing.
+the panes that did close are gone and nothing else on screen says that a removal stopped
+partway: their rows go as the picker catches up, which says the panes have stopped and no
+more — and says nothing at all where that reading fails. A pane that has already gone by
+itself is not a refusal: it is the state the call asks for, and stopping on it would kill the
+panes before it for nothing.
 
 **The order is panes, then git, and it is not atomic.** The dirty check turns the common
 failure into a refusal instead of a report, but it is a check and not a lock: a file written

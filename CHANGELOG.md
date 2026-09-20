@@ -78,7 +78,10 @@ All notable changes to this project are documented here. The format follows
   silently; or `could not remove <branch>` with git's own words and a sound. That is the
   report which still arrives when the picker has been closed, which is now the ordinary case.
   With the picker still up, a refusal is on the prompt line as well, and a success is simply
-  the row leaving the list. A notification herdr declines — because they are turned off, or
+  the row leaving the list — or, where the list could not be read again, a line saying that,
+  since the row has not left. A removal whose process ended without a readable word is the one
+  ending nobody can settle, so the picker reads the list again and says it has — and stops
+  there, because a row that has gone is not proof the checkout has. A notification herdr declines — because they are turned off, or
   no client is attached — is accepted in silence: a refused removal leaves the checkout
   standing, so the row is there next time. See
   [ADR 0014](docs/adr/0014-removing-outlives-the-picker.md).

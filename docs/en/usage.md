@@ -226,6 +226,18 @@ is the clause about panes — next time there are none to close, so there is not
 say. With the picker still up, a refusal is on
 the prompt line as well.
 
+A removal whose process ended without a readable word is one nobody can settle — it may well
+have gone through — so the picker reads the list again and says it has: `the list has been
+read again since`. It stops there on purpose: a row that has gone is not proof the checkout
+has, because a repository whose last pane has just closed is not listed at all.
+
+That reading happens whenever a removal reports and whenever `Shift-D` closes panes, and where
+it is the reading that fails the picker says `the list could not be read again` with herdr's
+words, on the end of whatever else it had to tell you — `the panes closed, but …` where there
+was nothing else. Until `r` works, the rows on screen are older than what has happened to
+them, and a question that was up when it failed goes back rather than being answered over a
+list nobody could read.
+
 `b`/`w`/`i`/`d` replace the search box with a state chip. Pressing the same one again clears
 it, so a filter is never a one-way door.
 

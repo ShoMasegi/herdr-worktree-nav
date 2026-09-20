@@ -88,7 +88,9 @@ impl<'a> Removals<'a> {
     ///
     /// A pane that will not close stops the whole thing: a checkout removed out from under
     /// half its panes is worse than one not removed. How far it got is what the message is
-    /// for — the panes that did close are gone, and nothing else on screen will say so.
+    /// for — the panes that did close are gone, and their rows going as the picker catches
+    /// up says that much and no more: not that a removal stopped partway, and nothing at all
+    /// where the list could not be read again.
     pub fn remove(&mut self, herdr: &dyn HerdrPort, removal: &Removal) -> Result<(), String> {
         self.close_panes(herdr, removal)?;
         // Every pane is gone by now, so a failure here is the same shape as a git refusal
@@ -104,7 +106,7 @@ impl<'a> Removals<'a> {
 
     /// Close every pane the removal names, in the order it lists them, stopping at the first
     /// that refuses. How far it got is in the message, because the panes before the refusal
-    /// are gone and nothing else on screen says so.
+    /// are gone and the rows that go with them say only that they have stopped.
     ///
     /// A pane that has already gone is not a refusal, but that is not decided here: see
     /// [`HerdrPort::pane_close`], which is where a pane herdr no longer knows about becomes

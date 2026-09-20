@@ -46,7 +46,10 @@ anyone. One reporter that always speaks beats two that each assume the other did
 `no pane` becomes `deleting ⠻` and stops being selectable, so the cursor steps over it and a
 second `Shift-D` cannot reach it. A refusal goes on the prompt line, naming its own checkout
 because several can be in flight. A success is not announced at all: the row leaving the list
-is the report.
+is the report — except where the picker could not read the list again afterwards, and the row
+therefore has not left. Silence there would leave the screen saying the checkout is still
+where it was, which is the opposite of what happened, so the line says what it could not
+read instead.
 
 **A notification herdr declines is accepted in silence.** `notification.show` answers
 `shown: false` with a reason — `disabled`, `no_foreground_client`, `rate_limited`, `busy`.
