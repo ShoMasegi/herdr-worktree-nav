@@ -110,9 +110,14 @@ impl Settled {
             std::thread::spawn(move || {
                 let answer = match git.github_slug(&repo_root) {
                     Ok(None) => Answer::Unaskable("no GitHub remote to ask about".to_string()),
-                    Err(error) => {
-                        Answer::Refused(format!("git could not name the repository: {error:#}"))
-                    }
+                    // One line, because this one reaches the prompt line: git says its
+                    // piece over several — an unreadable `.git/config` is a `warning:` and a
+                    // `fatal:` — and a newline inside a `Span` breaks the row it is drawn
+                    // in. The `gh` half is single-lined in its own adapter; this half had
+                    // nothing to single-line until git's refusals could reach here at all.
+                    Err(error) => Answer::Refused(crate::app::one_line(&format!(
+                        "git could not name the repository: {error:#}"
+                    ))),
                     Ok(Some(slug)) => match gh.settled_pull_requests(&slug) {
                         Ok(settled) => Answer::Answered(settled),
                         Err(refusal) => Answer::Refused(refusal),

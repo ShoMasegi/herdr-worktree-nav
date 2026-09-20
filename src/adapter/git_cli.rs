@@ -49,8 +49,9 @@ struct Said {
 /// repository at all ([`NOT_A_REPOSITORY`]), whether a ref was dropped from a walk
 /// ([`dropped_refs`]), whether `status` could open every directory ([`unread_paths`]) and
 /// whether a repository simply has no `origin` ([`NO_SUCH_REMOTE`]) — and all are English
-/// literals, while git ships translations of each message and picks one from the environment
-/// herdr launched the plugin in.
+/// literals, while git ships a translation of each of these — bar `cannot change to`, the
+/// exception [`NOT_A_REPOSITORY`] names — and picks one from the environment herdr launched
+/// the plugin in.
 ///
 /// Why this variable, why one git, and what it costs a reader who does not read English:
 /// `docs/adr/0015-reading-git-in-one-language.md`, which carries the transcript it was
@@ -71,9 +72,11 @@ impl GitCli {
 
     /// Start git in `dir` and wait for it. `Err` is a git that could not be started at all.
     ///
-    /// What every call reads its answer from. `run` reads it for the calls that want "not a
-    /// repository" told apart from a refusal, which is all of them but one; `github_slug`
-    /// reads it itself, because the answer it has to tell apart is a different one.
+    /// What every call reads its answer from, and the one place the locale is pinned for all
+    /// of them. `run` reads it for every call that wants "not a repository" recognised —
+    /// `identify` to answer `None`, the eight behind `run_in_repo` to turn it into an error
+    /// that says so. `github_slug` reads it itself, because the answer it has to pick out is
+    /// a different one and "not a repository" is a failure there rather than an answer.
     fn output(dir: &str, args: &[&str]) -> Result<Output> {
         Self::command(dir)
             .args(args)
@@ -166,21 +169,29 @@ fn dropped_refs(stderr: &str) -> Option<String> {
 
 /// What git said while leaving part of a working tree out of `status`, or nothing.
 ///
-/// The one thing `status --porcelain` prints when it cannot look, measured against git
+/// The one thing `status --porcelain` prints every time it cannot look, measured against git
 /// 2.55.0: a directory it cannot open gives `warning: could not open directory 'notes/':
 /// Permission denied`, once per directory, exits 0, and lists nothing under it — tracked or
 /// untracked. Where a tracked file is under it git prints a second line beside the warning,
 /// `deep/inner/u: Permission denied`, with no prefix; the warning is what is matched, since
-/// it is the line that is there every time.
+/// it is the line that is there in every one of these.
 ///
 /// Measured and not matched, because the answer is whole: a tracked file that is itself
-/// unreadable is still reported from the index (` M`), and a tracked directory that has gone
-/// is ` D`, with nothing on stderr either way.
+/// unreadable is still reported from the index (` M`), and a tracked path that has gone is
+/// ` D` — one line per tracked file, never one for the directory — with nothing on stderr
+/// either way.
+///
+/// Measured and not matched for the other reason: a directory `.gitignore` already excludes
+/// is not walked, so git has nothing to warn about and the answer is the same as it would
+/// have been. That is what keeps a `node_modules` whose permissions got mangled from turning
+/// every row into `?`.
 ///
 /// In git's English, which git translates and [`GIT_LOCALE`] is what keeps it in. One prefix
 /// rather than "stderr said something", for the reason `dropped_refs` gives: a trace
 /// variable writes to stderr on every call. Every matching line is kept, and not passed
-/// through [`refusal`], for the same reasons as there.
+/// through [`refusal`], for one of the reasons given there — it is always this call, so
+/// naming it tells a reader nothing they could act on. The other two are `for-each-ref`'s
+/// alone: these args are short, and these words reach `dump` rather than the prompt line.
 fn unread_paths(stderr: &str) -> Option<String> {
     let unread: Vec<&str> = stderr
         .lines()
@@ -201,7 +212,8 @@ fn unread_paths(stderr: &str) -> Option<String> {
 /// this and 128 for everything from an unparseable config to a root that has gone. The words
 /// alone would be no better the day another subcommand's error carries them.
 fn no_such_remote(code: Option<i32>, stderr: &str) -> bool {
-    code == Some(NO_SUCH_REMOTE.0) && stderr.contains(NO_SUCH_REMOTE.1)
+    let (exit, said) = NO_SUCH_REMOTE;
+    code == Some(exit) && stderr.contains(said)
 }
 
 /// What a git that could not be started reads as: the same shape as a refusal, with the
@@ -367,9 +379,8 @@ impl GitPort for GitCli {
         let args = ["remote", "get-url", "origin"];
         let output = GitCli::output(repo_root, &args)?;
         if output.status.success() {
-            return Ok(github_slug_from_url(&String::from_utf8_lossy(
-                &output.stdout,
-            )));
+            let url = String::from_utf8_lossy(&output.stdout);
+            return Ok(github_slug_from_url(&url));
         }
         // A repository with no `origin` is ordinary, and it is the one non-zero exit here
         // that is not a failure. Every other one is git failing to answer — a `.git/config`
@@ -542,8 +553,15 @@ impl GitPort for GitCli {
         // reported on stderr and everything under it is simply absent from stdout, so an
         // empty stdout beside that warning is not `clean` — it is the answer git could not
         // give, about the one working tree a sweep would then act on. `Err`, because a
-        // `bool` has nowhere to carry the words: `app::dirty` reads it as
-        // `WorkingTree::Unreadable`, and `dump` prints what git said.
+        // `bool` has nowhere to carry the words; `app::dirty` reads it as
+        // `WorkingTree::Unreadable`, and `dump` asks again and prints what git says then.
+        //
+        // Whatever stdout holds, not only when it is empty. A checkout can have visible work
+        // *and* a directory git could not open, and `true` would then be a whole answer to
+        // the question asked — but it is a whole answer arrived at by accident, from the
+        // half git could see. A partial reading is not reported as a complete one because
+        // the visible half happened to land on the safe side; the row says `?` rather than
+        // `✱`, and both refuse a sweep.
         if let Some(words) = unread_paths(&status.stderr) {
             bail!("{words}");
         }
