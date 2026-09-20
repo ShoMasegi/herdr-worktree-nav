@@ -203,8 +203,9 @@ Shift-D, y ─▶ setsid herdr-worktree-nav remove …  ─┬─▶ git worktre
 
 The child reports and the picker only decorates. Neither the loop nor the child can tell
 whether a line down that pipe was ever read — the user may be in the branches view, or gone —
-so the notification is unconditional and the picker adds nothing on success. `setsid` is
-load-bearing: herdr kills a closed pane's process group. See
+so the notification is unconditional and the picker adds nothing on success — beyond saying
+when it could not read the list again, since the row it would have taken away is still on
+screen. `setsid` is load-bearing: herdr kills a closed pane's process group. See
 [ADR 0014](../adr/0014-removing-outlives-the-picker.md).
 
 ## Looking like herdr

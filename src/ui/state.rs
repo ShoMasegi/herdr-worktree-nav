@@ -58,6 +58,23 @@ pub enum Action {
 /// What the prompt line says when the tree changed under a question.
 pub const WITHDRAWN: &str = "the list changed while that was up — ask again";
 
+/// What [`PanesState::cancel_removal`] took back.
+///
+/// The difference is what the reader does next, which is why the caller is told rather than
+/// left to guess. A box that was on screen is asked again by choosing the row and pressing
+/// the key again. A sweep's `Enter` that never became one leaves every mark where it was, so
+/// pressing `Enter` once more is the whole of it — and the two are indistinguishable on the
+/// prompt line unless this says which.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cancelled {
+    /// There was nothing up to take.
+    Nothing,
+    /// A box the user was looking at: `Shift-D`'s, or the sweep's.
+    Question,
+    /// A sweep's `Enter`, taken before it could become a box.
+    Enter,
+}
+
 pub struct PanesState {
     tree: Tree,
     options: ViewOptions,
@@ -317,16 +334,32 @@ impl PanesState {
         self.options.home.as_deref()
     }
 
-    /// Take back a question that could not be asked. The picker calls this when the pane is
-    /// too small to draw the box: leaving `y` armed over a question nobody saw would be
-    /// asking it without asking it, and the key hint at the bottom says which keys answer,
-    /// never what is being answered. And when the re-read a sweep's question waits on
-    /// fails: asked anyway, it would be asked over the facts the re-read was for replacing.
-    pub fn cancel_removal(&mut self) {
-        self.pending_removal = None;
-        self.pending_sweep = None;
-        if let Some(sweeping) = self.sweep.as_mut() {
-            sweeping.confirming = None;
+    /// Take back a question that could not be asked, and say what was taken. The picker calls
+    /// this when the pane is too small to draw the box: leaving `y` armed over a question
+    /// nobody saw would be asking it without asking it, and the key hint at the bottom says
+    /// which keys answer, never what is being answered. And when a reading a question waits
+    /// on fails: asked anyway, it would be asked over the facts that reading was for
+    /// replacing.
+    ///
+    /// Three things go, and the answer covers all three. A caller cannot see the third — a
+    /// sweep's `Enter` has no accessor, and until the walk answers it is neither of the two
+    /// that do — so a caller that wants to say a question went has to be told here. Worked
+    /// out at the call site instead, it is a second list of the same state kept in step by
+    /// hand, which is how the `Enter` came to be taken with nothing said about it.
+    pub fn cancel_removal(&mut self) -> Cancelled {
+        // Every take runs: `a.take().is_some() || b.take().is_some()` would skip the second.
+        let removal = self.pending_removal.take().is_some();
+        let sweep = self.pending_sweep.take().is_some();
+        let confirming = match self.sweep.as_mut() {
+            Some(sweeping) => sweeping.confirming.take().is_some(),
+            None => false,
+        };
+        // A box and an `Enter` waiting to become one cannot both be up, so the order here
+        // decides nothing; a box is named first because it is the one that was on screen.
+        match (removal || sweep, confirming) {
+            (true, _) => Cancelled::Question,
+            (false, true) => Cancelled::Enter,
+            (false, false) => Cancelled::Nothing,
         }
     }
 

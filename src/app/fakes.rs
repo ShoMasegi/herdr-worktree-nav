@@ -47,7 +47,8 @@ pub fn until(what: &str, mut ready: impl FnMut() -> bool) {
 /// `snapshot` is the exception, and it is an exception because it refuses rather than
 /// answers. A caller that reaches it still fails; it just fails in a shape a test can assert
 /// on instead of a panic, which is what makes "the panes closed and the list could not be
-/// read again" reachable at all. The `Ok` half of that arm is not put to a test here.
+/// read again" reachable at all. The `Ok` half of that arm needs a herdr that answers, which
+/// is a fake of the module's own — `app::panes`'s `Closing`.
 #[derive(Default)]
 pub struct Recorder {
     did: Mutex<Vec<String>>,
@@ -213,6 +214,102 @@ struct Reported(RemovalOutcome);
 impl RunningRemoval for Reported {
     fn wait(self: Box<Self>) -> Result<RemovalOutcome> {
         Ok(self.0)
+    }
+}
+
+/// A `RemovalPort` whose every removal ends without a word this side can read: the last arm
+/// of `adapter::detached::Detached::wait`, where nothing a report could be parsed out of came
+/// back. The removal may well have happened, and nothing here knows which.
+pub struct Lost;
+
+impl RemovalPort for Lost {
+    fn start(
+        &self,
+        _repo_root: &str,
+        _checkout_path: &str,
+        label: &str,
+        _panes_closed: usize,
+        _delete_branch: bool,
+    ) -> Result<Box<dyn RunningRemoval>> {
+        Ok(Box::new(Ended(label.to_string())))
+    }
+}
+
+/// Worded as the adapter words it. What the picker does with this turns on there being no
+/// outcome in it rather than on the sentence, but a test reading the prompt line reads the
+/// sentence, and one it could not have come from would be a line nobody will ever see.
+struct Ended(String);
+
+impl RunningRemoval for Ended {
+    fn wait(self: Box<Self>) -> Result<RemovalOutcome> {
+        Err(anyhow!(
+            "the removal of {} ended without saying what happened",
+            self.0
+        ))
+    }
+}
+
+/// A `RemovalPort` whose removal cannot even be waited on: `Detached::wait`'s other failure,
+/// where `wait_with_output` itself fails and the context names the removal over whatever the
+/// OS said. The child may still be running. Worded as the adapter words it, because what
+/// reaches the prompt line is the whole chain or none of it.
+pub struct Unwaited;
+
+impl RemovalPort for Unwaited {
+    fn start(
+        &self,
+        _repo_root: &str,
+        _checkout_path: &str,
+        label: &str,
+        _panes_closed: usize,
+        _delete_branch: bool,
+    ) -> Result<Box<dyn RunningRemoval>> {
+        Ok(Box::new(Unreaped(label.to_string())))
+    }
+}
+
+struct Unreaped(String);
+
+impl RunningRemoval for Unreaped {
+    fn wait(self: Box<Self>) -> Result<RemovalOutcome> {
+        Err(anyhow!("No child processes (os error 10)")
+            .context(format!("waiting for the removal of {}", self.0)))
+    }
+}
+
+/// A `RemovalPort` whose first removal ends without a readable word and whose every one after
+/// reports that it went: one frame with both shapes of report in it.
+pub struct LostFirst {
+    asked: AtomicBool,
+}
+
+impl Default for LostFirst {
+    fn default() -> Self {
+        Self {
+            asked: AtomicBool::new(false),
+        }
+    }
+}
+
+impl RemovalPort for LostFirst {
+    fn start(
+        &self,
+        repo_root: &str,
+        checkout_path: &str,
+        label: &str,
+        panes_closed: usize,
+        delete_branch: bool,
+    ) -> Result<Box<dyn RunningRemoval>> {
+        match self.asked.swap(true, Ordering::SeqCst) {
+            false => Lost.start(repo_root, checkout_path, label, panes_closed, delete_branch),
+            true => Reports(RemovalOutcome::Removed).start(
+                repo_root,
+                checkout_path,
+                label,
+                panes_closed,
+                delete_branch,
+            ),
+        }
     }
 }
 

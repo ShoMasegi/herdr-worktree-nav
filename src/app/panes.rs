@@ -12,12 +12,37 @@ use crate::app::Pending;
 use crate::domain::removal::{self, Removal, SweepRemoval};
 use crate::port::{GitPort, HerdrPort, PaneSplit, SplitDirection, WorktreeOpen};
 use crate::ui::render::{self, Mode};
-use crate::ui::state::{Action, PanesState, WITHDRAWN};
+use crate::ui::state::{Action, Cancelled, PanesState, WITHDRAWN};
 use crate::ui::theme::Theme;
 
 /// How long to wait for a key before turning the spinner on whatever is still coming. The
 /// same tick the branches view runs on; with nothing outstanding this loop does not use one.
 const TICK: std::time::Duration = std::time::Duration::from_millis(80);
+
+/// What the line says when the list could not be read again after something that changed it
+/// or may have. Appended to the account of what happened rather than written over it: the
+/// panes that stopped are what that account is for, and a sentence about the list does not
+/// replace it.
+const STALE: &str = "the list could not be read again";
+
+/// That sentence with herdr's own words on the end of it.
+fn could_not_read(error: &anyhow::Error) -> String {
+    format!("{STALE}: {error:#}")
+}
+
+/// And what it says where the list is the only answer there is: a removal this side could get
+/// no outcome from, so the checkout may be gone and may be standing. Said once a frame, like
+/// [`STALE`] and for the same reason — there is one list — so it is worded for however many
+/// endings nobody could read.
+///
+/// It says what was done and stops there. "A row that has gone is a checkout that has gone"
+/// would be the useful sentence and it is not a sound one: the tree is built from the panes
+/// herdr reports, so a repository whose last pane this removal just closed is not listed at
+/// all afterwards — every one of its rows goes, none of its checkouts did — and a repository
+/// `worktree.list` refused is dropped in silence. Issues #56 and #33. Read against those, a
+/// decision procedure on the rows is a wrong answer given confidently, which is worse than
+/// the one it replaces.
+const READ_AGAIN: &str = "the list has been read again since";
 
 /// What the picker was left wanting when it closed. The caller decides whether that means
 /// switching views or exiting.
@@ -126,7 +151,7 @@ pub fn run(
 /// Out of the loop for the reason `show_answers` is: this is the arm with consequences. That
 /// reports share the line is held by `two_removals_reporting_in_one_frame_share_the_line`,
 /// and that a withdrawal is said after them by `a_question_the_re_read_took_back_is_said_last`
-/// and `a_question_taken_back_by_the_first_of_two_reports_is_still_said_last`.
+/// and `a_question_taken_back_after_two_reports_is_still_said_last`.
 fn drain_finished(
     state: &mut PanesState,
     pending: &mut Pending,
@@ -139,8 +164,12 @@ fn drain_finished(
     // re-read below takes back is said on the same line, last: the reports have their
     // toasts, and the withdrawal has nothing else.
     let mut said: Vec<String> = Vec::new();
-    let mut withdrawn = false;
+    // Whether anything reported at all, and whether any of them left nobody able to say what
+    // became of the checkout.
+    let mut reported = false;
+    let mut unknown = false;
     while let Some(finished) = removals.finished() {
+        reported = true;
         state.set_removing(removals.paths());
         match finished.outcome {
             Ok(outcome) => {
@@ -151,21 +180,66 @@ fn drain_finished(
                 {
                     said.push(message);
                 }
-                // Errors here are not fatal: the picker keeps showing what it had.
-                if let Ok((_, tree)) = collect::collect_tree(herdr, git) {
-                    withdrawn |= state.replace_tree(tree);
-                    pending.dirty.ask(state.tree());
-                }
             }
-            // The panes are gone by now either way, so the report says so.
-            Err(error) => said.push(removal::refusal(
-                &format!("{error:#}"),
-                finished.panes_closed,
-            )),
+            // Nobody knows how this one ended. `Detached::wait` is explicit that the removal
+            // may well have happened, and the toast that would have said so is the child's
+            // own and does not come back through here — so the list is the only answer there
+            // is. The panes are gone either way, which `refusal` adds.
+            Err(error) => {
+                unknown = true;
+                said.push(removal::refusal(
+                    &format!("{error:#}"),
+                    finished.panes_closed,
+                ));
+            }
         }
     }
-    if withdrawn {
-        said.push(WITHDRAWN.to_string());
+    // Once, after all of them, because there is one list. Read per removal it is read N
+    // times for the one answer, every reading but the last thrown away — and the line is
+    // left to reconcile a reading that failed with a later one that worked, about the one
+    // list. Here it also puts the order the reader needs beyond reach of a mistake: what
+    // became of the list, and then the question that went with it.
+    //
+    // Whatever they reported, including a refusal, which changes nothing by itself: a
+    // reading `start_removal` could not finish leaves rows standing for panes that have
+    // stopped, that failure is a sentence and nothing more, and this is the only thing that
+    // tries again on a frame nobody pressed a key for. Skipping the ones that changed
+    // nothing buys a herdr round trip and gives back the bug above it.
+    if reported {
+        match catch_up(state, &mut pending.dirty, herdr, git) {
+            Ok(withdrawn) => {
+                // Only where something needs settling. After an ordinary report the rows are
+                // the report, and saying they have been read would be saying nothing twice.
+                if unknown {
+                    said.push(READ_AGAIN.to_string());
+                }
+                if withdrawn {
+                    said.push(WITHDRAWN.to_string());
+                }
+            }
+            Err(error) => {
+                // A question waiting on this goes back with it, the way `re_read` takes one
+                // back and for the same reason: the removal that has just reported is the
+                // change the box would be answered over, and the reading that would have
+                // noticed is the one that failed. `replace_tree` never ran, so nothing else
+                // will take it.
+                //
+                // Not `WITHDRAWN`, which says the list changed: nothing was replaced here,
+                // and the rows are the ones that were already there. What happened is that
+                // the reading failed, so this says that and what it cost — and which of the
+                // two it cost, because the way back differs. A box is asked again by
+                // choosing the row and pressing the key; an `Enter` that never became one
+                // leaves every mark standing, so `Enter` again is the whole of it. That
+                // second sentence is `re_read`'s, for the same state reached the other way.
+                said.push(match state.cancel_removal() {
+                    Cancelled::Question => {
+                        format!("{STALE}, so the question went back: {error:#}")
+                    }
+                    Cancelled::Enter => format!("{STALE}, so nothing was asked: {error:#}"),
+                    Cancelled::Nothing => could_not_read(&error),
+                });
+            }
+        }
     }
     if !said.is_empty() {
         state.set_message(said.join("; "));
@@ -207,12 +281,37 @@ fn re_read(
             state.cancel_removal();
             state.set_message(match why {
                 ReRead::Key => format!("{error:#}"),
-                ReRead::ForSweep => {
-                    format!("the list could not be read again, so nothing was asked: {error:#}")
-                }
+                ReRead::ForSweep => format!("{STALE}, so nothing was asked: {error:#}"),
             });
         }
     }
+}
+
+/// Read the tree again because something certainly happened to it, and say whether a question
+/// went with it.
+///
+/// The other half of [`re_read`], and the difference is who asked. `r` and a sweep's `Enter`
+/// are the user asking, and what they get is every working tree walked again — and, for `r`
+/// alone, `gh` forgotten as well. This is the picker catching up with panes it closed and
+/// checkouts that may have gone, so the working trees are only brought up to the new tree:
+/// `ask` walks the checkouts that have just appeared and forgets the ones that have left, and
+/// a removal is no reason to doubt an answer git has already given about anything else.
+///
+/// `Err` is herdr's own words and only ever herdr's: the one `?` inside `collect_tree` is the
+/// session, and every git call under it keeps what it can and drops the rest. They are handed
+/// back rather than put on the line, because what to say about a reading that failed depends
+/// on what else the frame has to say — beside an account of what happened where there is one,
+/// and alone where there is not.
+fn catch_up(
+    state: &mut PanesState,
+    dirty: &mut Dirty,
+    herdr: &dyn HerdrPort,
+    git: &dyn GitPort,
+) -> Result<bool> {
+    let (_, tree) = collect::collect_tree(herdr, git)?;
+    let withdrawn = state.replace_tree(tree);
+    dirty.ask(state.tree());
+    Ok(withdrawn)
 }
 
 /// Start every removal a sweep's `y` agreed to, in the order the box listed them.
@@ -255,32 +354,46 @@ fn start_removal(
     git: &dyn GitPort,
     removal: &Removal,
 ) {
-    match removals.remove(herdr, removal) {
-        Ok(()) => {
-            // The row says what is happening to it; nothing to add here.
-            state.set_removing(removals.paths());
-            // And only here: the panes are gone, so the list is known wrong rather than
-            // merely possibly stale. An empty checkout's removal changes nothing on screen
-            // yet and leaves the cursor where it was, which is where the next thing to tidy
-            // up usually is.
-            if !removal.panes().is_empty() {
-                match collect::collect_tree(herdr, git) {
-                    Ok((_, tree)) => {
-                        state.replace_tree(tree);
-                        dirty.ask(state.tree());
-                    }
-                    // Not fatal, but not silent either: rows for panes that have certainly
-                    // stopped are on screen until this works.
-                    Err(error) => state.set_message(format!(
-                        "the panes closed, but the list could not be read again: {error:#}"
-                    )),
-                }
-            }
-        }
-        // Nothing else is said or done. This is the account of what happened, and a failed
-        // re-read would overwrite it with a sentence about panes that may not have closed
-        // at all.
-        Err(message) => state.set_message(message),
+    let refused = removals.remove(herdr, removal).err();
+    // The row says what is happening to it; nothing to add here. Unconditionally, as
+    // `start_sweep` does: a removal that never started pushed nothing, so this is what it
+    // already was.
+    state.set_removing(removals.paths());
+
+    // Wherever the removal named panes, and whatever became of it. On the way through, every
+    // one of them closed; on the way out, either everything up to the one that refused, or —
+    // where it was the start that failed — every one of them. And a `pane_close` that failed
+    // is no evidence the pane survived: the adapter answers `Ok` for a pane herdr no longer
+    // knows about, so an `Err` is a call this side cannot account for. Every way round, a
+    // row standing for a pane that has stopped is one the cursor lands on, and `Enter` on it
+    // takes the whole picker down: `pane_focus` fails, and the `?` in `perform` carries that
+    // out of `run` with only the log to say why. An empty checkout's removal changes nothing
+    // on screen yet and leaves the cursor where it was, which is where the next thing to
+    // tidy up usually is.
+    //
+    // The `bool` is dropped rather than said: a question cannot be up here, because
+    // `handle_key` takes `pending_removal` in the act of returning the action this is
+    // carrying out, and `Shift-D` is ignored inside a sweep.
+    let stale = if removal.panes().is_empty() {
+        None
+    } else {
+        catch_up(state, dirty, herdr, git)
+            .err()
+            .as_ref()
+            .map(could_not_read)
+    };
+
+    match (refused, stale) {
+        (None, None) => {}
+        // Not fatal, but not silent either: rows for panes that have certainly stopped are
+        // on screen until this works.
+        (None, Some(stale)) => state.set_message(format!("the panes closed, but {stale}")),
+        (Some(message), None) => state.set_message(message),
+        // The account of what happened, and the list appended to it. Written over it instead,
+        // a sentence about the list would take the place of the one naming what went wrong
+        // and how far it got — which is the half no other thing on screen will say, and
+        // which on this arm may be a refusal that stopped nothing at all.
+        (Some(message), Some(stale)) => state.set_message(format!("{message}; {stale}")),
     }
 }
 
@@ -376,7 +489,9 @@ fn perform(herdr: &dyn HerdrPort, action: Action) -> Result<Exit> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::fakes::{until, Recorder, Refuses, RefusesFirst, Reports, Started};
+    use crate::app::fakes::{
+        until, Lost, LostFirst, Recorder, Refuses, RefusesFirst, Reports, Started, Unwaited,
+    };
     use crate::app::settled::Settled;
     use crate::domain::model::{CheckoutPath, RepoKey};
     use crate::port::{
@@ -863,6 +978,232 @@ mod tests {
         }
     }
 
+    /// The two panes [`Closing`] starts with, in the order a removal names them.
+    const FIRST_PANE: &str = "w2:p1";
+    const SECOND_PANE: &str = "w2:p2";
+
+    /// A herdr that really closes panes and then describes a session without them, and a git
+    /// that answers for it. One repository: its own checkout, and `feat/login` with two panes
+    /// in it.
+    ///
+    /// `Recorder` cannot reach this ground. It refuses to describe itself at all, which is
+    /// the other half of the same question — what the list says once some of the panes have
+    /// gone is only answerable by a herdr that answers.
+    struct Closing {
+        /// The one pane it will not close. Everything the removal names ahead of that does
+        /// close, which is what makes a close that stopped partway reachable at all.
+        refuses: &'static str,
+        open: Mutex<Vec<String>>,
+        /// Whether the checkout goes when the last of its panes does — the ordinary ending,
+        /// where the removal went through between one reading and the next.
+        removed_with_its_panes: bool,
+    }
+
+    impl Closing {
+        fn refusing(pane_id: &'static str) -> Self {
+            Self {
+                refuses: pane_id,
+                open: Mutex::new(vec![FIRST_PANE.to_string(), SECOND_PANE.to_string()]),
+                removed_with_its_panes: false,
+            }
+        }
+
+        /// Closes whatever it is asked to, and describes a session the checkout has left.
+        fn where_the_checkout_goes_too() -> Self {
+            Self {
+                refuses: "",
+                removed_with_its_panes: true,
+                ..Self::refusing("")
+            }
+        }
+
+        /// Whether `feat/login` is still there, which is what the two readings differ by.
+        fn listed(&self) -> bool {
+            !self.removed_with_its_panes || !self.open.lock().unwrap().is_empty()
+        }
+    }
+
+    impl HerdrPort for Closing {
+        fn pane_close(&self, pane_id: &str) -> Result<()> {
+            if pane_id == self.refuses {
+                return Err(anyhow::anyhow!(
+                    "herdr rejected pane.close: no such pane (not_found)"
+                ));
+            }
+            self.open.lock().unwrap().retain(|open| open != pane_id);
+            Ok(())
+        }
+        fn snapshot(&self) -> Result<Snapshot> {
+            let mut workspaces = vec![workspace("w1", "/src/app", false)];
+            // The repository is only in the tree at all while a pane of it is: `collect`
+            // probes from pane placements. The checkout that goes here takes the last of its
+            // own panes with it, so this keeps one in the main checkout — otherwise the whole
+            // repository leaves with it and there is nothing left to be forgotten.
+            let mut panes = match self.removed_with_its_panes {
+                true => vec![snapshot_pane("w1:p9", "/src/app")],
+                false => Vec::new(),
+            };
+            if self.listed() {
+                workspaces.push(workspace("w2", FEAT_LOGIN, true));
+            }
+            panes.extend(
+                self.open
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|pane_id| snapshot_pane(pane_id, FEAT_LOGIN)),
+            );
+            Ok(Snapshot {
+                workspaces,
+                panes,
+                ..Snapshot::default()
+            })
+        }
+        fn worktree_list(&self, _cwd: &str) -> Result<WorktreeList> {
+            let mut worktrees = vec![listed("main", "/src/app", false, Some("w1"))];
+            if self.listed() {
+                worktrees.push(listed("feat/login", FEAT_LOGIN, true, Some("w2")));
+            }
+            Ok(WorktreeList {
+                source: WorktreeSource {
+                    repo_key: "/src/app/.git".into(),
+                    repo_name: "app".into(),
+                    repo_root: "/src/app".into(),
+                    source_checkout_path: "/src/app".into(),
+                    source_workspace_id: None,
+                },
+                worktrees,
+            })
+        }
+        fn worktree_create(
+            &self,
+            _req: &crate::port::WorktreeCreate,
+        ) -> Result<crate::port::WorktreeOpened> {
+            unreachable!("this port closes panes and describes what is left")
+        }
+        fn worktree_open(&self, _req: &WorktreeOpen) -> Result<crate::port::WorktreeOpened> {
+            unreachable!("this port closes panes and describes what is left")
+        }
+        fn pane_focus(&self, _pane_id: &str) -> Result<()> {
+            unreachable!("this port closes panes and describes what is left")
+        }
+        fn pane_split(&self, _req: &PaneSplit) -> Result<crate::port::Pane> {
+            unreachable!("this port closes panes and describes what is left")
+        }
+        fn pane_move(
+            &self,
+            _pane: &str,
+            _dest: &crate::port::PaneDestination,
+            _focus: bool,
+        ) -> Result<()> {
+            unreachable!("this port closes panes and describes what is left")
+        }
+        fn workspace_focus(&self, _workspace_id: &str) -> Result<()> {
+            unreachable!("this port closes panes and describes what is left")
+        }
+        fn tab_focus(&self, _tab_id: &str) -> Result<()> {
+            unreachable!("this port closes panes and describes what is left")
+        }
+        fn plugin_pane_open(
+            &self,
+            _req: &crate::port::PluginPaneOpen,
+        ) -> Result<Option<crate::port::OpenRefusal>> {
+            unreachable!("this port closes panes and describes what is left")
+        }
+        fn notify(&self, _notification: &crate::port::Notification) -> Result<()> {
+            unreachable!("this port closes panes and describes what is left")
+        }
+    }
+
+    impl GitPort for Closing {
+        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
+            Ok(false)
+        }
+        fn local_refs(&self, _repo_root: &str) -> Result<RefWalk> {
+            Ok(RefWalk::of(vec![gone("feat/login", FEAT_LOGIN)]))
+        }
+        fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
+            Ok(Slug::owner_repo("me", "app"))
+        }
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            unreachable!("every pane is in a workspace herdr knows the checkout of")
+        }
+        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
+            unreachable!("a reading asks this port two things")
+        }
+        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("a reading asks this port two things")
+        }
+        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
+            unreachable!("a reading asks this port two things")
+        }
+        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+            unreachable!("a reading asks this port two things")
+        }
+        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+            unreachable!("a reading asks this port two things")
+        }
+        fn head_ref(&self, _repo_root: &str) -> Result<String> {
+            unreachable!("a reading asks this port two things")
+        }
+    }
+
+    /// A herdr whose refusal has a cause under it, which is the shape the socket adapter
+    /// makes: `with_context` over the io error that actually happened. Every other fake here
+    /// refuses with one flat sentence, so the alternate form that prints the chain is
+    /// invisible to them.
+    struct Chained;
+
+    impl HerdrPort for Chained {
+        fn pane_close(&self, _pane_id: &str) -> Result<()> {
+            Ok(())
+        }
+        fn snapshot(&self) -> Result<Snapshot> {
+            Err(anyhow::anyhow!("broken pipe").context("sending session.snapshot to herdr"))
+        }
+        fn worktree_list(&self, _cwd: &str) -> Result<WorktreeList> {
+            unreachable!("the session is asked for first, and it refuses")
+        }
+        fn worktree_create(
+            &self,
+            _req: &crate::port::WorktreeCreate,
+        ) -> Result<crate::port::WorktreeOpened> {
+            unreachable!("this port closes panes and then refuses to describe itself")
+        }
+        fn worktree_open(&self, _req: &WorktreeOpen) -> Result<crate::port::WorktreeOpened> {
+            unreachable!("this port closes panes and then refuses to describe itself")
+        }
+        fn pane_focus(&self, _pane_id: &str) -> Result<()> {
+            unreachable!("this port closes panes and then refuses to describe itself")
+        }
+        fn pane_split(&self, _req: &PaneSplit) -> Result<crate::port::Pane> {
+            unreachable!("this port closes panes and then refuses to describe itself")
+        }
+        fn pane_move(
+            &self,
+            _pane: &str,
+            _dest: &crate::port::PaneDestination,
+            _focus: bool,
+        ) -> Result<()> {
+            unreachable!("this port closes panes and then refuses to describe itself")
+        }
+        fn workspace_focus(&self, _workspace_id: &str) -> Result<()> {
+            unreachable!("this port closes panes and then refuses to describe itself")
+        }
+        fn tab_focus(&self, _tab_id: &str) -> Result<()> {
+            unreachable!("this port closes panes and then refuses to describe itself")
+        }
+        fn plugin_pane_open(
+            &self,
+            _req: &crate::port::PluginPaneOpen,
+        ) -> Result<Option<crate::port::OpenRefusal>> {
+            unreachable!("this port closes panes and then refuses to describe itself")
+        }
+        fn notify(&self, _notification: &crate::port::Notification) -> Result<()> {
+            unreachable!("this port closes panes and then refuses to describe itself")
+        }
+    }
+
     /// Open the picker on `session` the way `run` does, enter a sweep with both finished
     /// worktrees marked, and press `Enter`.
     fn enter_pressed(session: &Arc<Session>) -> (PanesState, Pending) {
@@ -1153,6 +1494,40 @@ mod tests {
         Removal::of(&repo.repo_root, &repo.worktrees[0])
     }
 
+    /// The same, where the tree has more than one checkout in it and the panes are in the
+    /// second: what [`Closing`] describes.
+    fn removal_of(state: &PanesState, checkout_path: &str) -> Removal {
+        let repo = &state.tree().repos[0];
+        let worktree = repo
+            .worktrees
+            .iter()
+            .find(|worktree| worktree.checkout_path == checkout_path)
+            .expect("the tree has that checkout");
+        Removal::of(&repo.repo_root, worktree)
+    }
+
+    /// The panes the list is drawing, in order. A pane that has been closed and is still on
+    /// screen is a row the cursor stops on and `Enter` acts on.
+    fn pane_rows(state: &PanesState) -> Vec<String> {
+        state
+            .rows()
+            .iter()
+            .filter(|row| matches!(row.reference, crate::domain::rows::RowRef::Pane(..)))
+            .map(|row| row.meta.clone())
+            .collect()
+    }
+
+    /// The one-pane tree with a second pane in the same checkout, so that a close can stop
+    /// between them.
+    fn two_pane_tree() -> crate::domain::model::Tree {
+        let mut tree = one_pane_tree();
+        let panes = &mut tree.repos[0].worktrees[0].panes;
+        let mut second = panes[0].clone();
+        second.pane_id = SECOND_PANE.into();
+        panes.push(second);
+        tree
+    }
+
     #[test]
     fn gh_is_asked_when_a_sweep_is_entered_and_not_before() {
         // The heavier of the two `gh` calls, so ADR 0011 defers it: most sessions never
@@ -1421,6 +1796,110 @@ mod tests {
     }
 
     #[test]
+    fn a_close_that_stopped_partway_takes_the_panes_it_closed_off_the_list() {
+        // The `Err` arm's half of the certainty the `Ok` arm already acts on: one pane is
+        // gone and the other is not, so the list is known wrong rather than merely stale.
+        // Left drawn, the row for the one that is gone is one the cursor stops on, and
+        // `Enter` there fails `pane_focus` and carries that out of `run` through `perform`
+        // — the picker disappears, with the reason only in the log.
+        let herdr = Arc::new(Closing::refusing(SECOND_PANE));
+        let mut removals = Removals::new(&Refuses);
+        let (_, tree) = collect::collect_tree(&*herdr, &*herdr).expect("the first reading");
+        let mut state = PanesState::new(tree, None);
+        let mut dirty = Dirty::new(herdr.clone());
+        let removal = removal_of(&state, FEAT_LOGIN);
+        assert_eq!(pane_rows(&state), [FIRST_PANE, SECOND_PANE]);
+
+        start_removal(
+            &mut state,
+            &mut dirty,
+            &mut removals,
+            &*herdr,
+            &*herdr,
+            &removal,
+        );
+
+        assert_eq!(
+            state.message(),
+            Some(
+                "could not close w2:p2: herdr rejected pane.close: no such pane (not_found) \
+                 — 1 of its 2 panes was closed first, and the checkout was not removed"
+            ),
+            "the account of what happened is kept whole"
+        );
+        assert_eq!(
+            pane_rows(&state),
+            [SECOND_PANE],
+            "and the pane that did close is off the list without anyone pressing `r`"
+        );
+    }
+
+    #[test]
+    fn a_close_that_stopped_partway_says_so_when_the_list_will_not_be_read_either() {
+        // Two things went wrong and the line carries both, in that order: the panes that
+        // stopped are what nothing else on screen will mention, and a list that could not be
+        // caught up is what the reader is about to act on. It is the order that is pinned
+        // here; writing the list over the account is what `start_removal`'s last arm refuses.
+        let recorder = Recorder::refusing(SECOND_PANE);
+        let git = Answers(Some(false));
+        let mut removals = Removals::new(&Refuses);
+        let mut state = PanesState::new(two_pane_tree(), None);
+        let mut dirty = Dirty::new(std::sync::Arc::new(Answers(Some(false))));
+        let removal = only_removal(&state);
+
+        start_removal(
+            &mut state,
+            &mut dirty,
+            &mut removals,
+            &recorder,
+            &git,
+            &removal,
+        );
+
+        assert_eq!(
+            state.message(),
+            Some(
+                "could not close w2:p2: herdr rejected pane.close: no such pane (not_found) \
+                 — 1 of its 2 panes was closed first, and the checkout was not removed; the \
+                 list could not be read again: herdr is not answering"
+            )
+        );
+    }
+
+    #[test]
+    fn a_close_that_refused_at_the_first_pane_reads_the_list_anyway() {
+        // A count of none is not the same as nothing having happened. `pane_close` answers
+        // `Ok` for a pane that had already gone, so an `Err` is a call this side cannot
+        // account for — the pane may be closed and the row for it wrong. `Recorder` will not
+        // describe itself, so the reading asked for here arrives as a clause on the end of
+        // this line; with herdr answering it would cost one round trip and say nothing.
+        let recorder = Recorder::refusing(FIRST_PANE);
+        let git = Answers(Some(false));
+        let mut removals = Removals::new(&Refuses);
+        let mut state = PanesState::new(two_pane_tree(), None);
+        let mut dirty = Dirty::new(std::sync::Arc::new(Answers(Some(false))));
+        let removal = only_removal(&state);
+
+        start_removal(
+            &mut state,
+            &mut dirty,
+            &mut removals,
+            &recorder,
+            &git,
+            &removal,
+        );
+
+        assert_eq!(
+            state.message(),
+            Some(
+                "could not close w2:p1: herdr rejected pane.close: no such pane (not_found) \
+                 — none of its 2 panes were closed, and the checkout was not removed; the \
+                 list could not be read again: herdr is not answering"
+            )
+        );
+    }
+
+    #[test]
     fn a_working_tree_git_would_not_read_is_handed_on_as_its_own_refusal() {
         // Not the same as dirty and not the same as clean. Folded into either, a checkout
         // git could not answer for is offered for removal on the strength of an answer
@@ -1526,16 +2005,17 @@ mod tests {
             panic!("`y` is the answer that goes ahead");
         };
         start_sweep(&mut state, &mut removals, &Recorder::default(), &sweep);
-        until("both reported", || {
-            drain_finished(
-                &mut state,
-                &mut pending,
-                &mut removals,
-                &*session,
-                &*session,
-            );
-            removals.is_empty()
-        });
+        // Both answers in the channel before the one drain. Draining until it empties is not
+        // the same test: the two can arrive in separate frames, and the second report then
+        // replaces the first on the line rather than sharing it with it.
+        until("both reported", || removals.reported() == 2);
+        drain_finished(
+            &mut state,
+            &mut pending,
+            &mut removals,
+            &*session,
+            &*session,
+        );
 
         let line = state.message().expect("two kept branches are said");
         for said in [
@@ -1586,9 +2066,9 @@ mod tests {
     }
 
     #[test]
-    fn a_question_taken_back_by_the_first_of_two_reports_is_still_said_last() {
-        // The first re-read takes the box back and the second has nothing to take: the
-        // notice belongs to the frame, not to the last report in it.
+    fn a_question_taken_back_after_two_reports_is_still_said_last() {
+        // Two reports and one reading, which is the frame's: the notice belongs to the frame
+        // rather than to the report that happened to come last in it.
         let session = Arc::new(Session::new(false, false));
         let (mut state, mut pending) = sweep_asked(&session);
         let port = Reports(RemovalOutcome::BranchKept("error: not fully merged".into()));
@@ -1623,6 +2103,602 @@ mod tests {
             line.matches("; ").count(),
             2,
             "three things on one line: {line:?}"
+        );
+    }
+
+    #[test]
+    fn a_removal_that_ended_without_saying_what_happened_reads_the_list_again_and_says_so() {
+        // Nothing can be told from the report: `Detached::wait` cannot separate a removal
+        // that worked from one that did not, and the toast that could is the child's own and
+        // does not come back through here. So the list is the only answer there is — read
+        // again, and said to have been. Left out, the row simply stops spinning and reads as
+        // a checkout that is still standing, which is the one thing nobody knows.
+        // A session whose second reading differs from its first, so that the list having
+        // been read again is something this can see rather than something the line claims.
+        let session = Arc::new(Session::new(true, false));
+        let (_, tree) = collect::collect_tree(&*session, &*session).expect("the first reading");
+        let mut state = PanesState::new(tree, None);
+        let mut pending = pending(Dirty::new(session.clone()));
+        let mut removals = Removals::new(&Lost);
+        let removal = Removal::sweeping("/src/app", &state.tree().repos[0].worktrees[1]);
+        removals.remove(&Recorder::default(), &removal).unwrap();
+        assert_eq!(pane_rows(&state), ["w1:p1"]);
+
+        until("it reported", || {
+            drain_finished(
+                &mut state,
+                &mut pending,
+                &mut removals,
+                &*session,
+                &*session,
+            );
+            removals.is_empty()
+        });
+
+        assert_eq!(
+            pane_rows(&state),
+            ["w1:p1", "w2:p1"],
+            "the list really was read again, and not only said to have been"
+        );
+        assert_eq!(
+            state.message(),
+            Some(
+                "the removal of feat/login ended without saying what happened; the list has \
+                 been read again since"
+            )
+        );
+    }
+
+    #[test]
+    fn an_ending_nobody_could_read_and_a_list_nobody_could_read_are_both_said() {
+        // The same ending against a herdr that will not describe itself. Neither reading got
+        // an answer — the child's, and this side's — so the sentence saying the list has
+        // been read is not said, and what could not be read is, once, on the end of the
+        // line.
+        let recorder = Recorder::default();
+        let git = Answers(Some(false));
+        let mut state = PanesState::new(one_pane_tree(), None);
+        let mut pending = pending(Dirty::new(std::sync::Arc::new(Answers(Some(false)))));
+        let mut removals = Removals::new(&Lost);
+        let removal = only_removal(&state);
+        removals.remove(&recorder, &removal).unwrap();
+
+        until("it reported", || {
+            drain_finished(&mut state, &mut pending, &mut removals, &recorder, &git);
+            removals.is_empty()
+        });
+
+        assert_eq!(
+            state.message(),
+            Some(
+                "the removal of feat/login ended without saying what happened — its 1 pane \
+                 was closed first; the list could not be read again: herdr is not answering"
+            )
+        );
+    }
+
+    #[test]
+    fn a_removal_that_worked_says_when_the_list_could_not_be_caught_up_with_it() {
+        // Saying nothing is the report when it worked, because the row leaves the list. When
+        // the list cannot be read again the row does not leave, and saying nothing then says
+        // the opposite of what happened — with the checkout's panes drawn as live rows the
+        // cursor stops on, which is where `Enter` takes the picker down.
+        let recorder = Recorder::default();
+        let git = Answers(Some(false));
+        let port = Reports(RemovalOutcome::Removed);
+        let mut state = PanesState::new(one_pane_tree(), None);
+        let mut pending = pending(Dirty::new(std::sync::Arc::new(Answers(Some(false)))));
+        let mut removals = Removals::new(&port);
+        let removal = only_removal(&state);
+        removals.remove(&recorder, &removal).unwrap();
+
+        until("it reported", || {
+            drain_finished(&mut state, &mut pending, &mut removals, &recorder, &git);
+            removals.is_empty()
+        });
+
+        assert_eq!(
+            state.message(),
+            Some("the list could not be read again: herdr is not answering")
+        );
+    }
+
+    #[test]
+    fn what_became_of_the_list_is_said_before_the_question_that_went_with_it() {
+        // Both in the one frame: an ending nobody could read, and a sweep's box taken back by
+        // the reading after it. The withdrawal is about the box rather than about any
+        // removal, so it stays last; ahead of the sentence about the list it would read as a
+        // remark on the list instead of on the box that has just gone.
+        let session = Arc::new(Session::new(false, false));
+        let (mut state, mut pending) = sweep_asked(&session);
+        let mut removals = Removals::new(&Lost);
+        let earlier = Removal::sweeping("/src/app", &state.tree().repos[0].worktrees[1]);
+        removals.remove(&Recorder::default(), &earlier).unwrap();
+
+        until("it reported", || {
+            drain_finished(
+                &mut state,
+                &mut pending,
+                &mut removals,
+                &*session,
+                &*session,
+            );
+            removals.is_empty()
+        });
+
+        assert!(
+            state.pending_sweep().is_none(),
+            "the box went with the reading"
+        );
+        assert_eq!(
+            state.message(),
+            Some(
+                "the removal of feat/login ended without saying what happened; the list has \
+                 been read again since; the list changed while that was up — ask again"
+            )
+        );
+    }
+
+    #[test]
+    fn a_refusal_reads_the_list_again_too_because_nothing_else_retries_it() {
+        // git declined, so the refusal changes nothing by itself. What it does not know is
+        // whether `start_removal`'s own reading got through when it closed this checkout's
+        // panes: if it did not, rows for panes that have stopped are on screen and the
+        // failure was a sentence the next keypress wiped. This frame is the only thing that
+        // reads the list again without the user asking, so it reads. `Recorder` will not
+        // describe itself, so that reading arrives as a clause on the end of the line.
+        let recorder = Recorder::default();
+        let git = Answers(Some(false));
+        let port = Reports(RemovalOutcome::Refused("fatal: refused".into()));
+        let mut state = PanesState::new(one_pane_tree(), None);
+        let mut pending = pending(Dirty::new(std::sync::Arc::new(Answers(Some(false)))));
+        let mut removals = Removals::new(&port);
+        let removal = only_removal(&state);
+        removals.remove(&recorder, &removal).unwrap();
+
+        until("it reported", || {
+            drain_finished(&mut state, &mut pending, &mut removals, &recorder, &git);
+            removals.is_empty()
+        });
+
+        assert_eq!(
+            state.message(),
+            Some(
+                "could not remove feat/login: fatal: refused — its 1 pane was closed first; \
+                 the list could not be read again: herdr is not answering"
+            )
+        );
+    }
+
+    #[test]
+    fn a_question_over_a_list_this_could_not_read_goes_back_with_it() {
+        // `re_read` takes a question back when its reading fails; this is the same situation
+        // reached the other way. The removal that has just reported is the change the box
+        // would be answered over, and the reading that would have noticed is the one that
+        // failed. Left standing, `y` acts on a pane list taken before that removal — which
+        // is ADR 0010's hazard, `git worktree remove` over a pane nobody closed.
+        let session = Arc::new(Session::new(false, false));
+        let (mut state, mut pending) = sweep_asked(&session);
+        let port = Reports(RemovalOutcome::BranchKept("error: not fully merged".into()));
+        let mut removals = Removals::new(&port);
+        let earlier = Removal::sweeping("/src/app", &state.tree().repos[0].worktrees[1]);
+        removals.remove(&Recorder::default(), &earlier).unwrap();
+        assert!(state.pending_sweep().is_some(), "the box is up");
+
+        // A herdr that will not describe itself takes the frame's one reading.
+        let recorder = Recorder::default();
+        let git = Answers(Some(false));
+        until("it reported", || {
+            drain_finished(&mut state, &mut pending, &mut removals, &recorder, &git);
+            removals.is_empty()
+        });
+
+        assert!(
+            state.pending_sweep().is_none(),
+            "the box went with the reading it was waiting on"
+        );
+        assert_eq!(
+            state.message(),
+            Some(
+                "removed feat/login, branch kept: error: not fully merged; the list could \
+                 not be read again, so the question went back: herdr is not answering"
+            ),
+            "and not `WITHDRAWN`, which would say the list changed when nothing replaced it"
+        );
+    }
+
+    #[test]
+    fn two_endings_nobody_could_read_are_settled_by_the_one_list_once() {
+        // The sentence is about the list, and there is one list however many came home in
+        // the frame. Said per report it would say the same thing twice about one reading.
+        let session = Arc::new(Session::new(false, false));
+        let (_, tree) = collect::collect_tree(&*session, &*session).expect("the first reading");
+        let mut state = PanesState::new(tree, None);
+        let mut pending = pending(Dirty::new(session.clone()));
+        let mut removals = Removals::new(&Lost);
+        for worktree in &state.tree().repos[0].worktrees[1..=2] {
+            let removal = Removal::sweeping("/src/app", worktree);
+            removals.remove(&Recorder::default(), &removal).unwrap();
+        }
+        until("both reported", || removals.reported() == 2);
+        drain_finished(
+            &mut state,
+            &mut pending,
+            &mut removals,
+            &*session,
+            &*session,
+        );
+
+        let line = state
+            .message()
+            .expect("two endings nobody could read are said");
+        assert_eq!(
+            line.matches(READ_AGAIN).count(),
+            1,
+            "one list, one sentence: {line:?}"
+        );
+        assert!(line.ends_with(READ_AGAIN), "and it comes last: {line:?}");
+        assert_eq!(
+            line.matches("; ").count(),
+            2,
+            "two reports and the one sentence: {line:?}"
+        );
+    }
+
+    #[test]
+    fn two_reports_over_one_reading_that_failed_say_what_failed_once() {
+        // The same rule for the other sentence. Both reports are here; only one reading was
+        // taken, so only one thing can be said about it.
+        let session = Arc::new(Session::new(false, false));
+        let (_, tree) = collect::collect_tree(&*session, &*session).expect("the first reading");
+        let mut state = PanesState::new(tree, None);
+        let mut pending = pending(Dirty::new(session.clone()));
+        let mut removals = Removals::new(&Lost);
+        for worktree in &state.tree().repos[0].worktrees[1..=2] {
+            let removal = Removal::sweeping("/src/app", worktree);
+            removals.remove(&Recorder::default(), &removal).unwrap();
+        }
+        until("both reported", || removals.reported() == 2);
+        let recorder = Recorder::default();
+        let git = Answers(Some(false));
+        drain_finished(&mut state, &mut pending, &mut removals, &recorder, &git);
+
+        let line = state
+            .message()
+            .expect("two endings nobody could read are said");
+        assert_eq!(
+            line.matches(STALE).count(),
+            1,
+            "one list, one sentence: {line:?}"
+        );
+        assert!(
+            !line.contains(READ_AGAIN),
+            "and not the one that says it was read: {line:?}"
+        );
+        assert_eq!(
+            line.matches("; ").count(),
+            2,
+            "two reports and the one sentence: {line:?}"
+        );
+    }
+
+    #[test]
+    fn a_sweeps_enter_still_waiting_for_its_box_goes_back_too() {
+        // The third thing `cancel_removal` takes, and the one no caller can see from
+        // outside: between `Enter` and the box, the question lives in the sweep rather than
+        // in a `pending_*`, because `confirm_sweep_if_settled` will not put a box up over a
+        // walk that has not answered. Missed, the user's `Enter` is eaten — no box ever
+        // comes, the marks stay on screen, and the line says nothing about the sweep.
+        let session = Arc::new(Session::new(false, false));
+        let (mut state, mut pending) = enter_pressed(&session);
+        assert!(
+            state.pending_sweep().is_none(),
+            "the box is waiting on the walk"
+        );
+        let mut removals = Removals::new(&Lost);
+        let earlier = Removal::sweeping("/src/app", &state.tree().repos[0].worktrees[1]);
+        removals.remove(&Recorder::default(), &earlier).unwrap();
+
+        // A herdr that will not describe itself takes the frame's one reading, and says why
+        // in two halves: this arm formats the error itself rather than going through
+        // `could_not_read`, so it is a second place the whole chain has to reach the line.
+        let git = Answers(Some(false));
+        until("it reported", || {
+            drain_finished(&mut state, &mut pending, &mut removals, &Chained, &git);
+            removals.is_empty()
+        });
+
+        assert_eq!(
+            state.message(),
+            Some(
+                "the removal of feat/login ended without saying what happened; the list \
+                 could not be read again, so nothing was asked: sending session.snapshot to \
+                 herdr: broken pipe"
+            ),
+            "the `Enter` went, and the line says which of the two it was: nothing was asked, \
+             so the marks stand and `Enter` again is the whole of the way back"
+        );
+        settle(&mut state, &mut pending);
+        assert!(
+            state.pending_sweep().is_none(),
+            "and no box comes up afterwards over the list nobody could read"
+        );
+    }
+
+    #[test]
+    fn a_shift_d_box_over_a_list_this_could_not_read_goes_back_too() {
+        // The other of the two boxes. Nothing else reaches this arm: `pending_removal` and
+        // `pending_sweep` are never up together, so the sweep's test cannot stand in for it.
+        let mut state = PanesState::new(one_pane_tree(), None);
+        let mut dirty = Dirty::new(std::sync::Arc::new(Answers(Some(false))));
+        dirty.ask(state.tree());
+        let mut pending = pending(dirty);
+        until("the walk answered", || {
+            !show_answers(&mut state, &mut pending)
+        });
+        press(&mut state, 'D');
+        assert!(state.pending_removal().is_some(), "the box is up");
+
+        let recorder = Recorder::default();
+        let git = Answers(Some(false));
+        let mut removals = Removals::new(&Lost);
+        let removal = only_removal(&state);
+        removals.remove(&recorder, &removal).unwrap();
+        until("it reported", || {
+            drain_finished(&mut state, &mut pending, &mut removals, &recorder, &git);
+            removals.is_empty()
+        });
+
+        assert!(state.pending_removal().is_none(), "and it went back");
+        assert_eq!(
+            state.message(),
+            Some(
+                "the removal of feat/login ended without saying what happened — its 1 pane \
+                 was closed first; the list could not be read again, so the question went \
+                 back: herdr is not answering"
+            )
+        );
+    }
+
+    #[test]
+    fn a_checkout_that_left_the_list_is_forgotten_by_the_walk() {
+        // `catch_up` hands the new tree to `Dirty`, which is the only thing that scopes the
+        // walk to what is there now. Dropped, answers pile up for checkouts that have gone —
+        // and a checkout that arrives is never walked at all, so its row answers "still
+        // reading that working tree" for the life of the picker and can never be removed.
+        let herdr = Arc::new(Closing::where_the_checkout_goes_too());
+        let recorder = Recorder::default();
+        let port = Started(&recorder);
+        let mut removals = Removals::new(&port);
+        let (_, tree) = collect::collect_tree(&*herdr, &*herdr).expect("the first reading");
+        let mut state = PanesState::new(tree, None);
+        let mut dirty = Dirty::new(herdr.clone());
+        dirty.ask(state.tree());
+        until("both checkouts were walked", || {
+            dirty.drain();
+            dirty.answers().len() == 2
+        });
+        let removal = removal_of(&state, FEAT_LOGIN);
+
+        start_removal(
+            &mut state,
+            &mut dirty,
+            &mut removals,
+            &*herdr,
+            &*herdr,
+            &removal,
+        );
+
+        assert_eq!(
+            dirty.answers().keys().collect::<Vec<_>>(),
+            [&CheckoutPath::for_test("/src/app")],
+            "the checkout that went is not one the walk still has an answer about, and the \
+             one that stayed is"
+        );
+    }
+
+    #[test]
+    fn what_herdr_said_reaches_the_line_with_its_cause_under_it() {
+        // The socket adapter wraps: `sending session.snapshot to herdr` over the io error
+        // that actually happened. Printed without the alternate form, the line carries the
+        // wrapper and drops the only half that says what went wrong.
+        let recorder = Recorder::default();
+        let port = Started(&recorder);
+        let mut removals = Removals::new(&port);
+        let mut state = PanesState::new(one_pane_tree(), None);
+        let mut dirty = Dirty::new(std::sync::Arc::new(Answers(Some(false))));
+        let removal = only_removal(&state);
+
+        start_removal(
+            &mut state,
+            &mut dirty,
+            &mut removals,
+            &Chained,
+            &Answers(Some(false)),
+            &removal,
+        );
+
+        assert_eq!(
+            state.message(),
+            Some(
+                "the panes closed, but the list could not be read again: sending \
+                 session.snapshot to herdr: broken pipe"
+            )
+        );
+    }
+
+    #[test]
+    fn a_frame_with_nothing_to_take_in_leaves_the_list_alone() {
+        // The guard, read the only way it can be: a herdr that will not describe itself, so a
+        // reading nobody asked for arrives as a sentence rather than as silence. Without it
+        // the picker reads the whole session and every repository's refs on every tick a
+        // removal is in flight for, and a box goes back on the frame after it came up.
+        let recorder = Recorder::default();
+        let git = Answers(Some(false));
+        let mut state = PanesState::new(one_pane_tree(), None);
+        let mut pending = pending(Dirty::new(std::sync::Arc::new(Answers(Some(false)))));
+        let mut removals = Removals::new(&Refuses);
+
+        drain_finished(&mut state, &mut pending, &mut removals, &recorder, &git);
+
+        assert_eq!(
+            state.message(),
+            None,
+            "nothing reported, so nothing was read"
+        );
+    }
+
+    #[test]
+    fn a_removal_that_worked_over_a_list_that_read_says_nothing_at_all() {
+        // The ordinary ending, and the contract ADR 0014 and the changelog state: the row
+        // leaving the list is the report. It holds only while the list keeps up, which is
+        // what the other three arms of this are about — so this is the one that says what
+        // "keeps up" looks like when it does.
+        let herdr = Arc::new(Closing::where_the_checkout_goes_too());
+        let port = Reports(RemovalOutcome::Removed);
+        let mut removals = Removals::new(&port);
+        let (_, tree) = collect::collect_tree(&*herdr, &*herdr).expect("the first reading");
+        let mut state = PanesState::new(tree, None);
+        let mut pending = pending(Dirty::new(herdr.clone()));
+        let removal = removal_of(&state, FEAT_LOGIN);
+        removals.remove(&*herdr, &removal).unwrap();
+
+        until("it reported", || {
+            drain_finished(&mut state, &mut pending, &mut removals, &*herdr, &*herdr);
+            removals.is_empty()
+        });
+
+        assert_eq!(state.message(), None, "the row leaving is the whole report");
+        assert_eq!(
+            pane_rows(&state),
+            ["w1:p9"],
+            "and it left: the panes that were in it are off the list"
+        );
+    }
+
+    #[test]
+    fn a_sweeps_enter_still_waiting_survives_a_reading_that_worked() {
+        // The positive control for the arm above. `replace_tree` leaves `confirming` alone on
+        // purpose — the reading it waits on is the one that just happened — so an unrelated
+        // removal reporting must not cost the user their `Enter`.
+        let session = Arc::new(Session::new(false, false));
+        let (mut state, mut pending) = enter_pressed(&session);
+        let port = Reports(RemovalOutcome::Removed);
+        let mut removals = Removals::new(&port);
+        let earlier = Removal::sweeping("/src/app", &state.tree().repos[0].worktrees[1]);
+        removals.remove(&Recorder::default(), &earlier).unwrap();
+
+        until("it reported", || {
+            drain_finished(
+                &mut state,
+                &mut pending,
+                &mut removals,
+                &*session,
+                &*session,
+            );
+            removals.is_empty()
+        });
+
+        settle(&mut state, &mut pending);
+        assert!(
+            !box_paths(&state).is_empty(),
+            "the box the `Enter` asked for still comes up: {:?}",
+            state.message()
+        );
+    }
+
+    #[test]
+    fn a_reading_that_failed_reaches_the_line_with_its_cause_under_it_too() {
+        // The arm that formats the error itself rather than going through `could_not_read`.
+        // `Chained` is the only fake here whose refusal has a cause under it, and this is the
+        // one place the alternate form is written out a second time.
+        let session = Arc::new(Session::new(false, false));
+        let (mut state, mut pending) = sweep_asked(&session);
+        let mut removals = Removals::new(&Lost);
+        let earlier = Removal::sweeping("/src/app", &state.tree().repos[0].worktrees[1]);
+        removals.remove(&Recorder::default(), &earlier).unwrap();
+
+        let git = Answers(Some(false));
+        until("it reported", || {
+            drain_finished(&mut state, &mut pending, &mut removals, &Chained, &git);
+            removals.is_empty()
+        });
+
+        assert_eq!(
+            state.message(),
+            Some(
+                "the removal of feat/login ended without saying what happened; the list \
+                 could not be read again, so the question went back: sending \
+                 session.snapshot to herdr: broken pipe"
+            )
+        );
+    }
+
+    #[test]
+    fn a_removal_that_could_not_be_waited_on_reaches_the_line_whole() {
+        // `Detached::wait`'s other failure, where the wait itself fails and the context names
+        // the removal over what the OS said. Both halves are the report: the wrapper says
+        // which removal, and the cause says why nobody can tell what became of it.
+        let session = Arc::new(Session::new(false, false));
+        let (_, tree) = collect::collect_tree(&*session, &*session).expect("the first reading");
+        let mut state = PanesState::new(tree, None);
+        let mut pending = pending(Dirty::new(session.clone()));
+        let mut removals = Removals::new(&Unwaited);
+        let removal = Removal::sweeping("/src/app", &state.tree().repos[0].worktrees[1]);
+        removals.remove(&Recorder::default(), &removal).unwrap();
+
+        until("it reported", || {
+            drain_finished(
+                &mut state,
+                &mut pending,
+                &mut removals,
+                &*session,
+                &*session,
+            );
+            removals.is_empty()
+        });
+
+        assert_eq!(
+            state.message(),
+            Some(
+                "waiting for the removal of feat/login: No child processes (os error 10); \
+                 the list has been read again since"
+            )
+        );
+    }
+
+    #[test]
+    fn one_ending_nobody_could_read_among_reports_that_worked_is_settled_once() {
+        // `unknown` is a fact about the frame, not about a report, so the sentence lands
+        // after both and is said once — not attached to the report that happened to be
+        // unreadable, and not repeated for the one that was not.
+        let session = Arc::new(Session::new(false, false));
+        let (_, tree) = collect::collect_tree(&*session, &*session).expect("the first reading");
+        let mut state = PanesState::new(tree, None);
+        let mut pending = pending(Dirty::new(session.clone()));
+        let port = LostFirst::default();
+        let mut removals = Removals::new(&port);
+        for worktree in &state.tree().repos[0].worktrees[1..=2] {
+            let removal = Removal::sweeping("/src/app", worktree);
+            removals.remove(&Recorder::default(), &removal).unwrap();
+        }
+        until("both reported", || removals.reported() == 2);
+        drain_finished(
+            &mut state,
+            &mut pending,
+            &mut removals,
+            &*session,
+            &*session,
+        );
+
+        let line = state
+            .message()
+            .expect("the ending nobody could read is said");
+        assert_eq!(
+            line,
+            "the removal of feat/login ended without saying what happened; the list has \
+             been read again since",
+            "the one that worked says nothing, and the list is settled once, last"
         );
     }
 
