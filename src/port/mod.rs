@@ -334,8 +334,13 @@ pub trait GitPort: Send + Sync {
     fn delete_branch(&self, repo_root: &str, branch: &str) -> Result<()>;
 
     /// Whether this checkout is holding work that is not committed: modified tracked files,
-    /// or untracked ones. The same question `git worktree remove` asks before it refuses,
-    /// which is why untracked files count.
+    /// or untracked ones. The question `git worktree remove` asks before it refuses, which
+    /// is why untracked files count — and no more than that question. `remove` goes on to
+    /// delete whatever it did not refuse over, and measured against git 2.55.0 it does that
+    /// silently for anything `status` did not name: files under a `.gitignore`d directory,
+    /// and untracked work in a checkout configured `status.showUntrackedFiles = no` or held
+    /// under `assume-unchanged`. `false` here means git reported nothing, not that there is
+    /// nothing there.
     ///
     /// **It is that question and no more.** git does not look at a path it has been told to
     /// ignore, or at a file under `assume-unchanged`, so `false` is "git, asked with

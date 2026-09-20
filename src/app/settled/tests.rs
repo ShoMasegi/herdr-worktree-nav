@@ -37,7 +37,13 @@ impl FakeGit for Remote {
     fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
         *self.named.lock().unwrap() += 1;
         if self.refuses {
-            return Err(anyhow::anyhow!("fatal: not a git repository"));
+            // Two lines, because git says it in two: a `.git/config` it cannot read
+            // gives a `warning:` and then a `fatal:`, measured against git 2.55.0. The
+            // prompt line is one line, which is what the assertion below is about.
+            return Err(anyhow::anyhow!(
+                "warning: unable to access '.git/config': Permission denied\n\
+                 fatal: unable to access '.git/config': Permission denied"
+            ));
         }
         Ok(self
             .slug
@@ -305,6 +311,14 @@ fn a_git_that_would_not_name_the_repository_says_so_rather_than_nothing() {
     assert!(
         said.contains("git could not name the repository"),
         "and it says which half went wrong: {said}"
+    );
+    // On one line. git says its piece over several and this one is drawn in a `Span`,
+    // where a newline breaks the row it is in — every other sentence that reaches the
+    // prompt line is folded on the way, and this one had nothing to fold until git's
+    // refusals could reach here at all.
+    assert!(
+        !said.contains('\n'),
+        "and on one line, whatever git used: {said:?}"
     );
 }
 

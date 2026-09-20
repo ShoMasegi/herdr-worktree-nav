@@ -20,8 +20,8 @@ use crate::port::GitPort;
 /// working-directory resolution uses, for the same reason.
 const MAX_IN_FLIGHT: usize = 8;
 
-/// One answer, tagged with the round of asking it belongs to. `None` is git declining to
-/// answer at all.
+/// One answer, tagged with the round of asking it belongs to. `None` is git not answering —
+/// refusing the call, or exiting clean having said it could not read part of the tree.
 type Reply = (u64, CheckoutPath, Option<bool>);
 
 /// What the picker knows about uncommitted work, and what it is still waiting to hear.

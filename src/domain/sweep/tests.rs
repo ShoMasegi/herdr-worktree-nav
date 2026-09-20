@@ -130,9 +130,10 @@ fn nothing_is_offered_on_a_working_tree_nobody_has_answered_for() {
 
 #[test]
 fn a_working_tree_git_would_not_read_is_never_offered() {
-    // Not the same as reading it and finding nothing. `safe.directory`, or a checkout
-    // whose directory has gone: git said it could not look, and offering on that offers
-    // to delete whatever is in there on the strength of a failed question.
+    // Not the same as reading it and finding nothing. `safe.directory`, a checkout whose
+    // directory has gone, a directory git could not open: git said it could not look, and
+    // offering on that offers to delete whatever is in there on the strength of a failed
+    // question.
     let mut wt = worktree("fix/crash", "/wt/fix-crash");
     wt.track = Some(Track::Gone);
     let unreadable = BTreeMap::from([(
