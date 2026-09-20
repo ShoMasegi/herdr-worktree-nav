@@ -108,8 +108,7 @@ pub fn build(
                     // carrying `[gone]`:
                     // `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out`
                     // in `tests/git_adapter.rs`. The row `build` makes below for a pane
-                    // herdr never listed keeps its track: nothing in `build`'s inputs tells
-                    // that checkout from one with nothing out (#49).
+                    // herdr never listed reads the same way, for the same reason.
                     let track = if branch.is_some() {
                         tracks
                             .get(&(normalize_path(&repo.repo_key), checkout_path))
@@ -163,7 +162,6 @@ pub fn build(
         };
 
         let checkout = normalize_path(&placement.checkout_path);
-        let owner = normalize_path(&placement.repo_key);
         let repo = &mut nodes[index];
         match repo
             .worktrees
@@ -175,13 +173,22 @@ pub fn build(
                 // A checkout herdr's worktree list did not mention — for instance one added
                 // with `git worktree add` outside herdr. Showing it is better than dropping
                 // the pane into "ungrouped", where the user would not think to look.
+                //
+                // And no track, for the reason the arm above has none: this row names no
+                // branch, so a marker on it is about a branch it cannot name. What git has
+                // at this path is a `worktreepath` off a registration, which says where a
+                // branch was checked out and not what is checked out there now — a
+                // `git worktree add --detach` at a path some stale registration still
+                // claims is both branchless and unlisted, and drew an unmissable `gone`
+                // beside a directory name. A missing marker beats a wrong one, which is the
+                // judgement #45 made one arm up. What git said is still on `dump`'s page,
+                // under `git names at this path:`, where naming it costs nothing. Issue #49.
                 repo.worktrees.push(WorktreeNode {
                     branch: None,
                     checkout_path: checkout.to_string(),
                     is_primary: false,
                     open_workspace_id: Some(node.workspace_id.clone()),
-                    // git knows about it even where herdr does not.
-                    track: tracks.get(&(owner, checkout)).copied(),
+                    track: None,
                     panes: vec![node],
                 });
             }

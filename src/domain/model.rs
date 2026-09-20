@@ -120,9 +120,11 @@ impl Refs {
 pub struct WorktreeNode {
     /// `None` for a checkout herdr listed with nothing out — and also for one herdr never
     /// listed, which [`domain::tree::build`](crate::domain::tree::build) synthesizes for a
-    /// pane and where a branch may well be out. Only the second can carry a `track`:
-    /// `what_a_branchless_row_draws_turns_on_whether_herdr_listed_it`. Carrying the difference
-    /// is issue #52, and issue #49 is what it costs on the marker.
+    /// pane and where a branch may well be out. Neither carries a `track`, because a marker
+    /// about a branch the row does not name is one nobody can act on:
+    /// `a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it`. Carrying the
+    /// difference between the two is issue #52; until then the second loses a marker it
+    /// might have deserved, which is the cheaper of the two mistakes.
     pub branch: Option<String>,
     pub checkout_path: String,
     pub is_primary: bool,
