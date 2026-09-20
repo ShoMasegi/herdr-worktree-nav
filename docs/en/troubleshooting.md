@@ -21,7 +21,7 @@ Prints the tree the panes view would draw, and under each checkout what git said
 herdr 0.7.4 (protocol 16)
 chrome: accent Named(Cyan), indicators Dots
 plugin config: /Users/me/.config/herdr/plugins/config/herdr-worktree-nav/config.toml
-[panes].worktree_nav_show_no_panes: false
+[panes].show_worktrees_without_panes: false
 1 panes in 2 repos
 
 me/app  [/Users/me/Workspace/app]

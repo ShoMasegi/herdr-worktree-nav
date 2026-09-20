@@ -111,8 +111,8 @@ pub fn report(
     }
     let _ = writeln!(
         out,
-        "[panes].worktree_nav_show_no_panes: {}",
-        plugin_config.settings.panes.worktree_nav_show_no_panes
+        "[panes].show_worktrees_without_panes: {}",
+        plugin_config.settings.panes.show_worktrees_without_panes
     );
     let _ = writeln!(
         out,
@@ -371,7 +371,7 @@ mod tests {
         Loaded {
             settings: Settings {
                 panes: Panes {
-                    worktree_nav_show_no_panes: show_no_panes,
+                    show_worktrees_without_panes: show_no_panes,
                 },
             },
             complaint: complaint.map(str::to_string),
@@ -480,7 +480,7 @@ mod tests {
 herdr 0.7.4 (protocol 16)
 chrome: accent Named(Cyan), indicators Dots
 plugin config: /plugin/config.toml
-[panes].worktree_nav_show_no_panes: false
+[panes].show_worktrees_without_panes: false
 1 panes in 2 repos
 
 me/app  [/src/app]
@@ -523,7 +523,7 @@ me/site  [/src/site]
             "{page}"
         );
         assert!(
-            page.contains("[panes].worktree_nav_show_no_panes: true\n"),
+            page.contains("[panes].show_worktrees_without_panes: true\n"),
             "{page}"
         );
     }

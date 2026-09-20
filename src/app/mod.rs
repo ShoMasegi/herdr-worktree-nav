@@ -182,7 +182,7 @@ fn views(
         dirty: Dirty::new(Arc::clone(&git)),
         settled: Settled::new(Arc::clone(&git), Arc::clone(&gh)),
     };
-    let mut view = ViewState::new(start, loaded.settings.panes.worktree_nav_show_no_panes);
+    let mut view = ViewState::new(start, loaded.settings.panes.show_worktrees_without_panes);
     let mut config_complaint = loaded.complaint;
     loop {
         match view.current {

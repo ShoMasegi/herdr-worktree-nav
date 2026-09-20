@@ -149,10 +149,10 @@ mod tests {
     #[test]
     fn the_file_controls_the_initial_panes_view() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        file.write_all(b"[panes]\nworktree_nav_show_no_panes = false\n")
+        file.write_all(b"[panes]\nshow_worktrees_without_panes = false\n")
             .unwrap();
         let loaded = load_from(file.path());
-        assert!(!loaded.settings.panes.worktree_nav_show_no_panes);
+        assert!(!loaded.settings.panes.show_worktrees_without_panes);
         assert!(loaded.complaint.is_none());
         assert_eq!(loaded.path.as_deref(), Some(file.path()));
     }
@@ -181,10 +181,10 @@ mod tests {
     #[test]
     fn a_wrong_table_keeps_the_defaults_and_leads_with_the_reason() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        file.write_all(b"[pane]\nworktree_nav_show_no_panes = false\n")
+        file.write_all(b"[pane]\nshow_worktrees_without_panes = false\n")
             .unwrap();
         let loaded = load_from(file.path());
-        assert!(loaded.settings.panes.worktree_nav_show_no_panes);
+        assert!(loaded.settings.panes.show_worktrees_without_panes);
         let complaint = loaded.complaint.expect("wrong table should complain");
         assert!(
             complaint.starts_with("plugin config.toml: unknown field `pane`"),
@@ -196,16 +196,17 @@ mod tests {
     #[test]
     fn a_near_miss_key_names_the_wrong_key_and_the_right_one() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        file.write_all(b"[panes]\nworktree_nav_show_no_pane = false\n")
+        file.write_all(b"[panes]\nshow_worktrees_without_pane = false\n")
             .unwrap();
         let loaded = load_from(file.path());
         let complaint = loaded.complaint.expect("a near-miss key should complain");
         assert!(
-            complaint.starts_with("plugin config.toml: unknown field `worktree_nav_show_no_pane`"),
+            complaint
+                .starts_with("plugin config.toml: unknown field `show_worktrees_without_pane`"),
             "{complaint}"
         );
         assert!(
-            complaint.contains("expected `worktree_nav_show_no_panes`"),
+            complaint.contains("expected `show_worktrees_without_panes`"),
             "{complaint}"
         );
     }
@@ -226,7 +227,7 @@ mod tests {
     fn a_syntax_error_names_the_line() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         file.write_all(
-            b"[panes]\nworktree_nav_show_no_panes = true\nworktree_nav_show_no_panes = false\n",
+            b"[panes]\nshow_worktrees_without_panes = true\nshow_worktrees_without_panes = false\n",
         )
         .unwrap();
         let loaded = load_from(file.path());

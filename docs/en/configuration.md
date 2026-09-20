@@ -26,7 +26,7 @@ The usual path is `~/.config/herdr/plugins/config/herdr-worktree-nav/config.toml
 
 ```toml
 [panes]
-worktree_nav_show_no_panes = false
+show_worktrees_without_panes = false
 ```
 
 The default value is `true`, which preserves the current behavior. Set the value to `false`

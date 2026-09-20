@@ -2158,7 +2158,7 @@ mod tests {
         // soon as the line has room for it — not a dozen columns later.
         let mut state = PanesState::new(tree(), None);
         state.set_message(plugin_config::complaint_for(
-            "[pane]\nworktree_nav_show_no_panes = false\n",
+            "[pane]\nshow_worktrees_without_panes = false\n",
         ));
         for width in 24..=92u16 {
             let line = prompt_line(&state, width);
@@ -2181,7 +2181,7 @@ mod tests {
         // the long complaint; the wrong key has to stay visible where the right one is cut.
         let mut state = PanesState::new(tree(), None);
         state.set_message(plugin_config::complaint_for(
-            "[panes]\nworktree_nav_show_no_pane = false\n",
+            "[panes]\nshow_worktrees_without_pane = false\n",
         ));
         for width in 24..=92u16 {
             let line = prompt_line(&state, width);
@@ -2189,21 +2189,21 @@ mod tests {
                 line.trim_end().ends_with("5 panes"),
                 "the count is still there at {width}: {line}"
             );
-            if width >= 74 {
+            if width >= 77 {
                 assert!(
-                    line.contains("worktree_nav_show_no_pane"),
+                    line.contains("show_worktrees_without_pane"),
                     "the mistyped key is what fits at {width}: {line}"
                 );
             }
         }
-        let just_short = prompt_line(&state, 112);
+        let just_short = prompt_line(&state, 116);
         assert!(
-            !just_short.contains("expected `worktree_nav_show_no_panes`"),
+            !just_short.contains("expected `show_worktrees_without_panes`"),
             "one column short, the right key is still cut: {just_short}"
         );
-        let wide = prompt_line(&state, 113);
+        let wide = prompt_line(&state, 117);
         assert!(
-            wide.contains("expected `worktree_nav_show_no_panes`"),
+            wide.contains("expected `show_worktrees_without_panes`"),
             "with room, the right key is there too: {wide}"
         );
     }

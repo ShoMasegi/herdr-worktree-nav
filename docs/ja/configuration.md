@@ -24,7 +24,7 @@ touch "$config_dir/config.toml"
 
 ```toml
 [panes]
-worktree_nav_show_no_panes = false
+show_worktrees_without_panes = false
 ```
 
 既定値は `true` で、現在の動作を維持します。Panes ビューを開いた時点では pane を持たない worktree を隠したい場合、`false` にします。
