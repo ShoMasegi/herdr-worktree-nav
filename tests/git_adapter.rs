@@ -727,8 +727,8 @@ fn every_ref_git_dropped_is_named_and_not_just_the_first() {
 
 #[test]
 fn a_refusal_puts_gits_words_before_the_call() {
-    // The other way round, the `--format=` string put git's words 191 columns in — past
-    // the right edge of every prompt line the picker draws.
+    // The other way round, the `--format=` string puts git's words past the right edge of
+    // every prompt line the picker draws.
     let repo = repository();
     std::fs::write(
         repo.path().join(".git/packed-refs"),

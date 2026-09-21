@@ -111,11 +111,11 @@ impl GitCli {
 
 /// What a refusal reads as: git's words first, the call after them.
 ///
-/// The other way round put the call first, and for `local_refs` the call carries a
-/// `--format=` string 139 columns long: git's words began 191 columns in, past the right
-/// edge of every prompt line the picker draws, so the sentence that exists to show them
-/// showed the plugin's own argv instead. What a reader needs is what git said; which call
-/// it was is the part that can be cut.
+/// The other way round puts the call first, and `local_refs` carries a `--format=` string
+/// long enough on its own to push git's words past the right edge of every prompt line the
+/// picker draws — so the sentence that exists to show them shows the plugin's own argv
+/// instead. What a reader needs is what git said; which call it was is the part that can be
+/// cut.
 fn refusal(args: &[&str], stderr: &str) -> String {
     let said = stderr.trim();
     match said.is_empty() {
@@ -147,8 +147,8 @@ fn refusal(args: &[&str], stderr: &str) -> String {
 ///
 /// Not passed through [`refusal`], which is the one place these words are not followed by the
 /// call that produced them. It is always this call, so naming it tells a reader nothing they
-/// could act on, and it is not small: `refusal` appends 185 columns, 139 of them the
-/// `--format=` string.
+/// could act on, and it is not small: most of what `refusal` appends is the `--format=`
+/// string.
 ///
 /// Not for reach, though. The call goes on after both refnames and the prompt line cuts from
 /// the right, so leaving it off moves the width at which a second refname arrives by exactly
@@ -559,10 +559,10 @@ mod tests {
 
     #[test]
     fn only_the_words_git_drops_a_ref_with_are_read_as_a_dropped_ref() {
-        // The check this replaced was "stderr said something", and stderr is where git puts
-        // everything that is not an answer. A trace variable in the environment herdr
-        // launched the plugin in writes a line per call there, and a repository where
-        // nothing at all is wrong then lost every marker it had.
+        // "stderr said something" is the tempting check and the wrong one: stderr is where
+        // git puts everything that is not an answer. A trace variable in the environment
+        // herdr launched the plugin in writes a line per call there, and under that check a
+        // repository where nothing at all is wrong loses every marker it has.
         assert_eq!(
             dropped_refs("warning: ignoring broken ref refs/heads/wip\n").as_deref(),
             Some("warning: ignoring broken ref refs/heads/wip")
@@ -622,8 +622,9 @@ mod tests {
 
     #[test]
     fn a_git_that_could_not_be_started_reads_the_same_way_round_as_a_refusal() {
-        // The spawn failure used to be the one message built the other way round — the
-        // call, then the OS — and it is the failure the usage page names.
+        // The spawn failure is the one easiest to build the other way round — the call,
+        // then the OS — because the OS's words are not git's. It is also the failure the
+        // usage page names, so it is the one a reader is most likely to meet.
         let words = could_not_run(
             &["fetch", "origin"],
             &std::io::Error::from(std::io::ErrorKind::NotFound),

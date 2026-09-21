@@ -250,15 +250,14 @@ impl Settled {
     ///
     /// A refusal is named ahead of a missing remote. The second is a fact about the
     /// repository that the user can do nothing about and that the rows already say; the
-    /// first is the one that a login or a network fixes — and with the local scratch
-    /// repository sorted first, it was what the prompt line said for ever while the
-    /// expired token on the repository that mattered was said nowhere.
+    /// first is the one that a login or a network fixes. Without that order a local scratch
+    /// repository sorted ahead of the rest holds the prompt line for ever while the expired
+    /// token on the repository that matters is said nowhere.
     ///
     /// Within a kind, the repository named is the first in the tree — the order the screen
-    /// lists them in, which is the same on every frame. What this replaced walked the map,
-    /// which is path order; and the test that asserted "the first thing that went wrong"
-    /// was racing its own fake, which handed each sentence to whichever thread reached it
-    /// first. It failed six full runs in forty.
+    /// lists them in, which is the same on every frame. Walking the map instead gives path
+    /// order, and a test asserting "the first thing that went wrong" then races its own
+    /// fake, which hands each sentence to whichever thread reaches it first.
     ///
     /// Read from the tree for the reason [`answers`](Self::answers) is: a repository that
     /// has left the list leaves the prompt line with it.

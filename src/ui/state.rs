@@ -849,8 +849,8 @@ impl PanesState {
         // git answer for itself, but here the panes are gone by the time it speaks.
         if !worktree.panes.is_empty() {
             // One answer with four possible shapes, so none of them can be consulted and the
-            // rest forgotten. `None` is the one that used to need saying twice: not asked
-            // yet is not asked and clean, and only the second is a licence to close
+            // rest forgotten. `None` is the one that needs saying twice: not asked yet is
+            // not asked and clean, and only the second is a licence to close
             // somebody's panes. Walking a working tree takes a moment and the answers land
             // after the first frame, so `None` is the ordinary state of the checkout the
             // picker opens on — the one the cursor is already sitting in.

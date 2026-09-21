@@ -32,7 +32,8 @@ const SETTLED_LIMIT: usize = 300;
 /// The arguments that pick out the finished pull requests, as one value so the shape can be
 /// read and tested rather than inferred from a builder.
 ///
-/// Two of these are load-bearing and both were wrong once.
+/// Two of these are load-bearing, and both are easy to get wrong in a way that answers
+/// rather than fails.
 ///
 /// `-R` takes `[HOST/]OWNER/REPO`, so passing a filesystem path to it failed every call —
 /// but dropping it is not the fix. Without `-R`, `gh` picks a base repository out of the
@@ -169,10 +170,9 @@ fn open_command(slug: &Slug) -> Command {
 
 /// The process, made but not run.
 ///
-/// The third thing split out of this call, and for the reason the first two were: what is
-/// left inside `settled_pull_requests` is [`output_within`] and nothing else. Both bugs this call
-/// has shipped were in what it asked, and what it asks is now pinned — the program and the
-/// argument list are both assertable, and asserted.
+/// Split out so that what is left inside `settled_pull_requests` is [`output_within`] and
+/// nothing else. What this call asks is where it goes wrong, and asking is now pinned: the
+/// program and the argument list are both assertable, and asserted.
 ///
 /// The redirections are not. `Command` has getters for the program, the arguments, the
 /// environment and the working directory, and none for `stdin`/`stdout`/`stderr`, so

@@ -178,9 +178,9 @@ impl Dirty {
 #[cfg(test)]
 mod tests {
 
-    /// The three questions these tests ask of the walk, projected out of the one map it now
-    /// hands back. Kept here rather than on `Dirty` because nothing in the picker wants them
-    /// separately any more — telling them apart at the call site is what this replaced.
+    /// The three questions these tests ask of the walk, projected out of the one map it
+    /// hands back. Kept here rather than on `Dirty` because nothing in the picker wants
+    /// them separately: telling them apart is a thing only a test needs to do.
     fn dirty_paths(walk: &Dirty) -> Vec<String> {
         picked(walk, |answer| answer == WorkingTree::Dirty)
     }
