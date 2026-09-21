@@ -25,7 +25,13 @@ pub struct RepoNode {
 /// `docs/adr/0011-what-may-be-swept.md` is where the distinction stops being cosmetic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkingTree {
-    /// Nothing modified and nothing untracked. The only one of these a sweep may act on.
+    /// git had nothing to report. The only one of these a sweep may act on.
+    ///
+    /// What git reports is not everything that is there: a path it was told to ignore, and a
+    /// file under `assume-unchanged`, are outside the question — and outside the one
+    /// `git worktree remove` asks too, so a sweep acting on this takes what deleting by hand
+    /// would have taken. [`GitPort::is_dirty`](crate::port::GitPort::is_dirty) carries the
+    /// whole of it.
     Clean,
     /// Modified tracked files, or untracked ones. The same question `git worktree remove`
     /// asks before it refuses.

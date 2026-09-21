@@ -648,6 +648,58 @@ fn a_branch_says_which_checkout_has_it() {
 }
 
 #[test]
+fn a_repository_that_hides_untracked_files_is_still_asked_about_them() {
+    // One line of `status.showUntrackedFiles = no`, anywhere in the chain, and git exits 0
+    // with nothing to say about an ordinary untracked file. Read as a clean working tree,
+    // that is a sweep closing every pane in the checkout and deleting the file. Issue #68.
+    let repo = repository();
+    let path = path_str(repo.path());
+    std::fs::write(repo.path().join("keep.txt"), "an afternoon\n").unwrap();
+    assert!(
+        GitCli.is_dirty(&path).expect("git answered"),
+        "an untracked file is work, before any configuration is in the way"
+    );
+
+    git(repo.path(), &["config", "status.showUntrackedFiles", "no"]);
+    assert!(
+        GitCli.is_dirty(&path).expect("git answered"),
+        "and the plugin's own question is what decides, not the machine's configuration"
+    );
+}
+
+#[test]
+fn what_git_was_told_not_to_look_at_is_not_work_it_can_report() {
+    // The limit `docs/en/usage.md` states, as a test: git does not walk an ignored path, and
+    // does not stat a file under `assume-unchanged`, so neither reaches this call. What
+    // makes it a limit rather than a defect is that `git worktree remove` is blind to both
+    // as well — a sweep takes exactly what deleting by hand would have taken. A later
+    // `--ignored`, or a second call that reads contents, would change that and should change
+    // the page with it.
+    let repo = repository();
+    let path = path_str(repo.path());
+    std::fs::write(repo.path().join(".gitignore"), "node_modules/\n").unwrap();
+    git(repo.path(), &["add", ".gitignore"]);
+    git(repo.path(), &["commit", "-m", "ignore node_modules"]);
+
+    std::fs::create_dir(repo.path().join("node_modules")).unwrap();
+    std::fs::write(repo.path().join("node_modules/.env"), "SECRET=1\n").unwrap();
+    assert!(
+        !GitCli.is_dirty(&path).expect("git answered"),
+        "an ignored path is not reported, and `git worktree remove` does not refuse over one"
+    );
+
+    git(
+        repo.path(),
+        &["update-index", "--assume-unchanged", "README.md"],
+    );
+    std::fs::write(repo.path().join("README.md"), "edited\n").unwrap();
+    assert!(
+        !GitCli.is_dirty(&path).expect("git answered"),
+        "nor is an edit to a file git was told to stop watching"
+    );
+}
+
+#[test]
 fn a_checkout_git_will_not_look_at_is_an_error_rather_than_a_clean_one() {
     // The whole `Unreadable` state upstream of this rests on the refusal arriving as an
     // `Err`. If it were ever softened into empty output, every checkout would be recorded

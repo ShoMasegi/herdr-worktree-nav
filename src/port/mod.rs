@@ -331,6 +331,13 @@ pub trait GitPort: Send + Sync {
     /// or untracked ones. The same question `git worktree remove` asks before it refuses,
     /// which is why untracked files count.
     ///
+    /// **It is that question and no more.** git does not look at a path it has been told to
+    /// ignore, or at a file under `assume-unchanged`, so `false` is "git, asked with
+    /// untracked files included, had nothing to report" rather than "there is nothing here".
+    /// `git worktree remove` is blind to the same two, so a removal on the strength of this
+    /// takes what deleting by hand would have taken — which is the whole of what it
+    /// promises. `docs/en/usage.md` says it where a user will meet it.
+    ///
     /// One process per checkout, and the only thing here that cannot be folded into an
     /// existing call — so it is asked in the background rather than in front of the first
     /// frame.

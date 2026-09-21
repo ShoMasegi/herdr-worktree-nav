@@ -307,6 +307,15 @@ cannot find the ref the branch tracks; usually that is a merged pull request who
 GitHub deleted and an `f` fetch in the branches view then pruned, but an upstream you have
 never fetched reads the same, because to git it is the same.
 
+What git reports is not everything the directory holds. A path the repository has been told
+to ignore is outside the question, and so is a file someone has marked `assume-unchanged`:
+git has nothing to say about either, so neither raises a `✱` and neither stops a sweep.
+`git worktree remove` is blind to the same two, so a checkout that goes on the strength of a
+missing `✱` takes exactly what deleting the directory by hand would have taken — a build
+directory, an `.env` under an ignored path. What the picker does pin is the question itself:
+it asks git with untracked files included whatever `status.showUntrackedFiles` is set to, so
+an ordinary untracked file is never read as nothing.
+
 Ahead, behind and `gone` come out of the same `git for-each-ref` the picker already runs, so
 they are there in the first frame. Whether a working tree is dirty is not: git has to walk
 the whole tree to know, once per checkout, so those are asked in the background and each row

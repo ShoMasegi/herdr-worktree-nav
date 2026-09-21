@@ -393,9 +393,21 @@ impl GitPort for GitCli {
         // Untracked files count, because they count to `git worktree remove`: the marker has
         // to mean the same thing there as it does on `Shift-D`, or it is telling the user
         // something they cannot act on.
+        //
+        // `status.showUntrackedFiles` is pinned for the same reason `push.default` and the
+        // locale are: the answer is only worth something if this side chose the question.
+        // Set to `no` anywhere in the chain — repository, global, system — git exits 0 with
+        // nothing to say about an ordinary untracked file, and a sweep deletes the checkout
+        // holding it. Issue #68.
         let status = GitCli::run_in_repo(
             checkout_path,
-            &["--no-optional-locks", "status", "--porcelain"],
+            &[
+                "-c",
+                "status.showUntrackedFiles=all",
+                "--no-optional-locks",
+                "status",
+                "--porcelain",
+            ],
         )?;
         Ok(!status.stdout.trim().is_empty())
     }
