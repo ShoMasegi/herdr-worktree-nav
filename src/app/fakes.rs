@@ -3,9 +3,7 @@
 //! Here rather than in one module's `mod tests` because the ordering rule these exist to
 //! pin — panes close, then the removal starts — spans two ports. Both write into one
 //! `Recorder` log, so a test reads a single interleaving rather than two sequences it has
-//! to merge by eye. That is also why both ports live in this file: `record` is private, so
-//! the grammar of that log is owned here — a line can only be put into it by one of the two
-//! ports below, saying one of the two things they say.
+//! to merge by eye, and `record` is private so that nothing else can put a line into it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -18,14 +16,12 @@ use crate::port::{
     WorktreeOpen, WorktreeOpened,
 };
 
-/// Spin until `ready`, or fail the test.
+/// Spin until `ready`, or fail the test with `what`.
 ///
 /// The work these tests drive runs on threads of its own, so there is nothing to join on and
-/// nothing to block for. Two seconds is far longer than any of them needs and short enough
-/// to notice; `what` is what makes the difference between "this hung" and "this machine is
-/// loaded" readable when it does fire. Here rather than in each module so that the budget is
-/// one number — every caller in this layer goes through it, including the ones that are
-/// waiting for a condition to stop holding.
+/// nothing to block for. `what` is what makes the difference between "this hung" and "this
+/// machine is loaded" readable when the budget runs out. Here rather than in each module so
+/// that the budget is one number for the whole layer.
 pub fn until(what: &str, mut ready: impl FnMut() -> bool) {
     for _ in 0..2000 {
         if ready() {
@@ -44,11 +40,10 @@ pub fn until(what: &str, mut ready: impl FnMut() -> bool) {
 /// needs one of them adds a fake of its own — filling one in with an *answer* would quietly
 /// weaken every test already using it, and none of them would fail to say so.
 ///
-/// `snapshot` is the exception, and it is an exception because it refuses rather than
-/// answers. A caller that reaches it still fails; it just fails in a shape a test can assert
-/// on instead of a panic, which is what makes "the panes closed and the list could not be
-/// read again" reachable at all. The `Ok` half of that arm needs a herdr that answers, which
-/// is a fake of the module's own — `app::panes`'s `Closing`.
+/// `snapshot` is the exception, because it refuses rather than answers: a caller that
+/// reaches it still fails, in a shape a test can assert on instead of a panic, which is what
+/// makes "the panes closed and the list could not be read again" reachable at all. The `Ok`
+/// half of that arm needs a herdr that answers — `app::panes`'s `Closing`.
 #[derive(Default)]
 pub struct Recorder {
     did: Mutex<Vec<String>>,
@@ -83,10 +78,7 @@ impl HerdrPort for Recorder {
         Ok(())
     }
 
-    /// A herdr that will not describe itself. Refusing rather than panicking on purpose:
-    /// what a caller does when the panes have closed and the list cannot be read again is a
-    /// decision worth pinning, and a panic is not something a test can assert the outcome
-    /// of. See the note on the struct.
+    /// A herdr that will not describe itself. See the note on the struct.
     fn snapshot(&self) -> Result<Snapshot> {
         Err(anyhow::anyhow!("herdr is not answering"))
     }
@@ -162,7 +154,6 @@ impl RunningRemoval for Done {
 /// A `RemovalPort` that refuses the first start it is asked for and records every one after,
 /// the way [`Started`] does. One refusal among many is what a sweep has to carry on past.
 pub struct RefusesFirst<'a> {
-    /// The one it defers to once it has refused.
     rest: Started<'a>,
     asked: AtomicBool,
 }
@@ -235,9 +226,8 @@ impl RemovalPort for Lost {
     }
 }
 
-/// Worded as the adapter words it. What the picker does with this turns on there being no
-/// outcome in it rather than on the sentence, but a test reading the prompt line reads the
-/// sentence, and one it could not have come from would be a line nobody will ever see.
+/// Worded as the adapter words it: what the picker does turns on there being no outcome
+/// rather than on the sentence, but a test reading the prompt line reads the sentence.
 struct Ended(String);
 
 impl RunningRemoval for Ended {

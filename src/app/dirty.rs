@@ -3,10 +3,9 @@
 //! The one answer in the panes view that cannot ride on a call already being made: git has
 //! to walk a working tree to know it, once per checkout. So it is asked behind the first
 //! frame and each row is filled in as its answer lands, for the reason
-//! `docs/adr/0007-stay-up-while-working.md` gives — a picker that waits for git is a picker
-//! that looks broken — and it is owned by the view switch rather than by the view, for the
-//! reason `docs/adr/0009-the-picker-owns-the-terminal.md` gives about the remote listing: an
-//! answer that cost a round of processes should survive `Tab` rather than be asked again.
+//! `docs/adr/0007-stay-up-while-working.md` gives, and it is owned by the view switch rather
+//! than by the view, for the reason `docs/adr/0009-the-picker-owns-the-terminal.md` gives
+//! about the remote listing.
 //!
 //! A checkout that has not answered yet is drawn with no marker rather than with a guess.
 
@@ -33,7 +32,7 @@ pub struct Dirty {
     git: Arc<dyn GitPort>,
     sender: Sender<Reply>,
     receiver: Receiver<Reply>,
-    /// Which round of asking is current. Bumped by [`forget`](Self::forget), because a
+    /// Which round of asking is current. Bumped by [`reask`](Self::reask), because a
     /// `git status` started before it was called is answering about a working tree the user
     /// has since changed — that is the whole reason they pressed the key.
     generation: u64,
@@ -107,9 +106,8 @@ impl Dirty {
 
     /// Take in whatever has arrived, and start whatever the freed slots allow.
     ///
-    /// Says nothing about whether anything needs redrawing. Which answers are worth a rebuild
-    /// is a question about rows, and it is asked where the rows are —
-    /// `ui::state::PanesState::set_working_trees`. Here every answer is equal.
+    /// Says nothing about whether anything needs redrawing: which answers are worth a
+    /// rebuild is asked where the rows are — `ui::state::PanesState::set_working_trees`.
     ///
     /// This is also the pump, so a view that stops draining stops the walk: with more
     /// checkouts than `MAX_IN_FLIGHT`, the remainder waits for the panes view to come back.
@@ -161,13 +159,11 @@ impl Dirty {
             let generation = self.generation;
             // Not joined anywhere. These outlive the view that asked — the answers are
             // wanted on both sides of a `Tab` — and leaving the picker ends the threads with
-            // the process. The `git status` each one is waiting on is a child process that
-            // carries on to its own end; it is read-only about anything the user would
-            // notice, and `--no-optional-locks` keeps it from touching the index.
+            // the process. The `git status` each one waits on carries on to its own end;
+            // `--no-optional-locks` keeps it from touching the index.
             std::thread::spawn(move || {
-                // A checkout git could not answer for gets no marker — no marker beats the
-                // wrong marker — but it is not recorded as clean, because that is a claim
-                // and this is the absence of one.
+                // A checkout git could not answer for is not recorded as clean: that
+                // would be a claim, and this is the absence of one.
                 let dirty = git.is_dirty(checkout_path.as_str()).ok();
                 let _ = sender.send((generation, checkout_path, dirty));
             });
@@ -179,8 +175,7 @@ impl Dirty {
 mod tests {
 
     /// The three questions these tests ask of the walk, projected out of the one map it
-    /// hands back. Kept here rather than on `Dirty` because nothing in the picker wants
-    /// them separately: telling them apart is a thing only a test needs to do.
+    /// hands back. Nothing in the picker wants them separately.
     fn dirty_paths(walk: &Dirty) -> Vec<String> {
         picked(walk, |answer| answer == WorkingTree::Dirty)
     }
@@ -313,7 +308,6 @@ mod tests {
         }
     }
 
-    /// Wait for the worker threads to have asked.
     fn until_asked(git: &FakeGit, count: usize) {
         until(
             &format!("expected {count} checkouts to be asked about"),
@@ -321,7 +315,6 @@ mod tests {
         );
     }
 
-    /// Drain until nothing is outstanding.
     fn until_answered(dirty: &mut Dirty) {
         until("answers never arrived", || {
             dirty.drain();
@@ -332,9 +325,7 @@ mod tests {
     #[test]
     fn an_answer_from_before_a_reload_is_not_taken_for_a_fresh_one() {
         // The case the manual checklist asks a tester to confirm: leave uncommitted work,
-        // let the walk start, commit it, press `r`. The walk that is still running knows
-        // only about the working tree as it was, and its answer must not come back as the
-        // answer to the question the user just asked.
+        // let the walk start, commit it, press `r`.
         let git = FakeGit::new();
         let mut dirty = Dirty::new(git.clone());
         let tree = tree(&["/wt/a"]);
@@ -345,9 +336,9 @@ mod tests {
         dirty.reask(&tree);
         until_asked(&git, 2);
 
-        // The stale answer lands first, and says what was true before the reload. Waiting
-        // for it to have been taken in — a finished thread pays its slot back — rather than
-        // for the picker to settle, which it cannot until the fresh answer arrives too.
+        // Waiting for the stale answer to have been taken in — a finished thread pays its
+        // slot back — rather than for the picker to settle, which it cannot until the fresh
+        // answer arrives too.
         git.answer("/wt/a", true);
         until("the stale answer never arrived", || {
             dirty.drain();
@@ -389,8 +380,6 @@ mod tests {
 
     #[test]
     fn a_checkout_is_asked_about_once_however_often_the_view_comes_back() {
-        // Which is the whole reason this is owned by the view switch rather than by the
-        // panes view: `Tab` away and back must not walk every working tree again.
         let git = FakeGit::new();
         let mut dirty = Dirty::new(git.clone());
         let tree = tree(&["/wt/a", "/wt/b"]);
@@ -417,8 +406,7 @@ mod tests {
     fn a_checkout_git_would_not_answer_for_is_not_recorded_as_clean() {
         // The failure this is really about is the correlated one: `safe.directory`, or a
         // `git` that is not on the path herdr launched the plugin with, refuses every
-        // checkout at once. An unmarked list would then be a confident claim that nothing
-        // anywhere is holding uncommitted work.
+        // checkout at once, and an unmarked list claims nothing anywhere is holding work.
         let git = FakeGit::new();
         let mut dirty = Dirty::new(git.clone());
         let tree = tree(&["/wt/a", "/wt/b"]);
@@ -444,9 +432,8 @@ mod tests {
 
     #[test]
     fn only_an_answer_that_changes_what_a_row_draws_asks_for_a_redraw() {
-        // Most checkouts are clean, and a checkout nobody had asked about turning out to be
-        // clean draws exactly what it drew before: nothing. Rebuilding the list for those
-        // is work for a list that comes out identical.
+        // Most checkouts are clean, and a checkout nobody had asked about turning out to
+        // be clean draws exactly what it drew before: nothing.
         let git = FakeGit::new();
         let mut dirty = Dirty::new(git.clone());
         let tree = tree(&["/wt/a", "/wt/b", "/wt/c"]);
@@ -482,9 +469,8 @@ mod tests {
 
     #[test]
     fn a_refusal_from_a_withdrawn_round_does_not_keep_a_row_marked() {
-        // The scenario the whole state exists for: git is misconfigured, every checkout
-        // refuses, the user fixes it and presses `r`. The refusals still in flight are
-        // answers to a question that has been withdrawn.
+        // git is misconfigured, every checkout refuses, the user fixes it and presses `r`.
+        // The refusals still in flight answer a question that has been withdrawn.
         let git = FakeGit::new();
         let mut dirty = Dirty::new(git.clone());
         let tree = tree(&["/wt/a"]);
@@ -509,9 +495,6 @@ mod tests {
 
     #[test]
     fn a_checkout_that_has_left_the_tree_is_forgotten() {
-        // Kept for the life of the picker, so without this a session's worth of deleted
-        // checkouts accumulates — and every one is an answer about a working tree that is
-        // no longer there.
         let git = FakeGit::new();
         let mut dirty = Dirty::new(git.clone());
 
@@ -523,8 +506,6 @@ mod tests {
         assert_eq!(unreadable(&dirty), vec!["/wt/a".to_string()]);
         assert_eq!(dirty_paths(&dirty), vec!["/wt/b".to_string()]);
 
-        // `/wt/a` is deleted; the picker collects the tree again and asks about what is
-        // left.
         dirty.ask(&tree(&["/wt/b"]));
         assert!(unreadable(&dirty).is_empty());
         assert_eq!(dirty_paths(&dirty), vec!["/wt/b".to_string()]);
@@ -535,16 +516,13 @@ mod tests {
     fn a_checkout_that_left_the_tree_mid_walk_does_not_come_back_with_its_answer() {
         // The generation counter cannot catch this one: the walk was started in the round
         // that is still current, so its answer is not stale — it is about a checkout that
-        // has since gone. Recording it anyway puts a marker, and a removal refusal, on a
-        // working tree that is no longer there and no longer has a row.
+        // has since gone, and recording it marks a row nothing is drawing.
         let git = FakeGit::new();
         let mut dirty = Dirty::new(git.clone());
 
         dirty.ask(&tree(&["/wt/a", "/wt/b"]));
         until_asked(&git, 2);
 
-        // `/wt/a` is removed while git is still walking it, and the picker asks again about
-        // what is left. The thread for `/wt/a` answers afterwards.
         dirty.ask(&tree(&["/wt/b"]));
         git.answer("/wt/a", true);
         git.answer("/wt/b", true);
@@ -563,8 +541,8 @@ mod tests {
 
     #[test]
     fn no_more_than_eight_working_trees_are_walked_at_once() {
-        // A user with forty worktrees is the reason: forty `git status` processes at once
-        // is a laptop that stops for a moment.
+        // A user with forty worktrees is the reason: that many `git status` processes at
+        // once is a laptop that stops for a moment.
         let git = FakeGit::new();
         let mut dirty = Dirty::new(git.clone());
         let paths: Vec<String> = (0..20).map(|n| format!("/wt/{n}")).collect();

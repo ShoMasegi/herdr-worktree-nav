@@ -13,7 +13,6 @@ pub struct RepoNode {
     /// `owner/repo` when the origin is on GitHub, otherwise the directory name.
     pub display_name: String,
     pub worktrees: Vec<WorktreeNode>,
-    /// Whether the markers on those worktrees are what git said, or what git would not say.
     pub refs: Refs,
 }
 
@@ -41,7 +40,6 @@ pub enum WorkingTree {
 }
 
 impl WorkingTree {
-    /// Whether this is a working tree with nothing in it to lose.
     pub fn is_clean(self) -> bool {
         self == WorkingTree::Clean
     }
@@ -119,7 +117,6 @@ pub struct WorktreeNode {
     /// difference is issue #52, and issue #49 is what it costs on the marker.
     pub branch: Option<String>,
     pub checkout_path: String,
-    /// The main checkout rather than a linked worktree.
     pub is_primary: bool,
     /// The workspace herdr has this checkout open in, when it has one.
     pub open_workspace_id: Option<String>,

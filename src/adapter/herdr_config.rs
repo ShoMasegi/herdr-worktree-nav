@@ -28,7 +28,6 @@ pub fn load() -> Chrome {
 /// that environment (`herdr-worktree-nav dump` from a plain shell, for instance).
 fn config_path() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("HERDR_PLUGIN_CONFIG_DIR") {
-        // <herdr config>/plugins/config/<plugin id> -> <herdr config>
         if let Some(root) = PathBuf::from(dir)
             .ancestors()
             .nth(3)

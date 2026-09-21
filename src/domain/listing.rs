@@ -47,8 +47,8 @@ pub fn starting(cache: &mut Cache, repo_root: &str) -> Remote {
 /// `None` means there is nothing left to show from cache: a fetch rewrote the refs, so what
 /// was remembered is behind and the repository has to be read again.
 pub fn apply(cache: &mut Cache, repo_root: &str, answer: Answer) -> Option<Remote> {
-    // Not a field on the entry: `--prune` deleted refs, and anything kept here would put
-    // them straight back. The whole entry goes, and the repository is read again.
+    // Not a field on the entry: `--prune` deletes refs, and anything kept here would put
+    // them straight back.
     if answer == Answer::Refetched {
         cache.remove(repo_root);
         return None;
@@ -147,8 +147,6 @@ mod tests {
         assert!(!now.loading);
     }
 
-    /// A fetch rewrote `refs/remotes`, and `--prune` deleted some. Patching what is cached
-    /// would put the pruned ones straight back, so what is cached goes instead.
     #[test]
     fn a_fetch_drops_what_was_remembered_rather_than_patching_it() {
         let mut cache = Cache::new();

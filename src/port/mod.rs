@@ -114,11 +114,10 @@ pub trait HerdrPort: Sync {
     /// A pane that has already gone is not an error: it is the state this asks for, and it
     /// arrives on its own whenever a pane's command finishes.
     ///
-    /// The first call here that takes something out of the session rather than adding to it
-    /// or rearranging it — see `docs/adr/0010-closing-the-panes-first.md`. herdr collapses a
-    /// tab and a workspace that end up empty, which is what lets this leave no residue:
-    /// measured against herdr 0.7.4 by closing the only pane of a fresh workspace, which
-    /// took its tab and its workspace with it and left every other one alone.
+    /// herdr collapses a tab and a workspace that end up empty, which is what lets this
+    /// leave no residue: measured against herdr 0.7.4 by closing the only pane of a fresh
+    /// workspace, which took its tab and its workspace with it and left every other one
+    /// alone. See `docs/adr/0010-closing-the-panes-first.md`.
     fn pane_close(&self, pane_id: &str) -> Result<()>;
 
     /// Relocate a pane. herdr closes the tab and workspace the pane leaves behind if they
@@ -468,8 +467,7 @@ pub trait GhPort: Send + Sync {
     /// Open pull requests for the repository, or an empty list when `gh` is missing or
     /// unauthenticated. This layer is decoration: it must never fail the picker.
     /// A repository GitHub has never heard of has no [`Slug`] and cannot be asked, which is
-    /// the right answer rather than a missing one. The type is why a checkout path cannot be
-    /// passed here — see [`Slug`] for the two times one was.
+    /// the right answer rather than a missing one.
     fn pull_requests(&self, slug: &Slug) -> Vec<PullRequest>;
 
     /// Pull requests that have been merged or closed, for deciding what a sweep may offer.
@@ -482,8 +480,7 @@ pub trait GhPort: Send + Sync {
     /// with", which is the different answer this exists to keep apart.
     /// [`pull_requests`](GhPort::pull_requests) conflates those two on purpose, because
     /// ADR 0003's promise is that a missing `gh` costs nothing there. Here it costs
-    /// something: ADR 0011 says a degraded `gh` must be *visible*, since a sweep that
-    /// quietly offers fewer rows is worse than one that says which half it could not judge.
+    /// something: ADR 0011 says a degraded `gh` must be *visible*.
     ///
     /// `Err` is still never a reason to fail the picker. It is a sentence to show, not a
     /// question to give up on.
@@ -499,12 +496,9 @@ mod tests {
 
     #[test]
     fn a_repository_root_is_not_two_names() {
-        // The accident this type exists to stop, in the shape it would actually arrive in:
-        // somebody has a path and wants a slug out of it. Splitting an absolute path on the
-        // first `/` gives an empty owner; splitting it anywhere else leaves a `/` in one
-        // half. `gh` asked for `[HOST/]OWNER/REPO` and would reject either, but it rejects
-        // them at a subprocess boundary with a non-zero exit that the branches view throws
-        // away — which is how this went unnoticed twice.
+        // `gh` asked for `[HOST/]OWNER/REPO` and would reject a path split either way, but
+        // it rejects at a subprocess boundary with a non-zero exit that the branches view
+        // throws away, so nothing on screen says so.
         let root = "/src/app";
         let (owner, repo) = root.split_once('/').expect("an absolute path has one");
         assert_eq!(Slug::owner_repo(owner, repo), None, "{owner:?} / {repo:?}");

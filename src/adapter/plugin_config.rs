@@ -55,8 +55,7 @@ impl Loaded {
 
     fn invalid(path: &Path, contents: &str, error: toml::de::Error) -> Self {
         // The prompt line is one row. A short file label, then the reason without the
-        // caret drawing — a cut must not leave only a path. A syntax error has no key
-        // in the reason, so the line number is what locates it.
+        // caret drawing — a cut must not leave only a path.
         Self {
             settings: Settings::default(),
             complaint: Some(format_invalid(contents, error)),

@@ -1,10 +1,9 @@
 //! Removals the picker has started and no longer owns.
 //!
-//! Each one is a process of its own that finishes whether or not anything here is still
-//! watching, and reports itself to herdr either way — see
-//! `docs/adr/0014-removing-outlives-the-picker.md`. What is kept here is only what the
-//! picker needs while it happens to still be up: which rows are going, and what to say
-//! about the ones that come back refused.
+//! Each one is a process of its own that reports itself to herdr whether or not anything
+//! here is still watching — see `docs/adr/0014-removing-outlives-the-picker.md`. What is
+//! kept here is only what the picker needs while it is still up: which rows are going, and
+//! what to say about the ones that come back refused.
 
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -49,11 +48,9 @@ pub struct Removals<'a> {
     receiver: Receiver<(CheckoutPath, Result<RemovalOutcome>)>,
     in_flight: Vec<InFlight>,
     /// How many answers have been put in the channel, counted after the send rather than
-    /// when they are read. Nothing in the picker reads it: what a frame does is decided by
-    /// what [`finished`](Self::finished) hands over, and waiting for a number would be the
-    /// loop waiting on a removal, which is the one thing it must not do. A test that needs
-    /// two answers in one drain has no other way to know they are both there — reading one
-    /// to find out takes it.
+    /// when they are read. Nothing in the picker reads it. A test that needs two answers in
+    /// one drain has no other way to know they are both there — reading one to find out
+    /// takes it.
     #[cfg(test)]
     reported: Arc<AtomicUsize>,
 }
@@ -74,27 +71,23 @@ impl<'a> Removals<'a> {
     /// Close a checkout's panes and then start removing it, stopping at the first thing that
     /// fails. `Err` is what to tell the user, already in words.
     ///
-    /// This is the only way in, and that is the point. `git worktree remove` walking a
-    /// working tree that still has agents writing into it is what
-    /// `docs/adr/0010-closing-the-panes-first.md` is about, and an order that holds only
-    /// because every caller remembered it is one the next caller breaks in silence. The
-    /// panes come off the `Removal` rather than from an argument, so the list and the
-    /// checkout arrive together and cannot be paired by hand.
+    /// This is the only way in, and that is the point: the order is
+    /// `docs/adr/0010-closing-the-panes-first.md`, and an order that holds only because
+    /// every caller remembered it is one the next caller breaks in silence. The panes come
+    /// off the `Removal` rather than from an argument, so the list and the checkout arrive
+    /// together and cannot be paired by hand.
     ///
     /// They are closed here rather than in the process that carries out the removal because
-    /// by the time that runs they are gone: the grouping it could rebuild for itself would
-    /// be a grouping with nothing in it. herdr collapses a tab and a workspace that end up
-    /// empty, which is what lets this leave no residue — measured against 0.7.4.
+    /// by the time that runs they are gone. herdr collapses a tab and a workspace that end
+    /// up empty, which is what lets this leave no residue — measured against 0.7.4.
     ///
     /// A pane that will not close stops the whole thing: a checkout removed out from under
     /// half its panes is worse than one not removed. How far it got is what the message is
-    /// for — the panes that did close are gone, and their rows going as the picker catches
-    /// up says that much and no more: not that a removal stopped partway, and nothing at all
-    /// where the list could not be read again.
+    /// for — nothing else on screen says it.
     pub fn remove(&mut self, herdr: &dyn HerdrPort, removal: &Removal) -> Result<(), String> {
         self.close_panes(herdr, removal)?;
-        // Every pane is gone by now, so a failure here is the same shape as a git refusal
-        // and gets the same clause: the worst version of it, in fact, since none survived.
+        // Every pane is gone by now, so a failure here gets the same clause as a git
+        // refusal — the worst version of it, since none survived.
         self.start(removal).map_err(|error| {
             format!(
                 "could not start removing {}: {}",
@@ -105,8 +98,7 @@ impl<'a> Removals<'a> {
     }
 
     /// Close every pane the removal names, in the order it lists them, stopping at the first
-    /// that refuses. How far it got is in the message, because the panes before the refusal
-    /// are gone and the rows that go with them say only that they have stopped.
+    /// that refuses. How far it got is in the message.
     ///
     /// A pane that has already gone is not a refusal, but that is not decided here: see
     /// [`HerdrPort::pane_close`], which is where a pane herdr no longer knows about becomes
@@ -132,9 +124,9 @@ impl<'a> Removals<'a> {
     ///
     /// Private, so nothing outside this module reaches a removal without going through
     /// `remove` and the close it does first. That is ADR 0010's ordering on the picker's
-    /// side, which is all it can be: the `remove` subcommand in `main` runs `git worktree
-    /// remove` having closed nothing, because by the time it runs the panes are already
-    /// gone. It is the other half of the same ADR, not a hole in this one.
+    /// side, which is all it can be: the `remove` subcommand in `main` closes nothing,
+    /// because by the time it runs the panes are gone. It is the other half of the same
+    /// ADR, not a hole in this one.
     fn start(&mut self, removal: &Removal) -> Result<()> {
         let checkout_path = removal.checkout_path();
         let panes_closed = removal.panes().len();
@@ -288,17 +280,17 @@ mod tests {
         }
     }
 
-    /// A checkout to remove, named by the panes in it. Built the only way one can be —
-    /// through the checkout — so the pane list is the checkout's own.
+    /// A checkout to remove. Built the only way one can be — through the checkout — so the
+    /// pane list is the checkout's own.
     fn removal(checkout_path: &str, label: &str, panes: &[&str]) -> Removal {
         Removal::of("/src/app", &checkout(checkout_path, label, panes))
     }
 
     #[test]
     fn every_pane_closes_before_the_removal_starts_and_in_the_order_given() {
-        // The order is the safety rule: `git worktree remove` walking a working tree that
-        // still has agents writing into it is what closing first exists to prevent. Both
-        // fakes write into one log, so the rule is one sequence rather than two.
+        // `git worktree remove` walking a working tree that still has agents writing into
+        // it is what closing first exists to prevent. Both fakes write into one log, so the
+        // rule is one sequence rather than two.
         let recorder = Recorder::default();
         let port = Started(&recorder);
         let mut removals = Removals::new(&port);
@@ -322,8 +314,8 @@ mod tests {
 
     #[test]
     fn a_pane_that_will_not_close_stops_the_removal_and_says_how_far_it_got() {
-        // Half the panes gone and the checkout still standing is not "nothing happened",
-        // and herdr's bare refusal does not say which of the two the reader is looking at.
+        // herdr's bare refusal does not say whether the checkout is still standing, and
+        // half the panes gone is not "nothing happened".
         let recorder = Recorder::refusing("w2:p2");
         let port = Started(&recorder);
         let mut removals = Removals::new(&port);
@@ -351,9 +343,9 @@ mod tests {
 
     #[test]
     fn a_removal_that_will_not_start_says_the_panes_are_already_gone() {
-        // The worst way this can end: the closing worked, so nothing is running in the
-        // checkout any more, and the checkout is still there. Saying only that the removal
-        // failed would read as "nothing happened" to someone whose panes just vanished.
+        // The worst way this can end: every pane is gone and the checkout is still there.
+        // Saying only that the removal failed reads as "nothing happened" to someone whose
+        // panes just vanished.
         let recorder = Recorder::default();
         let mut removals = Removals::new(&Refuses);
 
@@ -394,7 +386,7 @@ mod tests {
     #[test]
     fn a_sweep_asks_for_the_branch_to_go_and_shift_d_does_not() {
         // The flag rides on the `Removal`, so what the port hears is what the constructor
-        // decided: `sweeping` on a checkout with a branch, and nothing else.
+        // decided.
         let recorder = Recorder::default();
         let port = Started(&recorder);
         let mut removals = Removals::new(&port);
@@ -418,9 +410,8 @@ mod tests {
 
     #[test]
     fn an_answer_is_matched_to_the_removal_that_asked_for_it() {
-        // Several can be in flight at once, and they do not answer in the order they were
-        // started. Getting this wrong names the wrong branch in the refusal and miscounts
-        // the panes it closed — both of which read as facts about the wrong checkout.
+        // They do not answer in the order they were started. Getting this wrong names the
+        // wrong branch in the refusal and miscounts the panes it closed.
         let port = FakeRemover::default();
         let herdr = Recorder::default();
         let mut removals = Removals::new(&port);
@@ -441,7 +432,6 @@ mod tests {
             ]
         );
 
-        // The second one answers first.
         port.finish("/wt/b", RemovalOutcome::Refused("no".into()));
         let mut finished = None;
         until("the second removal never reported", || {

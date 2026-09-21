@@ -26,6 +26,15 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Lint
         run: cargo clippy --all-targets -- -D warnings
+      - name: Doc links resolve
+        # A `[`name`](Self::name)` link on the wrong type resolves to nothing, and
+        # check-invariants.sh cannot see it: that script asks whether the name exists
+        # anywhere in src or tests, and a same-named method on another type satisfies it.
+        # rustdoc asks whether the link resolves from where it is written, which is the
+        # question. Private items included, because most of these docs are on them.
+        env:
+          RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links
+        run: cargo doc --no-deps --document-private-items
       - name: A locale git does not answer in English
         # tests/git_locale.rs proves the LC_ALL pin by running a git that would otherwise
         # answer in another language. This image lists C, C.utf8, POSIX and en_US.utf8 only,

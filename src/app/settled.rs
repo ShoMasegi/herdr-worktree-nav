@@ -28,19 +28,16 @@ type Reply = (u64, String, Answer);
 /// What is known about one repository's pull requests.
 ///
 /// Four things, each named, so that every reader says what it does with each rather than
-/// testing for the one it wants. This was an `Option<Result<_, String>>`, and
-/// `forget_failures` was `!matches!(_, Some(Err(_)))` over it — which answers "keep" for
-/// whatever it has not been taught, the shape `domain::sweep::Candidate::is_markable`'s
-/// doc argues against. It also had one state for two things: a `gh` that refused, which
-/// is worth asking again, and a repository with no GitHub remote, which is not.
+/// testing for the one it wants — the shape `domain::sweep::Candidate::is_markable`'s doc
+/// argues for. A `gh` that refused is worth asking again and a repository with no GitHub
+/// remote is not, so one state for both could not tell them apart.
 #[derive(Debug, Clone)]
 enum Answer {
     /// Asked, and the call has not come home.
     Asking,
     /// There is nothing to ask: git named no GitHub remote. That does not change while the
-    /// picker is up, so it is not asked again on entering a sweep — and on the prompt line
-    /// it is outranked by a refusal, which is the one the user can do something about. The
-    /// rows still say `PR unknown`, as ADR 0011 asks: nothing has looked.
+    /// picker is up, so it is not asked again on entering a sweep. The rows still say
+    /// `PR unknown`, as ADR 0011 asks: nothing has looked.
     Unaskable(String),
     /// Asked, and could not answer: `gh` refused, or git would not name the repository.
     /// Asked again the next time a sweep is entered.
@@ -62,9 +59,8 @@ pub struct Settled {
     answers: BTreeMap<String, Answer>,
     /// Which round of asking is current. Bumped by [`forget`](Self::forget), because a `gh`
     /// call started before it was called is answering about pull requests as they were, and
-    /// the whole point of `r` is that one may have landed since. The same counter
-    /// `app::dirty` keeps, for the same reason: `mpsc` does not deliver in the order the
-    /// threads were spawned, so without it the stale round can simply win.
+    /// the whole point of `r` is that one may have landed since. `mpsc` does not deliver in
+    /// the order the threads were spawned, so without it the stale round can simply win.
     generation: u64,
 }
 
@@ -86,12 +82,8 @@ impl Settled {
     ///
     /// Called on every frame a sweep is on. For a repository already in the map it asks
     /// nothing: a merged pull request does not become unmerged, so a frame — or a sweep left
-    /// and re-entered — is a map lookup rather than another round of `gh`. What asks again
-    /// is `r`, through [`forget`](Self::forget); entering a sweep, through
-    /// [`forget_failures`](Self::forget_failures), where the answer was a refusal; and a
-    /// repository that left the list and came back, because what was learned about it went
-    /// when it left. A call still out keeps its slot whatever the tree says, so that its
-    /// answer has somewhere to land.
+    /// and re-entered — is a map lookup rather than another round of `gh`. A call still out
+    /// keeps its slot whatever the tree says, so that its answer has somewhere to land.
     pub fn ask(&mut self, tree: &Tree) {
         let listed: BTreeSet<&str> = tree
             .repos
@@ -115,8 +107,6 @@ impl Settled {
             // both sides of a `Tab`, and leaving the picker ends the thread with the process.
             std::thread::spawn(move || {
                 let answer = match git.github_slug(&repo_root) {
-                    // Nothing to ask, and nothing that will change. Still a row that says
-                    // so — not a row that looks like it has nothing to find.
                     Ok(None) => Answer::Unaskable("no GitHub remote to ask about".to_string()),
                     Err(error) => {
                         Answer::Refused(format!("git could not name the repository: {error:#}"))
@@ -133,14 +123,14 @@ impl Settled {
 
     /// Throw every answer away so the next [`ask`](Self::ask) asks again.
     ///
-    /// What `r` means here. A pull request merged while the picker was up is exactly the
-    /// kind of thing a reload is for.
+    /// What `r` means here: a pull request merged while the picker was up is what a reload
+    /// is for.
     ///
     /// Threads already running are left alone — there is no way to call one back — but their
     /// answers belong to the round this ends, and [`drain`](Self::drain) drops them on that
-    /// basis. Not on whether the repository is still listed: it usually is, and `mpsc` hands
-    /// over in whatever order the calls finish rather than the order they started, so a slow
-    /// call from before the reload can land after a fast one from after it and win.
+    /// basis rather than on whether the repository is still listed. `mpsc` hands over in
+    /// whatever order the calls finish, so a slow call from before the reload can land after
+    /// a fast one from after it.
     pub fn forget(&mut self) {
         self.generation += 1;
         self.answers.clear();
@@ -151,12 +141,11 @@ impl Settled {
     ///
     /// What entering a sweep means here. A `gh` that could not answer once — the network was
     /// out, the token had just expired — is not one that can never answer, and the only
-    /// other way to ask again is `r`, which a sweep does not take. Everything else is kept:
-    /// an answer, for the reason `ask` asks once; a repository with no GitHub remote, because
-    /// asking again would be a `git remote get-url` per repository per `Shift-S` for an
-    /// answer that cannot change; and a call still out, because dropping its slot would
-    /// have the next `ask` start a second call for the same repository in the same round,
-    /// with the older free to land last and win.
+    /// other way to ask again is `r`, which a sweep does not take. A repository with no
+    /// GitHub remote is kept, because asking again would be a `git remote get-url` per
+    /// repository per `Shift-S` for an answer that cannot change; a call still out is kept,
+    /// because dropping its slot would have the next `ask` start a second call for the same
+    /// repository in the same round, with the older free to land last and win.
     ///
     /// No round ends here, unlike in [`forget`](Self::forget): a refusal is a call that has
     /// already come home, so there is no thread still out whose answer this has to disown.
@@ -177,12 +166,9 @@ impl Settled {
             if generation != self.generation {
                 continue;
             }
-            // Recorded against what was asked, rather than inserted. A reply with no slot
-            // cannot happen today: a call still out keeps its slot through `ask`'s pruning
-            // and through `forget_failures`, and the one thing that does drop it, `forget`,
-            // ends the round, so the guard above has already dropped the reply. Kept as a
-            // guard rather than an `insert` all the same, because inserting would put a
-            // repository back that nothing is waiting on — and a mutation of it survives.
+            // Recorded against what was asked, rather than inserted: a reply with no slot
+            // cannot happen today, but inserting would put a repository back that nothing is
+            // waiting on.
             if let Some(slot) = self.answers.get_mut(&repo_root) {
                 *slot = answer;
             }
@@ -193,16 +179,14 @@ impl Settled {
     /// What `gh` has said so far, in the shape `domain::sweep` decides on.
     ///
     /// A repository still being asked about is left out entirely rather than entered as
-    /// `None`, because those two are different questions there: absent is "nobody has asked
-    /// yet", which says nothing on a row, and `None` is "asked, and `gh` could not answer",
-    /// which does. A repository with no GitHub remote is `None` for the same reason: nothing
-    /// has looked, and the row says so.
+    /// `None`: absent is "nobody has asked yet", and `None` is "asked, and `gh` could not
+    /// answer", which is what puts `PR unknown` on a row. A repository with no GitHub remote
+    /// is `None` for the same reason: nothing has looked, and the row says so.
     ///
     /// Keyed from the tree rather than from the string this stored, because
     /// [`RepoRoot::of`] is the only way to make one and a `RepoNode` is the only thing it
-    /// takes. `RepoNode` carries `repo_key` and `repo_root` side by side and a map keyed by
-    /// the wrong one answers nothing for every checkout in the tree, silently — so the type
-    /// keeps that choice in one place, and this walks the tree to stay inside it.
+    /// takes. `RepoNode` carries `repo_key` and `repo_root` side by side, and a map keyed by
+    /// the wrong one answers nothing for every checkout in the tree, silently.
     pub fn answers(&self, tree: &Tree) -> BTreeMap<RepoRoot, Option<SettledPullRequests>> {
         tree.repos
             .iter()
@@ -221,13 +205,11 @@ impl Settled {
     /// turns a spinner while this is true, so a sweep entered on a slow network does not
     /// read as one that found nothing.
     ///
-    /// Read off the map rather than counted. A count of calls started had to be kept level
-    /// with the map by hand, and [`forget`](Self::forget) did not keep it: a round the user
-    /// had just ended went on turning the spinner until every call from it came home, and
-    /// asking again put the same repository in the count twice. The map cannot disagree
-    /// with itself. And read from the tree, like [`answers`](Self::answers) and
-    /// [`trouble`](Self::trouble): a call still out for a repository that has left the list
-    /// is not one the user can see a spinner for.
+    /// Read off the map rather than from a count of calls started, which would have to be
+    /// kept level with the map by hand across [`forget`](Self::forget) and an `ask` that
+    /// asks the same repository again. And read from the tree, like
+    /// [`answers`](Self::answers) and [`trouble`](Self::trouble): a call still out for a
+    /// repository that has left the list is not one the user can see a spinner for.
     ///
     /// A call that never comes home would keep this true for as long as the picker is up and
     /// the repository is listed; `adapter::gh_cli` gives up on one after `GH_BUDGET` and
@@ -245,22 +227,16 @@ impl Settled {
     /// line — with a count of the rest, so that one repository's trouble does not read as
     /// the whole of it. It names its repository, because the rows cannot be relied on to: a
     /// repository whose checkouts are all primary, running or `gone` never reaches
-    /// `PR unknown`, so with two repositories in trouble for two reasons the sentence and
-    /// the rows were about different ones.
+    /// `PR unknown`.
     ///
     /// A refusal is named ahead of a missing remote. The second is a fact about the
     /// repository that the user can do nothing about and that the rows already say; the
-    /// first is the one that a login or a network fixes. Without that order a local scratch
-    /// repository sorted ahead of the rest holds the prompt line for ever while the expired
-    /// token on the repository that matters is said nowhere.
+    /// first is the one that a login or a network fixes.
     ///
     /// Within a kind, the repository named is the first in the tree — the order the screen
-    /// lists them in, which is the same on every frame. Walking the map instead gives path
-    /// order, and a test asserting "the first thing that went wrong" then races its own
-    /// fake, which hands each sentence to whichever thread reaches it first.
-    ///
-    /// Read from the tree for the reason [`answers`](Self::answers) is: a repository that
-    /// has left the list leaves the prompt line with it.
+    /// lists them in, which is the same on every frame; walking the map gives path order
+    /// instead. Read from the tree for the reason [`answers`](Self::answers) is: a
+    /// repository that has left the list leaves the prompt line with it.
     pub fn trouble(&self, tree: &Tree) -> Option<String> {
         let mut refused = None;
         let mut unaskable = None;
@@ -374,13 +350,12 @@ mod tests {
     /// taken. The two rounds of a reload are otherwise a race nothing can pin.
     #[derive(Default)]
     struct Held {
-        /// The slug each call was for, in the order the calls reached this. Which repository
-        /// reaches it first is a race, so a test that cares which call is which asks by
-        /// slug — `call_for` — rather than by number.
+        /// The slug each call was for, in the order the calls reached this. Which
+        /// repository reaches it first is a race, so a test that cares asks by slug —
+        /// `call_for` — rather than by number.
         started: Mutex<Vec<String>>,
-        /// The answer each call is waiting for, by the order it started in. Addressed rather
-        /// than queued, so the test decides which call finishes and in which order — which
-        /// is the whole of what this is here to pin.
+        /// The answer each call is waiting for, by the order it started in. Addressed
+        /// rather than queued, so the test decides which call finishes and in which order.
         released: Mutex<BTreeMap<usize, Result<SettledPullRequests, String>>>,
         /// Repositories git names no GitHub remote for.
         no_remote: Vec<&'static str>,
@@ -516,9 +491,8 @@ mod tests {
 
     #[test]
     fn each_repository_is_asked_about_once_however_often_the_sweep_is_entered() {
-        // The whole reason this is owned by the view switch. A merged pull request does not
-        // become unmerged, so entering the sweep a second time is a frame — not another
-        // round of `gh` over the network on a key the user is holding down.
+        // Entering the sweep again is a frame, not another round of `gh` over the network
+        // on a key the user is holding down.
         let (remote, mut settled) = asking(Remote {
             slug: Some("me/app"),
             ..Remote::default()
@@ -555,9 +529,6 @@ mod tests {
     fn an_answer_from_before_a_reload_does_not_overwrite_the_one_after_it() {
         // `mpsc` hands answers over in whatever order the calls finish, not the order they
         // started, so a slow `gh` from before `r` can land after a fast one from after it.
-        // The whole point of `r` is that a pull request may have landed since, so the older
-        // answer winning is a sweep showing the state of the world the user just asked it to
-        // stop showing.
         let held = Arc::new(Held::default());
         let mut settled = Settled::new(held.clone(), held.clone());
         let tree = tree(&["/src/app"]);
@@ -570,7 +541,6 @@ mod tests {
         settled.ask(&tree);
         until("the second call never started", || held.started() == 2);
 
-        // The reload's call comes back first, and the one from before it comes back after.
         held.release(
             2,
             SettledPullRequests::All(vec![settled_pr(2, "feat/after")]),
@@ -584,8 +554,7 @@ mod tests {
             SettledPullRequests::All(vec![settled_pr(1, "feat/before")]),
         );
         // Waited for, not assumed: with the stale reply still in the channel the assertion
-        // below holds whether or not `drain` drops it, and a `drain` that did not was green
-        // one run in six.
+        // below holds whether or not `drain` drops it.
         until("the stale answer never arrived", || settled.drain() > 0);
 
         let listed = settled
@@ -604,8 +573,7 @@ mod tests {
     #[test]
     fn a_repository_github_has_never_heard_of_is_asked_and_answered_for() {
         // Not absent, which would read as "still coming" and put a spinner on a row that
-        // will never fill in. `gh` is never started for it — there is nothing to start it
-        // with — but the question was put and this is the answer.
+        // will never fill in.
         let (remote, mut settled) = asking(Remote::default());
         let tree = tree(&["/src/app"]);
 
@@ -630,9 +598,9 @@ mod tests {
 
     #[test]
     fn a_git_that_would_not_name_the_repository_says_so_rather_than_nothing() {
-        // The other half of "asked and unanswerable". Reporting it as an empty answer would
-        // be the conflation ADR 0011 exists to prevent — a sweep saying nothing is finished
-        // with, on a repository it never managed to ask about.
+        // Reporting it as an empty answer would be the conflation ADR 0011 exists to
+        // prevent — a sweep saying nothing is finished with, on a repository it never
+        // managed to ask about.
         let (remote, mut settled) = asking(Remote {
             refuses: true,
             ..Remote::default()
@@ -659,14 +627,9 @@ mod tests {
 
     #[test]
     fn the_first_repository_on_screen_that_failed_is_the_one_named() {
-        // One line, however many repositories failed — but it names its repository, because
-        // the rows cannot be relied on to: a repository whose checkouts are all primary,
-        // running or `gone` never reaches `PR unknown`, so with two failing for two reasons
-        // the sentence and the rows were about different ones. And "first" is the order the
-        // screen lists them in, which is the same on every frame. The test this replaces
-        // asserted "the first thing that went wrong" against a fake that handed each
-        // sentence to whichever thread reached it first, and it failed six full runs in
-        // forty.
+        // "First" is the order the screen lists them in, which is the same on every frame.
+        // A test asserting "the first thing that went wrong" instead races its own fake,
+        // which hands each sentence to whichever thread reaches it first.
         let (_, mut settled) = asking(Remote {
             slug: Some("me/app"),
             answer: Some(Err("gh is out".to_string())),
@@ -687,9 +650,8 @@ mod tests {
 
     #[test]
     fn a_repository_that_left_the_tree_leaves_the_prompt_line_with_it() {
-        // `answers` is read off the tree, and so is this. Kept in the map and read from
-        // there, an error from a repository no longer listed put a sentence on the prompt
-        // line with every row on screen answered and none of them saying `PR unknown`.
+        // Read from the map instead, an error from a repository no longer listed puts a
+        // sentence on the prompt line with every row on screen answered.
         let (_, mut settled) = asking(Remote {
             slug: Some("me/app"),
             answer: Some(Err("gh is out".to_string())),
@@ -707,10 +669,6 @@ mod tests {
 
     #[test]
     fn entering_a_sweep_again_asks_again_where_gh_refused_and_nowhere_else() {
-        // A `gh` that could not answer once — the network was out, the token had just
-        // expired — is not one that can never answer, and `r`, the only other way to ask
-        // again, is not taken during a sweep. Only the refusals are asked again: an answer
-        // that came is kept, for the reason `ask` asks once.
         let held = Arc::new(Held::default());
         let mut settled = Settled::new(held.clone(), held.clone());
         let tree = tree(&["/src/app", "/src/site"]);
@@ -740,11 +698,8 @@ mod tests {
 
     #[test]
     fn a_reload_stops_waiting_for_the_round_it_ended() {
-        // Whether anything is still coming is read off the map, not counted. A count of
-        // calls started had to be kept level with the map by hand, and `forget` did not
-        // keep it: the round the user had just ended went on turning the spinner until
-        // every call from it came home, and asking again put the same repository in the
-        // count twice — so the new round's answer landing was not enough to stop it.
+        // A count of calls started, rather than the map, leaves the spinner turning for a
+        // round the user has ended until every call from it comes home.
         let held = Arc::new(Held::default());
         let mut settled = Settled::new(held.clone(), held.clone());
         let tree = tree(&["/src/app"]);
@@ -763,9 +718,7 @@ mod tests {
         until("the second call never started", || held.started() == 2);
         assert!(settled.is_waiting(&tree), "the new round is");
         // Only the new round's call comes home. Which round wins when both do is
-        // `an_answer_from_before_a_reload_does_not_overwrite_the_one_after_it`'s to say,
-        // and it says so by waiting for the stale reply; released together here, the two
-        // raced, and this was green without the guard one run in six.
+        // `an_answer_from_before_a_reload_does_not_overwrite_the_one_after_it`'s to say.
         held.release(2, SettledPullRequests::All(vec![settled_pr(2, "fresh")]));
         until_answered(&mut settled, &tree);
 
@@ -781,10 +734,9 @@ mod tests {
 
     #[test]
     fn a_sweep_is_still_waiting_while_any_listed_repository_is() {
-        // Two repositories, one slow. Read as "all still out" instead of "any", the spinner
-        // stopped when the fast one landed, the prompt read as a finished sweep, and the
-        // slow one's answer then widened it under the cursor — the very thing the spinner
-        // is there to say is coming.
+        // Read as "all still out" instead of "any", the spinner stops when the fast one
+        // lands, the prompt reads as a finished sweep, and the slow one's answer then
+        // widens it under the cursor.
         let held = Arc::new(Held::default());
         let mut settled = Settled::new(held.clone(), held.clone());
         let tree = tree(&["/src/app", "/src/site"]);
@@ -823,9 +775,9 @@ mod tests {
 
     #[test]
     fn a_repository_that_answered_does_not_hide_the_one_after_it_that_could_not() {
-        // The test above this one has both repositories fail, so it pins the order and not
-        // the scan: "the first repository that failed" and "the first repository, if it
-        // failed" gave the same answer there. Here the first answered.
+        // The test above has both repositories fail, so "the first repository that failed"
+        // and "the first repository, if it failed" give the same answer there. Here the
+        // first answered.
         let held = Arc::new(Held::default());
         let mut settled = Settled::new(held.clone(), held.clone());
         let tree = tree(&["/src/app", "/src/site"]);
@@ -847,9 +799,8 @@ mod tests {
 
     #[test]
     fn a_refusal_is_named_ahead_of_a_repository_with_nothing_to_ask() {
-        // A scratch repository with no remote sorted first, and the prompt line said so for
-        // ever — while the expired token on the repository that mattered, listed second,
-        // was said nowhere. Named ahead of it now, with the rest counted.
+        // Without the order, a scratch repository with no remote holds the prompt line for
+        // ever while the expired token on the one that matters is said nowhere.
         let held = Arc::new(Held {
             no_remote: vec!["/src/local"],
             ..Held::default()
@@ -880,8 +831,8 @@ mod tests {
 
     #[test]
     fn a_repository_with_no_github_remote_is_not_asked_again_on_the_way_back_in() {
-        // Nothing about it can change while the picker is up, and asking is a
-        // `git remote get-url` — a process per repository per `Shift-S`, for ever.
+        // Asking is a `git remote get-url`: a process per repository per `Shift-S`, for an
+        // answer that cannot change while the picker is up.
         let (remote, mut settled) = asking(Remote::default());
         let tree = tree(&["/src/app"]);
 
@@ -903,10 +854,10 @@ mod tests {
 
     #[test]
     fn entering_a_sweep_again_leaves_a_question_still_out_alone() {
-        // `forget_failures` throws away refusals and nothing else. Throw away the slot of a
-        // call still out and the next `ask` starts a second call for the same repository in
-        // the same round, with the older free to land last and win; end the round instead
-        // and the call still out is disowned when it lands, so the spinner never stops.
+        // Throw away the slot of a call still out and the next `ask` starts a second call
+        // for the same repository in the same round, with the older free to land last and
+        // win; end the round instead and its answer is disowned, so the spinner never
+        // stops.
         let held = Arc::new(Held::default());
         let mut settled = Settled::new(held.clone(), held.clone());
         let tree = tree(&["/src/app", "/src/site"]);
@@ -945,9 +896,8 @@ mod tests {
 
     #[test]
     fn a_repository_that_left_the_list_and_came_back_is_asked_again() {
-        // What was learned about it went when it left. Kept, a refusal from before it left
-        // was the sweep's answer about it for the life of the picker, with no `r` inside a
-        // sweep to clear it and `forget_failures` firing only on the way in.
+        // Kept instead, a refusal from before it left is the sweep's answer about it for
+        // the life of the picker: there is no `r` inside a sweep to clear it.
         let (remote, mut settled) = asking(Remote {
             slug: Some("me/app"),
             ..Remote::default()
@@ -966,9 +916,8 @@ mod tests {
 
     #[test]
     fn a_call_still_out_keeps_its_slot_when_its_repository_leaves_the_list() {
-        // `ask` lets go of what was learned about a repository that has left — but not of a
-        // call that has not come home, or its answer would have nowhere to land and the
-        // repository coming back would start a second call in the same round.
+        // A call that has not come home keeps its slot, or its answer has nowhere to land
+        // and the repository coming back starts a second call in the same round.
         let held = Arc::new(Held::default());
         let mut settled = Settled::new(held.clone(), held.clone());
         let listed = tree(&["/src/app"]);
@@ -989,9 +938,8 @@ mod tests {
 
     #[test]
     fn the_spinner_turns_only_for_a_repository_on_the_list() {
-        // `answers` and `trouble` read from the tree; this did not, and a call still out for
-        // a repository the user could no longer see kept `asking gh…` turning with every
-        // visible row answered.
+        // Read from the map instead, a call still out for a repository the user can no
+        // longer see keeps `asking gh…` turning with every visible row answered.
         let held = Arc::new(Held::default());
         let mut settled = Settled::new(held.clone(), held.clone());
         let listed = tree(&["/src/app"]);
@@ -1008,10 +956,8 @@ mod tests {
 
     #[test]
     fn a_repository_still_being_asked_about_is_not_in_the_answer_at_all() {
-        // Absent and `None` are different questions to `domain::sweep`: absent is "nobody
-        // has asked yet" and says nothing on a row, `None` is "asked and gh could not say"
-        // and puts `PR unknown` on one. Reporting the first as the second would tell the
-        // user a sweep failed while it was still running.
+        // Reporting absent as `None` tells the user a sweep failed while it is still
+        // running.
         let (_, mut settled) = asking(Remote {
             slug: Some("me/app"),
             ..Remote::default()
@@ -1059,9 +1005,9 @@ mod tests {
 
     #[test]
     fn the_answer_is_keyed_by_the_root_and_not_the_directory_beside_it() {
-        // `RepoNode` carries `/src/app/.git` and `/src/app` side by side. `domain::sweep`
-        // looks its facts up by the second, so keying on the first answers nothing for
-        // every checkout in the tree — no marks, no `PR unknown`, no error, nothing.
+        // `RepoNode` carries `/src/app/.git` and `/src/app` side by side, and
+        // `domain::sweep` looks its facts up by the second: keying on the first answers
+        // nothing for every checkout in the tree, with no error to say so.
         let (_, mut settled) = asking(Remote {
             slug: Some("me/app"),
             ..Remote::default()

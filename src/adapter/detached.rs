@@ -87,8 +87,7 @@ fn arguments(
         label.to_string(),
         panes_closed.to_string(),
     ];
-    // Absent rather than `false`, so a removal that keeps the branch is the line it always
-    // was.
+    // Absent rather than `false`: the child reads a missing word as keeping the branch.
     if delete_branch {
         arguments.push("delete-branch".to_string());
     }

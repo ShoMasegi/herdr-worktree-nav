@@ -3,9 +3,6 @@
 //! Choosing a branch can mean a network fetch and a checkout of a whole working tree. That
 //! is seconds of work, and a picker that goes blank for it is indistinguishable from one
 //! that has crashed. Every step says what it is doing and which branch it is doing it to.
-//!
-//! Each stage also knows whether the picker can still be abandoned at that point, which is
-//! not a question about patience: see [`Stage::interruptible`].
 
 use crate::domain::dest::Destination;
 
@@ -130,8 +127,6 @@ mod tests {
 
     #[test]
     fn only_the_stages_before_herdr_is_touched_can_be_interrupted() {
-        // The rule that matters: quitting after a worktree exists but before its pane has
-        // been moved leaves a workspace nobody asked for.
         assert!(Stage::Starting { branch: "b".into() }.interruptible());
         assert!(Stage::Fetching {
             remote: "origin".into(),

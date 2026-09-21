@@ -1,7 +1,7 @@
 //! Turning a herdr snapshot into the `repo -> worktree -> pane` tree the panes view shows.
 //!
-//! This is pure: the caller resolves where each pane lives and which worktrees each
-//! repository has (via the ports), and hands the answers in.
+//! The caller resolves where each pane lives and which worktrees each repository has, via
+//! the ports, and hands the answers in.
 
 use std::collections::HashMap;
 
@@ -189,8 +189,8 @@ pub fn build(
     }
 
     for repo in &mut nodes {
-        // The main checkout first, then linked worktrees alphabetically. This keeps the
-        // repository's "home" row in a stable place as worktrees come and go.
+        // The main checkout stays first so the repository's "home" row keeps its place as
+        // worktrees come and go.
         repo.worktrees.sort_by(|a, b| {
             b.is_primary
                 .cmp(&a.is_primary)
@@ -317,9 +317,6 @@ mod tests {
 
     #[test]
     fn a_repository_whose_refs_could_not_be_read_says_so_and_marks_nothing() {
-        // A failed read marks nothing, because no marker beats a wrong one, and the
-        // repository carries git's words so the prompt line can say which it was. The
-        // other repository is untouched either way.
         let mut app = repo(
             "me/app",
             "/src/app",
@@ -376,9 +373,7 @@ mod tests {
 
     #[test]
     fn one_repositorys_branch_state_never_lands_on_anothers_checkout() {
-        // Two repositories, a branch of the same name in each, and no order between them
-        // that the lookup is allowed to depend on. Checkout paths are absolute, so they are
-        // what tells the two apart.
+        // Checkout paths are absolute, so they are what tells two same-named branches apart.
         let mut app = repo(
             "me/app",
             "/src/app",
@@ -399,9 +394,8 @@ mod tests {
 
     #[test]
     fn the_branch_is_matched_by_the_checkout_git_says_has_it() {
-        // Not by name. A ref that is not checked out anywhere says nothing about a checkout
-        // that merely shares its name, and a detached checkout has nothing pointing at it —
-        // which is exactly right: no marker rather than the wrong one.
+        // A ref that is checked out nowhere says nothing about a checkout that merely shares
+        // its name, and a detached checkout has nothing pointing at it.
         let mut input = repo(
             "me/app",
             "/src/app",
@@ -579,7 +573,6 @@ mod tests {
 
     #[test]
     fn preserves_the_snapshot_order_of_panes_within_a_worktree() {
-        // Sorting by pane id would put p10 before p9; herdr's order is the layout order.
         let tree = build(
             &snapshot(json!([
                 pane("w1:p9", None),
@@ -643,8 +636,7 @@ mod tests {
     #[test]
     fn a_track_is_read_from_the_repository_that_owns_the_checkout() {
         // Two repositories naming one path, which `tests/git_adapter.rs` shows git does.
-        // Pooled into one map the second one wins, and which that is depends on the order
-        // the repositories were listed in.
+        // Pooled into one map, which of them answers depends on the order they came in.
         let shared = "/wt/shared";
         let mut stale = repo("me/old", "/src/old", vec![]);
         stale.refs = Ok(vec![local_ref("old", Some(shared), Some(Track::Gone))]);
@@ -676,9 +668,7 @@ mod tests {
 
     #[test]
     fn two_tracked_refs_at_one_of_a_repository_s_own_paths_answer_nothing() {
-        // git does make this — `one_repository_can_name_one_path_from_two_refs` builds it —
-        // and taking the last would be a marker chosen by iteration order. The honest
-        // answer is the one a checkout with no ref of its own gets.
+        // git does make this: `one_repository_can_name_one_path_from_two_refs` builds it.
         let shared = "/wt/shared";
         let mut app = repo(
             "me/app",
@@ -730,10 +720,8 @@ mod tests {
 
     #[test]
     fn a_pane_s_own_row_is_read_from_the_repository_the_pane_is_in() {
-        // The other lookup: a pane in a checkout herdr's worktree list did not mention, so
-        // the row is made here rather than from the list. It has to draw on the repository
-        // the pane is in and not on whichever repository happens to name that path — this
-        // is issue #31 on the row `build` synthesizes itself.
+        // Issue #31 on the row `build` synthesizes itself: it has to draw on the repository
+        // the pane is in, not on whichever repository happens to name that path.
         let shared = "/wt/shared";
         let mut stale = repo("me/old", "/src/old", vec![]);
         stale.refs = Ok(vec![local_ref("old", Some(shared), Some(Track::Gone))]);
@@ -792,9 +780,8 @@ mod tests {
 
     #[test]
     fn a_remote_ref_at_a_checkout_is_not_a_second_ref_of_the_repositorys() {
-        // Only local refs count. A second ref at a path is answered with nothing, so a
-        // remote ref carrying a `%(worktreepath)` would not overwrite the marker but take
-        // it away.
+        // A second ref at a path is answered with nothing, so a remote ref carrying a
+        // `%(worktreepath)` would not overwrite the marker but take it away.
         let shared = "/wt/shared";
         let mut app = repo(
             "me/app",
@@ -892,8 +879,7 @@ mod tests {
     #[test]
     fn a_repository_key_herdr_and_the_placement_spell_differently_is_one_repository() {
         // `RepoInput::repo_key` and `PanePlacement::repo_key` are two fields, and every site
-        // that reads either normalizes it. Spelled two ways here, the pane has to land in its
-        // repository and its row has to draw the marker.
+        // that reads either normalizes it.
         let shared = "/wt/shared";
         let mut app = repo(
             "me/app",
@@ -956,9 +942,8 @@ mod tests {
     #[test]
     fn two_refs_that_agree_about_where_they_stand_still_answer_nothing() {
         // Two refs at one path disagree about which branch is there whatever their tracks
-        // say. Both `[gone]` is the ordinary way it happens — two branches whose upstreams
-        // were deleted — and a rule that only collapsed on differing tracks would hand the
-        // row a `gone` built out of a contradiction.
+        // say, and both `[gone]` is the ordinary way it happens. A rule that collapsed only
+        // on differing tracks would hand the row a `gone` built out of a contradiction.
         let shared = "/wt/shared";
         let mut app = repo(
             "me/app",
@@ -977,12 +962,10 @@ mod tests {
     #[test]
     fn what_a_branchless_row_draws_turns_on_whether_herdr_listed_it() {
         // The two rows `build` makes, over one repository's identical git facts: a stale
-        // registration goes on naming `/wt/shared` for `chore/deps`, whose upstream was
-        // deleted, and nothing is checked out there. The row herdr listed is refused the
-        // marker and the row `build` makes for a pane herdr never mentioned keeps it, each
-        // for the reason `build`'s own comment gives. Both carry `branch: None`; the second
-        // draws `gone` about a branch it never names — issue #49, pinned here so it stays a
-        // measured difference.
+        // registration goes on naming a path for `chore/deps`, whose upstream was deleted,
+        // and nothing is checked out there. Both rows carry `branch: None`, and only the one
+        // `build` makes for a pane draws `gone` about a branch it never names — issue #49,
+        // pinned here so the difference stays deliberate.
         let shared = "/wt/shared";
         let stale = || local_ref("chore/deps", Some(shared), Some(Track::Gone));
 

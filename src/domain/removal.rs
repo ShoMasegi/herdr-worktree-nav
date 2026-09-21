@@ -192,13 +192,11 @@ pub fn notification(
         RemovalOutcome::Removed => Notification {
             title: format!("removed {label}"),
             body: Some(checkout_path.to_string()),
-            // Tidying up is done often, and a chime for every checkout that goes is noise.
             sound: NotificationSound::None,
         },
         RemovalOutcome::Refused(reason) => Notification {
             title: format!("could not remove {label}"),
-            // git's words, and what it cost to reach them. Not a summary of what git said:
-            // the reason it gave is what says what would have been lost.
+            // git's words, and what it cost to reach them.
             body: Some(refusal(reason, panes_closed)),
             // The one that has to reach someone who is no longer looking.
             sound: NotificationSound::Request,
@@ -313,8 +311,6 @@ mod tests {
 
     #[test]
     fn a_sweep_skips_a_key_the_tree_no_longer_has() {
-        // Between the box and the `y` nothing replaces the tree without withdrawing the
-        // question; this is the last line of the same promise, for a key with nothing at it.
         let tree = tree();
         let sweep = SweepRemoval::of(
             &tree,
@@ -364,8 +360,6 @@ mod tests {
 
     #[test]
     fn a_kept_branch_whose_reason_spans_lines_still_travels_as_one() {
-        // The same fold a refusal gets: however many lines the reason had, the channel is
-        // one.
         let line = report_line(&RemovalOutcome::BranchKept(
             "error: the branch 'fix/crash' is not fully merged\nhint: run 'git branch -D'"
                 .to_string(),
@@ -382,7 +376,6 @@ mod tests {
 
     #[test]
     fn a_kept_branch_is_a_removal_that_says_so_without_a_sound() {
-        // The checkout the user asked about went; the branch is still in the branches view.
         let notification = notification(
             "fix/crash",
             "~/.herdr/worktrees/app/fix-crash",
@@ -409,8 +402,6 @@ mod tests {
 
     #[test]
     fn only_a_sweep_of_a_checkout_on_a_branch_asks_for_the_branch_to_go() {
-        // A checkout with no branch has a directory name for a label, and that name must
-        // never reach `git branch -d`.
         assert!(Removal::sweeping("/src/app", &checkout(Some("fix/crash"))).delete_branch());
         assert!(!Removal::sweeping("/src/app", &checkout(None)).delete_branch());
         assert!(
@@ -442,17 +433,12 @@ mod tests {
 
     #[test]
     fn anything_else_on_that_channel_is_not_an_outcome() {
-        // A line the picker cannot read is not a removal it can report on. Saying so beats
-        // guessing that silence meant success.
         assert_eq!(parse_report(""), None);
         assert_eq!(parse_report("Killed"), None);
     }
 
     #[test]
     fn a_refusal_after_panes_were_closed_says_that_they_were() {
-        // The one case where a failure is not simply "nothing happened": the panes are
-        // already gone by the time git speaks, and a report that only quoted git would
-        // leave the user to work that out from an empty tab.
         let notification = notification(
             "fix/crash",
             "~/.herdr/worktrees/app/fix-crash",
@@ -477,8 +463,6 @@ mod tests {
 
     #[test]
     fn a_close_that_stopped_partway_says_how_far_it_got() {
-        // The other half of the same rule: panes are gone, the checkout is not, and the
-        // reader would otherwise have herdr's bare refusal and an emptied tab to reconcile.
         assert_eq!(
             interrupted(
                 "w1:p3",
@@ -508,8 +492,6 @@ mod tests {
 
     #[test]
     fn a_removal_that_worked_does_not_dwell_on_the_panes() {
-        // They were listed in the question and the checkout is gone; saying it again is
-        // saying twice what the row leaving the list already said once.
         let notification = notification(
             "fix/crash",
             "~/.herdr/worktrees/app/fix-crash",
@@ -567,7 +549,6 @@ mod tests {
 
     #[test]
     fn the_picker_repeats_the_refusal_and_says_which_checkout_it_was_about() {
-        // Several removals can be in flight at once, so the reason has to name its own.
         assert_eq!(
             message(
                 "fix/crash",

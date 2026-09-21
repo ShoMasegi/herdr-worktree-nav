@@ -1,10 +1,6 @@
 //! Flattening the tree into the rows the panes picker draws, in the shape herdr's own
-//! session navigator uses.
-//!
-//! A row carries what the navigator's rows carry: a depth for the tree glyphs, a label, a
-//! right-hand `meta` column, an aggregate status, whether it is the row the session is
-//! currently on, and whether it matched the active filter — a row that did not match itself
-//! is kept as context and drawn dimmed rather than removed.
+//! session navigator uses: a row that did not match the filter itself is kept as context and
+//! drawn dimmed rather than removed.
 //!
 //! Pure, so the shape of the list under every combination of folding, filtering, and hidden
 //! ungrouped panes is covered by ordinary tests rather than by squinting at a terminal.
@@ -65,16 +61,12 @@ pub struct Row {
     /// `None` is the ordinary state of the first frame — and a marker that is wrong for a
     /// moment is worse than one that is late.
     ///
-    /// Only `marks` reads this — a rule rather than an invariant, since the field is `pub`.
-    /// In a live `PanesState` it lags on purpose: `set_working_trees` does not rebuild the
-    /// list for an answer no row would draw, so a checkout that has just answered `Clean`
-    /// keeps the `None` it was flattened with until something else rebuilds. A reload does;
-    /// so does another checkout answering something a row *does* draw; so does
-    /// `set_removing`, but only when the removing set actually changes, which with no
-    /// removal running is never. The two render identically, which is what makes the elision
-    /// sound. What it is not is a fact about
-    /// the checkout: `Some(Clean)` and `None` here are the same row drawn at two different
-    /// moments, and telling the two apart is `ViewOptions::working_trees`' job.
+    /// Not a fact about the checkout: in a live `PanesState` this lags, because
+    /// `set_working_trees` does not rebuild the list for an answer no row would draw, so a
+    /// checkout that has just answered `Clean` keeps the `None` it was flattened with until
+    /// something else rebuilds. The two render identically, which is what makes that sound.
+    /// Only `marks` reads this, and telling the two apart is `ViewOptions::working_trees`'
+    /// job.
     pub working_tree: Option<WorkingTree>,
     /// What git said about this checkout's branch against its upstream.
     pub track: Option<Track>,
@@ -99,16 +91,14 @@ impl Row {
     /// the arrow keys longer to press.
     ///
     /// A sweep changes what the cursor is for, so it changes this: every checkout is a row
-    /// with an answer on it, the ones the sweep refuses included, and a refusal is asked
-    /// for by pressing `Space` on the row. Without this the cursor stepped
-    /// over the checkouts with panes in them — the refusal with the most to explain. One
-    /// refusal stays out of reach: a checkout being removed is not a row the cursor stops
-    /// on, sweep or no sweep, and `deleting` on the row is what says so.
+    /// with an answer on it, the ones the sweep refuses included, since a refusal is asked
+    /// for by pressing `Space` on the row. One refusal stays out of reach: the cursor does
+    /// not stop on a checkout being removed, sweep or no sweep, and `deleting` on the row is
+    /// what says so.
     pub fn is_selectable(&self) -> bool {
         if self.is_removing {
-            // Nothing left to do to it, sweep or no sweep. A second `Shift-D` would race the
-            // first, Enter would open a checkout being deleted underneath, and the sweep
-            // refuses it anyway — with `deleting` already on the row saying why.
+            // A second `Shift-D` would race the first, and Enter would open a checkout being
+            // deleted underneath.
             return false;
         }
         match self.reference {
@@ -152,11 +142,10 @@ pub fn marks(row: &Row) -> String {
 /// How much room a row's marks are allowed to take without moving the meta column.
 ///
 /// The marker for what a `git status` said is counted whether it is showing or not — and
-/// `✱` and `?` are the same width, so one reserve serves both. It appears a beat after the
+/// `✱` and `?` are the same width, so one reserve serves both. It arrives a beat after the
 /// first frame, with the list already on screen, and the meta column is a maximum over every
 /// row: measuring only what is showing would jump every path in the list sideways once,
-/// including the paths of rows in repositories that have not changed at all. Three reserved
-/// columns are the price of that not happening.
+/// including the paths of rows in repositories that have not changed at all.
 ///
 /// Ahead, behind and `gone` are measured exactly, because they are known before the first
 /// frame and cannot change without a reload — which redraws the whole list anyway.
@@ -248,17 +237,15 @@ pub struct ViewOptions {
     /// read, because this module does not touch the environment.
     pub home: Option<String>,
     /// Checkout paths whose removal has been started and has not reported back. Passed in
-    /// for the same reason `home` is: which processes are running is not something this
-    /// module is allowed to find out for itself.
+    /// for the same reason `home` is.
     pub removing: Vec<CheckoutPath>,
     /// What git has said about each working tree so far. A checkout that has not answered
     /// is absent, which is a different fact from `Clean` and decides different things — see
     /// `domain::model::WorkingTree`.
     pub working_trees: BTreeMap<CheckoutPath, WorkingTree>,
     /// What a sweep would do with each checkout, by repository and checkout path, or `None`
-    /// when no sweep is on. Worked out once by `domain::sweep::marks` and handed here,
-    /// rather than recomputed per row: the same answer decides what is drawn and what is
-    /// deleted, and two of it is one too many.
+    /// when no sweep is on. Worked out once by `domain::sweep::marks` and handed here: the
+    /// same answer decides what is drawn and what is deleted.
     pub sweep: Option<BTreeMap<(RepoKey, CheckoutPath), Mark>>,
 }
 
@@ -604,8 +591,7 @@ pub fn selectable(rows: &[Row], lines: &[DisplayLine], index: usize) -> bool {
 /// The breadcrumb shown under the list for the row the cursor is on.
 ///
 /// This is where the checkout path lives. The navigator keeps its rows to a label and one
-/// meta column and puts the fuller context here, so the list stays scannable and nothing is
-/// actually lost.
+/// meta column and puts the fuller context here, so the list stays scannable.
 pub fn detail(tree: &Tree, reference: RowRef) -> String {
     let parts: Vec<String> = match reference {
         RowRef::Repo(repo_index) => {
@@ -686,15 +672,13 @@ pub fn detail(tree: &Tree, reference: RowRef) -> String {
 /// What the prompt line says when git would not read a repository's refs, or nothing.
 ///
 /// The first such repository on screen, named, with git's words, and the rest counted. The
-/// rows cannot say this themselves: a checkout with no track marker is drawn the same
-/// whether git had nothing to say or would not say it — the right row, and the wrong
-/// silence — so this is the one place the difference is visible. The same shape `gh`
-/// failing takes during a sweep, and shown ahead of it: refs not read is about ahead,
-/// behind and `gone` on every row of the repository, sweep or no sweep.
+/// rows cannot say this themselves: a checkout with no track marker is drawn the same whether
+/// git had nothing to say or would not say it, so this is the one place the difference is
+/// visible. Shown ahead of the same line for `gh` failing, because refs not read is about
+/// ahead, behind and `gone` on every row of the repository, sweep or no sweep.
 ///
 /// `refs unreadable` is the word the row uses in a sweep and `dump` uses under the
-/// repository, so a reader meets one term in all three places. It is short on purpose:
-/// what follows is git's, and the prompt line is one line.
+/// repository, so a reader meets one term in all three places.
 pub fn refs_trouble(tree: &Tree) -> Option<String> {
     let mut unreadable = tree.repos.iter().filter_map(|repo| match &repo.refs {
         Refs::Read => None,
@@ -854,8 +838,7 @@ mod tests {
 
     #[test]
     fn a_repository_leaves_its_path_to_the_checkout_below_it() {
-        // The main checkout sits directly under it with the same path; printing both is
-        // noise.
+        // The main checkout sits directly under it with the same path.
         let rows = flatten(&tree(), &ViewOptions::default());
         assert_eq!(find(&rows, "me/app (3)").meta, "");
     }
@@ -915,9 +898,8 @@ mod tests {
     }
 
     /// `None` is a checkout nobody has answered for, which is a third thing and not a
-    /// synonym for clean. Taking a bool here would collapse the two into one `false`,
-    /// which pins the behaviour while naming neither state — and `Clean` is then an arm
-    /// nothing in these tests asks for by name.
+    /// synonym for clean. A bool here would collapse the two into one `false`, naming
+    /// neither state.
     fn marks_for(working_tree: Option<WorkingTree>, track: Option<Track>) -> String {
         let mut tree = tree();
         tree.repos[0].worktrees[2].track = track;
@@ -1026,9 +1008,8 @@ mod tests {
 
     #[test]
     fn a_checkout_whose_answer_has_not_arrived_is_drawn_without_a_marker() {
-        // Asking whether a checkout is dirty is a process per checkout, so the answers
-        // arrive after the first frame. Not yet known and known-clean draw the same, on
-        // purpose: the alternative is a marker that is wrong for a moment.
+        // Asking whether a checkout is dirty is a process per checkout, so the answers arrive
+        // after the first frame. The alternative is a marker that is wrong for a moment.
         let rows = flatten(&tree(), &ViewOptions::default());
         assert_eq!(find(&rows, "fix/crash").working_tree, None);
         assert_eq!(marks(find(&rows, "fix/crash")), "", "and so draws nothing");
@@ -1051,7 +1032,7 @@ mod tests {
     #[test]
     fn a_checkout_being_removed_says_that_instead_of_saying_it_is_empty() {
         // The removal runs in a process of its own, so the row has to say what is happening
-        // to it for as long as the picker is up to draw it.
+        // to it for as long as the picker is up.
         let options = ViewOptions {
             removing: vec![CheckoutPath::for_test("/wt/fix-crash")],
             ..Default::default()
@@ -1063,8 +1044,8 @@ mod tests {
 
     #[test]
     fn the_cursor_does_not_stop_on_a_checkout_that_is_going() {
-        // There is nothing left to do to it: a second Shift-D would race the first, and
-        // opening it would open something that is being deleted underneath.
+        // A second Shift-D would race the first, and opening it would open something that is
+        // being deleted underneath.
         let options = ViewOptions {
             removing: vec![CheckoutPath::for_test("/wt/fix-crash")],
             ..Default::default()
@@ -1224,9 +1205,7 @@ mod tests {
 
     #[test]
     fn every_repository_on_screen_has_something_selectable_under_it() {
-        // Otherwise the arrow keys could reach a group and then have nowhere to go inside
-        // it. A checkout either has panes, which are selectable, or has none, which makes
-        // the checkout itself selectable.
+        // Otherwise the arrow keys could reach a group and then have nowhere to go inside it.
         for options in [
             ViewOptions::default(),
             ViewOptions {
@@ -1306,8 +1285,7 @@ mod tests {
             "and wraps to the last thing there is to go to"
         );
 
-        // A blank line, the heading after it, and the checkout that already has panes are
-        // all stepped over in one go.
+        // A blank line, the heading after it, and a checkout with panes, in one go.
         let spacer = lines
             .iter()
             .position(|line| *line == DisplayLine::Spacer)
@@ -1458,8 +1436,7 @@ mod tests {
             Some("me/site: refs unreadable: fatal: bad ref for refs/heads/x")
         );
 
-        // Two in trouble: the first on screen is named, the other counted — the shape the
-        // sweep's `gh` line already has, so the reader learns one.
+        // Two in trouble: the first on screen is named, the other counted.
         tree.repos[0].refs = Refs::Unreadable("fatal: index file corrupt".into());
         assert_eq!(
             refs_trouble(&tree).as_deref(),

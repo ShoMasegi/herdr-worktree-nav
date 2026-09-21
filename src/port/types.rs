@@ -165,8 +165,7 @@ pub struct Pane {
 }
 
 impl Pane {
-    /// The directory this pane is really working in. Prefers the foreground process's cwd,
-    /// which follows the user into subdirectories, and falls back to the shell's.
+    /// The directory this pane is really working in, preferring the foreground process's.
     pub fn effective_cwd(&self) -> Option<&str> {
         self.foreground_cwd
             .as_deref()
