@@ -8,6 +8,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::domain::model::{CheckoutPath, RepoKey, Tree, WorkingTree};
+use crate::domain::notice::{self, Notice};
 use crate::domain::removal::{Removal, SweepRemoval};
 use crate::domain::rows::{self, DisplayLine, Row, RowRef, StateFilter, ViewOptions};
 use crate::domain::sweep::{self, Changes, Mark, RepoRoot};
@@ -540,7 +541,15 @@ impl PanesState {
     /// while `gh` is asked only during a sweep and about the half git could not decide. One
     /// sentence at a time, so the `gh` one waits behind the git one until that is fixed.
     pub fn trouble(&self) -> Option<String> {
-        rows::refs_trouble(&self.tree).or_else(|| self.sweep_trouble().map(str::to_string))
+        notice::summarize(&self.conditions())
+    }
+
+    /// Everything that is wrong right now, in full and in order.
+    ///
+    /// The prompt line can hold one of these; this is what the count on the end of it is
+    /// standing in for, and what a reader who wants the rest is shown.
+    pub fn conditions(&self) -> Vec<Notice> {
+        notice::conditions(&self.tree, self.sweep_trouble())
     }
 
     /// Whether a sweep has been entered since this was last asked. True once per entry.
@@ -1738,7 +1747,9 @@ mod tests {
         );
 
         // Both in trouble during a sweep: git's is the one about the track markers on the
-        // row, so it is the one said, and `gh`'s waits behind it.
+        // row, so it is the one said. `gh`'s waits behind it and is counted, not dropped —
+        // a line that named one of two and said nothing about the other would read as the
+        // whole story, and the count is what a reader follows to the rest.
         state.handle_key(key(KeyCode::Char('S')));
         state.set_settled(
             BTreeMap::from([(RepoRoot::of(&state.tree.repos[0]), None)]),
@@ -1748,7 +1759,12 @@ mod tests {
         assert_eq!(state.sweep_trouble(), Some("me/app: gh could not be run"));
         assert_eq!(
             state.trouble().as_deref(),
-            Some("me/app: refs unreadable: fatal: bad ref")
+            Some("me/app: refs unreadable: fatal: bad ref (+1 more)")
+        );
+        assert_eq!(
+            state.conditions().len(),
+            2,
+            "and both are there in full for whoever asks for them"
         );
 
         let mut tree = state.tree.clone();

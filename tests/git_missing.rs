@@ -14,7 +14,7 @@ use herdr_worktree_nav::port::GitPort;
 #[test]
 fn a_git_that_cannot_be_started_reaches_the_prompt_line_words_first() {
     // The sentence has to read the way a refusal does, because it arrives where a refusal
-    // does: `domain::rows::refs_trouble` puts it after `me/app: refs unreadable:` and the
+    // does: `domain::notice::conditions` puts it after `me/app: refs unreadable:` and the
     // prompt line cuts what does not fit off the right. Built the other way round, what
     // survived the cut was the plugin's own argv.
     std::env::set_var("PATH", "");

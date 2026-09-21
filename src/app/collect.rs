@@ -35,7 +35,7 @@ pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapsho
 /// without them first.
 ///
 /// A repository git could not answer for carries no markers and says so: git's words go on
-/// the repository, and the prompt line names it once — `domain::rows::refs_trouble`.
+/// the repository, and the prompt line names it once — `domain::notice::conditions`.
 fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
     // No chunking: repositories are however many the user has panes open in, which is a
     // handful — unlike working directories, where every pane can have its own.
