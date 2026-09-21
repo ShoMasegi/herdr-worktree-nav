@@ -201,7 +201,8 @@ degradation**, where nothing false is shown but no part of the screen admits the
 doing less than it claims; a **reporting defect**, where the failure is caught and said, and
 the wording, placement, language or moment it disappears is wrong; or a **limit we accept**,
 where the honest answer is that we do not look — `git status --porcelain` cannot see work
-under an ignored directory, and seeing it means asking a different question. Only the third
+under an ignored directory, and seeing it means asking a different question
+([issue #68](https://github.com/ShoMasegi/herdr-worktree-nav/issues/68)). Only the third
 one is closed. The distinction a later reader needs is between *nobody noticed* and *we
 decided not to*, and only the second can be recorded.
 

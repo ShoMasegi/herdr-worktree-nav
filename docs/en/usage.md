@@ -58,6 +58,11 @@ running in it. Repository headings and checkouts that already have panes are ste
 the panes listed directly under them are the answer, and stopping on the header first would
 only make the walk longer. They stay on screen; the arrow keys just pass through them.
 
+Every row is drawn from a reading taken at some point in the past, so a pane can close or a
+checkout can go while the picker is up. `Enter` on such a row leaves the picker where it is
+and says what herdr said on the prompt line, and the list is read again on the spot — the key
+that worked is the one that closes the picker.
+
 ### Seeing what is finished with
 
 `Shift-D` deletes one checkout because you put the cursor on it. `Shift-S` answers a
@@ -301,6 +306,15 @@ ask, and git's answer comes back as a notification. `gone` means git
 cannot find the ref the branch tracks; usually that is a merged pull request whose head
 GitHub deleted and an `f` fetch in the branches view then pruned, but an upstream you have
 never fetched reads the same, because to git it is the same.
+
+What git reports is not everything the directory holds. A path the repository has been told
+to ignore is outside the question, and so is a file someone has marked `assume-unchanged`:
+git has nothing to say about either, so neither raises a `✱` and neither stops a sweep.
+`git worktree remove` is blind to the same two, so a checkout that goes on the strength of a
+missing `✱` takes exactly what deleting the directory by hand would have taken — a build
+directory, an `.env` under an ignored path. What the picker does pin is the question itself:
+it asks git with untracked files included whatever `status.showUntrackedFiles` is set to, so
+an ordinary untracked file is never read as nothing.
 
 Ahead, behind and `gone` come out of the same `git for-each-ref` the picker already runs, so
 they are there in the first frame. Whether a working tree is dirty is not: git has to walk
