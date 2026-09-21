@@ -146,6 +146,7 @@ herdr plugin action invoke herdr-worktree-nav.open-panes
 - [使い方](docs/ja/usage.md) — すべてのキーと、その動作
 - [設定](docs/ja/configuration.md)
 - [アーキテクチャ](docs/ja/architecture.md) — 構成と、その理由
+- [エラーハンドリング](docs/ja/error-handling.md) — 失敗を何に変えてよいか、誰が直すか
 - [トラブルシューティング](docs/ja/troubleshooting.md)
 - [設計判断の記録](docs/adr/) — 後から読んだ人が元に戻したくなるであろう選択の理由（英語）
 

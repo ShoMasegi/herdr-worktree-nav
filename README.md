@@ -172,6 +172,7 @@ herdr plugin action invoke herdr-worktree-nav.open-panes
 - [Usage](docs/en/usage.md) — every key, and what each one does
 - [Configuration](docs/en/configuration.md)
 - [Architecture](docs/en/architecture.md) — how it is put together, and why
+- [Error handling](docs/en/error-handling.md) — what a failure may turn into, and who has to fix it
 - [Troubleshooting](docs/en/troubleshooting.md)
 - [Decision records](docs/adr/) — the choices a later reader would otherwise undo
 
