@@ -1,0 +1,16 @@
+---
+source: src/ui/render/panes.rs
+expression: "screen(&state, 92, 12)"
+---
+" / codex█                                                                           5 panes "
+"────────────────────────────────────────────────────────────────────────────────────────────"
+" ◆ ● me/app (3)                                                                             "
+"   └── ○ feat/login       /wt/feat-login                                                    "
+"      └── ○ codex         w2:p1                                                             "
+"                                                                                            "
+"                                                                                            "
+"                                                                                            "
+"                                                                                            "
+"                                                                                            "
+" me/app · feat/login · w2:p1 · idle · /wt/feat-login ───────────────────────────────────────"
+" ↵ keep search  ctrl+u clear  esc cancel  ↑↓ move  ←→ repo                                  "

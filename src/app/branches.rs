@@ -183,7 +183,7 @@ pub fn run(
                     state.tick();
                     last_tick = std::time::Instant::now();
                 }
-                terminal.draw(|frame| render::draw_branches(frame, &state, theme))?;
+                terminal.draw(|frame| render::branches::draw(frame, &state, theme))?;
 
                 match receiver.try_recv() {
                     Ok(Update::Fetched { repo_root, result }) => {

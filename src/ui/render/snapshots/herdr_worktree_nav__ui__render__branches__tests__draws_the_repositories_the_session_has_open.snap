@@ -1,0 +1,16 @@
+---
+source: src/ui/render/branches.rs
+expression: "branches_screen(&branches_picker(), 92, 12)"
+---
+" / search repositories                                                       2 repositories "
+"────────────────────────────────────────────────────────────────────────────────────────────"
+" ◆ me/app    2 worktrees, 1 pane    /src/app                                                "
+"   me/notes  1 worktree, 1 pane     ~/src/notes                                             "
+"                                                                                            "
+"                                                                                            "
+"                                                                                            "
+"                                                                                            "
+"                                                                                            "
+"                                                                                            "
+" me/app · /src/app ─────────────────────────────────────────────────────────────────────────"
+" ↵ branches  j/k move  / search  ⇥ panes  q close                                           "
