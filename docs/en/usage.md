@@ -26,6 +26,7 @@ branch list starts on.
 | `Enter` on a pane | go to it |
 | `Enter` on a checkout with nothing running | open it |
 | `n` | add a pane to the checkout under the cursor |
+| `p` | show or hide worktrees without panes |
 | `Shift-D` | delete the checkout under the cursor, after asking |
 | `Shift-S` | sweep: show which checkouts are finished with |
 | `Tab` | branches, starting on the repository under the cursor |
@@ -46,6 +47,10 @@ what you are typing.
 
 Panes that are not inside a repository are always listed, in a section of their own at the
 bottom. They are still panes, and a picker that hides some of them makes you wonder which.
+
+Worktrees without panes are visible by default. Press `p` to show or hide them. The plugin
+configuration can change the initial value. A sweep always shows them because they are its
+main cleanup candidates.
 
 The cursor stops only where there is somewhere to go: a pane, and a checkout with nothing
 running in it. Repository headings and checkouts that already have panes are stepped over —

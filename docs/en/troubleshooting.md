@@ -18,9 +18,24 @@ herdr-worktree-nav dump
 Prints the tree the panes view would draw, and under each checkout what git said about it:
 
 ```
+herdr 0.7.4 (protocol 16)
+chrome: accent Named(Cyan), indicators Dots
+plugin config: /Users/me/.config/herdr/plugins/config/herdr-worktree-nav/config.toml
+[panes].show_worktrees_without_panes: false
+1 panes in 2 repos
+
+me/app  [/Users/me/Workspace/app]
   - fix/crash  /Users/me/.herdr/worktrees/app/fix-crash
       upstream origin/fix/crash  track gone  working tree clean
 ```
+
+The two plugin lines show the file and the effective preference. If no file exists,
+the first line reads `plugin config: missing, defaults`.
+
+An unreadable or invalid plugin file adds `plugin config problem:` and the reason to the
+dump. It does not close the picker. The picker opens with the defaults and puts
+`plugin config.toml: …` on the prompt line. Fix that file, close the picker, and open it
+again.
 
 `track level` is a branch even with its upstream and `upstream none` one with no upstream to
 be even with — the same empty marker on a row. `working tree unreadable:` carries git's own

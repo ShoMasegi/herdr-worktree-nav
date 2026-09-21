@@ -48,10 +48,11 @@ drifted from its upstream, `gone` when git cannot find the ref it tracks, `✱` 
 working tree is holding work nobody has committed — which is what `git worktree remove` would
 refuse — and `?` when git would not read the working tree at all.
 
-`Enter` goes there — across spaces, across tabs, straight to the pane. A worktree with no
-pane in it is listed too, and `Enter` opens it. `←`/`→` jump to the head of the previous or
-next repository. `b`/`w`/`i`/`d` narrow to one agent state and `a` clears that, exactly as
-they do in the navigator.
+`Enter` goes there — across spaces, across tabs, straight to the pane. Press `p` to show or
+hide worktrees with no pane. `Enter` opens one after it becomes visible. The plugin shows
+these worktrees by default, and its configuration can change that initial value. `←`/`→`
+jump to the head of the previous or next repository. `b`/`w`/`i`/`d` narrow to one agent
+state and `a` clears that, exactly as they do in the navigator.
 
 ## Branches — get me onto that branch
 

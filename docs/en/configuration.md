@@ -2,9 +2,45 @@
 
 [日本語](../ja/configuration.md)
 
-herdr-worktree-nav has no configuration file of its own. Everything it honours is either
-herdr's configuration or the state of your repository, which is deliberate: two tools
-disagreeing about where worktrees go is worse than one tool having fewer knobs.
+herdr-worktree-nav reads one optional configuration file of its own. It never writes this
+file. herdr still controls shared behavior such as the worktree directory and appearance.
+
+## Plugin preferences
+
+Find the configuration directory for this plugin:
+
+```sh
+herdr plugin config-dir herdr-worktree-nav
+```
+
+Create `config.toml` in the directory that the command prints. These commands create an
+empty file at the usual location:
+
+```sh
+config_dir="$(herdr plugin config-dir herdr-worktree-nav)"
+mkdir -p "$config_dir"
+touch "$config_dir/config.toml"
+```
+
+The usual path is `~/.config/herdr/plugins/config/herdr-worktree-nav/config.toml`.
+
+```toml
+[panes]
+show_worktrees_without_panes = false
+```
+
+The default value is `true`, which preserves the current behavior. Set the value to `false`
+if each panes view must start with worktrees without panes hidden.
+
+Press `p` to reverse this preference while the picker is open. The toggle stays active
+across a switch to the branches view. The plugin does not write the new value to the file.
+
+An unknown key or invalid TOML is reported on the prompt line as `plugin config.toml:` and
+then the reason, and the picker opens with the defaults. That keeps a misspelled preference
+from having no visible effect, without taking the picker down.
+
+The picker reads this file when its process starts. After each change, close the picker and
+open it again. `herdr server reload-config` does not reload this plugin file.
 
 ## Keybindings
 
@@ -29,7 +65,8 @@ while `prefix+g` is herdr's own `goto`, `prefix+shift+g` is `new_worktree`, `pre
 `workspace_picker`, and `prefix+b` toggles the sidebar. A binding here wins, so one that
 collides silently costs you a herdr command you already had.
 
-Reload with `herdr server reload-config`.
+After a keybinding change, run `herdr server reload-config`. This command reloads herdr's
+main `config.toml`, not the plugin file above.
 
 Both actions are available from herdr's action menu without a binding, and directly:
 
@@ -116,7 +153,7 @@ herdr sets these; you do not.
 | `HERDR_SOCKET_PATH` | the API socket. Without it the binary exits with an explanation. |
 | `HERDR_PLUGIN_CONTEXT_JSON` | which pane and repository the action was invoked from |
 | `HERDR_PLUGIN_ROOT` | locating the binary from the pane entrypoints |
-| `HERDR_PLUGIN_CONFIG_DIR` | locating herdr's own `config.toml`, to read the two settings above |
+| `HERDR_PLUGIN_CONFIG_DIR` | finds the plugin file and herdr's own `config.toml` |
 
 The action passes two of its own to the pane it opens, because a pane process cannot work
 them out for itself:

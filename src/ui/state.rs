@@ -325,6 +325,24 @@ impl PanesState {
         self.options.state_filter
     }
 
+    /// Whether worktrees that contain no pane are visible.
+    pub fn shows_worktrees_without_panes(&self) -> bool {
+        // ViewOptions stores the hide rule, but this API describes visible rows.
+        !self.options.hide_worktrees_without_panes
+    }
+
+    /// Set visibility from the plugin configuration or the runtime `p` toggle.
+    pub fn set_show_worktrees_without_panes(&mut self, show: bool) {
+        if self.shows_worktrees_without_panes() == show {
+            return;
+        }
+        let anchor = self.anchor();
+        let at = self.cursor;
+        self.options.hide_worktrees_without_panes = !show;
+        self.relist();
+        self.restore_cursor(anchor, at);
+    }
+
     pub fn is_filtering(&self) -> bool {
         self.filtering
     }
@@ -588,10 +606,10 @@ impl PanesState {
             // under `/login` marked and counted checkouts nothing on screen mentioned.
             //
             // Clearing is the version of that a reader can hold: with no query and no state
-            // filter, `flatten` drops nothing, so what is judged and what is drawn are the
-            // same list by construction rather than by a second filter agreeing with the
-            // first. `/` and the state keys are `Ignored` while a sweep is on, so it cannot
-            // become filtered again underneath one.
+            // filter, `flatten`'s only other drop is the no-pane hide. That hide requires
+            // `options.sweep.is_none()`, so a sweep disables it. What is judged and what is
+            // drawn are the same list by construction. `/` and the state keys are `Ignored`
+            // while a sweep is on, so it cannot become filtered again underneath one.
             self.options.query.clear();
             self.options.state_filter = None;
         }
@@ -1011,6 +1029,10 @@ impl PanesState {
             }
             KeyCode::Enter => self.activate(),
             KeyCode::Char('n') => self.new_pane(),
+            KeyCode::Char('p') => {
+                self.set_show_worktrees_without_panes(!self.shows_worktrees_without_panes());
+                Action::Consumed
+            }
             KeyCode::Char('r') => Action::Reload,
             KeyCode::Char('b') => self.set_state_filter(Some(StateFilter::Blocked)),
             KeyCode::Char('w') => self.set_state_filter(Some(StateFilter::Working)),
@@ -2393,6 +2415,57 @@ mod tests {
     fn panes_that_are_not_in_a_repository_are_always_listed() {
         // They are still panes. A picker that hides some of them makes you wonder which.
         assert!(row_labels(&state()).contains(&"zsh".to_string()));
+    }
+
+    #[test]
+    fn p_toggles_worktrees_without_panes() {
+        let mut state = state();
+        state.set_show_worktrees_without_panes(false);
+        assert!(!row_labels(&state).contains(&"fix/crash".to_string()));
+
+        assert_eq!(state.handle_key(key(KeyCode::Char('p'))), Action::Consumed);
+        assert!(state.shows_worktrees_without_panes());
+        assert!(row_labels(&state).contains(&"fix/crash".to_string()));
+
+        state.handle_key(key(KeyCode::Char('p')));
+        assert!(!state.shows_worktrees_without_panes());
+        assert!(!row_labels(&state).contains(&"fix/crash".to_string()));
+    }
+
+    #[test]
+    fn p_keeps_the_cursor_on_a_still_visible_pane() {
+        let mut state = state();
+        // This pane follows the row that disappears, so this also checks the cursor repair.
+        select(&mut state, "zsh");
+
+        assert_eq!(state.handle_key(key(KeyCode::Char('p'))), Action::Consumed);
+        assert_eq!(cursor_label(&state), "zsh");
+    }
+
+    #[test]
+    fn hide_moves_the_cursor_off_a_worktree_that_disappears() {
+        let mut state = state();
+        select(&mut state, "fix/crash");
+        state.set_show_worktrees_without_panes(false);
+        assert_ne!(cursor_label(&state), "fix/crash");
+        assert!(rows::selectable(
+            state.rows(),
+            state.lines(),
+            state.cursor()
+        ));
+    }
+
+    #[test]
+    fn a_sweep_temporarily_shows_worktrees_without_panes() {
+        let mut state = state();
+        state.set_show_worktrees_without_panes(false);
+        assert!(!row_labels(&state).contains(&"fix/crash".to_string()));
+
+        state.handle_key(key(KeyCode::Char('S')));
+        assert!(row_labels(&state).contains(&"fix/crash".to_string()));
+
+        state.handle_key(key(KeyCode::Esc));
+        assert!(!row_labels(&state).contains(&"fix/crash".to_string()));
     }
 
     #[test]

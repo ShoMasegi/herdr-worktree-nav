@@ -18,7 +18,7 @@ use ratatui::DefaultTerminal;
 
 use std::sync::Arc;
 
-use crate::adapter::herdr_config;
+use crate::adapter::{herdr_config, plugin_config};
 use crate::app::context::{Context, FROM_PANE, REPO_ROOT};
 use crate::app::dirty::Dirty;
 use crate::app::removals::Removals;
@@ -49,6 +49,30 @@ pub struct Pending {
 pub enum Entrypoint {
     Panes,
     Branches,
+}
+
+/// The view on screen and the panes preference that survives a view switch.
+struct ViewState {
+    current: Entrypoint,
+    show_worktrees_without_panes: bool,
+}
+
+impl ViewState {
+    fn new(current: Entrypoint, show_worktrees_without_panes: bool) -> Self {
+        Self {
+            current,
+            show_worktrees_without_panes,
+        }
+    }
+
+    fn show_branches(&mut self, show_worktrees_without_panes: bool) {
+        self.current = Entrypoint::Branches;
+        self.show_worktrees_without_panes = show_worktrees_without_panes;
+    }
+
+    fn show_panes(&mut self) {
+        self.current = Entrypoint::Panes;
+    }
 }
 
 /// Where the picker was summoned from, as precisely as the action could tell it.
@@ -104,6 +128,7 @@ pub fn run_picker(
     // Borrowed from herdr's own configuration so the pickers look like its navigator
     // rather than like a different program.
     let theme = Theme::new(herdr_config::load());
+    let loaded = plugin_config::load();
     let summoned = Summoned {
         pane: from_pane,
         repo_root,
@@ -121,6 +146,7 @@ pub fn run_picker(
         gh,
         remover,
         &theme,
+        loaded,
         start,
         summoned,
     );
@@ -139,6 +165,7 @@ fn views(
     gh: Arc<dyn GhPort>,
     remover: &dyn RemovalPort,
     theme: &Theme,
+    loaded: plugin_config::Loaded,
     start: Entrypoint,
     mut summoned: Summoned,
 ) -> Result<()> {
@@ -155,9 +182,10 @@ fn views(
         dirty: Dirty::new(Arc::clone(&git)),
         settled: Settled::new(Arc::clone(&git), Arc::clone(&gh)),
     };
-    let mut view = start;
+    let mut view = ViewState::new(start, loaded.settings.panes.show_worktrees_without_panes);
+    let mut config_complaint = loaded.complaint;
     loop {
-        match view {
+        match view.current {
             Entrypoint::Branches => {
                 // No repository in hand is not a failure: the picker opens on its list of
                 // them. It falls back to the panes view only when there are none at all.
@@ -171,7 +199,7 @@ fn views(
                     &mut listings,
                 )? {
                     branches::Exit::Closed => return Ok(()),
-                    branches::Exit::ShowPanes => view = Entrypoint::Panes,
+                    branches::Exit::ShowPanes => view.show_panes(),
                 }
             }
             Entrypoint::Panes => {
@@ -181,18 +209,43 @@ fn views(
                     &*git,
                     &mut removals,
                     &mut pending,
-                    summoned.pane.as_deref(),
-                    theme,
+                    panes::Options {
+                        initial_pane: summoned.pane.as_deref(),
+                        theme,
+                        show_worktrees_without_panes: view.show_worktrees_without_panes,
+                        config_complaint: config_complaint.take(),
+                    },
                 )? {
                     panes::Exit::Closed => return Ok(()),
-                    panes::Exit::ShowBranches { repo_root } => {
+                    panes::Exit::ShowBranches {
+                        repo_root,
+                        show_worktrees_without_panes: show,
+                    } => {
                         // `None` when the cursor was not in a repository; the branches picker
                         // then simply starts with nothing preselected.
                         summoned.repo_root = repo_root;
-                        view = Entrypoint::Branches;
+                        view.show_branches(show);
                     }
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_panes_toggle_survives_a_branches_round_trip() {
+        let mut view = ViewState::new(Entrypoint::Panes, true);
+
+        view.show_branches(false);
+        assert_eq!(view.current, Entrypoint::Branches);
+        assert!(!view.show_worktrees_without_panes);
+
+        view.show_panes();
+        assert_eq!(view.current, Entrypoint::Panes);
+        assert!(!view.show_worktrees_without_panes);
     }
 }

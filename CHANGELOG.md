@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **`p` shows or hides worktrees that contain no pane.** The ordinary panes view shows
+  these rows by default to preserve the current behavior. The optional plugin configuration
+  can hide them each time the view opens. The choice stays active across a switch to the
+  branches view. A sweep always shows them because they are its main cleanup candidates. A
+  malformed plugin configuration file opens the picker on the defaults and says what was
+  wrong on the prompt line, rather than refusing to start.
+
 - **`Shift-S` opens a sweep**: which of these checkouts is nobody working on any more. The
   gutter becomes a box — `[x]` for a checkout the sweep would take, `[ ]` for one it would
   leave, none for one it never will — and the reason sits beside the name: `gone` for an

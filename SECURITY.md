@@ -61,10 +61,11 @@ Specifically, herdr-worktree-nav:
 
 Nothing here rewrites history, changes a file in a working tree, or pushes.
 
-It stores nothing of its own on disk — not even a preference. It does not read your
-credentials, send anything anywhere, or run any command a repository supplies. Network access is
-`git ls-remote` / `git fetch` against your remote, and `gh` against GitHub — both using
-credentials you have already configured.
+It stores nothing of its own on disk. It reads the optional configuration file that you put
+in the directory from `herdr plugin config-dir herdr-worktree-nav`, but never writes it. It
+does not read your credentials, send anything anywhere, or run any command a repository supplies. Network
+access is `git ls-remote` / `git fetch` against your remote, and `gh` against GitHub. Both
+use credentials you have already configured.
 
 ## Verifying what you install
 

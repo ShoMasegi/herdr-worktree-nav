@@ -180,8 +180,9 @@ fn sweep_box(row: &Row) -> Option<&'static str> {
 }
 
 /// Widest first; the picker draws the first that fits. Each rung drops the least useful
-/// thing left, so a narrow pane loses `r reload` before it loses how to move.
+/// thing left, so a narrow pane loses `p no-pane` before it loses remove, states, or reload.
 const HELP_PANES: &[&str] = &[
+    "\u{21b5} jump  n new pane  p no-pane rows  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  shift+d remove  r reload  esc close",
     "\u{21b5} jump  n new pane  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  shift+d remove  r reload  esc close",
     "\u{21b5} jump  n new  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  shift+d remove  esc close",
     "\u{21b5} jump  n new  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  esc close",
@@ -309,9 +310,9 @@ fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'stat
     } else {
         format!("{} panes", state.pane_count())
     };
-    // What git said about a repository's refs is as long as git made it, and it is the one
-    // thing on this line that can be: cut to what fits, so the words that fit are git's and
-    // the count on the right is still there. An ellipsis says there was more.
+    // What git said, or a toast, can be as long as the source made it. Cut to what fits
+    // so the words that fit are the start of it and the count on the right is still there.
+    // An ellipsis says there was more.
     let taken: usize = spans
         .iter()
         .chain(tail.iter())
@@ -323,7 +324,7 @@ fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'stat
 
     if let Some(message) = state.message() {
         spans.push(Span::styled(
-            message.to_string(),
+            truncate(message, room),
             Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
@@ -397,12 +398,17 @@ fn render_detail(frame: &mut Frame, detail: &str, theme: &Theme, area: Rect) {
     frame.render_widget(Paragraph::new(format!(" {text} ")).style(theme.dim()), area);
 }
 
-fn footer(variants: &[&'static str], theme: &Theme, width: u16) -> Paragraph<'static> {
-    let text = variants
+fn first_that_fits(variants: &[&'static str], width: u16) -> &'static str {
+    variants
         .iter()
         .find(|text| text.chars().count() < width as usize)
         .copied()
-        .unwrap_or_else(|| variants.last().copied().unwrap_or_default());
+        .or_else(|| variants.last().copied())
+        .unwrap_or_default()
+}
+
+fn footer(variants: &[&'static str], theme: &Theme, width: u16) -> Paragraph<'static> {
+    let text = first_that_fits(variants, width);
     Paragraph::new(Line::from(Span::styled(format!(" {text}"), theme.dim())))
 }
 
@@ -1882,6 +1888,7 @@ mod tests {
     use ratatui::Terminal;
     use std::num::NonZeroU32;
 
+    use crate::adapter::plugin_config;
     use crate::domain::chrome::Chrome;
     use crate::domain::dest::Destination;
     use crate::domain::model::{PaneNode, Refs, RepoNode, Tree, WorktreeNode};
@@ -2103,6 +2110,114 @@ mod tests {
         );
     }
 
+    fn prompt_line(state: &PanesState, width: u16) -> String {
+        let drawn = screen(state, width, 18);
+        drawn
+            .lines()
+            .next()
+            .expect("the prompt line")
+            .trim_matches('"')
+            .to_string()
+    }
+
+    fn panes_help(width: u16) -> &'static str {
+        super::first_that_fits(super::HELP_PANES, width)
+    }
+
+    #[test]
+    fn panes_help_drops_p_before_remove_states_or_reload() {
+        // Same pick as `footer`: first rung whose length is strictly less than the width.
+        for text in super::HELP_PANES {
+            assert!(
+                !text.contains("branch") || text.contains("branches"),
+                "no singular branch: {text}"
+            );
+        }
+        for width in 18..=140u16 {
+            let text = panes_help(width);
+            if width >= 121 {
+                assert!(text.contains("no-pane"), "p fits from 121: {width} {text}");
+                assert!(
+                    text.contains("reload"),
+                    "reload stays on the p rung: {width} {text}"
+                );
+            } else {
+                assert!(
+                    !text.contains("no-pane"),
+                    "p is gone before reload/remove/states: {width} {text}"
+                );
+            }
+            if width >= 105 {
+                assert!(text.contains("reload"), "reload from 105: {width} {text}");
+            }
+            if width >= 90 {
+                assert!(text.contains("remove"), "remove from 90: {width} {text}");
+            }
+            if width >= 74 {
+                assert!(
+                    text.contains("b/w/i/d/a states"),
+                    "states from 74: {width} {text}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_config_complaint_fits_on_the_prompt_line_and_the_count_survives_it() {
+        // Seeded as the loader would. The count has to stay; the reason has to show as
+        // soon as the line has room for it — not a dozen columns later.
+        let mut state = PanesState::new(tree(), None);
+        state.set_message(plugin_config::complaint_for(
+            "[pane]\nshow_worktrees_without_panes = false\n",
+        ));
+        for width in 24..=92u16 {
+            let line = prompt_line(&state, width);
+            assert!(
+                line.trim_end().ends_with("5 panes"),
+                "the count is still there at {width}: {line}"
+            );
+            if width >= 54 {
+                assert!(
+                    line.contains("unknown field `pane`"),
+                    "the reason is what fits at {width}: {line}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_near_miss_key_still_names_the_wrong_key_on_a_narrow_prompt_line() {
+        // The likeliest typo is a missing `s`. Serde names both keys in full, so this is
+        // the long complaint; the wrong key has to stay visible where the right one is cut.
+        let mut state = PanesState::new(tree(), None);
+        state.set_message(plugin_config::complaint_for(
+            "[panes]\nshow_worktrees_without_pane = false\n",
+        ));
+        for width in 24..=92u16 {
+            let line = prompt_line(&state, width);
+            assert!(
+                line.trim_end().ends_with("5 panes"),
+                "the count is still there at {width}: {line}"
+            );
+            if width >= 77 {
+                assert!(
+                    line.contains("show_worktrees_without_pane"),
+                    "the mistyped key is what fits at {width}: {line}"
+                );
+            }
+        }
+        let just_short = prompt_line(&state, 116);
+        assert!(
+            !just_short.contains("expected `show_worktrees_without_panes`"),
+            "one column short, the right key is still cut: {just_short}"
+        );
+        let wide = prompt_line(&state, 117);
+        assert!(
+            wide.contains("expected `show_worktrees_without_panes`"),
+            "with room, the right key is there too: {wide}"
+        );
+    }
+
     #[test]
     fn gits_words_fit_on_the_prompt_line_and_the_count_survives_them() {
         // The sentence is as long as git made it; what fits has to be git's words, not the
@@ -2114,14 +2229,7 @@ mod tests {
         for waiting in [false, true] {
             state.set_waiting(waiting);
             for width in 24..=92u16 {
-                let drawn = screen(&state, width, 18);
-                let line = drawn.lines().next().expect("the prompt line");
-                let line = line.trim_matches('"');
-                assert_eq!(
-                    line.chars().count(),
-                    width as usize,
-                    "the line is the width, at {width}: {line}"
-                );
+                let line = prompt_line(&state, width);
                 // The spinner's `  ⠋ reading working trees…` is 26 columns of its own, so
                 // with the sentence cut to nothing ` / ` and it and `5 panes` are 36. Below
                 // that the spinner is what pushes the count off the line, which is not what
