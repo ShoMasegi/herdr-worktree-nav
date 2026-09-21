@@ -1,0 +1,16 @@
+---
+source: src/ui/render/branches.rs
+expression: "branches_screen(&state, 92, 12)"
+---
+" + new branch from feat/login: feat/login-v2█                                    5 branches "
+" me/app · /src/app ─────────────────────────────────────────────────────────────────────────"
+"   ● feat/login   running      #123 Add the login screen (draft)                            "
+"   ○ fix/crash    checked out  latest work on fix/crash                                     "
+"   · main         local        latest work on main                                          "
+"   · chore/deps   local        latest work on chore/deps                                    "
+"   ↓ feat/search  remote                                                                    "
+"                                                                                            "
+"                                                                                            "
+"                                                                                            "
+" feat/login · open in w2:p1 · /wt/feat-login · #123 Add the login screen (draft) ───────────"
+" ↵ next  ctrl+u clear  esc back                                                             "

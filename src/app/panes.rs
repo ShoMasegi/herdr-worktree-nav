@@ -11,7 +11,7 @@ use crate::app::removals::Removals;
 use crate::app::Pending;
 use crate::domain::removal::{self, Removal, SweepRemoval};
 use crate::port::{GitPort, HerdrPort, PaneSplit, SplitDirection, WorktreeOpen};
-use crate::ui::render::{self, Mode};
+use crate::ui::render;
 use crate::ui::state::{Action, Cancelled, PanesState, WITHDRAWN};
 use crate::ui::theme::Theme;
 
@@ -109,7 +109,7 @@ pub fn run(
             last_tick = std::time::Instant::now();
         }
         let mut asked = true;
-        terminal.draw(|frame| asked = render::draw(frame, &state, options.theme, Mode::Panes))?;
+        terminal.draw(|frame| asked = render::panes::draw(frame, &state, options.theme))?;
         if !asked {
             // The pane is too small to put the question in. Taking it back is the only
             // honest answer: the alternative is `y` armed over a box nobody ever saw.

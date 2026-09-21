@@ -1,0 +1,13 @@
+---
+source: src/ui/render/prompt.rs
+expression: "screen(&state, 92, 9)"
+---
+" / sweep                                                                           3 marked "
+"────────────────────────────────────────────────────────────────────────────────────────────"
+" ◆ ● me/app (1)         ┌──────────────────────────────────────────┐                       █"
+"   ├── ● main           │ Delete 3 checkouts and their branches?   │                       █"
+" ◆ │  └── ● claude      │   y delete     any other key cancels     │                       █"
+"[x]├── · feat/login  gon└──────────────────────────────────────────┘                       █"
+"[x]├── · fix/crash  gone  no pane        /wt/fix-crash                                     │"
+" me/app · main · w1:p1 · working · /wt/main ────────────────────────────────────────────────"
+" y delete  any other key cancels                                                            "
