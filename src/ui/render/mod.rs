@@ -26,8 +26,8 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::domain::model::PaneNode;
-use crate::domain::rows::{self};
 use crate::ui::theme::Theme;
+use crate::ui::words;
 
 /// The four rows the picker lays out in, mirroring herdr's navigator geometry.
 ///
@@ -194,7 +194,7 @@ pub(super) fn spinner(frame: usize) -> &'static str {
 /// no agent: the glyph beside it already says there is nothing to report, and a column of
 /// `unknown` would be noise.
 pub(super) fn agent_state(pane: &PaneNode) -> &'static str {
-    rows::status_label(pane.agent_status).unwrap_or("")
+    words::status(pane.agent_status).unwrap_or("")
 }
 
 /// `1 branch`, `5 branches`. A list that says "1 branches" reads like it is guessing.

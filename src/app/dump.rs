@@ -18,7 +18,6 @@ use crate::adapter::plugin_config::Loaded;
 use crate::app::one_line;
 use crate::domain::chrome::Chrome;
 use crate::domain::model::{normalize_path, Refs, RepoNode, Tree, WorktreeNode};
-use crate::domain::rows;
 use crate::port::{GitPort, GitRef, RefKind, Snapshot, Track};
 
 /// What the second ref walk — the one `main` makes for this page, for the upstream names —
@@ -191,7 +190,7 @@ fn branch_words(repo: &RepoNode, worktree: &WorktreeNode, refs: &RefsByRepo) -> 
         return detached_words(worktree, read);
     };
     let tree_track = || match worktree.track {
-        Some(track) => rows::track_mark(Some(track)).trim_start().to_string(),
+        Some(track) => track_words(track),
         None => "not known".to_string(),
     };
     let read = match read {
@@ -301,20 +300,29 @@ fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {
         }
     }
     if let Some(track) = worktree.track {
-        let _ = write!(
-            out,
-            "  track {}",
-            rows::track_mark(Some(track)).trim_start()
-        );
+        let _ = write!(out, "  track {}", track_words(track));
     }
     out
+}
+
+/// The marks the list draws for a track, with no row in front of them.
+///
+/// The page's own copy rather than the picker's, because the picker's carry the gap that
+/// separates them from a label and a page with no label has nothing to separate them from.
+fn track_words(track: Track) -> String {
+    match track {
+        Track::Gone => "gone".to_string(),
+        Track::Ahead(ahead) => format!("\u{2191}{ahead}"),
+        Track::Behind(behind) => format!("\u{2193}{behind}"),
+        Track::Diverged { ahead, behind } => format!("\u{2191}{ahead}\u{2193}{behind}"),
+    }
 }
 
 /// The words for a track: the marker where git reported one, else `level` beside an
 /// upstream and `none` without one.
 fn standing(track: Option<Track>, upstream: Option<&str>) -> String {
     match track {
-        Some(track) => rows::track_mark(Some(track)).trim_start().to_string(),
+        Some(track) => track_words(track),
         None if upstream.is_some() => "level".to_string(),
         None => "none".to_string(),
     }

@@ -10,7 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::domain::rows::{marks, marks_reserve, DisplayLine, Row};
+use crate::domain::rows::{DisplayLine, Row};
 use crate::ui::panes::PanesState;
 use crate::ui::theme::Theme;
 
@@ -65,7 +65,7 @@ fn meta_column(rows: &[Row], width: u16) -> usize {
 ///
 /// **The meta column is a maximum over every row, so nothing that can appear while the picker
 /// is up may make a row wider than it was measured.**
-/// [`domain::rows::marks_reserve`](crate::domain::rows::marks_reserve) therefore keeps room
+/// [`ui::words::marks_reserve`](crate::ui::words::marks_reserve) therefore keeps room
 /// for the `✱` whether or not it is showing — `✱` and `?` are the same width, so one reserve
 /// serves both. The `deleting` note is the deliberate exception: it appears on a keypress on
 /// one row, and those columns come out of that row's own label rather than out of everyone
@@ -81,8 +81,8 @@ fn label_end(row: &Row) -> usize {
     GUTTER_WIDTH
         + tree
         + 2
-        + row.label.chars().count()
-        + marks_reserve(row)
+        + words::row_label(row).chars().count()
+        + words::marks_reserve(row)
         + if row.is_idle { IDLE_NOTE.len() } else { 0 }
 }
 
@@ -273,7 +273,7 @@ fn waiting_on(state: &PanesState, theme: &Theme, labels: bool) -> Vec<Span<'stat
     // branches view does while it waits on a remote.
     //
     // A checkout git would not answer for says so on its own row rather than here — see
-    // `domain::rows::marks`, and `docs/adr/0011-what-may-be-swept.md`, which puts the
+    // `ui::words::marks`, and `docs/adr/0011-what-may-be-swept.md`, which puts the
     // unknown on the row it belongs to for the same reason.
     if state.is_waiting() {
         tail.push(Span::raw("  "));
@@ -377,7 +377,7 @@ fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'stat
             spans.push(Span::styled(glyph, style.add_modifier(Modifier::BOLD)));
             spans.push(Span::raw(" "));
             spans.push(Span::styled(
-                filter.label(),
+                words::state_filter(filter),
                 style.add_modifier(Modifier::BOLD),
             ));
         }
@@ -549,7 +549,7 @@ fn render_row(
 
     // What the checkout itself is: uncommitted work, and where it stands against its
     // upstream. Measured and drawn from the same string, so the two cannot drift.
-    let marks = marks(row);
+    let marks = words::marks(row);
     let used = gutter.chars().count() + prefix.chars().count() + glyph.chars().count() + 1;
     // A row with nothing in the meta column may use the whole line for its label; one with
     // something has to stop short of the column so the two do not collide.
@@ -592,7 +592,7 @@ fn render_row(
         Span::styled(prefix, tree_style),
         Span::styled(glyph, glyph_style),
         Span::raw(" "),
-        Span::styled(truncate(&row.label, label_budget), label_style),
+        Span::styled(truncate(&words::row_label(row), label_budget), label_style),
     ];
     // Beside the name rather than in a column, because most rows have none of it.
     if !marks.is_empty() {

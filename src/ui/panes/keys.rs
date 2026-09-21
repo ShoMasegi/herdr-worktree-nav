@@ -442,17 +442,25 @@ mod tests {
     #[test]
     fn the_cursor_visits_only_panes_and_checkouts_with_nothing_running() {
         let mut state = state();
-        let first = state.selected().unwrap().label.clone();
+        let first = state.selected().unwrap().name.clone();
         let mut stops = vec![first.clone()];
         for _ in 0..state.lines().len() {
             state.handle_key(key(KeyCode::Down));
-            let label = state.selected().unwrap().label.clone();
+            let label = state.selected().unwrap().name.clone();
             if label == first {
                 break;
             }
             stops.push(label);
         }
-        assert_eq!(stops, ["claude", "codex", "fix/crash", "zsh"]);
+        assert_eq!(
+            stops,
+            [
+                Some("claude".to_string()),
+                Some("codex".to_string()),
+                Some("fix/crash".to_string()),
+                Some("zsh".to_string())
+            ]
+        );
 
         // And the rows it stepped over are still on screen.
         assert_eq!(
@@ -474,32 +482,36 @@ mod tests {
     fn the_arrows_move_between_repositories() {
         // The fixture has one repository plus the panes in none of them.
         let mut state = state();
-        assert_eq!(state.selected().unwrap().label, "claude");
+        assert_eq!(state.selected().unwrap().name.as_deref(), Some("claude"));
 
         state.handle_key(key(KeyCode::Right));
         assert_eq!(
-            state.selected().unwrap().label,
-            "zsh",
+            state.selected().unwrap().name.as_deref(),
+            Some("zsh"),
             "the panes in no repository are a section like any other"
         );
         state.handle_key(key(KeyCode::Right));
-        assert_eq!(state.selected().unwrap().label, "claude", "and it wraps");
+        assert_eq!(
+            state.selected().unwrap().name.as_deref(),
+            Some("claude"),
+            "and it wraps"
+        );
 
         // From deep inside a group, one press still leaves it.
         state.handle_key(key(KeyCode::Down));
         state.handle_key(key(KeyCode::Down));
-        assert_eq!(state.selected().unwrap().label, "fix/crash");
+        assert_eq!(state.selected().unwrap().name.as_deref(), Some("fix/crash"));
         state.handle_key(key(KeyCode::Left));
-        assert_eq!(state.selected().unwrap().label, "zsh");
+        assert_eq!(state.selected().unwrap().name.as_deref(), Some("zsh"));
     }
 
     #[test]
     fn h_and_l_are_the_arrows_by_another_name() {
         let mut state = state();
         state.handle_key(key(KeyCode::Char('l')));
-        assert_eq!(state.selected().unwrap().label, "zsh");
+        assert_eq!(state.selected().unwrap().name.as_deref(), Some("zsh"));
         state.handle_key(key(KeyCode::Char('h')));
-        assert_eq!(state.selected().unwrap().label, "claude");
+        assert_eq!(state.selected().unwrap().name.as_deref(), Some("claude"));
     }
 
     #[test]
@@ -508,7 +520,7 @@ mod tests {
         state.handle_key(key(KeyCode::Char('/')));
         assert!(state.is_filtering());
         state.handle_key(key(KeyCode::Right));
-        assert_eq!(state.selected().unwrap().label, "zsh");
+        assert_eq!(state.selected().unwrap().name.as_deref(), Some("zsh"));
         assert_eq!(state.query(), "", "an arrow is not text");
 
         // A letter is, though: `l` types rather than moves once the search box has focus.
@@ -520,7 +532,7 @@ mod tests {
     fn moving_up_from_the_top_wraps_to_the_last_thing_worth_going_to() {
         let mut state = state();
         state.handle_key(key(KeyCode::Up));
-        assert_eq!(state.selected().unwrap().label, "zsh");
+        assert_eq!(state.selected().unwrap().name.as_deref(), Some("zsh"));
     }
 
     #[test]

@@ -11,10 +11,14 @@
 //! it, and those three reading differently would be a bug nothing would catch.
 
 use crate::domain::dest::{Destination, Landing, SpaceName, TabName};
+use crate::domain::model::Tree;
+use crate::domain::model::WorkingTree;
 use crate::domain::notice::Condition;
 use crate::domain::order::{Order, SortKey};
 use crate::domain::preview::Refusal;
 use crate::domain::progress::Stage;
+use crate::domain::rows::{Row, RowRef, StateFilter};
+use crate::port::{AgentStatus, Track};
 
 /// Shown for a pane herdr is not tracking an agent in.
 pub const UNNAMED_PANE: &str = "shell";
@@ -153,11 +157,220 @@ pub fn conditions_line(conditions: &[Condition]) -> Option<String> {
     })
 }
 
+/// A checkout holding uncommitted changes or untracked files, with the gap that precedes it.
+const DIRTY: &str = "  \u{2731}";
+/// A checkout git would not answer for. The same width as [`DIRTY`] and mutually exclusive
+/// with it — a working tree is dirty, clean, or unread — so it costs the row nothing extra.
+const UNREADABLE: &str = "  ?";
+/// git cannot find the ref this branch tracks. A word rather than a glyph: it is the one of
+/// these that says a branch is finished with, and it is worth being unmissable.
+const GONE: &str = "gone";
+
+/// What a row is called, which for a group is its name and how much it holds.
+///
+/// The count rides with the name rather than in the meta column: a group's meta column is
+/// left to the checkout directly beneath it, and a heading that did not say how much was
+/// under it would be a heading worth folding and this picker does not fold.
+pub fn row_label(row: &Row) -> String {
+    match (&row.name, row.reference) {
+        (Some(name), RowRef::Repo(_)) => format!("{name} ({})", row.panes),
+        (Some(name), _) => name.clone(),
+        // The group of panes no repository holds. It is named by what it is, because there
+        // is nothing else to call it.
+        (None, RowRef::UngroupedRepo) => format!("not in any repository ({})", row.panes),
+        (None, _) => UNNAMED_PANE.to_string(),
+    }
+}
+
+/// What a row says about itself between its label and its `no pane` note.
+///
+/// Two spaces before each, the same gap the note uses. Everything is optional and most rows
+/// have none of it, which is why these ride beside the label rather than in a column of
+/// their own: a column that is blank on most rows is a permanent gap between the name and
+/// the path.
+///
+/// Dirty comes first because it is the one that stops a checkout being removable.
+pub fn marks(row: &Row) -> String {
+    let mut out = String::new();
+    match row.working_tree {
+        Some(WorkingTree::Dirty) => out.push_str(DIRTY),
+        Some(WorkingTree::Unreadable) => out.push_str(UNREADABLE),
+        // Clean and not-yet-answered both draw nothing, for different reasons: one has
+        // nothing to report and the other has nothing to report *yet*.
+        Some(WorkingTree::Clean) | None => {}
+    }
+    out.push_str(&track_mark(row.track));
+    out
+}
+
+/// How much room a row's marks are allowed to take without moving the meta column.
+///
+/// The marker for what a `git status` said is counted whether it is showing or not — and
+/// `✱` and `?` are the same width, so one reserve serves both. It arrives a beat after the
+/// first frame, with the list already on screen, and the meta column is a maximum over every
+/// row: measuring only what is showing would jump every path in the list sideways once,
+/// including the paths of rows in repositories that have not changed at all.
+///
+/// Ahead, behind and `gone` are measured exactly, because they are known before the first
+/// frame and cannot change without a reload — which redraws the whole list anyway.
+pub fn marks_reserve(row: &Row) -> usize {
+    if !row.reference.is_worktree() {
+        return 0;
+    }
+    DIRTY.chars().count() + track_mark(row.track).chars().count()
+}
+
+/// Where the branch stands against its upstream, with the gap that precedes it.
+pub fn track_mark(track: Option<Track>) -> String {
+    match track {
+        Some(Track::Gone) => format!("  {GONE}"),
+        Some(Track::Ahead(ahead)) => format!("  \u{2191}{ahead}"),
+        Some(Track::Behind(behind)) => format!("  \u{2193}{behind}"),
+        Some(Track::Diverged { ahead, behind }) => format!("  \u{2191}{ahead}\u{2193}{behind}"),
+        // Nothing to draw; what an absent track leaves open is not this row's to say.
+        None => String::new(),
+    }
+}
+
+/// The same marks with no gap in front, for a page that is not a row of the list.
+pub fn track_alone(track: Track) -> String {
+    track_mark(Some(track)).trim_start().to_string()
+}
+
+/// Narrowing the list to one agent state, as the chip beside the search box reads.
+pub fn state_filter(filter: StateFilter) -> &'static str {
+    match filter {
+        StateFilter::Blocked => "blocked",
+        StateFilter::Working => "working",
+        StateFilter::Idle => "idle",
+        StateFilter::Done => "done",
+    }
+}
+
+/// herdr's wording for an agent state. `None` when there is no agent to describe.
+pub fn status(status: AgentStatus) -> Option<&'static str> {
+    match status {
+        AgentStatus::Blocked => Some("blocked"),
+        AgentStatus::Working => Some("working"),
+        AgentStatus::Done => Some("done"),
+        AgentStatus::Idle => Some("idle"),
+        AgentStatus::Unknown => None,
+    }
+}
+
+/// Show a path under the user's home as `~/...`. Popups are narrower than a full pane, and
+/// sixteen characters of `/Users/someone` are the least useful part of a checkout path.
+pub fn abbreviate(path: &str, home: Option<&str>) -> String {
+    let Some(home) = home.filter(|home| !home.is_empty()) else {
+        return path.to_string();
+    };
+    let home = home.trim_end_matches('/');
+    match path.strip_prefix(home) {
+        Some("") => "~".to_string(),
+        Some(rest) if rest.starts_with('/') => format!("~{rest}"),
+        _ => path.to_string(),
+    }
+}
+
+/// The breadcrumb shown under the list for the row the cursor is on.
+///
+/// This is where the checkout path lives. The navigator keeps its rows to a label and one
+/// meta column and puts the fuller context here, so the list stays scannable.
+pub fn detail(tree: &Tree, reference: RowRef) -> String {
+    let parts: Vec<String> = match reference {
+        RowRef::Repo(repo_index) => {
+            let Some(repo) = tree.repos.get(repo_index) else {
+                return String::new();
+            };
+            let panes: usize = repo.worktrees.iter().map(|w| w.panes.len()).sum();
+            let worktrees = repo.worktrees.len();
+            vec![
+                repo.display_name.clone(),
+                format!("{worktrees} {}", plural(worktrees, "worktree")),
+                format!("{panes} {}", plural(panes, "pane")),
+                repo.repo_root.clone(),
+            ]
+        }
+        RowRef::Worktree(repo_index, worktree_index) => {
+            let Some(repo) = tree.repos.get(repo_index) else {
+                return String::new();
+            };
+            let Some(worktree) = repo.worktrees.get(worktree_index) else {
+                return String::new();
+            };
+            let mut parts = vec![repo.display_name.clone(), worktree.label().to_string()];
+            if worktree.is_primary {
+                parts.push("main checkout".to_string());
+            }
+            parts.push(worktree.checkout_path.clone());
+            parts
+        }
+        RowRef::Pane(repo_index, worktree_index, pane_index) => {
+            let Some(repo) = tree.repos.get(repo_index) else {
+                return String::new();
+            };
+            let Some(worktree) = repo.worktrees.get(worktree_index) else {
+                return String::new();
+            };
+            let Some(pane) = worktree.panes.get(pane_index) else {
+                return String::new();
+            };
+            let mut parts = vec![
+                repo.display_name.clone(),
+                worktree.label().to_string(),
+                pane.pane_id.clone(),
+            ];
+            if let Some(label) = status(pane.agent_status) {
+                parts.push(label.to_string());
+            }
+            parts.push(worktree.checkout_path.clone());
+            parts
+        }
+        RowRef::UngroupedRepo => vec![
+            "not inside any git work tree".to_string(),
+            format!(
+                "{} {}",
+                tree.ungrouped.len(),
+                plural(tree.ungrouped.len(), "pane")
+            ),
+        ],
+        RowRef::Ungrouped(index) => {
+            let Some(pane) = tree.ungrouped.get(index) else {
+                return String::new();
+            };
+            let mut parts = vec![
+                pane.display_name
+                    .clone()
+                    .unwrap_or_else(|| UNNAMED_PANE.to_string()),
+                pane.pane_id.clone(),
+            ];
+            if let Some(label) = status(pane.agent_status) {
+                parts.push(label.to_string());
+            }
+            parts
+        }
+    };
+    parts.join(" \u{b7} ")
+}
+
+fn plural(count: usize, noun: &str) -> String {
+    if count == 1 {
+        noun.to_string()
+    } else {
+        format!("{noun}s")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::dest::fixtures::{space_name, tab_name};
+    use crate::domain::model::{CheckoutPath, WorkingTree};
+    use crate::domain::rows::fixtures::*;
+    use crate::domain::rows::{flatten, ViewOptions};
     use crate::port::SplitDirection;
+    use std::collections::BTreeMap;
+    use std::num::NonZeroU32;
 
     #[test]
     fn a_space_is_named_by_its_id_first_because_that_is_what_herdr_shows() {
@@ -357,5 +570,204 @@ mod tests {
             Some("me/app: refs unreadable: fatal: bad ref"),
             "the only one there is stands in for nothing"
         );
+    }
+
+    /// The answers map with one checkout given an answer, which is all these need.
+    fn answered(working_tree: WorkingTree) -> BTreeMap<CheckoutPath, WorkingTree> {
+        BTreeMap::from([(CheckoutPath::for_test("/wt/fix-crash"), working_tree)])
+    }
+
+    /// `None` is a checkout nobody has answered for, which is a third thing and not a
+    /// synonym for clean. A bool here would collapse the two into one `false`, naming
+    /// neither state.
+    fn marks_for(working_tree: Option<WorkingTree>, track: Option<Track>) -> String {
+        let mut tree = tree();
+        tree.repos[0].worktrees[2].track = track;
+        let options = ViewOptions {
+            working_trees: working_tree.map(answered).unwrap_or_default(),
+            ..Default::default()
+        };
+        marks(find(&flatten(&tree, &options), "fix/crash"))
+    }
+
+    #[test]
+    fn a_checkout_with_nothing_to_report_says_nothing() {
+        assert_eq!(marks_for(None, None), "", "nobody has answered for it");
+        assert_eq!(
+            marks_for(Some(WorkingTree::Clean), None),
+            "",
+            "and git answered and had nothing to report — the same absence of a marker for \
+             two different reasons, which is the whole of why the list is not rebuilt when \
+             one becomes the other"
+        );
+    }
+
+    #[test]
+    fn every_answer_a_working_tree_can_give_reads_on_its_own() {
+        assert_eq!(marks_for(Some(WorkingTree::Dirty), None), "  ✱");
+        assert_eq!(marks_for(Some(WorkingTree::Unreadable), None), "  ?");
+    }
+
+    #[test]
+    fn the_room_kept_for_the_marks_does_not_depend_on_the_dirty_answer() {
+        // Which is what stops every path in the list moving sideways when a `git status`
+        // finally answers.
+        let mut tree = tree();
+        tree.repos[0].worktrees[2].track = Some(Track::Gone);
+        let clean = flatten(&tree, &ViewOptions::default());
+        let dirty = flatten(
+            &tree,
+            &ViewOptions {
+                working_trees: answered(WorkingTree::Dirty),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            marks_reserve(find(&clean, "fix/crash")),
+            marks_reserve(find(&dirty, "fix/crash"))
+        );
+        assert_eq!(
+            marks_reserve(find(&clean, "me/app")),
+            0,
+            "a repository heading has no checkout to say anything about"
+        );
+    }
+
+    #[test]
+    fn each_thing_a_checkout_can_be_reads_on_its_own() {
+        assert_eq!(marks_for(Some(WorkingTree::Dirty), None), "  \u{2731}");
+        assert_eq!(
+            marks_for(None, Some(Track::Ahead(NonZeroU32::new(2).unwrap()))),
+            "  \u{2191}2"
+        );
+        assert_eq!(
+            marks_for(None, Some(Track::Behind(NonZeroU32::new(1).unwrap()))),
+            "  \u{2193}1"
+        );
+        assert_eq!(
+            marks_for(
+                None,
+                Some(Track::Diverged {
+                    ahead: NonZeroU32::new(2).unwrap(),
+                    behind: NonZeroU32::new(1).unwrap()
+                })
+            ),
+            "  \u{2191}2\u{2193}1",
+            "one gap, not two: they are one answer"
+        );
+        assert_eq!(marks_for(None, Some(Track::Gone)), "  gone");
+    }
+
+    #[test]
+    fn a_dirty_checkout_whose_upstream_is_gone_says_both() {
+        // Which is the pair that decides whether a checkout can be swept: gone says it is
+        // finished with, and dirty says it cannot go anyway.
+        assert_eq!(
+            marks_for(Some(WorkingTree::Dirty), Some(Track::Gone)),
+            "  \u{2731}  gone"
+        );
+    }
+
+    #[test]
+    fn a_checkout_holding_uncommitted_work_is_marked_as_such() {
+        let options = ViewOptions {
+            working_trees: answered(WorkingTree::Dirty),
+            ..Default::default()
+        };
+        let rows = flatten(&tree(), &options);
+        assert_eq!(
+            find(&rows, "fix/crash").working_tree,
+            Some(WorkingTree::Dirty)
+        );
+        assert_eq!(
+            find(&rows, "feat/login").working_tree,
+            None,
+            "nobody asked about that one"
+        );
+    }
+
+    #[test]
+    fn a_checkout_whose_answer_has_not_arrived_is_drawn_without_a_marker() {
+        // Asking whether a checkout is dirty is a process per checkout, so the answers arrive
+        // after the first frame. The alternative is a marker that is wrong for a moment.
+        let rows = flatten(&tree(), &ViewOptions::default());
+        assert_eq!(find(&rows, "fix/crash").working_tree, None);
+        assert_eq!(marks(find(&rows, "fix/crash")), "", "and so draws nothing");
+    }
+
+    #[test]
+    fn a_checkout_carries_what_git_said_about_its_branch() {
+        let mut tree = tree();
+        tree.repos[0].worktrees[2].track = Some(Track::Gone);
+        let rows = flatten(&tree, &ViewOptions::default());
+        assert_eq!(find(&rows, "fix/crash").track, Some(Track::Gone));
+        assert_eq!(find(&rows, "feat/login").track, None);
+        assert_eq!(
+            find(&rows, "me/app").track,
+            None,
+            "a repository heading has no branch of its own"
+        );
+    }
+
+    #[test]
+    fn paths_under_the_home_directory_are_shortened() {
+        assert_eq!(
+            abbreviate("/home/me/Workspace/app", Some("/home/me")),
+            "~/Workspace/app"
+        );
+        assert_eq!(
+            abbreviate("/home/me", Some("/home/me")),
+            "~",
+            "the home directory itself is the whole of it"
+        );
+        assert_eq!(
+            abbreviate("/home/me/src", Some("/home/me/")),
+            "~/src",
+            "a trailing slash on the home does not leave a doubled one behind"
+        );
+    }
+
+    #[test]
+    fn a_path_outside_the_home_directory_is_left_alone() {
+        assert_eq!(abbreviate("/srv/app", Some("/home/me")), "/srv/app");
+        // A sibling that merely shares the prefix must not be mangled.
+        assert_eq!(
+            abbreviate("/home/median/app", Some("/home/me")),
+            "/home/median/app"
+        );
+        assert_eq!(abbreviate("/home/me", Some("/home/me")), "~");
+        assert_eq!(abbreviate("/home/me/x", Some("/home/me/")), "~/x");
+        assert_eq!(abbreviate("/home/me/x", None), "/home/me/x");
+        assert_eq!(abbreviate("/home/me/x", Some("")), "/home/me/x");
+    }
+
+    #[test]
+    fn the_breadcrumb_carries_the_checkout_path_the_rows_no_longer_show() {
+        let tree = tree();
+        assert_eq!(
+            detail(&tree, RowRef::Worktree(0, 1)),
+            "me/app · feat/login · /wt/feat-login"
+        );
+        assert_eq!(
+            detail(&tree, RowRef::Worktree(0, 0)),
+            "me/app · main · main checkout · /wt/main"
+        );
+        assert_eq!(
+            detail(&tree, RowRef::Pane(0, 0, 0)),
+            "me/app · main · w1:p1 · working · /wt/main"
+        );
+        assert_eq!(
+            detail(&tree, RowRef::Repo(0)),
+            "me/app · 3 worktrees · 3 panes · /src/app"
+        );
+    }
+
+    #[test]
+    fn the_breadcrumb_is_empty_rather_than_panicking_on_a_stale_reference() {
+        let tree = tree();
+        assert_eq!(detail(&tree, RowRef::Repo(99)), "");
+        assert_eq!(detail(&tree, RowRef::Worktree(0, 99)), "");
+        assert_eq!(detail(&tree, RowRef::Pane(0, 0, 99)), "");
+        assert_eq!(detail(&tree, RowRef::Ungrouped(99)), "");
     }
 }

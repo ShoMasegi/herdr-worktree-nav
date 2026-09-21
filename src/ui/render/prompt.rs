@@ -12,7 +12,7 @@ use ratatui::Frame;
 
 use crate::domain::notice;
 use crate::domain::removal::{Removal, SweepRemoval};
-use crate::domain::rows::{abbreviate, UNNAMED_PANE};
+
 use crate::ui::theme::Theme;
 
 /// The keys under either question, and the one that answers it.
@@ -113,7 +113,7 @@ pub(super) fn render_removal(
     const TITLE: &str = "Delete this checkout?";
     const CLOSING: &str = "  these panes close:";
 
-    let path = abbreviate(removal.checkout_path().as_str(), home);
+    let path = words::abbreviate(removal.checkout_path().as_str(), home);
     // Uncommitted work is git's to protect and it does; what a working agent has in flight
     // has no other safety net, so the question names every pane that stops, in the words the
     // list behind the box uses for them.
@@ -123,7 +123,7 @@ pub(super) fn render_removal(
         .map(|pane| {
             pane.display_name
                 .as_deref()
-                .unwrap_or(UNNAMED_PANE)
+                .unwrap_or(words::UNNAMED_PANE)
                 .chars()
                 .count()
         })
@@ -142,7 +142,7 @@ pub(super) fn render_removal(
             format!(
                 " {}  {}   {}",
                 pad(
-                    pane.display_name.as_deref().unwrap_or(UNNAMED_PANE),
+                    pane.display_name.as_deref().unwrap_or(words::UNNAMED_PANE),
                     name_column
                 ),
                 pad(agent_state(pane), state_column),
@@ -281,7 +281,7 @@ pub(super) fn render_sweep_removal(
     let paths: Vec<String> = sweep
         .removals()
         .iter()
-        .map(|removal| abbreviate(removal.checkout_path().as_str(), home))
+        .map(|removal| words::abbreviate(removal.checkout_path().as_str(), home))
         .collect();
     let widest = [
         title.chars().count(),
