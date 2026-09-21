@@ -78,8 +78,8 @@ impl<'a> Removals<'a> {
     /// together and cannot be paired by hand.
     ///
     /// They are closed here rather than in the process that carries out the removal because
-    /// by the time that runs they are gone. herdr collapses a tab and a workspace that end
-    /// up empty, which is what lets this leave no residue — measured against 0.7.4.
+    /// by the time that runs they are gone, and closing them leaves no residue —
+    /// [`HerdrPort::pane_close`] says what herdr does with a tab that empties.
     ///
     /// A pane that will not close stops the whole thing: a checkout removed out from under
     /// half its panes is worse than one not removed. How far it got is what the message is

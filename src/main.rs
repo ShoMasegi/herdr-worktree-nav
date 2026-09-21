@@ -83,8 +83,8 @@ fn pane(start: Entrypoint) -> Result<()> {
     )
 }
 
-/// Print what the plugin sees as plain text. Useful when the picker shows something
-/// surprising: it separates "herdr or git told us something odd" from "the UI drew it wrong".
+/// Print what the plugin sees as plain text. What it is for, and what it prints that the
+/// rows leave out, is the module doc of `app::dump`.
 fn dump() -> Result<()> {
     let herdr = SocketHerdr::from_env()?;
     let (snapshot, tree) = collect::collect_tree(&herdr, &GitCli)?;

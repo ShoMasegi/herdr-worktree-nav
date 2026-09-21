@@ -2050,8 +2050,6 @@ mod tests {
 
     #[test]
     fn the_cursor_steps_off_a_checkout_once_its_removal_has_started() {
-        // A second `Shift-D` would race the first, and `Enter` would open a checkout being
-        // deleted underneath it.
         let mut state = state();
         select(&mut state, "fix/crash");
         state.set_removing(vec![CheckoutPath::for_test("/wt/app/fix-crash")]);
