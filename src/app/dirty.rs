@@ -198,19 +198,20 @@ mod tests {
     }
     use super::*;
     use crate::app::fakes::until;
+    use crate::app::fakes::{fake_git, FakeGit};
     use crate::domain::model::{Refs, RepoNode, WorktreeNode};
-    use crate::port::{RefWalk, RepoIdentity};
+
     use anyhow::Result;
     use std::sync::Mutex;
 
     /// A `GitPort` whose `is_dirty` blocks until the test releases it, so the window this
     /// module exists to manage — an answer in flight while the user does something else —
     /// can be opened and closed deliberately.
-    struct FakeGit {
+    struct InFlight {
         answered: Mutex<Vec<(String, std::sync::mpsc::Sender<Option<bool>>)>>,
     }
 
-    impl FakeGit {
+    impl InFlight {
         fn new() -> Arc<Self> {
             Arc::new(Self {
                 answered: Mutex::new(Vec::new()),
@@ -242,7 +243,7 @@ mod tests {
         }
     }
 
-    impl GitPort for FakeGit {
+    impl FakeGit for InFlight {
         fn is_dirty(&self, checkout_path: &str) -> Result<bool> {
             let (reply, wait) = mpsc::channel();
             self.answered
@@ -256,35 +257,8 @@ mod tests {
                 Err(_) => Ok(false),
             }
         }
-
-        fn identify(&self, _cwd: &str) -> Result<Option<RepoIdentity>> {
-            unreachable!("only is_dirty is asked of this port")
-        }
-        fn github_slug(&self, _repo_root: &str) -> Result<Option<crate::port::Slug>> {
-            unreachable!()
-        }
-        fn local_refs(&self, _repo_root: &str) -> Result<RefWalk> {
-            unreachable!()
-        }
-        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
-            unreachable!()
-        }
-        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!()
-        }
-        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
-            unreachable!()
-        }
-        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
-            unreachable!()
-        }
-        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!()
-        }
-        fn head_ref(&self, _repo_root: &str) -> Result<String> {
-            unreachable!()
-        }
     }
+    fake_git!(InFlight);
 
     fn tree(checkouts: &[&str]) -> Tree {
         Tree {
@@ -309,7 +283,7 @@ mod tests {
         }
     }
 
-    fn until_asked(git: &FakeGit, count: usize) {
+    fn until_asked(git: &InFlight, count: usize) {
         until(
             &format!("expected {count} checkouts to be asked about"),
             || git.outstanding() >= count,
@@ -327,7 +301,7 @@ mod tests {
     fn an_answer_from_before_a_reload_is_not_taken_for_a_fresh_one() {
         // The case the manual checklist asks a tester to confirm: leave uncommitted work,
         // let the walk start, commit it, press `r`.
-        let git = FakeGit::new();
+        let git = InFlight::new();
         let mut dirty = Dirty::new(git.clone());
         let tree = tree(&["/wt/a"]);
 
@@ -362,7 +336,7 @@ mod tests {
     fn a_checkout_that_has_been_cleaned_stops_being_marked() {
         // Within one round an answer is final, but across a reload the second answer has to
         // be able to undo the first — otherwise a marker can only ever be added.
-        let git = FakeGit::new();
+        let git = InFlight::new();
         let mut dirty = Dirty::new(git.clone());
         let tree = tree(&["/wt/a"]);
 
@@ -381,7 +355,7 @@ mod tests {
 
     #[test]
     fn a_checkout_is_asked_about_once_however_often_the_view_comes_back() {
-        let git = FakeGit::new();
+        let git = InFlight::new();
         let mut dirty = Dirty::new(git.clone());
         let tree = tree(&["/wt/a", "/wt/b"]);
 
@@ -408,7 +382,7 @@ mod tests {
         // The failure this is really about is the correlated one: `safe.directory`, or a
         // `git` that is not on the path herdr launched the plugin with, refuses every
         // checkout at once, and an unmarked list claims nothing anywhere is holding work.
-        let git = FakeGit::new();
+        let git = InFlight::new();
         let mut dirty = Dirty::new(git.clone());
         let tree = tree(&["/wt/a", "/wt/b"]);
 
@@ -435,7 +409,7 @@ mod tests {
     fn only_an_answer_that_changes_what_a_row_draws_asks_for_a_redraw() {
         // Most checkouts are clean, and a checkout nobody had asked about turning out to
         // be clean draws exactly what it drew before: nothing.
-        let git = FakeGit::new();
+        let git = InFlight::new();
         let mut dirty = Dirty::new(git.clone());
         let tree = tree(&["/wt/a", "/wt/b", "/wt/c"]);
         dirty.ask(&tree);
@@ -472,7 +446,7 @@ mod tests {
     fn a_refusal_from_a_withdrawn_round_does_not_keep_a_row_marked() {
         // git is misconfigured, every checkout refuses, the user fixes it and presses `r`.
         // The refusals still in flight answer a question that has been withdrawn.
-        let git = FakeGit::new();
+        let git = InFlight::new();
         let mut dirty = Dirty::new(git.clone());
         let tree = tree(&["/wt/a"]);
 
@@ -496,7 +470,7 @@ mod tests {
 
     #[test]
     fn a_checkout_that_has_left_the_tree_is_forgotten() {
-        let git = FakeGit::new();
+        let git = InFlight::new();
         let mut dirty = Dirty::new(git.clone());
 
         dirty.ask(&tree(&["/wt/a", "/wt/b"]));
@@ -518,7 +492,7 @@ mod tests {
         // The generation counter cannot catch this one: the walk was started in the round
         // that is still current, so its answer is not stale — it is about a checkout that
         // has since gone, and recording it marks a row nothing is drawing.
-        let git = FakeGit::new();
+        let git = InFlight::new();
         let mut dirty = Dirty::new(git.clone());
 
         dirty.ask(&tree(&["/wt/a", "/wt/b"]));
@@ -544,7 +518,7 @@ mod tests {
     fn no_more_than_eight_working_trees_are_walked_at_once() {
         // A user with forty worktrees is the reason: that many `git status` processes at
         // once is a laptop that stops for a moment.
-        let git = FakeGit::new();
+        let git = InFlight::new();
         let mut dirty = Dirty::new(git.clone());
         let paths: Vec<String> = (0..20).map(|n| format!("/wt/{n}")).collect();
         let borrowed: Vec<&str> = paths.iter().map(String::as_str).collect();

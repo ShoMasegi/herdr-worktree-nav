@@ -333,6 +333,7 @@ fn working_tree_words(answer: Option<&Result<bool, String>>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::fakes::{fake_git, FakeGit};
     use crate::domain::model::{PaneNode, WorktreeNode};
     use crate::domain::settings::{Panes, Settings};
     use crate::port::{AgentStatus, Track};
@@ -557,7 +558,7 @@ me/site  [/src/site]
         Refused,
     }
 
-    impl GitPort for Asked {
+    impl FakeGit for Asked {
         fn local_refs(&self, repo_root: &str) -> Result<crate::port::RefWalk, anyhow::Error> {
             self.walks.lock().unwrap().push(repo_root.to_string());
             let refs = vec![local("main", "/src/app", Some("origin/main"))];
@@ -572,44 +573,15 @@ me/site  [/src/site]
                 Walk::Whole => Ok(crate::port::RefWalk::of(refs)),
             }
         }
+
         fn is_dirty(&self, checkout_path: &str) -> Result<bool, anyhow::Error> {
             match checkout_path {
                 "/src/app" => Ok(true),
                 _ => anyhow::bail!("fatal: not a git repository\n  (`git status`)"),
             }
         }
-        fn github_slug(
-            &self,
-            _repo_root: &str,
-        ) -> Result<Option<crate::port::Slug>, anyhow::Error> {
-            unreachable!("this page asks git two things")
-        }
-        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>, anyhow::Error> {
-            unreachable!("this page asks git two things")
-        }
-        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>, anyhow::Error> {
-            unreachable!("this page asks git two things")
-        }
-        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<(), anyhow::Error> {
-            unreachable!("this page asks git two things")
-        }
-        fn fetch_all(&self, _repo_root: &str) -> Result<(), anyhow::Error> {
-            unreachable!("this page asks git two things")
-        }
-        fn remove_worktree(
-            &self,
-            _repo_root: &str,
-            _checkout_path: &str,
-        ) -> Result<(), anyhow::Error> {
-            unreachable!("this page asks git two things")
-        }
-        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<(), anyhow::Error> {
-            unreachable!("this page asks git two things")
-        }
-        fn head_ref(&self, _repo_root: &str) -> Result<String, anyhow::Error> {
-            unreachable!("this page asks git two things")
-        }
     }
+    fake_git!(Asked);
 
     fn asked(walk: Walk) -> Asked {
         Asked {

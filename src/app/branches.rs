@@ -519,6 +519,7 @@ fn open_existing(herdr: &dyn HerdrPort, repo_root: &str, checkout_path: &str) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::fakes::{fake_gh, fake_git, FakeGh, FakeGit};
     use std::sync::Mutex;
 
     use crate::port::{RefWalk, Slug};
@@ -526,63 +527,32 @@ mod tests {
     /// A git that knows one repository by name, or refuses to say.
     struct Origin(std::result::Result<Option<Slug>, ()>);
 
-    impl GitPort for Origin {
+    impl FakeGit for Origin {
         fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
             match &self.0 {
                 Ok(slug) => Ok(slug.clone()),
                 Err(()) => Err(anyhow!("fatal: not a git repository")),
             }
         }
-        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn local_refs(&self, _repo_root: &str) -> Result<RefWalk> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn head_ref(&self, _repo_root: &str) -> Result<String> {
-            unreachable!("only github_slug is asked of this port")
-        }
     }
+    fake_git!(Origin);
 
     /// A `gh` that answers nothing and remembers what it was asked about.
     #[derive(Default)]
     struct Asked(Mutex<Vec<String>>);
 
-    impl GhPort for Asked {
+    impl FakeGh for Asked {
         fn pull_requests(&self, slug: &Slug) -> Vec<PullRequest> {
             self.0.lock().unwrap().push(slug.as_str().to_string());
             Vec::new()
         }
-        fn settled_pull_requests(
-            &self,
-            _slug: &Slug,
-        ) -> std::result::Result<crate::port::SettledPullRequests, String> {
-            unreachable!("the branches view does not sweep")
-        }
     }
+    fake_gh!(Asked);
 
     /// A git that answers one walk, however it went.
     struct Walked(std::result::Result<RefWalk, ()>);
 
-    impl GitPort for Walked {
+    impl FakeGit for Walked {
         fn local_refs(&self, _repo_root: &str) -> Result<RefWalk> {
             match &self.0 {
                 Ok(walk) => Ok(walk.clone()),
@@ -591,34 +561,8 @@ mod tests {
                 )),
             }
         }
-        fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn head_ref(&self, _repo_root: &str) -> Result<String> {
-            unreachable!("only local_refs is asked of this port")
-        }
     }
+    fake_git!(Walked);
 
     fn a_ref(name: &str) -> GitRef {
         GitRef {

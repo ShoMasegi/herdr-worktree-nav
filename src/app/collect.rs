@@ -219,16 +219,14 @@ fn collect_repos(
 
 #[cfg(test)]
 mod tests {
+    use crate::app::fakes::{fake_git, fake_herdr, FakeGit, FakeHerdr};
     use std::collections::HashMap;
 
     use anyhow::Result;
 
     use super::{collect_repos, is_inside, read_refs, resolve_placements};
     use crate::domain::tree::{PanePlacement, RepoInput};
-    use crate::port::{
-        GitPort, HerdrPort, PaneDestination, PaneSplit, Slug, Snapshot, Worktree, WorktreeCreate,
-        WorktreeList, WorktreeOpen, WorktreeOpened, WorktreeSource,
-    };
+    use crate::port::{Slug, Snapshot, Worktree, WorktreeList, WorktreeSource};
 
     /// A herdr that knows one repository, and a git that may or may not know its name on
     /// GitHub. Between them they are everything `collect_repos` reads.
@@ -245,7 +243,7 @@ mod tests {
         Dropped,
     }
 
-    impl GitPort for RefsFailFor {
+    impl FakeGit for RefsFailFor {
         fn local_refs(&self, repo_root: &str) -> Result<crate::port::RefWalk> {
             if repo_root != self.0 {
                 return Ok(crate::port::RefWalk::of(Vec::new()));
@@ -275,70 +273,18 @@ mod tests {
                 }),
             }
         }
-        fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn head_ref(&self, _repo_root: &str) -> Result<String> {
-            unreachable!("only local_refs is asked of this port")
-        }
     }
+    fake_git!(RefsFailFor);
 
     /// A git whose ref walk panics — a debug build's shape of a walk that did not finish.
     struct RefsPanic;
 
-    impl GitPort for RefsPanic {
+    impl FakeGit for RefsPanic {
         fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
             panic!("the walk did not finish")
         }
-        fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
-            unreachable!("only local_refs is asked of this port")
-        }
-        fn head_ref(&self, _repo_root: &str) -> Result<String> {
-            unreachable!("only local_refs is asked of this port")
-        }
     }
+    fake_git!(RefsPanic);
 
     fn repo_input(repo_root: &str) -> RepoInput {
         RepoInput {
@@ -404,7 +350,7 @@ mod tests {
         );
     }
 
-    impl HerdrPort for Repository {
+    impl FakeHerdr for Repository {
         fn worktree_list(&self, _cwd: &str) -> Result<WorktreeList> {
             Ok(WorktreeList {
                 source: WorktreeSource {
@@ -419,79 +365,18 @@ mod tests {
                 worktrees: Vec::<Worktree>::new(),
             })
         }
-        fn snapshot(&self) -> Result<Snapshot> {
-            unreachable!("only worktree_list is asked of this port")
-        }
-        fn worktree_create(&self, _req: &WorktreeCreate) -> Result<WorktreeOpened> {
-            unreachable!("only worktree_list is asked of this port")
-        }
-        fn worktree_open(&self, _req: &WorktreeOpen) -> Result<WorktreeOpened> {
-            unreachable!("only worktree_list is asked of this port")
-        }
-        fn pane_focus(&self, _pane_id: &str) -> Result<()> {
-            unreachable!("only worktree_list is asked of this port")
-        }
-        fn pane_split(&self, _req: &PaneSplit) -> Result<crate::port::Pane> {
-            unreachable!("only worktree_list is asked of this port")
-        }
-        fn pane_move(&self, _pane: &str, _dest: &PaneDestination, _focus: bool) -> Result<()> {
-            unreachable!("only worktree_list is asked of this port")
-        }
-        fn pane_close(&self, _pane_id: &str) -> Result<()> {
-            unreachable!("only worktree_list is asked of this port")
-        }
-        fn workspace_focus(&self, _workspace_id: &str) -> Result<()> {
-            unreachable!("only worktree_list is asked of this port")
-        }
-        fn tab_focus(&self, _tab_id: &str) -> Result<()> {
-            unreachable!("only worktree_list is asked of this port")
-        }
-        fn plugin_pane_open(
-            &self,
-            _req: &crate::port::PluginPaneOpen,
-        ) -> Result<Option<crate::port::OpenRefusal>> {
-            unreachable!("only worktree_list is asked of this port")
-        }
-        fn notify(&self, _notification: &crate::port::Notification) -> Result<()> {
-            unreachable!("only worktree_list is asked of this port")
-        }
     }
+    fake_herdr!(Repository);
 
-    impl GitPort for Repository {
+    impl FakeGit for Repository {
         fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
             match &self.slug {
                 Ok(slug) => Ok(slug.clone()),
                 Err(()) => Err(anyhow::anyhow!("fatal: not a git repository")),
             }
         }
-        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn head_ref(&self, _repo_root: &str) -> Result<String> {
-            unreachable!("only github_slug is asked of this port")
-        }
     }
+    fake_git!(Repository);
 
     fn one_pane_in(checkout_path: &str) -> HashMap<String, PanePlacement> {
         HashMap::from([(
@@ -537,7 +422,7 @@ mod tests {
     /// `identify_one`'s normalization has something to do.
     struct IdentifiesWithASlash;
 
-    impl GitPort for IdentifiesWithASlash {
+    impl FakeGit for IdentifiesWithASlash {
         fn identify(&self, cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
             if is_inside(cwd, "/src/app") {
                 return Ok(None);
@@ -548,34 +433,8 @@ mod tests {
                 branch: None,
             }))
         }
-        fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
-            unreachable!("only identify is asked of this port")
-        }
-        fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
-            unreachable!("only identify is asked of this port")
-        }
-        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
-            unreachable!("only identify is asked of this port")
-        }
-        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!("only identify is asked of this port")
-        }
-        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
-            unreachable!("only identify is asked of this port")
-        }
-        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
-            unreachable!("only identify is asked of this port")
-        }
-        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!("only identify is asked of this port")
-        }
-        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
-            unreachable!("only identify is asked of this port")
-        }
-        fn head_ref(&self, _repo_root: &str) -> Result<String> {
-            unreachable!("only identify is asked of this port")
-        }
     }
+    fake_git!(IdentifiesWithASlash);
 
     #[test]
     fn one_repository_is_asked_about_once_however_many_panes_are_in_it() {
