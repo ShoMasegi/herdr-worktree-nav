@@ -243,6 +243,13 @@ put the failure but a log, and that is how it goes silent.
   because the terminal was small. It is also why a condition and the prompt line do not
   compete for the same columns: [#35](https://github.com/ShoMasegi/herdr-worktree-nav/issues/35)
   was a condition losing the line to a filter chip that had room to spare beside it.
+- **What a width cut has to be readable somewhere the user already is.** `!` opens a panel
+  over the list holding every condition whole. A count is enough to say *something is
+  wrong*; it is not enough to act on, and a person who has to quit the picker and run
+  another command to read a sentence will not read it. The panel degrades the way the line
+  does — what does not fit becomes a count of what is left — because it is only ever read,
+  and a clipped sentence is not a different sentence the way a clipped question is a
+  different question.
 - **Do not push what you should derive.** A condition stored as a message outlives the thing
   it described; [#64](https://github.com/ShoMasegi/herdr-worktree-nav/issues/64) is exactly
   that, and the fix is the shape in kind 3 rather than a place to take it back from.

@@ -99,6 +99,13 @@ pub struct PanesState {
     /// nothing to retire it, so a frame whose reading worked sat under a sentence saying
     /// the list could not be read. Issue #64.
     stale: Option<String>,
+    /// Whether the panel holding every condition in full is open.
+    ///
+    /// The prompt line has one line and gives its words up for a count as it narrows, so
+    /// there has to be somewhere the whole sentence can still be read without leaving the
+    /// picker. Not a condition itself: it is a thing the user opened, and it closes when
+    /// they say so.
+    showing_conditions: bool,
     /// Frame of the spinner on the rows being removed. Advanced by the loop that owns the
     /// clock, the same way the branches view does it — `domain` is not allowed to read one.
     tick: usize,
@@ -173,6 +180,7 @@ impl PanesState {
             pending_sweep: None,
             message: None,
             stale: None,
+            showing_conditions: false,
             tick: 0,
             waiting: false,
             sweep: None,
@@ -565,6 +573,11 @@ impl PanesState {
         notice::summarize(&self.conditions())
     }
 
+    /// Whether the panel holding every condition in full is open.
+    pub fn is_showing_conditions(&self) -> bool {
+        self.showing_conditions
+    }
+
     /// Everything that is wrong right now, in full and in order.
     ///
     /// The prompt line can hold one of these; this is what the count on the end of it is
@@ -682,6 +695,10 @@ impl PanesState {
             });
         }
         if !after.is_empty() {
+            // The question is the one thing on screen that a key can answer destructively,
+            // so it takes the space and the keyboard from a panel that was only being read.
+            // Both are drawn over the list, and two boxes at once is a box nobody saw.
+            self.showing_conditions = false;
             self.pending_sweep = Some(SweepRemoval::of(&self.tree, &after));
         }
     }
@@ -934,6 +951,20 @@ impl PanesState {
         Action::Consumed
     }
 
+    /// What `!` means: put every condition on screen in full.
+    ///
+    /// With nothing wrong it says so rather than opening an empty panel. The user pressed a
+    /// key to ask a question, and "nothing" is an answer to it; a panel with no lines in it
+    /// is not.
+    fn show_conditions(&mut self) -> Action {
+        if self.conditions().is_empty() {
+            self.message = Some("nothing is wrong".into());
+        } else {
+            self.showing_conditions = true;
+        }
+        Action::Consumed
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> Action {
         // Windows sends both press and release; only act on press.
         if key.kind == KeyEventKind::Release {
@@ -962,6 +993,27 @@ impl PanesState {
                 }
                 _ => Action::Consumed,
             };
+        }
+
+        // The panel is over the list and holds the whole of what the line could only
+        // summarise, so while it is up it is what the keyboard is for. It closes on the key
+        // that opened it, and on the keys that mean "go back" everywhere else in the picker.
+        if self.showing_conditions {
+            match key.code {
+                // Abandoning the picker outright is not a key the panel is allowed to
+                // swallow: it is how a pane is got rid of when nothing else is working.
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return Action::Quit
+                }
+                KeyCode::Char('!') | KeyCode::Esc | KeyCode::Char('q') => {
+                    self.showing_conditions = false
+                }
+                // Anything else is left alone rather than acted on: a key pressed at a panel
+                // was aimed at the panel, and the list under it is not what the user is
+                // looking at.
+                _ => {}
+            }
+            return Action::Consumed;
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -1001,6 +1053,10 @@ impl PanesState {
                     return self.set_sweeping(false)
                 }
                 KeyCode::Char(' ') => return self.flip_mark(),
+                // Reading is not deciding, so this one key is shared with the ordinary
+                // mode: `gh` refusing is a sweep's own condition, and a sweep is when the
+                // user most needs to read it whole.
+                KeyCode::Char('!') => return self.show_conditions(),
                 KeyCode::Enter => {
                     let chosen = self.chosen();
                     if chosen.is_empty() {
@@ -1064,6 +1120,7 @@ impl PanesState {
                 Action::Consumed
             }
             KeyCode::Char('r') => Action::Reload,
+            KeyCode::Char('!') => self.show_conditions(),
             KeyCode::Char('b') => self.set_state_filter(Some(StateFilter::Blocked)),
             KeyCode::Char('w') => self.set_state_filter(Some(StateFilter::Working)),
             KeyCode::Char('i') => self.set_state_filter(Some(StateFilter::Idle)),
@@ -2601,6 +2658,68 @@ mod tests {
     #[test]
     fn the_count_beside_the_search_box_includes_panes_outside_a_repository() {
         assert_eq!(state().pane_count(), 3);
+    }
+
+    #[test]
+    fn the_key_that_reads_what_is_wrong_answers_when_nothing_is() {
+        // A panel with no lines in it is not an answer to a question the user asked with a
+        // keypress, and a key that appears to do nothing is the same bug as a blank line.
+        let mut state = state();
+        assert!(state.conditions().is_empty());
+
+        assert_eq!(state.handle_key(key(KeyCode::Char('!'))), Action::Consumed);
+        assert!(!state.is_showing_conditions());
+        assert_eq!(state.message(), Some("nothing is wrong"));
+    }
+
+    #[test]
+    fn the_panel_opens_on_what_is_wrong_and_closes_three_ways() {
+        for closing in [KeyCode::Char('!'), KeyCode::Esc, KeyCode::Char('q')] {
+            let mut state = state();
+            state.set_stale("herdr did not answer".into());
+
+            assert_eq!(state.handle_key(key(KeyCode::Char('!'))), Action::Consumed);
+            assert!(state.is_showing_conditions());
+            // And `q` closes the panel rather than the picker, the way it leaves a sweep.
+            assert_eq!(state.handle_key(key(closing)), Action::Consumed);
+            assert!(!state.is_showing_conditions(), "{closing:?} closes it");
+        }
+    }
+
+    #[test]
+    fn a_key_the_panel_has_no_use_for_does_not_reach_the_list_under_it() {
+        let mut state = state();
+        state.set_stale("herdr did not answer".into());
+        state.handle_key(key(KeyCode::Char('!')));
+        let before = state.cursor;
+
+        assert_eq!(state.handle_key(key(KeyCode::Char('j'))), Action::Consumed);
+        assert_eq!(state.cursor, before, "the cursor is not where the user is");
+        assert_eq!(state.handle_key(key(KeyCode::Char('D'))), Action::Consumed);
+        assert!(state.pending_removal().is_none(), "and nothing is asked");
+        assert!(state.is_showing_conditions(), "the panel is still up");
+
+        // Abandoning the picker is the one key it does not swallow.
+        let quit = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(state.handle_key(quit), Action::Quit);
+    }
+
+    #[test]
+    fn a_sweeps_question_takes_the_panel_off_the_screen() {
+        // Both are drawn over the list, and the one that can delete something owns the
+        // space: a box nobody saw is a box whose `y` is armed over nothing.
+        let mut state = sweeping();
+        state.set_stale("herdr did not answer".into());
+        // The order a user reaches this in: `Enter` asks for the reading the question waits
+        // on, and the panel is opened while that reading is still out.
+        state.handle_key(key(KeyCode::Enter));
+        assert_eq!(state.handle_key(key(KeyCode::Char('!'))), Action::Consumed);
+        assert!(state.is_showing_conditions(), "a sweep can read it too");
+
+        state.set_waiting(false);
+        state.confirm_sweep_if_settled();
+        assert!(state.pending_sweep().is_some(), "the question is up");
+        assert!(!state.is_showing_conditions());
     }
 
     #[test]

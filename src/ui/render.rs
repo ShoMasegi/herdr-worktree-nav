@@ -193,6 +193,27 @@ const HELP_PANES: &[&str] = &[
     "\u{21b5} jump  \u{21e5} branches  / search  esc close",
     "\u{21b5} jump  esc close",
 ];
+/// While something is wrong. `HELP_PANES` with the key that reads it in full.
+///
+/// It outranks the reminder of `shift+d` from the rung below the widest: a key that has
+/// been in the hint since the picker opened is one the user has already seen, and this one
+/// has only just become worth pressing. It is also the last thing to go as the rungs
+/// narrow, because the narrow end is where the line has given up its words for a count.
+const HELP_PANES_TROUBLE: &[&str] = &[
+    "\u{21b5} jump  n new pane  p no-pane rows  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  shift+d remove  r reload  ! what is wrong  esc close",
+    "\u{21b5} jump  n new pane  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  shift+d remove  ! what is wrong  esc close",
+    "\u{21b5} jump  n new  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  ! what is wrong  esc close",
+    "\u{21b5} jump  n new  \u{21e5} branches  / search  ! what is wrong  esc close",
+    "\u{21b5} jump  \u{21e5} branches  ! what is wrong  esc close",
+    "\u{21b5} jump  ! what is wrong  esc close",
+    "! what is wrong  esc close",
+];
+/// While the panel holding every condition is up. The only keys it has are the ones that
+/// close it, and `dump` is where the words are when the pane is too small even for this.
+const HELP_PANES_CONDITIONS: &[&str] = &[
+    "! or esc closes  herdr-worktree-nav dump has them in full",
+    "! or esc closes",
+];
 /// While a deletion is waiting on a yes. Says what the dialog says, in case the dialog is
 /// too small a pane to have drawn everything.
 const HELP_PANES_REMOVE: &[&str] = &["y delete  any other key cancels", "y delete"];
@@ -250,7 +271,14 @@ pub fn draw(frame: &mut Frame, state: &PanesState, theme: &Theme, _mode: Mode) -
     let asked = match (state.pending_removal(), state.pending_sweep()) {
         (Some(removal), _) => render_removal(frame, removal, state.home(), theme, panel.body),
         (None, Some(sweep)) => render_sweep_removal(frame, sweep, state.home(), theme, panel.body),
-        (None, None) => true,
+        (None, None) => {
+            // Under a question rather than beside it: a question is answered with a key and
+            // this is only read, so the one that can delete something owns the space.
+            if state.is_showing_conditions() {
+                render_conditions(frame, &state.conditions(), theme, panel.body);
+            }
+            true
+        }
     };
     render_detail(frame, &state.detail(), theme, panel.detail);
 
@@ -260,10 +288,18 @@ pub fn draw(frame: &mut Frame, state: &PanesState, theme: &Theme, _mode: Mode) -
         state.is_filtering(),
     ) {
         (true, _, _) => HELP_PANES_REMOVE,
+        // Before every other variant but a question's: the keys the list offers do nothing
+        // while the panel is up, and a footer offering them would be describing a screen
+        // the user is not on.
+        _ if state.is_showing_conditions() => HELP_PANES_CONDITIONS,
         // Before the search variant, because `/` does nothing during a sweep — the keys a
         // footer offers have to be the keys that answer.
         (false, true, _) => HELP_PANES_SWEEP,
         (false, false, true) => HELP_PANES_SEARCH,
+        // `!` is worth a place in the hint only when there is something to read, and it
+        // survives every rung below: at the widths where the line itself has given up its
+        // words for a count, the key that gets them back is the most useful thing left.
+        (false, false, false) if !state.conditions().is_empty() => HELP_PANES_TROUBLE,
         (false, false, false) => HELP_PANES,
     };
     frame.render_widget(footer(variants, theme, panel.footer.width), panel.footer);
@@ -820,6 +856,165 @@ fn render_sweep_removal(
     }
     candidates.push(vec![title, keys]);
     question_box(frame, theme, body, width, title_width, candidates)
+}
+
+/// A panel's own columns: a border and a padding column on each side. Unlike a question
+/// box its lines are not indented — there is nothing above them to hang an indent off.
+const PANEL_CHROME: usize = 4;
+
+/// The fewest columns the panel is worth drawing in. Below it the prompt line's count is
+/// what a pane that small gets, and `dump` is where the words are.
+const PANEL_MIN_WIDTH: usize = 8;
+
+/// Everything that is wrong, whole, as a panel over the list.
+///
+/// The prompt line has one line and gives its words up for a count as it narrows, so a
+/// narrow pane cuts sentences nobody can then read. `dump` is the unabridged copy for a bug
+/// report; this is the one for the person looking at the picker now, and `!` is what opens
+/// it.
+///
+/// It degrades rather than refuses: what does not fit becomes a count of what is left, the
+/// same answer the line gives for the same reason. A question box refuses instead, because
+/// a clipped question is a different question — this is only ever read.
+fn render_conditions(frame: &mut Frame, conditions: &[notice::Notice], theme: &Theme, body: Rect) {
+    if body.height == 0 || (body.width as usize) < PANEL_MIN_WIDTH {
+        return;
+    }
+    // Room for a border costs two rows and two columns; under that the panel is drawn bare.
+    let bordered = body.height >= 3;
+    let width = (body.width as usize).min(BOX_MAX_WIDTH);
+    let inner = match bordered {
+        true => width - PANEL_CHROME,
+        false => width,
+    };
+
+    let title = format!(
+        "{} wrong",
+        count_of(conditions.len(), "thing is", "things are")
+    );
+    let wrapped: Vec<Vec<String>> = conditions
+        .iter()
+        .map(|condition| wrap(&condition.text, inner))
+        .collect();
+
+    let blank = Line::from("");
+    let title = Line::from(Span::styled(
+        title,
+        Style::default().add_modifier(Modifier::BOLD),
+    ));
+    let paragraphs: Vec<Vec<Line>> = wrapped
+        .iter()
+        .map(|lines| {
+            lines
+                .iter()
+                .map(|line| Line::from(Span::raw(line.clone())))
+                .collect()
+        })
+        .collect();
+
+    // Air between one sentence and the next goes first, then sentences from the bottom with
+    // a count in their place. The title has said how many there are the whole time.
+    let mut airy = vec![title.clone(), blank.clone()];
+    for (index, paragraph) in paragraphs.iter().enumerate() {
+        airy.extend(paragraph.clone());
+        if index + 1 < paragraphs.len() {
+            airy.push(blank.clone());
+        }
+    }
+    let tight: Vec<Line> = std::iter::once(title.clone())
+        .chain(paragraphs.iter().flatten().cloned())
+        .collect();
+    let mut candidates = vec![airy, tight];
+    for shown in (1..paragraphs.len()).rev() {
+        let more = Line::from(Span::styled(
+            format!("+{} more", paragraphs.len() - shown),
+            theme.dim(),
+        ));
+        candidates.push(
+            std::iter::once(title.clone())
+                .chain(paragraphs[..shown].iter().flatten().cloned())
+                .chain(std::iter::once(more))
+                .collect(),
+        );
+    }
+    // The last resort says how many there are and nothing else, which is what the prompt
+    // line says at the widths that cannot hold a sentence either.
+    candidates.push(vec![title]);
+
+    let chrome = match bordered {
+        true => 2,
+        false => 0,
+    };
+    let Some(lines) = candidates
+        .into_iter()
+        .find(|lines| lines.len() + chrome <= body.height as usize)
+    else {
+        return;
+    };
+    let height = (lines.len() + chrome) as u16;
+    let area = Rect::new(
+        body.x + (body.width - width as u16) / 2,
+        body.y + (body.height - height) / 2,
+        width as u16,
+        height,
+    );
+    frame.render_widget(Clear, area);
+    let paragraph = Paragraph::new(lines);
+    frame.render_widget(
+        match bordered {
+            true => paragraph.block(
+                Block::bordered()
+                    .border_style(Style::default().fg(theme.accent))
+                    .padding(ratatui::widgets::Padding::horizontal(1)),
+            ),
+            false => paragraph,
+        },
+        area,
+    );
+}
+
+/// Break `text` into lines of at most `width` characters, at spaces where there is one.
+///
+/// A word longer than the line is cut rather than left to overflow: git's words include
+/// paths and refnames, and one of those is easily wider than a pane.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return Vec::new();
+    }
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    let mut length = 0;
+    for word in text.split_whitespace() {
+        let mut word = word.chars().collect::<Vec<char>>();
+        // Longer than a line on its own: take what fits, and go round again with the rest.
+        while word.len() > width {
+            if length > 0 {
+                lines.push(std::mem::take(&mut line));
+                length = 0;
+            }
+            let head: String = word.drain(..width).collect();
+            lines.push(head);
+        }
+        let word: String = word.into_iter().collect();
+        let wanted = match length {
+            0 => word.chars().count(),
+            _ => word.chars().count() + 1,
+        };
+        if length + wanted > width && length > 0 {
+            lines.push(std::mem::take(&mut line));
+            length = 0;
+        }
+        if length > 0 {
+            line.push(' ');
+            length += 1;
+        }
+        length += word.chars().count();
+        line.push_str(&word);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
 }
 
 fn render_rows(frame: &mut Frame, state: &PanesState, theme: &Theme, area: Rect) {
@@ -2287,6 +2482,84 @@ mod tests {
             wide.contains("expected `show_worktrees_without_panes`"),
             "with room, the right key is there too: {wide}"
         );
+    }
+
+    #[test]
+    fn the_panel_holds_what_the_prompt_line_had_to_cut() {
+        // The line's job is to say something is wrong at any width; the panel's is to be
+        // the place the whole of it can still be read without leaving the picker.
+        let mut tree = tree();
+        tree.repos[0].refs = Refs::Unreadable(TWO_REFS_REFUSAL.into());
+        let mut state = PanesState::new(tree, None);
+
+        let narrow = 60;
+        let line = prompt_line(&state, narrow);
+        assert!(
+            !line.contains("refs/heads/chore/deps"),
+            "the line cannot hold the second refname here: {line}"
+        );
+
+        press(&mut state, KeyCode::Char('!'));
+        assert!(state.is_showing_conditions());
+        insta::assert_snapshot!(screen(&state, 92, 18));
+        let panel = screen(&state, narrow, 18);
+        assert!(
+            panel.contains("refs/heads/main") && panel.contains("refs/heads/chore/deps"),
+            "both refnames are readable in the panel:\n{panel}"
+        );
+    }
+
+    #[test]
+    fn a_panel_too_short_for_everything_says_how_much_is_left() {
+        // The same answer the line gives when it runs out of columns, for the same reason:
+        // a screen that shows two of three things and looks complete is the failure mode.
+        let mut tree = tree();
+        tree.repos[0].refs = Refs::Unreadable(REFS_REFUSAL.into());
+        tree.repos[1].refs = Refs::Unreadable(REFS_REFUSAL.into());
+        let mut state = PanesState::new(tree, None);
+        state.set_stale("herdr did not answer".into());
+        assert_eq!(state.conditions().len(), 3);
+
+        press(&mut state, KeyCode::Char('!'));
+        // Below the prompt line, which carries a count of its own and would answer for the
+        // panel's if the search were over the whole screen.
+        let short = screen(&state, 92, 9);
+        let panel = short.lines().skip(1).collect::<Vec<&str>>().join("\n");
+        assert!(panel.contains("3 things are wrong"), "the count:\n{panel}");
+        assert!(
+            panel.contains("herdr did not answer"),
+            "the one that fit, whole:\n{panel}"
+        );
+        assert!(panel.contains("+2 more"), "and what did not:\n{panel}");
+    }
+
+    #[test]
+    fn the_key_that_reads_it_is_offered_only_while_there_is_something_to_read() {
+        let state = PanesState::new(tree(), None);
+        let hint = screen(&state, 92, 18);
+        let hint = hint.lines().last().expect("the key hint").to_string();
+        assert!(!hint.contains('!'), "nothing is wrong: {hint}");
+
+        let mut tree = tree();
+        tree.repos[0].refs = Refs::Unreadable(REFS_REFUSAL.into());
+        let state = PanesState::new(tree, None);
+        let hint = screen(&state, 92, 18);
+        let hint = hint.lines().last().expect("the key hint").to_string();
+        assert!(hint.contains("! what is wrong"), "and now: {hint}");
+    }
+
+    #[test]
+    fn every_width_the_picker_supports_keeps_the_key_that_reads_the_rest() {
+        // The narrow end is where it matters: that is where the line itself has given up
+        // its words for a count, so the key is the only way back to them.
+        let mut tree = tree();
+        tree.repos[0].refs = Refs::Unreadable(TWO_REFS_REFUSAL.into());
+        let state = PanesState::new(tree, None);
+        for width in 24..=92 {
+            let drawn = screen(&state, width, 18);
+            let hint = drawn.lines().last().expect("the key hint").to_string();
+            assert!(hint.contains('!'), "at {width}: {hint}");
+        }
     }
 
     #[test]

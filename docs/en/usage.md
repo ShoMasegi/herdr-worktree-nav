@@ -34,6 +34,7 @@ branch list starts on.
 | `b` `w` `i` `d` | narrow to blocked, working, idle, or done |
 | `a` | clear the state filter |
 | `r` | reload |
+| `!` | read everything that is wrong, in full |
 | `q`, `Esc`, `Ctrl-C` | close |
 
 `←` and `→` — or `h` and `l`, as `↑`/`↓` are also `k`/`j` — land on the first thing worth
@@ -106,7 +107,7 @@ it refused. Fix the cause and enter the sweep again: a repository `gh` refused i
 again on the way in; one it answered for is not, and neither is one with no GitHub remote, since
 there is nothing to ask. With more than one repository in trouble the prompt line names the
 first and counts the rest, and a refusal — the one you can do something about — is named ahead
-of a missing remote. Entering again re-asks `gh` and nothing else: which working trees are
+of a missing remote; `!` opens the rest in full, during a sweep as well as outside one. Entering again re-asks `gh` and nothing else: which working trees are
 clean and which checkouts have panes in them were read when the picker opened; `r`, outside a
 sweep, reads them again, and so does `Enter` inside one, before it asks.
 
@@ -341,7 +342,14 @@ are typing in the field, where the cursor is yours.
 
 On a line too narrow to hold it, it gives up its words rather than its place: the spinners
 lose their labels first, and then the sentence becomes a count of how many things are wrong,
-`!2`. No width leaves the line silent about it. `r` reads the refs again.
+`!2`. No width leaves the line silent about it.
+
+`!` opens a panel over the list with every one of them in it, whole, wrapped to the pane —
+which is where a sentence the line had to cut can still be read without leaving the picker.
+The key hint offers it for as long as there is something to read, and `!`, `Esc` or `q`
+closes it again. A pane too short for all of them shows what fits and counts the rest, the
+same answer the line gives for the same reason; `herdr-worktree-nav dump` is the copy with
+nothing left out. `r` reads the refs again.
 
 `r` asks again. It is the only thing that does: the answers are otherwise kept for as long as
 the picker is open, `Tab` to the branches view and back included.
