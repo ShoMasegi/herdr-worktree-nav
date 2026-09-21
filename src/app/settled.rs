@@ -7,11 +7,12 @@
 //!
 //! One thread per repository, not per checkout. Repositories are however many the user has
 //! panes open in, which is a handful, so there is nothing here to cap — unlike
-//! `app::dirty`, where every checkout costs a process of its own.
+//! [`app::dirty`](crate::app::dirty), where every checkout costs a process of its own.
 //!
 //! A repository that has not answered yet is absent from the map, which is not the same as
-//! present with `None`: `domain::sweep::Facts` reads the first as "nobody has asked" and the
-//! second as "asked, and `gh` could not say", and only the second is worth a word on a row.
+//! present with `None`: [`domain::sweep::Facts`](crate::domain::sweep::Facts) reads the first
+//! as "nobody has asked" and the second as "asked, and `gh` could not say", and only the
+//! second is worth a word on a row.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -28,8 +29,9 @@ type Reply = (u64, String, Answer);
 /// What is known about one repository's pull requests.
 ///
 /// Four things, each named, so that every reader says what it does with each rather than
-/// testing for the one it wants — the shape `domain::sweep::Candidate::is_markable`'s doc
-/// argues for. A `gh` that refused is worth asking again and a repository with no GitHub
+/// testing for the one it wants — the shape
+/// [`domain::sweep::Candidate::is_markable`](crate::domain::sweep::Candidate::is_markable)'s
+/// doc argues for. A `gh` that refused is worth asking again and a repository with no GitHub
 /// remote is not, so one state for both could not tell them apart.
 #[derive(Debug, Clone)]
 enum Answer {
@@ -176,7 +178,8 @@ impl Settled {
         received
     }
 
-    /// What `gh` has said so far, in the shape `domain::sweep` decides on.
+    /// What `gh` has said so far, in the shape [`domain::sweep`](crate::domain::sweep) decides
+    /// on.
     ///
     /// A repository still being asked about is left out entirely rather than entered as
     /// `None`: absent is "nobody has asked yet", and `None` is "asked, and `gh` could not
@@ -212,9 +215,9 @@ impl Settled {
     /// repository that has left the list is not one the user can see a spinner for.
     ///
     /// A call that never comes home would keep this true for as long as the picker is up and
-    /// the repository is listed; `adapter::gh_cli` gives up on one after `GH_BUDGET` and
-    /// answers with a refusal instead — `a_gh_on_the_path_is_given_the_budget_and_no_more`
-    /// in `tests/gh_cli.rs`.
+    /// the repository is listed; [`adapter::gh_cli`](crate::adapter::gh_cli) gives up on one
+    /// after `GH_BUDGET` and answers with a refusal instead —
+    /// `a_gh_on_the_path_is_given_the_budget_and_no_more` in `tests/gh_cli.rs`.
     pub fn is_waiting(&self, tree: &Tree) -> bool {
         tree.repos
             .iter()

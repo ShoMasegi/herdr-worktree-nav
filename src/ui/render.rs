@@ -81,12 +81,13 @@ fn meta_column(rows: &[Row], width: u16) -> usize {
 /// the label itself, the room kept for what the checkout says about itself, and the note on
 /// one with nothing running in it.
 ///
-/// **The meta column is a maximum over every row, so nothing that can appear while the
-/// picker is up may make a row wider than it was measured.** `domain::rows::marks_reserve`
-/// therefore keeps room for the `✱` whether or not it is showing — `✱` and `?` are the same
-/// width, so one reserve serves both. The `deleting` note is the deliberate exception: it
-/// appears on a keypress on one row, and those columns come out of that row's own label
-/// rather than out of everyone else's alignment.
+/// **The meta column is a maximum over every row, so nothing that can appear while the picker
+/// is up may make a row wider than it was measured.**
+/// [`domain::rows::marks_reserve`](crate::domain::rows::marks_reserve) therefore keeps room
+/// for the `✱` whether or not it is showing — `✱` and `?` are the same width, so one reserve
+/// serves both. The `deleting` note is the deliberate exception: it appears on a keypress on
+/// one row, and those columns come out of that row's own label rather than out of everyone
+/// else's alignment.
 fn label_end(row: &Row) -> usize {
     // Mirrors `tree_prefix`, whose glyphs carry their own trailing space.
     let tree = if row.reference.is_group() || row.depth == 0 {
@@ -149,10 +150,11 @@ fn note_width(row: &Row) -> usize {
 /// sweep opens. What it would replace is where the session currently is — the less useful of
 /// the two while the question on screen is what to delete.
 ///
-/// As it stands the two never meet: `domain::rows::flatten` gives every worktree row
-/// `is_current: false`, so the order the gutter takes them in is unobservable and a mutation
-/// that swaps them survives. Whoever makes a checkout able to be current has to decide it,
-/// which is why the gutter matches on the pair rather than checking one and falling through.
+/// As it stands the two never meet: [`domain::rows::flatten`](crate::domain::rows::flatten)
+/// gives every worktree row `is_current: false`, so the order the gutter takes them in is
+/// unobservable and a mutation that swaps them survives. Whoever makes a checkout able to be
+/// current has to decide it, which is why the gutter matches on the pair rather than checking
+/// one and falling through.
 fn sweep_box(row: &Row) -> Option<&'static str> {
     let mark = row.sweep.as_ref()?;
     Some(if mark.is_going() {
@@ -1984,7 +1986,7 @@ mod tests {
         );
     }
 
-    /// What `adapter::git_cli::local_refs` actually hands up when a loose ref is broken:
+    /// What [`adapter::git_cli::local_refs`] actually hands up when a loose ref is broken:
     /// git's words, and only those — the call is left off this one sentence, for the reason
     /// `dropped_refs` gives.
     const REFS_REFUSAL: &str = "warning: ignoring broken ref refs/heads/main";
@@ -2988,7 +2990,7 @@ mod tests {
     /// The style of the cell where `needle` starts, on the first row containing it.
     ///
     /// Column, not byte offset: the rows are full of box-drawing and status glyphs, so
-    /// `str::find` would land several cells to the right of the label.
+    /// [`str::find`] would land several cells to the right of the label.
     fn style_of_row(buffer: &ratatui::buffer::Buffer, needle: &str) -> Style {
         let area = buffer.area();
         for y in area.y..area.y + area.height {

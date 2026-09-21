@@ -50,9 +50,10 @@ pub enum Refusal {
     /// Panes are running in it. Closing somebody's panes is one deliberate act — see
     /// `docs/adr/0010-closing-the-panes-first.md` — and a batch is not where it belongs.
     Running,
-    /// Its removal is already going, in a process of its own. Never read out: the cursor
-    /// does not stop on a row being removed, sweep or no sweep — see
-    /// `domain::rows::Row::is_selectable`. The variant still keeps the row out of [`chosen`].
+    /// Its removal is already going, in a process of its own. Never read out: the cursor does
+    /// not stop on a row being removed, sweep or no sweep — see
+    /// [`domain::rows::Row::is_selectable`](crate::domain::rows::Row::is_selectable). The
+    /// variant still keeps the row out of [`chosen`].
     Removing,
 }
 
@@ -108,7 +109,7 @@ pub enum Candidate {
     /// git's half fails one way: the ref walk failed, and every checkout of the repository
     /// then has `track: None` — which is also what a branch level with its upstream has, so
     /// the row cannot tell and the repository carries the fact instead
-    /// (`domain::model::Refs`).
+    /// ([`domain::model::Refs`](crate::domain::model::Refs)).
     Unjudged(Half),
     /// Nothing says it should go, and `Space` still marks it.
     Available,
@@ -159,7 +160,8 @@ impl RepoRoot {
 /// Everything a sweep decides on that is not in the tree.
 pub struct Facts<'a> {
     /// What git said about each working tree, by checkout path. Absent is "not asked yet",
-    /// which is not clean — see `domain::model::WorkingTree`.
+    /// which is not clean — see
+    /// [`domain::model::WorkingTree`](crate::domain::model::WorkingTree).
     pub working_trees: &'a BTreeMap<CheckoutPath, WorkingTree>,
     /// What `gh` said, by repository root. `None` for a repository `gh` could not be asked
     /// about — the reason belongs on the prompt line, not in a decision — and a repository
@@ -457,11 +459,11 @@ impl Mark {
 
     /// What the row says beside its mark, or nothing.
     ///
-    /// `Reason::Gone` is left out: `domain::rows::marks` draws it as the branch's upstream
-    /// marker on every row it is true of, and `judge` offers that reason only where `track`
-    /// is `Gone`, so repeating it puts the same word on the row twice. (The converse does not
-    /// hold: a row whose track is gone is not offered while it is primary, running, being
-    /// removed, or not known to be clean.)
+    /// [`Reason::Gone`] is left out: [`domain::rows::marks`](crate::domain::rows::marks) draws
+    /// it as the branch's upstream marker on every row it is true of, and `judge` offers that
+    /// reason only where `track` is `Gone`, so repeating it puts the same word on the row
+    /// twice. (The converse does not hold: a row whose track is gone is not offered while it
+    /// is primary, running, being removed, or not known to be clean.)
     ///
     /// A refusal is left out too: the absence of a box says it, and `Space` answers on the
     /// prompt line — see [`refusal`](Mark::refusal).

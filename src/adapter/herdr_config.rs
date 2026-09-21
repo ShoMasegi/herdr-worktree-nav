@@ -3,7 +3,7 @@
 //!
 //! This is the only file outside herdr's plugin directories that the plugin touches, and it
 //! only ever reads. Everything about interpreting the contents lives in
-//! `crate::domain::chrome`; this module just finds the file.
+//! [`crate::domain::chrome`]; this module just finds the file.
 
 use std::path::PathBuf;
 

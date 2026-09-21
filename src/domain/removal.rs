@@ -17,21 +17,23 @@ use crate::port::{Notification, NotificationSound, RemovalOutcome};
 /// A checkout to remove: what to say about it, and what has to stop first.
 ///
 /// One value rather than five arguments travelling together, because they have to agree.
-/// `app::removals::Removals::remove` closes the panes *this* names and then removes the
-/// checkout *this* names, so a pane list belonging to some other checkout removes a working
-/// tree out from under everything still running in it — the accident
-/// `docs/adr/0010-closing-the-panes-first.md` exists to prevent.
+/// [`app::removals::Removals::remove`](crate::app::removals::Removals::remove) closes the
+/// panes *this* names and then removes the checkout *this* names, so a pane list belonging to
+/// some other checkout removes a working tree out from under everything still running in it —
+/// the accident `docs/adr/0010-closing-the-panes-first.md` exists to prevent.
 ///
 /// Every field is private and [`Removal::of`] and [`Removal::sweeping`] are the only things
 /// that fill them, together, from one `WorktreeNode`. So the pairing cannot be taken apart
 /// afterwards: there is no shorter list to substitute and no other checkout to repoint at.
 ///
-/// What that does *not* reach is a `WorktreeNode` that describes a checkout falsely, since
-/// its own fields are public — but such a node is a lie to the whole tree, and every row,
-/// marker and count drawn from it is wrong long before this type sees it. The production
-/// callers are `ui::state::PanesState::ask_to_remove` and [`SweepRemoval::of`];
-/// `PanesState::replace_tree` withdraws either question if the tree changes while it is up,
-/// so a `y` never acts on a list the user was not shown.
+/// What that does *not* reach is a `WorktreeNode` that describes a checkout falsely, since its
+/// own fields are public — but such a node is a lie to the whole tree, and every row, marker
+/// and count drawn from it is wrong long before this type sees it. The production callers are
+/// [`ui::state::PanesState::ask_to_remove`](crate::ui::state::PanesState::ask_to_remove) and
+/// [`SweepRemoval::of`];
+/// [`PanesState::replace_tree`](crate::ui::state::PanesState::replace_tree) withdraws either
+/// question if the tree changes while it is up, so a `y` never acts on a list the user was not
+/// shown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Removal {
     repo_root: String,

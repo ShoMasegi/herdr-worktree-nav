@@ -3,11 +3,13 @@
 //! `herdr-worktree-nav dump` is for the moment the picker shows something surprising: it
 //! separates "herdr or git told us something odd" from "the UI drew it wrong". So it prints
 //! what the rows are drawn from, and the answers the rows deliberately leave out — that git
-//! would not read a repository's refs, that a branch has no upstream to be level with, and
-//! why git would not read a working tree. Outside a sweep a row draws nothing for the first
-//! two and only `?` for the third, because no marker beats a wrong one
-//! (`domain::model::Refs`, `domain::model::WorkingTree`); in a sweep a row it would have
-//! judged says `refs unreadable`, which is that something is missing rather than what.
+//! would not read a repository's refs, that a branch has no upstream to be level with, and why
+//! git would not read a working tree. Outside a sweep a row draws nothing for the first two
+//! and only `?` for the third, because no marker beats a wrong one
+//! ([`domain::model::Refs`](crate::domain::model::Refs),
+//! [`domain::model::WorkingTree`](crate::domain::model::WorkingTree)); in a sweep a row it
+//! would have judged says `refs unreadable`, which is that something is missing rather than
+//! what.
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -26,17 +28,18 @@ use crate::port::{GitPort, GitRef, RefKind, Snapshot, Track};
 pub type RefsByRepo = BTreeMap<String, Result<Vec<GitRef>, String>>;
 
 /// What git said about each working tree, by checkout path, or its words when it would not
-/// say. The picker keeps only that it would not — `WorkingTree::Unreadable` — and the words
+/// say. The picker keeps only that it would not —
+/// [`WorkingTree::Unreadable`](crate::domain::model::WorkingTree::Unreadable) — and the words
 /// are the half a person troubleshooting needs.
 pub type WorkingTrees = BTreeMap<String, Result<bool, String>>;
 
 /// Ask git again for what the rows are drawn from, and for what they leave out.
 ///
-/// A second `for-each-ref` per repository, for the upstream names: `collect::collect_tree`
-/// keeps what the rows draw, and the rows do not draw those. A repository whose first walk
-/// went wrong is not asked again — the tree already carries git's words for it — and one
-/// that goes wrong the second time has its words kept, so the page can say that this read
-/// failed where the tree's did not.
+/// A second `for-each-ref` per repository, for the upstream names:
+/// [`collect::collect_tree`](crate::app::collect::collect_tree) keeps what the rows draw, and
+/// the rows do not draw those. A repository whose first walk went wrong is not asked again —
+/// the tree already carries git's words for it — and one that goes wrong the second time has
+/// its words kept, so the page can say that this read failed where the tree's did not.
 pub fn read_refs(git: &dyn GitPort, tree: &Tree) -> RefsByRepo {
     tree.repos
         .iter()
@@ -172,9 +175,9 @@ pub fn report(
 /// upstream to be even with, and `not read` when git would not read the refs at all.
 ///
 /// A branch with no upstream is measured against where it would push — see
-/// `adapter::git_cli` — so `upstream none` can still be followed by a marker. Under
-/// `push.default = current` a branch nobody has pushed gets a push destination git calls
-/// `[gone]`, which the adapter drops rather than believe.
+/// [`adapter::git_cli`](crate::adapter::git_cli) — so `upstream none` can still be followed by
+/// a marker. Under `push.default = current` a branch nobody has pushed gets a push destination
+/// git calls `[gone]`, which the adapter drops rather than believe.
 ///
 /// Where this page knows less than the picker it says which: `not read` for an upstream its
 /// own walk could not get, beside the marker the picker is drawing or `not known`. When git

@@ -48,11 +48,11 @@ impl WorkingTree {
     /// nobody has answered for yet — which is why the commonest transition of all does not
     /// rebuild the list.
     ///
-    /// Spelled out rather than written as `!= Clean`, which is the same thing today and
-    /// would go on compiling as an answer that draws nothing was added. This has to track
-    /// `domain::rows::marks`. The compiler will make whoever adds a variant *visit* both,
-    /// which `!= Clean` would not — it cannot make them agree, so the two still have to be
-    /// read together.
+    /// Spelled out rather than written as `!= Clean`, which is the same thing today and would
+    /// go on compiling as an answer that draws nothing was added. This has to track
+    /// [`domain::rows::marks`](crate::domain::rows::marks). The compiler will make whoever
+    /// adds a variant *visit* both, which `!= Clean` would not — it cannot make them agree, so
+    /// the two still have to be read together.
     pub fn is_drawn(self) -> bool {
         match self {
             WorkingTree::Clean => false,
@@ -82,8 +82,8 @@ pub enum Refs {
     /// Every checkout here is missing its track markers. `domain::tree::tracks` is keyed by
     /// repository as well as by checkout path, so no other repository's answer reaches them
     /// — `a_repository_whose_refs_were_not_read_has_no_track_to_draw_from` — and
-    /// `app::collect_repos` makes one `RepoInput` per repository, so there is no readable
-    /// twin of this one to draw from either —
+    /// `app::collect::collect_repos` makes one `RepoInput` per repository, so there is no
+    /// readable twin of this one to draw from either —
     /// `one_repository_is_asked_about_once_however_many_panes_are_in_it` and
     /// `a_placement_carries_one_spelling_of_a_repository_key_whichever_answered`. A fixture
     /// can still pair the two directly, and `domain::sweep::judge` offers the row on `gone`
@@ -111,10 +111,10 @@ impl Refs {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeNode {
     /// `None` for a checkout herdr listed with nothing out — and also for one herdr never
-    /// listed, which `domain::tree::build` synthesizes for a pane and where a branch may
-    /// well be out. Only the second can carry a `track`:
-    /// `what_a_branchless_row_draws_turns_on_whether_herdr_listed_it`. Carrying the
-    /// difference is issue #52, and issue #49 is what it costs on the marker.
+    /// listed, which [`domain::tree::build`](crate::domain::tree::build) synthesizes for a
+    /// pane and where a branch may well be out. Only the second can carry a `track`:
+    /// `what_a_branchless_row_draws_turns_on_whether_herdr_listed_it`. Carrying the difference
+    /// is issue #52, and issue #49 is what it costs on the marker.
     pub branch: Option<String>,
     pub checkout_path: String,
     pub is_primary: bool,
@@ -122,7 +122,7 @@ pub struct WorktreeNode {
     pub open_workspace_id: Option<String>,
     /// Where this checkout's branch stands against its upstream, when it has anything to
     /// say. It rides on a ref walk that is happening anyway rather than costing a process
-    /// of its own; see `port::Track`.
+    /// of its own; see [`port::Track`](crate::port::Track).
     pub track: Option<Track>,
     /// Panes currently working in this checkout, in the order herdr reported them.
     pub panes: Vec<PaneNode>,
@@ -148,8 +148,8 @@ impl WorktreeNode {
 
 /// A checkout's path, as the key its working-tree answer and its removal are kept under.
 ///
-/// A newtype rather than the `String` on the node, so that a map keyed by some other string
-/// a node carries — `RepoNode::repo_root`, say — cannot be passed where one keyed by this is.
+/// A newtype rather than the `String` on the node, so that a map keyed by some other string a
+/// node carries — [`RepoNode::repo_root`], say — cannot be passed where one keyed by this is.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CheckoutPath(String);
 

@@ -43,7 +43,7 @@ pub fn until(what: &str, mut ready: impl FnMut() -> bool) {
 /// `snapshot` is the exception, because it refuses rather than answers: a caller that
 /// reaches it still fails, in a shape a test can assert on instead of a panic, which is what
 /// makes "the panes closed and the list could not be read again" reachable at all. The `Ok`
-/// half of that arm needs a herdr that answers — `app::panes`'s `Closing`.
+/// half of that arm needs a herdr that answers — [`app::panes`]'s `Closing`.
 #[derive(Default)]
 pub struct Recorder {
     did: Mutex<Vec<String>>,
@@ -208,8 +208,8 @@ impl RunningRemoval for Reported {
     }
 }
 
-/// A `RemovalPort` whose every removal ends without a word this side can read: the last arm
-/// of `adapter::detached::Detached::wait`, where nothing a report could be parsed out of came
+/// A `RemovalPort` whose every removal ends without a word this side can read: the last arm of
+/// [`adapter::detached::Detached::wait`], where nothing a report could be parsed out of came
 /// back. The removal may well have happened, and nothing here knows which.
 pub struct Lost;
 
@@ -239,7 +239,7 @@ impl RunningRemoval for Ended {
     }
 }
 
-/// A `RemovalPort` whose removal cannot even be waited on: `Detached::wait`'s other failure,
+/// A `RemovalPort` whose removal cannot even be waited on: [`Detached::wait`]'s other failure,
 /// where `wait_with_output` itself fails and the context names the removal over whatever the
 /// OS said. The child may still be running. Worded as the adapter words it, because what
 /// reaches the prompt line is the whole chain or none of it.
@@ -304,7 +304,7 @@ impl RemovalPort for LostFirst {
 }
 
 /// A `RemovalPort` that will not start anything. The branch it exercises is the worst one
-/// in `Removals::remove`: every pane is already closed by the time it is reached.
+/// in [`Removals::remove`]: every pane is already closed by the time it is reached.
 pub struct Refuses;
 
 impl RemovalPort for Refuses {

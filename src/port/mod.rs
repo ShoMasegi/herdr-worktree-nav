@@ -1,7 +1,7 @@
 //! The boundary between this plugin and the outside world.
 //!
 //! Everything above this module works against these traits, never against a process or a
-//! socket, so the interesting logic in `crate::domain` can be tested without a running
+//! socket, so the interesting logic in [`crate::domain`] can be tested without a running
 //! herdr server or a real repository.
 
 pub mod types;
@@ -413,10 +413,10 @@ pub enum SettledPullRequests {
 impl SettledPullRequests {
     /// The pull requests, whichever way the list arrived.
     ///
-    /// Data, not a decision. What a branch's *absence* from this means is the whole
-    /// difference between the two variants, so anything acting on a miss matches on the
-    /// variant rather than reaching for the list — see `domain::sweep`, which is where that
-    /// reasoning lives.
+    /// Data, not a decision. What a branch's *absence* from this means is the whole difference
+    /// between the two variants, so anything acting on a miss matches on the variant rather
+    /// than reaching for the list — see [`domain::sweep`](crate::domain::sweep), which is
+    /// where that reasoning lives.
     pub fn pull_requests(&self) -> &[SettledPullRequest] {
         match self {
             SettledPullRequests::All(list) | SettledPullRequests::Window(list) => list,

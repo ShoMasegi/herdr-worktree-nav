@@ -65,7 +65,7 @@ pub struct Row {
     /// `set_working_trees` does not rebuild the list for an answer no row would draw, so a
     /// checkout that has just answered `Clean` keeps the `None` it was flattened with until
     /// something else rebuilds. The two render identically, which is what makes that sound.
-    /// Only `marks` reads this, and telling the two apart is `ViewOptions::working_trees`'
+    /// Only `marks` reads this, and telling the two apart is [`ViewOptions::working_trees`]'
     /// job.
     pub working_tree: Option<WorkingTree>,
     /// What git said about this checkout's branch against its upstream.
@@ -241,11 +241,12 @@ pub struct ViewOptions {
     pub removing: Vec<CheckoutPath>,
     /// What git has said about each working tree so far. A checkout that has not answered
     /// is absent, which is a different fact from `Clean` and decides different things — see
-    /// `domain::model::WorkingTree`.
+    /// [`domain::model::WorkingTree`](crate::domain::model::WorkingTree).
     pub working_trees: BTreeMap<CheckoutPath, WorkingTree>,
     /// What a sweep would do with each checkout, by repository and checkout path, or `None`
-    /// when no sweep is on. Worked out once by `domain::sweep::marks` and handed here: the
-    /// same answer decides what is drawn and what is deleted.
+    /// when no sweep is on. Worked out once by
+    /// [`domain::sweep::marks`](crate::domain::sweep::marks) and handed here: the same answer
+    /// decides what is drawn and what is deleted.
     pub sweep: Option<BTreeMap<(RepoKey, CheckoutPath), Mark>>,
 }
 

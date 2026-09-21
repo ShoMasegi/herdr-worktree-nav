@@ -128,7 +128,7 @@ struct Sweeping {
 /// The answers a row puts a marker on. Clean and not-yet-answered are both absent, and that
 /// is the point: they render identically, so a list rebuilt on the difference between them
 /// would draw the same thing. The rows do differ, which is why nothing but
-/// `domain::rows::marks` may read `Row::working_tree`.
+/// [`domain::rows::marks`](crate::domain::rows::marks) may read [`Row::working_tree`].
 fn marked(answers: &BTreeMap<CheckoutPath, WorkingTree>) -> BTreeMap<&CheckoutPath, WorkingTree> {
     answers
         .iter()
@@ -184,7 +184,7 @@ impl PanesState {
     /// Say what git has said about each working tree so far. Arrives after the first frame,
     /// one answer at a time, so nothing may move under the reader: the cursor stays where it
     /// is, the row count cannot change, and the meta column is measured with room for these
-    /// already kept (`domain::rows::marks_reserve`).
+    /// already kept ([`domain::rows::marks_reserve`](crate::domain::rows::marks_reserve)).
     ///
     /// One map rather than a list of the dirty ones and a list of who has answered, because
     /// the difference between "clean" and "not asked" is what decides whether somebody's
@@ -517,9 +517,11 @@ impl PanesState {
     /// Whether a sweep has been entered since this was last asked. True once per entry.
     ///
     /// The loop reads it on the frame after `Shift-S` and asks `gh` again where it refused
-    /// last time — `app::settled::Settled::forget_failures`. Asked here rather than
-    /// answered by the key, because what has to happen is not herdr's to perform: it is a
-    /// change to what the loop is waiting on, which the loop owns and this cannot see.
+    /// last time —
+    /// [`Settled::forget_failures`](crate::app::settled::Settled::forget_failures).
+    /// Asked here rather than answered by the key, because what has to happen is not herdr's
+    /// to perform: it is a change to what the loop is waiting on, which the loop owns and this
+    /// cannot see.
     pub fn sweep_entered(&mut self) -> bool {
         let Some(sweeping) = self.sweep.as_mut() else {
             return false;

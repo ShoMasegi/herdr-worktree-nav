@@ -6,8 +6,8 @@
 //! working offline.
 //!
 //! The sweep's question is the exception, and only in one respect: it still never fails, but
-//! it says "could not ask" instead of "nothing to report". See `GhPort::settled_pull_requests`
-//! and `docs/adr/0011-what-may-be-swept.md`.
+//! it says "could not ask" instead of "nothing to report". See
+//! [`GhPort::settled_pull_requests`] and `docs/adr/0011-what-may-be-swept.md`.
 
 use std::io::Read;
 use std::process::{Command, Output, Stdio};
@@ -26,7 +26,7 @@ const LIMIT: &str = "100";
 
 /// A wider window than the open list, because it looks back over everything that has landed
 /// rather than at what is in flight. A repository busier than this is not told "no pull
-/// request" for the branches beyond it — see `SettledPullRequests::Window`.
+/// request" for the branches beyond it — see [`SettledPullRequests::Window`].
 const SETTLED_LIMIT: usize = 300;
 
 /// The arguments that pick out the finished pull requests, as one value so the shape can be
@@ -212,7 +212,7 @@ fn open_answer(output: &Output) -> Vec<PullRequest> {
 /// What one run of `gh` amounts to: an answer, or a sentence saying why there is not one.
 ///
 /// Separate from starting the process for the same reason [`read_settled`] is separate from
-/// this: everything above `Command::new` can then be tested.
+/// this: everything above [`Command::new`] can then be tested.
 fn settled_answer(output: &Output) -> Result<SettledPullRequests, String> {
     if !output.status.success() {
         // `gh`'s own words, because the alternative is a picker that says a sweep could not
@@ -254,7 +254,7 @@ impl GhPort for GhCli {
 
 /// How long either call waits for `gh` before giving up on it. A `gh` on a network that has
 /// gone away, or at an auth prompt nobody can see under the alternate screen, never exits on
-/// its own, and `Command::output` would wait with it for ever — issue #26.
+/// its own, and [`Command::output`] would wait with it for ever — issue #26.
 pub const GH_BUDGET: Duration = Duration::from_secs(5);
 
 /// How often [`output_within`] looks for the process having exited.
@@ -273,7 +273,7 @@ const POLL: Duration = Duration::from_millis(25);
 ///
 /// The pipes are read on threads rather than in turn, because a process that fills one
 /// blocks on it and a caller reading the other first would deadlock — which is the thing
-/// `Command::output` does for itself and this has to do for itself too.
+/// [`Command::output`] does for itself and this has to do for itself too.
 fn output_within(command: &mut Command, budget: Duration) -> std::io::Result<Option<Output>> {
     let deadline = Instant::now() + budget;
     let mut child = command.stdout(Stdio::piped()).spawn()?;
