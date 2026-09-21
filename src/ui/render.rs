@@ -14,6 +14,7 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::domain::model::{PaneNode, RepoNode};
+use crate::domain::notice;
 use crate::domain::order::Order;
 use crate::domain::preview::{Preview, PreviewPane};
 use crate::domain::removal::{Removal, SweepRemoval};
@@ -181,6 +182,27 @@ const HELP_PANES: &[&str] = &[
     "\u{21b5} jump  \u{21e5} branches  / search  esc close",
     "\u{21b5} jump  esc close",
 ];
+/// While something is wrong. [`HELP_PANES`] with the key that reads it in full.
+///
+/// It outranks the reminder of `shift+d` from the rung below the widest: a key that has
+/// been in the hint since the picker opened is one the user has already seen, and this one
+/// has only just become worth pressing. It is also the last thing to go as the rungs
+/// narrow, because the narrow end is where the line has given up its words for a count.
+const HELP_PANES_TROUBLE: &[&str] = &[
+    "\u{21b5} jump  n new pane  p no-pane rows  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  shift+d remove  r reload  ! what is wrong  esc close",
+    "\u{21b5} jump  n new pane  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  shift+d remove  ! what is wrong  esc close",
+    "\u{21b5} jump  n new  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  ! what is wrong  esc close",
+    "\u{21b5} jump  n new  \u{21e5} branches  / search  ! what is wrong  esc close",
+    "\u{21b5} jump  \u{21e5} branches  ! what is wrong  esc close",
+    "\u{21b5} jump  ! what is wrong  esc close",
+    "! what is wrong  esc close",
+];
+/// While the panel holding every condition is up. The only keys it has are the ones that
+/// close it, and `dump` is where the words are when the pane is too small even for this.
+const HELP_PANES_CONDITIONS: &[&str] = &[
+    "! or esc closes  herdr-worktree-nav dump has them in full",
+    "! or esc closes",
+];
 /// While a deletion is waiting on a yes. Says what the dialog says, in case the dialog is
 /// too small a pane to have drawn everything.
 const HELP_PANES_REMOVE: &[&str] = &["y delete  any other key cancels", "y delete"];
@@ -237,7 +259,14 @@ pub fn draw(frame: &mut Frame, state: &PanesState, theme: &Theme, _mode: Mode) -
     let asked = match (state.pending_removal(), state.pending_sweep()) {
         (Some(removal), _) => render_removal(frame, removal, state.home(), theme, panel.body),
         (None, Some(sweep)) => render_sweep_removal(frame, sweep, state.home(), theme, panel.body),
-        (None, None) => true,
+        (None, None) => {
+            // Under a question rather than beside it: a question is answered with a key and
+            // this is only read, so the one that can delete something owns the space.
+            if state.is_showing_conditions() {
+                render_conditions(frame, &state.conditions(), theme, panel.body);
+            }
+            true
+        }
     };
     render_detail(frame, &state.detail(), theme, panel.detail);
 
@@ -247,10 +276,18 @@ pub fn draw(frame: &mut Frame, state: &PanesState, theme: &Theme, _mode: Mode) -
         state.is_filtering(),
     ) {
         (true, _, _) => HELP_PANES_REMOVE,
+        // Before every other variant but a question's: the keys the list offers do nothing
+        // while the panel is up, and a footer offering them would be describing a screen
+        // the user is not on.
+        _ if state.is_showing_conditions() => HELP_PANES_CONDITIONS,
         // Before the search variant, because `/` does nothing during a sweep — the keys a
         // footer offers have to be the keys that answer.
         (false, true, _) => HELP_PANES_SWEEP,
         (false, false, true) => HELP_PANES_SEARCH,
+        // `!` is worth a place in the hint only when there is something to read, and it
+        // survives every rung below: at the widths where the line itself has given up its
+        // words for a count, the key that gets them back is the most useful thing left.
+        (false, false, false) if !state.conditions().is_empty() => HELP_PANES_TROUBLE,
         (false, false, false) => HELP_PANES,
     };
     frame.render_widget(footer(variants, theme, panel.footer.width), panel.footer);
@@ -258,6 +295,57 @@ pub fn draw(frame: &mut Frame, state: &PanesState, theme: &Theme, _mode: Mode) -
 }
 
 /// `/ query` with the total on the right, or a state chip when one is active.
+/// The fewest columns a condition keeps before it gives up its words for a count.
+///
+/// Enough for a repository's name and the ellipsis that says there was more. Below that the
+/// words are not a sentence any more, and a bare count at least says how many things are
+/// wrong — which is the one thing no width may leave unsaid.
+const MIN_CONDITION: usize = 12;
+
+/// What waits on an answer, drawn after the field. `labels` is given up before a condition
+/// is, because a spinner says what it is with its glyph alone and a sentence does not.
+fn waiting_on(state: &PanesState, theme: &Theme, labels: bool) -> Vec<Span<'static>> {
+    let mut tail = Vec::new();
+    // Whether a checkout is holding uncommitted work is a walk of its whole working tree,
+    // one per checkout, so the answers land after the first frame. The spinner says the
+    // list is still filling in rather than finished and empty-handed — the same thing the
+    // branches view does while it waits on a remote.
+    //
+    // A checkout git would not answer for says so on its own row rather than here — see
+    // `domain::rows::marks`, and `docs/adr/0011-what-may-be-swept.md`, which puts the
+    // unknown on the row it belongs to for the same reason.
+    if state.is_waiting() {
+        tail.push(Span::raw("  "));
+        tail.push(Span::styled(spinner(state.frame()), theme.dim()));
+        if labels {
+            tail.push(Span::styled(" reading working trees\u{2026}", theme.dim()));
+        }
+    }
+    // Its own spinner, because until `gh` answers the rows are showing what git alone
+    // decided — a smaller sweep than the one the user is about to get, and one that is about
+    // to change under their cursor.
+    if state.is_asking_gh() {
+        tail.push(Span::raw("  "));
+        tail.push(Span::styled(spinner(state.frame()), theme.dim()));
+        if labels {
+            tail.push(Span::styled(" asking gh\u{2026}", theme.dim()));
+        }
+    }
+    tail
+}
+
+fn spans_width(spans: &[Span<'static>]) -> usize {
+    spans.iter().map(|s| s.content.chars().count()).sum()
+}
+
+/// `/ query` with the total on the right, a state chip where one is on, and what is wrong
+/// beside all of them.
+///
+/// A condition does not take its turn behind the chip, the query or the placeholder: those
+/// are how the picker is ordinarily used and it is a repository that has lost its markers,
+/// so the two sit side by side and the line is divided between them. What it gives up first
+/// is its own words — to a count, never to nothing — and before that the spinners give up
+/// their labels. Issue #35 is what any of those going silent looked like.
 fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'static> {
     let focus = if state.is_filtering() {
         Style::default()
@@ -268,26 +356,6 @@ fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'stat
     };
     let mut spans = vec![Span::styled(" / ", focus)];
 
-    // What follows the field, worked out first so the field knows how much room it has.
-    // Whether a checkout is holding uncommitted work is a walk of its whole working tree,
-    // one per checkout, so the answers land after the first frame; the spinner says the
-    // list is still filling in rather than finished and empty-handed.
-    //
-    // A checkout git would not answer for says so on its own row rather than here — see
-    // `domain::rows::marks` and `docs/adr/0011-what-may-be-swept.md`.
-    let mut tail = Vec::new();
-    if state.is_waiting() {
-        tail.push(Span::raw("  "));
-        tail.push(Span::styled(spinner(state.frame()), theme.dim()));
-        tail.push(Span::styled(" reading working trees\u{2026}", theme.dim()));
-    }
-    // Its own spinner: until `gh` answers the rows show what git alone decided, which is a
-    // smaller sweep than the one about to arrive under the user's cursor.
-    if state.is_asking_gh() {
-        tail.push(Span::raw("  "));
-        tail.push(Span::styled(spinner(state.frame()), theme.dim()));
-        tail.push(Span::styled(" asking gh\u{2026}", theme.dim()));
-    }
     // During a sweep the number being decided about is how many are going, not how many
     // panes are open.
     let count = if state.is_sweeping() {
@@ -295,20 +363,47 @@ fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'stat
     } else {
         format!("{} panes", state.pane_count())
     };
-    // What git said, or a toast, can be as long as the source made it, so it is cut from
-    // the right: what fits is the start of it, and the count on the right is still there.
-    let taken: usize = spans
-        .iter()
-        .chain(tail.iter())
-        .map(|s| s.content.chars().count())
-        .sum();
-    // Two columns of gap before the count and the one after it, the same as a short line.
-    let room = (width as usize).saturating_sub(taken + count.chars().count() + 3);
-    let trouble = state.trouble().map(|trouble| truncate(&trouble, room));
 
+    let conditions = state.conditions();
+    // Not while the field has the cursor: there the user is reading what they are typing,
+    // and a sentence arriving beside it mid-word is the one moment the field really is
+    // theirs. A query they have kept is a different thing — they are back to reading the
+    // list — and issue #35 asks for it there.
+    let condition = if state.is_filtering() {
+        None
+    } else {
+        notice::summarize(&conditions)
+    };
+    // Two columns of gap before it, so it reads as its own thing beside the field.
+    let badge = format!("!{}", conditions.len());
+    let reserved = condition.as_ref().map_or(0, |_| badge.chars().count() + 2);
+
+    // The labelled spinners only where a condition would still have words beside them. A
+    // spinner says what it is with its glyph alone, so its label is the cheaper thing to
+    // give up, and giving it up first is what issue #35 asks for. With nothing wrong there
+    // is nothing to weigh it against and the labels stay.
+    let width = width as usize;
+    let spare = |tail: &[Span<'static>]| {
+        width.saturating_sub(spans_width(&spans) + spans_width(tail) + count.chars().count() + 3)
+    };
+    let labelled = waiting_on(state, theme, true);
+    let wanted = condition.as_ref().map_or(0, |_| MIN_CONDITION + 2);
+    let tail = if spare(&labelled) >= wanted {
+        labelled
+    } else {
+        waiting_on(state, theme, false)
+    };
+    let room = spare(&tail);
+
+    // What the field itself holds. Cut to what is left once the condition beside it has been
+    // kept room for, so a long toast cannot take the line whole.
+    let left_room = room.saturating_sub(reserved);
+    let before = spans_width(&spans);
     if let Some(message) = state.message() {
+        // What git said, or a toast, can be as long as the source made it. The words that
+        // fit are the start of it, and an ellipsis says there was more.
         spans.push(Span::styled(
-            truncate(message, room),
+            truncate(message, left_room),
             Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
@@ -329,32 +424,47 @@ fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'stat
             if state.state_filter().is_some() {
                 spans.push(Span::raw("  "));
             }
-            spans.push(Span::raw(state.query().to_string()));
-        } else if state.is_sweeping() {
-            // `/` does nothing during a sweep, so the field says what the mode is instead
-            // of offering a search that would not run. Where git or `gh` failed it says
-            // that instead: the rows can say a repository went unjudged, never why.
-            match trouble {
-                Some(trouble) => spans.push(Span::styled(trouble, theme.dim())),
-                None => spans.push(Span::styled("sweep", theme.dim())),
-            }
-        } else if !state.is_filtering() && state.state_filter().is_none() {
+            spans.push(Span::raw(truncate(state.query(), left_room)));
+        } else if state.state_filter().is_none() && !state.is_filtering() && condition.is_none() {
             // The placeholder is what to do when the field is not focused; once it is, the
-            // cursor says everything and the hint is in the way of what is being typed.
-            // A repository whose refs git would not read takes its place: those rows are
-            // missing their track markers, and outside a sweep nothing on them says so.
-            match trouble {
-                Some(trouble) => spans.push(Span::styled(trouble, theme.dim())),
-                None => spans.push(Span::styled("search panes", theme.dim())),
-            }
+            // cursor says everything and the hint is in the way of what is being typed. It
+            // is also the one thing a condition does displace outright: a hint the reader
+            // could guess is worth less than a repository that has lost its markers.
+            //
+            // `/` does nothing during a sweep, so there the field says what the mode is
+            // instead of offering a search that would not run.
+            let hint = if state.is_sweeping() {
+                "sweep"
+            } else {
+                "search panes"
+            };
+            spans.push(Span::styled(hint, theme.dim()));
         }
     }
     if state.is_filtering() {
         spans.push(Span::styled("\u{2588}", theme.dim()));
     }
+
+    if let Some(condition) = condition {
+        let used = spans_width(&spans) - before;
+        // The gap only where there is something to be separated from.
+        let gap = if used == 0 { 0 } else { 2 };
+        let left = room.saturating_sub(used + gap);
+        if left > 0 {
+            spans.push(Span::raw(" ".repeat(gap)));
+            spans.push(Span::styled(
+                if left >= MIN_CONDITION {
+                    truncate(&condition, left)
+                } else {
+                    truncate(&badge, left)
+                },
+                theme.dim(),
+            ));
+        }
+    }
     spans.extend(tail);
-    let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-    let pad = (width as usize).saturating_sub(used + count.chars().count() + 1);
+    let used = spans_width(&spans);
+    let pad = width.saturating_sub(used + count.chars().count() + 1);
     spans.push(Span::raw(" ".repeat(pad)));
     spans.push(Span::styled(count, theme.dim()));
     Paragraph::new(Line::from(spans))
@@ -723,6 +833,165 @@ fn render_sweep_removal(
     }
     candidates.push(vec![title, keys]);
     question_box(frame, theme, body, width, title_width, candidates)
+}
+
+/// A panel's own columns: a border and a padding column on each side. Unlike a question
+/// box its lines are not indented — there is nothing above them to hang an indent off.
+const PANEL_CHROME: usize = 4;
+
+/// The fewest columns the panel is worth drawing in. Below it the prompt line's count is
+/// what a pane that small gets, and `dump` is where the words are.
+const PANEL_MIN_WIDTH: usize = 8;
+
+/// Everything that is wrong, whole, as a panel over the list.
+///
+/// The prompt line has one line and gives its words up for a count as it narrows, so a
+/// narrow pane cuts sentences nobody can then read. `dump` is the unabridged copy for a bug
+/// report; this is the one for the person looking at the picker now, and `!` is what opens
+/// it.
+///
+/// It degrades rather than refuses: what does not fit becomes a count of what is left, the
+/// same answer the line gives for the same reason. A question box refuses instead, because
+/// a clipped question is a different question — this is only ever read.
+fn render_conditions(frame: &mut Frame, conditions: &[notice::Notice], theme: &Theme, body: Rect) {
+    if body.height == 0 || (body.width as usize) < PANEL_MIN_WIDTH {
+        return;
+    }
+    // Room for a border costs two rows and two columns; under that the panel is drawn bare.
+    let bordered = body.height >= 3;
+    let width = (body.width as usize).min(BOX_MAX_WIDTH);
+    let inner = match bordered {
+        true => width - PANEL_CHROME,
+        false => width,
+    };
+
+    let title = format!(
+        "{} wrong",
+        count_of(conditions.len(), "thing is", "things are")
+    );
+    let wrapped: Vec<Vec<String>> = conditions
+        .iter()
+        .map(|condition| wrap(&condition.text, inner))
+        .collect();
+
+    let blank = Line::from("");
+    let title = Line::from(Span::styled(
+        title,
+        Style::default().add_modifier(Modifier::BOLD),
+    ));
+    let paragraphs: Vec<Vec<Line>> = wrapped
+        .iter()
+        .map(|lines| {
+            lines
+                .iter()
+                .map(|line| Line::from(Span::raw(line.clone())))
+                .collect()
+        })
+        .collect();
+
+    // Air between one sentence and the next goes first, then sentences from the bottom with
+    // a count in their place. The title has said how many there are the whole time.
+    let mut airy = vec![title.clone(), blank.clone()];
+    for (index, paragraph) in paragraphs.iter().enumerate() {
+        airy.extend(paragraph.clone());
+        if index + 1 < paragraphs.len() {
+            airy.push(blank.clone());
+        }
+    }
+    let tight: Vec<Line> = std::iter::once(title.clone())
+        .chain(paragraphs.iter().flatten().cloned())
+        .collect();
+    let mut candidates = vec![airy, tight];
+    for shown in (1..paragraphs.len()).rev() {
+        let more = Line::from(Span::styled(
+            format!("+{} more", paragraphs.len() - shown),
+            theme.dim(),
+        ));
+        candidates.push(
+            std::iter::once(title.clone())
+                .chain(paragraphs[..shown].iter().flatten().cloned())
+                .chain(std::iter::once(more))
+                .collect(),
+        );
+    }
+    // The last resort says how many there are and nothing else, which is what the prompt
+    // line says at the widths that cannot hold a sentence either.
+    candidates.push(vec![title]);
+
+    let chrome = match bordered {
+        true => 2,
+        false => 0,
+    };
+    let Some(lines) = candidates
+        .into_iter()
+        .find(|lines| lines.len() + chrome <= body.height as usize)
+    else {
+        return;
+    };
+    let height = (lines.len() + chrome) as u16;
+    let area = Rect::new(
+        body.x + (body.width - width as u16) / 2,
+        body.y + (body.height - height) / 2,
+        width as u16,
+        height,
+    );
+    frame.render_widget(Clear, area);
+    let paragraph = Paragraph::new(lines);
+    frame.render_widget(
+        match bordered {
+            true => paragraph.block(
+                Block::bordered()
+                    .border_style(Style::default().fg(theme.accent))
+                    .padding(ratatui::widgets::Padding::horizontal(1)),
+            ),
+            false => paragraph,
+        },
+        area,
+    );
+}
+
+/// Break `text` into lines of at most `width` characters, at spaces where there is one.
+///
+/// A word longer than the line is cut rather than left to overflow: git's words include
+/// paths and refnames, and one of those is easily wider than a pane.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return Vec::new();
+    }
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    let mut length = 0;
+    for word in text.split_whitespace() {
+        let mut word = word.chars().collect::<Vec<char>>();
+        // Longer than a line on its own: take what fits, and go round again with the rest.
+        while word.len() > width {
+            if length > 0 {
+                lines.push(std::mem::take(&mut line));
+                length = 0;
+            }
+            let head: String = word.drain(..width).collect();
+            lines.push(head);
+        }
+        let word: String = word.into_iter().collect();
+        let wanted = match length {
+            0 => word.chars().count(),
+            _ => word.chars().count() + 1,
+        };
+        if length + wanted > width && length > 0 {
+            lines.push(std::mem::take(&mut line));
+            length = 0;
+        }
+        if length > 0 {
+            line.push(' ');
+            length += 1;
+        }
+        length += word.chars().count();
+        line.push_str(&word);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
 }
 
 fn render_rows(frame: &mut Frame, state: &PanesState, theme: &Theme, area: Rect) {
@@ -1954,9 +2223,11 @@ mod tests {
     }
 
     #[test]
-    fn the_refs_sentence_gives_way_to_a_state_chip_and_to_a_message() {
-        // A chip stays until the filter is cleared and a message is there for one
-        // keypress; neither shares the line with the sentence.
+    fn the_refs_sentence_shares_the_line_with_a_state_chip_and_with_a_message() {
+        // Two other things sit in the field, and neither takes it whole. A chip stays until
+        // the filter is cleared, which is an ordinary way to use the picker rather than a
+        // moment, and a message is there for one keypress — and all the while a repository
+        // is missing its markers with nothing on its rows to say so. Issue #35.
         let mut tree = tree();
         tree.repos[0].refs = Refs::Unreadable("fatal: bad ref".into());
         let mut state = PanesState::new(tree, None);
@@ -1966,14 +2237,14 @@ mod tests {
         let line = filtered.lines().next().expect("the prompt line");
         assert!(line.contains("blocked"), "the chip is there: {line}");
         assert!(
-            !line.contains("refs unreadable"),
-            "and the sentence is not: {line}"
+            line.contains("refs unreadable"),
+            "and so is the sentence, beside it: {line}"
         );
         press(&mut state, KeyCode::Char('a'));
         let cleared = screen(&state, 92, 18);
         assert!(
             cleared.lines().next().unwrap().contains("refs unreadable"),
-            "and it is back once the filter is: {cleared}"
+            "and it is still there once the filter is gone: {cleared}"
         );
 
         state.set_message("select a worktree or a pane first".into());
@@ -1981,8 +2252,9 @@ mod tests {
         let line = told.lines().next().expect("the prompt line");
         assert!(line.contains("select a worktree"), "the message: {line}");
         assert!(
-            !line.contains("refs unreadable"),
-            "alone on the line: {line}"
+            line.contains("refs unreadable"),
+            "and the sentence keeps its room beside it, because a message is a moment and \
+             this is not: {line}"
         );
     }
 
@@ -2169,6 +2441,107 @@ mod tests {
     }
 
     #[test]
+    fn the_panel_holds_what_the_prompt_line_had_to_cut() {
+        // The line's job is to say something is wrong at any width; the panel's is to be
+        // the place the whole of it can still be read without leaving the picker.
+        let mut tree = tree();
+        tree.repos[0].refs = Refs::Unreadable(TWO_REFS_REFUSAL.into());
+        let mut state = PanesState::new(tree, None);
+
+        let narrow = 60;
+        let line = prompt_line(&state, narrow);
+        assert!(
+            !line.contains("refs/heads/chore/deps"),
+            "the line cannot hold the second refname here: {line}"
+        );
+
+        press(&mut state, KeyCode::Char('!'));
+        assert!(state.is_showing_conditions());
+        insta::assert_snapshot!(screen(&state, 92, 18));
+        let panel = screen(&state, narrow, 18);
+        assert!(
+            panel.contains("refs/heads/main") && panel.contains("refs/heads/chore/deps"),
+            "both refnames are readable in the panel:\n{panel}"
+        );
+    }
+
+    #[test]
+    fn a_panel_too_short_for_everything_says_how_much_is_left() {
+        // The same answer the line gives when it runs out of columns, for the same reason:
+        // a screen that shows two of three things and looks complete is the failure mode.
+        let mut tree = tree();
+        tree.repos[0].refs = Refs::Unreadable(REFS_REFUSAL.into());
+        tree.repos[1].refs = Refs::Unreadable(REFS_REFUSAL.into());
+        let mut state = PanesState::new(tree, None);
+        state.set_stale("herdr did not answer".into());
+        assert_eq!(state.conditions().len(), 3);
+
+        press(&mut state, KeyCode::Char('!'));
+        // Below the prompt line, which carries a count of its own and would answer for the
+        // panel's if the search were over the whole screen.
+        let short = screen(&state, 92, 9);
+        let panel = short.lines().skip(1).collect::<Vec<&str>>().join("\n");
+        assert!(panel.contains("3 things are wrong"), "the count:\n{panel}");
+        assert!(
+            panel.contains("herdr did not answer"),
+            "the one that fit, whole:\n{panel}"
+        );
+        assert!(panel.contains("+2 more"), "and what did not:\n{panel}");
+    }
+
+    #[test]
+    fn the_key_that_reads_it_is_offered_only_while_there_is_something_to_read() {
+        let state = PanesState::new(tree(), None);
+        let hint = screen(&state, 92, 18);
+        let hint = hint.lines().last().expect("the key hint").to_string();
+        assert!(!hint.contains('!'), "nothing is wrong: {hint}");
+
+        let mut tree = tree();
+        tree.repos[0].refs = Refs::Unreadable(REFS_REFUSAL.into());
+        let state = PanesState::new(tree, None);
+        let hint = screen(&state, 92, 18);
+        let hint = hint.lines().last().expect("the key hint").to_string();
+        assert!(hint.contains("! what is wrong"), "and now: {hint}");
+    }
+
+    #[test]
+    fn every_width_the_picker_supports_keeps_the_key_that_reads_the_rest() {
+        // The narrow end is where it matters: that is where the line itself has given up
+        // its words for a count, so the key is the only way back to them.
+        let mut tree = tree();
+        tree.repos[0].refs = Refs::Unreadable(TWO_REFS_REFUSAL.into());
+        let state = PanesState::new(tree, None);
+        for width in 24..=92 {
+            let drawn = screen(&state, width, 18);
+            let hint = drawn.lines().last().expect("the key hint").to_string();
+            assert!(hint.contains('!'), "at {width}: {hint}");
+        }
+    }
+
+    #[test]
+    fn no_width_leaves_the_prompt_line_silent_about_a_repository_in_trouble() {
+        // The half of issue #35 that was a blank screen rather than a precedence: at three
+        // of the widths the picker supports, `truncate` was handed nothing to work with and
+        // printed nothing at all — not even the ellipsis that says something was cut. What
+        // has to hold at every width is that something is there, whether that is git's
+        // words, a cut of them, or a bare count of how many things are wrong.
+        let mut tree = tree();
+        tree.repos[0].refs = Refs::Unreadable(REFS_REFUSAL.into());
+        let mut state = PanesState::new(tree, None);
+        for waiting in [false, true] {
+            state.set_waiting(waiting);
+            for width in 24..=92u16 {
+                let line = prompt_line(&state, width);
+                assert!(
+                    line.contains("me/app") || line.contains('!') || line.contains('\u{2026}'),
+                    "something says a repository is in trouble at {width} \
+                     (waiting: {waiting}): {line:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn gits_words_fit_on_the_prompt_line_and_the_count_survives_them() {
         // The sentence is as long as git made it, and what fits has to be git's words
         // rather than the plugin's argv. Walked with and without the spinner, which shares
@@ -2199,10 +2572,21 @@ mod tests {
                         "git's words are what fits at {width}: {line}"
                     );
                 }
-                if waiting && width >= 36 {
+                // The spinner's label is the first thing given up, and it comes back only
+                // once the sentence can still have words beside it. Below this the glyph
+                // goes on turning and the line spends its columns on git's words instead —
+                // which is the trade issue #35 asks for, in that direction.
+                const LABEL_BESIDE_THE_SENTENCE: u16 = 53;
+                if waiting {
                     assert!(
+                        line.contains(spinner(state.frame())),
+                        "the spinner is turning at {width}: {line}"
+                    );
+                    assert_eq!(
                         line.contains("reading working trees"),
-                        "and so is the spinner at {width}: {line}"
+                        width >= LABEL_BESIDE_THE_SENTENCE,
+                        "and it has its label only where the sentence keeps its own words \
+                         at {width}: {line}"
                     );
                 }
             }

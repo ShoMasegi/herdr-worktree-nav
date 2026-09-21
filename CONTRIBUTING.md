@@ -72,6 +72,12 @@ they cost something to learn: a function whose failure is a value its success ca
 needs a test that watches it succeed, and a mutation is measured with
 `cargo test --all-targets` and nothing narrower.
 
+How a failure may be handled, and which review findings a pull request has to answer for, are
+in [the error handling page](docs/en/error-handling.md). The short version: a failure may
+never become a value a legitimate answer could also have produced, and a finding blocks the
+change in front of it only when it is a wrong claim or when that change is what made it
+reachable. Everything else is filed rather than argued.
+
 ## What a comment is for
 
 A comment carries what stays true when the code changes. Anything else is a second copy of a

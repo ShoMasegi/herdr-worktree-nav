@@ -122,7 +122,7 @@ done
 #    that is src/domain/sweep.rs, and for `Refs::Unreadable` it is whichever file declares
 #    `Refs`. A holder belonging to std, crossterm or a test crate goes on the list below;
 #    that list is about who owns the name, not about whether the check is convenient.
-external_holders='Command File Palette env event fs std str tempfile thread'
+external_holders='Command ExitCode File Palette anyhow env event fs std str tempfile thread'
 
 defines() {
     grep -qE "(^|[^A-Za-z_0-9])(fn|struct|enum|trait|type|const|static|union|mod)[[:space:]]+$2([^A-Za-z_0-9]|$)|^[[:space:]]*(pub[[:space:]]+)?$2[[:space:]]*:|^[[:space:]]{4,}$2[[:space:]]*(\{|\(|,|=|$)" "$1"

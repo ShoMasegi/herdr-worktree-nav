@@ -10,7 +10,7 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 use std::collections::BTreeMap;
 
-use crate::domain::model::{CheckoutPath, PaneNode, Refs, RepoKey, Tree, WorkingTree};
+use crate::domain::model::{CheckoutPath, PaneNode, RepoKey, Tree, WorkingTree};
 use crate::domain::sweep::Mark;
 use crate::port::{AgentStatus, Track};
 
@@ -668,29 +668,6 @@ pub fn detail(tree: &Tree, reference: RowRef) -> String {
         }
     };
     parts.join(" \u{b7} ")
-}
-
-/// What the prompt line says when git would not read a repository's refs, or nothing.
-///
-/// The first such repository on screen, named, with git's words, and the rest counted. The
-/// rows cannot say this themselves: a checkout with no track marker is drawn the same whether
-/// git had nothing to say or would not say it, so this is the one place the difference is
-/// visible. Shown ahead of the same line for `gh` failing, because refs not read is about
-/// ahead, behind and `gone` on every row of the repository, sweep or no sweep.
-///
-/// `refs unreadable` is the word the row uses in a sweep and `dump` uses under the
-/// repository, so a reader meets one term in all three places.
-pub fn refs_trouble(tree: &Tree) -> Option<String> {
-    let mut unreadable = tree.repos.iter().filter_map(|repo| match &repo.refs {
-        Refs::Read => None,
-        Refs::Unreadable(words) => Some((repo.display_name.as_str(), words.as_str())),
-    });
-    let (name, words) = unreadable.next()?;
-    let first = format!("{name}: refs unreadable: {words}");
-    Some(match unreadable.count() {
-        0 => first,
-        more => format!("{first} (+{more} more)"),
-    })
 }
 
 fn plural(count: usize, noun: &str) -> String {
@@ -1421,27 +1398,6 @@ mod tests {
         assert_eq!(
             detail(&tree, RowRef::Repo(0)),
             "me/app · 3 worktrees · 3 panes · /src/app"
-        );
-    }
-
-    #[test]
-    fn a_repository_whose_refs_git_would_not_read_is_named_once_with_gits_words() {
-        // The rows carry no marker either way, so this sentence is the whole of what tells
-        // "nothing to report" from "git would not say".
-        let mut tree = tree();
-        assert_eq!(refs_trouble(&tree), None);
-
-        tree.repos[1].refs = Refs::Unreadable("fatal: bad ref for refs/heads/x".into());
-        assert_eq!(
-            refs_trouble(&tree).as_deref(),
-            Some("me/site: refs unreadable: fatal: bad ref for refs/heads/x")
-        );
-
-        // Two in trouble: the first on screen is named, the other counted.
-        tree.repos[0].refs = Refs::Unreadable("fatal: index file corrupt".into());
-        assert_eq!(
-            refs_trouble(&tree).as_deref(),
-            Some("me/app: refs unreadable: fatal: index file corrupt (+1 more)")
         );
     }
 

@@ -4,6 +4,7 @@ pub mod chrome;
 pub mod dest;
 pub mod listing;
 pub mod model;
+pub mod notice;
 pub mod order;
 pub mod preview;
 pub mod progress;

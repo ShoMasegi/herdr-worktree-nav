@@ -34,6 +34,7 @@ branch list starts on.
 | `b` `w` `i` `d` | narrow to blocked, working, idle, or done |
 | `a` | clear the state filter |
 | `r` | reload |
+| `!` | read everything that is wrong, in full |
 | `q`, `Esc`, `Ctrl-C` | close |
 
 `←` and `→` — or `h` and `l`, as `↑`/`↓` are also `k`/`j` — land on the first thing worth
@@ -106,7 +107,7 @@ it refused. Fix the cause and enter the sweep again: a repository `gh` refused i
 again on the way in; one it answered for is not, and neither is one with no GitHub remote, since
 there is nothing to ask. With more than one repository in trouble the prompt line names the
 first and counts the rest, and a refusal — the one you can do something about — is named ahead
-of a missing remote. Entering again re-asks `gh` and nothing else: which working trees are
+of a missing remote; `!` opens the rest in full, during a sweep as well as outside one. Entering again re-asks `gh` and nothing else: which working trees are
 clean and which checkouts have panes in them were read when the picker opened; `r`, outside a
 sweep, reads them again, and so does `Enter` inside one, before it asks.
 
@@ -124,8 +125,9 @@ otherwise have judged — clean, on a branch, nothing running in them, and not t
 own — read `refs unreadable` in a sweep, before and after you mark them by hand. The prompt
 line names the repository with git's words, as it does for `gh`. `gh` still widens the sweep
 there: a merged pull request marks the row as it would anywhere. When git and `gh` have both
-failed, the prompt line names git's failure — it is the one the track markers on the row went
-with — and shows `gh`'s once that is fixed.
+failed, the prompt line names git's failure first — it is the one the track markers on the
+row went with — and counts `gh`'s behind it, so one being named does not read as the only
+thing wrong.
 
 ### Deleting a checkout
 
@@ -333,9 +335,21 @@ the prompt line says it instead, where the search hint was:
  / me/app: refs unreadable: warning: ignoring broken ref refs/heads/main               5 panes
 ```
 
-git's own words, and a count when more than one repository is in trouble. It stays for as
-long as the refs cannot be read, and steps aside for a search — being typed or left in the
-field — and for a state filter. `r` reads the refs again.
+git's own words, and a count when more than one thing is wrong. It stays for as long as the
+refs cannot be read, and it sits beside a state filter's chip and beside a search you have
+left in the field rather than giving the line up to either. It steps aside only while you
+are typing in the field, where the cursor is yours.
+
+On a line too narrow to hold it, it gives up its words rather than its place: the spinners
+lose their labels first, and then the sentence becomes a count of how many things are wrong,
+`!2`. No width leaves the line silent about it.
+
+`!` opens a panel over the list with every one of them in it, whole, wrapped to the pane —
+which is where a sentence the line had to cut can still be read without leaving the picker.
+The key hint offers it for as long as there is something to read, and `!`, `Esc` or `q`
+closes it again. A pane too short for all of them shows what fits and counts the rest, the
+same answer the line gives for the same reason; `herdr-worktree-nav dump` is the copy with
+nothing left out. `r` reads the refs again.
 
 `r` asks again. It is the only thing that does: the answers are otherwise kept for as long as
 the picker is open, `Tab` to the branches view and back included.

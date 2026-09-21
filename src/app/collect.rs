@@ -33,9 +33,9 @@ pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapsho
 /// In front of the first frame on purpose: unlike whether a checkout is dirty, these are
 /// known the moment git answers.
 ///
-/// A repository git could not answer for carries no markers and says so: git's words go on the
-/// repository, and the prompt line names it once —
-/// [`domain::rows::refs_trouble`](crate::domain::rows::refs_trouble).
+/// A repository git could not answer for carries no markers and says so: git's words go on
+/// the repository, and the prompt line names it once —
+/// [`domain::notice::conditions`](crate::domain::notice::conditions).
 fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
     // No chunking: repositories are however many the user has panes open in, which is a
     // handful — unlike working directories, where every pane can have its own.
