@@ -71,21 +71,83 @@ else
     done
 fi
 
-# 5. A doc that names something names something that exists. A sentence saying "held by
-#    `some_test_name`" is a claim that something elsewhere carries it, and the way that
-#    claim rots is a rename: the sentence goes on pointing, at nothing, and the next reader
-#    takes it on trust. Only doc comments and the pages that ship are read — an ordinary
-#    `//` line is prose about the code beside it, not a pointer away from it. Four or more
-#    underscore-separated words is what tells a name of ours from a word: herdr's
-#    `no_foreground_client` has three. A name is satisfied by anything in src or tests
-#    called that, not only by an `fn`, since a doc can as fairly name a field or a const —
-#    what it may not do is name nothing.
-for name in $( { grep -rh '//[/!]' src/ tests/ --include=*.rs
-                 cat docs/en/*.md docs/ja/*.md ./*.md 2>/dev/null; } \
-               | grep -o '`[a-z][a-z_0-9]*`' | tr -d '`' \
-               | awk -F'_' 'NF >= 4 && $NF != ""' | sort -u ); do
-    grep -rq "\b$name\b" src tests || fail "a doc names \`$name\`, and nothing in src or tests is called that"
+# 5. A doc or a comment that names something names something that exists. A sentence saying
+#    "held by `some_test_name`" is a claim that something elsewhere carries it, and the way
+#    that claim rots is a rename: the sentence goes on pointing, at nothing, and the next
+#    reader takes it on trust.
+#
+#    The haystack is the code with its comment lines taken out, and that is the whole of the
+#    check. Searched with them in, a name written in a Rust comment finds itself and passes
+#    however long ago the thing it names was renamed away — a `//` line can say
+#    `totally_made_up_helper_name` and satisfy the search by being the only place it is
+#    written. Only the pages under docs/ were ever really being read.
+#
+#    What is taken for a name of ours: anything qualified by a path, in which case the last
+#    segment is what has to exist; anything in CamelCase or SCREAMING_CASE; and any
+#    snake_case word carrying two underscores or more. Prose cannot be mistaken for one of
+#    those, and a single backticked word can — `gone` and `merged` are what a row says, not
+#    what anything is called.
+haystack=$(mktemp)
+needles=$(mktemp)
+trap 'rm -f "$haystack" "$needles"' EXIT
+find src tests -name '*.rs' -exec cat {} + | grep -vE '^[[:space:]]*//' > "$haystack"
+{ find src tests -name '*.rs' -exec grep -hE '^[[:space:]]*//' {} +
+  cat docs/adr/*.md docs/en/*.md docs/ja/*.md ./*.md 2>/dev/null; } > "$needles"
+
+# Names belonging to something other than this crate, which nothing here can keep current:
+# git's and herdr's environment, herdr's socket API and the internals its pages name, the
+# crates the picker is built on, and a file a release ships. Adding to this list is a claim
+# that the name is somebody else's — a name of ours never belongs on it.
+external='ALL Cell EnterAlternateScreen GIT_TRACE GIT_TRACE2 GIT_TRACE_PERFORMANCE
+HERDR_PANE_ID HERDR_PLUGIN_ROOT LANG LC_MESSAGES LeaveAlternateScreen OpenOptions
+RUSTUP_TOOLCHAIN SHA256SUMS agent_not_found closed_tab_id closed_workspace_id from_name
+no_foreground_client render_panel_shell set_panic_hook'
+
+for name in $( { grep -o '`[A-Za-z_][A-Za-z_0-9]*::[A-Za-z_0-9:]*`' "$needles" \
+                   | tr -d '`' | sed 's/.*:://'
+                 grep -o '`[A-Za-z_][A-Za-z_0-9]*`' "$needles" | tr -d '`' \
+                   | awk '/^[A-Z]/ || gsub(/_/, "_") >= 2'; } | sort -u ); do
+    case " $(echo $external) " in *" $name "*) continue ;; esac
+    grep -q "\b$name\b" "$haystack" || \
+        fail "a doc or comment names \`$name\`, and nothing in src or tests is called that"
 done
+
+# 6. What a comment may not say, because the code beside it already says it and a comment
+#    repeating it is a second copy of the same fact to keep current. Both rules are in
+#    CONTRIBUTING.md under "What a comment is for"; this is where they bite.
+#
+#    Nothing here reads a comment for sense. What it can do is catch the two shapes that
+#    went wrong over and over, and both are shapes: a number, and a past tense.
+comments=$(find src tests -name '*.rs' -exec awk '
+    /^[ \t]*\/\// {
+        text = $0
+        gsub(/`[^`]*`/, "", text)
+
+        # 6a. No measured layout number. A column count written into prose is a value with
+        #     no test holding it, and it is usually sitting directly above an assertion
+        #     carrying the same value, which does. Name the constant or state the rule; let
+        #     the assertion keep the number. Issue numbers, ADR numbers, record filenames
+        #     and version numbers are facts about things outside the code, so they stay.
+        bare = text
+        gsub(/#[0-9]+/, "", bare)
+        gsub(/ADR [0-9]+/, "", bare)
+        gsub(/[0-9]+\.[0-9.]+/, "", bare)
+        gsub(/[0-9][0-9][0-9][0-9]-[a-z0-9-]+\.md/, "", bare)
+        if (bare ~ /[0-9]/ &&
+            (bare ~ /[Cc]olumns?|[Ww]idths?|wide|[Rr]ows?|tall/ || bare ~ /[0-9]+ to [0-9]+/))
+            printf "%s:%d: a measured number belongs in a constant or an assertion, not in prose:\n    %s\n", FILENAME, FNR, $0
+
+        # 6b. No narrating what the code used to be. git log carries that, and an ADR
+        #     carries it where the decision was worth a record. What is left after the
+        #     narration goes is the constraint itself, which is still true and still worth
+        #     saying: not "both were wrong once" but what makes them easy to get wrong.
+        if (tolower(text) ~ /used to be|what used to|this replaced|previously|originally|w(as|ere) wrong once|ha(s|ve) shipped|before this (rule|change)|used to (do|take|need|break|go|have)/)
+            printf "%s:%d: what the code used to be belongs in git log or an ADR:\n    %s\n", FILENAME, FNR, $0
+    }' {} +)
+if [ -n "$comments" ]; then
+    fail "comments say what the code says better:"
+    printf '%s\n' "$comments" >&2
+fi
 
 [ "$status" -eq 0 ] && printf 'invariants ok (version %s, rust %s)\n' "$manifest" "$pinned"
 exit "$status"

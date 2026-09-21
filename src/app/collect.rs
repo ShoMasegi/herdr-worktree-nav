@@ -358,7 +358,7 @@ mod tests {
 
     #[test]
     fn a_ref_walk_that_failed_keeps_gits_words_on_one_line_and_touches_no_other_repository() {
-        // What used to be `unwrap_or_default()`: the failure became an empty list, which is
+        // Why not `unwrap_or_default()`: the failure would become an empty list, which is
         // also what a repository with nothing to report looks like. The words are what the
         // prompt line shows, and it is one line, so git's several are folded here.
         let mut repos = vec![repo_input("/src/app"), repo_input("/src/site")];

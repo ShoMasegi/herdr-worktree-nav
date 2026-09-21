@@ -357,8 +357,8 @@ fn start_sweep(
 /// Out of the loop for the reason `show_answers` is: `run` needs a terminal and a keyboard,
 /// so nothing in it is reachable from a test, and this is the arm with consequences. What
 /// deleting it looks like is a picker where `y` closes the confirmation box and does
-/// nothing else — no error, no message, the row unchanged — which is a shape this
-/// repository has shipped once already.
+/// nothing else — no error, no message, the row unchanged — which is a shape that reads
+/// as working and is not caught by anything else here.
 fn start_removal(
     state: &mut PanesState,
     dirty: &mut Dirty,
