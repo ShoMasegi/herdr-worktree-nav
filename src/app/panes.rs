@@ -1635,9 +1635,7 @@ mod tests {
 
     #[test]
     fn entering_a_sweep_again_asks_gh_again_where_it_refused() {
-        // A `gh` that could not answer when `Shift-S` was first pressed is not one that can
-        // never answer, and the only other way to ask again is `r`, which a sweep does not
-        // take: a network out for one keypress would be out for the life of the picker.
+        // Without this, a network out for one keypress is out for the life of the picker.
         let port = std::sync::Arc::new(Recovering::default());
         let mut state = PanesState::new(no_pane_tree(), None);
         let mut pending = Pending {

@@ -34,7 +34,9 @@ pub struct Dirty {
     receiver: Receiver<Reply>,
     /// Which round of asking is current. Bumped by [`reask`](Self::reask), because a
     /// `git status` started before it was called is answering about a working tree the user
-    /// has since changed — that is the whole reason they pressed the key.
+    /// has since changed — that is the whole reason they pressed the key. How a round is
+    /// dropped, and why not on arrival order:
+    /// `docs/adr/0016-an-answer-belongs-to-a-round.md`.
     generation: u64,
     /// Every checkout asked about in the current round. Keeping the clean answers as well
     /// as the dirty ones is what lets a second answer correct a first.
@@ -92,11 +94,9 @@ impl Dirty {
     /// Throw every answer away and ask again. What comes back is about the working trees as
     /// they are now, which is what `r` means about a tree the user has been editing since.
     ///
-    /// Threads already running are left alone — there is no way to call one back — but their
-    /// answers belong to the round this ends, and [`drain`](Self::drain) drops them on that
-    /// basis rather than on whether the checkout is still listed. Asking is not separable
-    /// from forgetting: a `Dirty` that had forgotten and not yet asked would sit with its
-    /// spinner turning over a list it will never say anything about.
+    /// Asking is not separable from forgetting: a `Dirty` that had forgotten and not yet
+    /// asked would sit with its spinner turning over a list it will never say anything
+    /// about. What becomes of the calls already out is ADR 0016.
     pub fn reask(&mut self, tree: &Tree) {
         self.generation += 1;
         self.answers.clear();

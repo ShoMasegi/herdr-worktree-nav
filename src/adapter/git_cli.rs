@@ -37,30 +37,11 @@ struct Said {
 /// Two things here are decided by reading git's own words — whether the path is a repository
 /// at all ([`NOT_A_REPOSITORY`]) and whether a ref was dropped from a walk ([`dropped_refs`])
 /// — and both are English literals, while git ships translations of both messages and picks
-/// one from the environment herdr launched the plugin in. Measured against git 2.55.0:
+/// one from the environment herdr launched the plugin in.
 ///
-/// ```text
-/// LC_ALL=C            warning: ignoring broken ref refs/heads/broken
-/// LC_ALL=de_DE.UTF-8  Warnung: Ignoriere fehlerhafte Referenz refs/heads/broken
-/// LC_ALL=C            fatal: not a git repository (or any of the parent directories): .git
-/// LC_ALL=de_DE.UTF-8  Schwerwiegend: Kein Git-Repository (oder irgendeines der …): .git
-/// ```
-///
-/// Under the second of each, a dropped ref goes unnoticed — the walk still exits 0 and the
-/// refs it did list still build the markers, so the checkout on the dropped ref carries none
-/// and reads exactly like a checkout with nothing to report, with nothing anywhere saying
-/// why. That is the silence issue #21 is about. And a pane that is simply not in a
-/// repository is read as git refusing.
-///
-/// `LC_ALL` rather than `LC_MESSAGES` because it outranks the other `LC_*` variables and
-/// `LANG`. `LANGUAGE` outranks even `LC_ALL` — `LANGUAGE=fr LC_ALL=de_DE.UTF-8` prints French
-/// — but is ignored when the locale is `C`, which is why pinning `LC_ALL` alone is enough:
-/// measured with `LANGUAGE=de LC_ALL=de_DE.UTF-8` in the parent and `LC_ALL=C` on the child,
-/// which printed git's English.
-///
-/// The cost is that git's words reach the prompt line and `dump` in English rather than in
-/// the reader's language. Everything else the plugin writes is English too, and a sentence
-/// this side cannot read is a sentence it cannot act on.
+/// Why this variable, why one git, and what it costs a reader who does not read English:
+/// `docs/adr/0015-reading-git-in-one-language.md`, which carries the transcript it was
+/// measured from.
 const GIT_LOCALE: (&str, &str) = ("LC_ALL", "C");
 
 impl GitCli {
@@ -131,10 +112,9 @@ fn refusal(args: &[&str], stderr: &str) -> String {
 ///
 /// In git's English, which git translates and [`GIT_LOCALE`] is what keeps it in.
 ///
-/// Two prefixes rather than "stderr said something": `GIT_TRACE`, `GIT_TRACE_PERFORMANCE`
-/// and `GIT_TRACE2` are read from the environment herdr launched the plugin in, and each
-/// writes a timestamped line per call to stderr while listing every ref correctly. So does
-/// an `error: commit-graph file is too small`, which is about the graph and not the refs.
+/// Two prefixes rather than "stderr said something", because stderr carries lines from a
+/// walk that went perfectly well — `docs/adr/0015-reading-git-in-one-language.md` names
+/// which.
 ///
 /// Only the matching lines are kept, and all of them: git says it once per ref, and a reader
 /// told about one who fixes it and is then told about the next has been given half of what

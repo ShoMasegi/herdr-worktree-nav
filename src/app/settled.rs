@@ -61,8 +61,8 @@ pub struct Settled {
     answers: BTreeMap<String, Answer>,
     /// Which round of asking is current. Bumped by [`forget`](Self::forget), because a `gh`
     /// call started before it was called is answering about pull requests as they were, and
-    /// the whole point of `r` is that one may have landed since. `mpsc` does not deliver in
-    /// the order the threads were spawned, so without it the stale round can simply win.
+    /// the whole point of `r` is that one may have landed since. Why a round and not arrival
+    /// order: `docs/adr/0016-an-answer-belongs-to-a-round.md`.
     generation: u64,
 }
 
@@ -128,11 +128,7 @@ impl Settled {
     /// What `r` means here: a pull request merged while the picker was up is what a reload
     /// is for.
     ///
-    /// Threads already running are left alone — there is no way to call one back — but their
-    /// answers belong to the round this ends, and [`drain`](Self::drain) drops them on that
-    /// basis rather than on whether the repository is still listed. `mpsc` hands over in
-    /// whatever order the calls finish, so a slow call from before the reload can land after
-    /// a fast one from after it.
+    /// What becomes of the calls already out is ADR 0016.
     pub fn forget(&mut self) {
         self.generation += 1;
         self.answers.clear();
