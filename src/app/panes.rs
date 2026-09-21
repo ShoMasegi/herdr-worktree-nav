@@ -142,11 +142,64 @@ pub fn run(
                 &removal,
             ),
             Action::RemoveWorktrees(sweep) => start_sweep(&mut state, removals, herdr, &sweep),
-            action => break action,
+            action => {
+                if let Some(exit) = act(&mut state, pending, herdr, git, action) {
+                    break exit;
+                }
+            }
         }
     };
 
-    finish(herdr, outcome, &state)
+    Ok(outcome)
+}
+
+/// Carry out the key that would close the picker, or say why it could not and stay up.
+///
+/// Every row is drawn from a tree read at some point in the past, so herdr declining a focus
+/// or an open is the ordinary end of a row the list has not caught up with — a pane that has
+/// closed, a checkout that has gone. That is something the user asked for and did not get,
+/// so it is said where they are looking, and the picker is still there to say it on: leaving
+/// is the right answer for a key that worked. Carried out of `run` by `?`, the only account
+/// of it was `herdr plugin log list`, and from the user's seat the picker had vanished.
+/// Issue #65.
+///
+/// `None` when the picker stayed up.
+fn act(
+    state: &mut PanesState,
+    pending: &mut Pending,
+    herdr: &dyn HerdrPort,
+    git: &dyn GitPort,
+    action: Action,
+) -> Option<Exit> {
+    let asked = asked_for(&action);
+    match finish(herdr, action, state) {
+        Ok(exit) => Some(exit),
+        Err(error) => {
+            state.set_message(format!("{asked}: {error:#}"));
+            // The row it was tried on is evidence the list is behind, and this is the
+            // reading that would put it right — a condition when it cannot be made, the way
+            // a removal's is.
+            if let Err(error) = catch_up(state, &mut pending.dirty, herdr, git) {
+                state.set_stale(could_not_read(&error));
+            }
+            None
+        }
+    }
+}
+
+/// What the user asked for, in the words of the row they asked it on.
+///
+/// herdr's message names the call it refused, which is a sentence about the API and not
+/// about the list: the half that says which row this was about has to come from here.
+fn asked_for(action: &Action) -> &'static str {
+    match action {
+        Action::Jump(_) => "could not go to that pane",
+        Action::OpenWorktree { .. } => "could not open that checkout",
+        Action::NewPane { .. } => "could not add a pane there",
+        // Nothing else asks herdr for anything, so nothing else can arrive here having
+        // failed. A sentence is cheaper than a shape that makes that unsayable.
+        _ => "that did not work",
+    }
 }
 
 /// Take in every removal that has reported back since the last frame — including from before
@@ -736,6 +789,9 @@ mod tests {
         pane_opens: bool,
         /// A file written into `feat/login` between the first walk and the second.
         file_written: bool,
+        /// A herdr that no longer has what the rows say it has: the state a list the picker
+        /// has not caught up with puts every key into.
+        stale_rows: bool,
         readings: Mutex<usize>,
         walks: Mutex<BTreeMap<String, usize>>,
     }
@@ -745,8 +801,17 @@ mod tests {
             Self {
                 pane_opens,
                 file_written,
+                stale_rows: false,
                 readings: Mutex::new(0),
                 walks: Mutex::new(BTreeMap::new()),
+            }
+        }
+
+        /// A session that still describes itself but refuses to act on any of it.
+        fn with_stale_rows() -> Self {
+            Self {
+                stale_rows: true,
+                ..Self::new(false, false)
             }
         }
 
@@ -869,10 +934,18 @@ mod tests {
             unreachable!("a re-read asks this port for the session and the worktrees")
         }
         fn worktree_open(&self, _req: &WorktreeOpen) -> Result<crate::port::WorktreeOpened> {
-            unreachable!("a re-read asks this port for the session and the worktrees")
+            assert!(self.stale_rows, "only a stale row opens a checkout here");
+            Err(anyhow::anyhow!(
+                "herdr rejected worktree.open: no such path (not_found)"
+            ))
         }
         fn pane_focus(&self, _pane_id: &str) -> Result<()> {
-            unreachable!("a re-read asks this port for the session and the worktrees")
+            match self.stale_rows {
+                true => Err(anyhow::anyhow!(
+                    "herdr rejected pane.focus: no such pane (not_found)"
+                )),
+                false => Ok(()),
+            }
         }
         fn pane_split(&self, _req: &PaneSplit) -> Result<crate::port::Pane> {
             unreachable!("a re-read asks this port for the session and the worktrees")
@@ -1428,6 +1501,92 @@ mod tests {
             }],
             ungrouped: Vec::new(),
         }
+    }
+
+    /// A picker open on `session`, the way `run` starts one.
+    fn opened(session: &Arc<Session>) -> (PanesState, Pending) {
+        let (_, tree) = collect::collect_tree(&**session, &**session).expect("the first reading");
+        let state = PanesState::new(tree, None);
+        let mut pending = Pending {
+            dirty: Dirty::new(session.clone()),
+            settled: Settled::new(session.clone(), session.clone()),
+        };
+        pending.dirty.ask(state.tree());
+        (state, pending)
+    }
+
+    #[test]
+    fn a_pane_herdr_no_longer_has_leaves_the_picker_up_and_says_what_herdr_said() {
+        // The account of it was `herdr plugin log list`, which is not where the user is:
+        // from their seat the picker vanished the way it does when a jump worked. Issue #65.
+        let session = Arc::new(Session::with_stale_rows());
+        let (mut state, mut pending) = opened(&session);
+        let before = *session.readings.lock().unwrap();
+
+        let exit = act(
+            &mut state,
+            &mut pending,
+            &*session,
+            &*session,
+            Action::Jump("w1:p1".into()),
+        );
+
+        assert!(exit.is_none(), "the picker stays up");
+        let said = state.message().expect("the prompt line says what happened");
+        assert!(said.starts_with("could not go to that pane"), "{said}");
+        assert!(said.contains("not_found"), "herdr's own words: {said}");
+        assert!(
+            *session.readings.lock().unwrap() > before,
+            "and the list that was behind is read again"
+        );
+        assert!(
+            state.trouble().is_none(),
+            "the reading worked, so nothing is"
+        );
+    }
+
+    #[test]
+    fn a_checkout_that_is_no_longer_there_does_the_same() {
+        let session = Arc::new(Session::with_stale_rows());
+        let (mut state, mut pending) = opened(&session);
+
+        let exit = act(
+            &mut state,
+            &mut pending,
+            &*session,
+            &*session,
+            Action::OpenWorktree {
+                repo_root: "/src/app".into(),
+                checkout_path: FIX_CRASH.into(),
+            },
+        );
+
+        assert!(exit.is_none(), "the picker stays up");
+        let said = state.message().expect("the prompt line says what happened");
+        assert!(said.starts_with("could not open that checkout"), "{said}");
+        assert!(said.contains("not_found"), "herdr's own words: {said}");
+    }
+
+    #[test]
+    fn a_jump_that_worked_still_closes_the_picker() {
+        // The other half of the rule: leaving is the right answer for a key that worked,
+        // and a refusal is the only thing that holds the picker open.
+        let session = Arc::new(Session::new(false, false));
+        let (mut state, mut pending) = opened(&session);
+
+        let exit = act(
+            &mut state,
+            &mut pending,
+            &*session,
+            &*session,
+            Action::Jump("w1:p1".into()),
+        );
+
+        assert!(
+            matches!(exit, Some(Exit::Closed)),
+            "a jump that worked closes the picker"
+        );
+        assert_eq!(state.message(), None);
     }
 
     #[test]

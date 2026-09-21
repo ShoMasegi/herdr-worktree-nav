@@ -58,6 +58,11 @@ running in it. Repository headings and checkouts that already have panes are ste
 the panes listed directly under them are the answer, and stopping on the header first would
 only make the walk longer. They stay on screen; the arrow keys just pass through them.
 
+Every row is drawn from a reading taken at some point in the past, so a pane can close or a
+checkout can go while the picker is up. `Enter` on such a row leaves the picker where it is
+and says what herdr said on the prompt line, and the list is read again on the spot — the key
+that worked is the one that closes the picker.
+
 ### Seeing what is finished with
 
 `Shift-D` deletes one checkout because you put the cursor on it. `Shift-S` answers a
