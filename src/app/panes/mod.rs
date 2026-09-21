@@ -12,8 +12,8 @@ use crate::app::words;
 use crate::app::Pending;
 use crate::domain::removal::{Removal, SweepRemoval};
 use crate::port::{GitPort, HerdrPort, PaneSplit, SplitDirection, WorktreeOpen};
+use crate::ui::panes::{Action, Cancelled, PanesState, WITHDRAWN};
 use crate::ui::render;
-use crate::ui::state::{Action, Cancelled, PanesState, WITHDRAWN};
 use crate::ui::theme::Theme;
 
 /// How long to wait for a key before turning the spinner on whatever is still coming. The
@@ -26,7 +26,7 @@ const TICK: std::time::Duration = std::time::Duration::from_millis(80);
 /// A condition, not a report: it is true of the rows on screen for as long as no reading
 /// works, whatever the user presses in the meantime, and the reading that puts the list
 /// right is what takes it back. So it is held by
-/// [`PanesState::set_stale`](crate::ui::state::PanesState::set_stale) and drawn beside
+/// [`PanesState::set_stale`](crate::ui::panes::PanesState::set_stale) and drawn beside
 /// the account of what happened rather than joined to it — the panes that stopped are what
 /// that account is for, and a sentence about the list neither replaces it nor belongs to
 /// the same moment.

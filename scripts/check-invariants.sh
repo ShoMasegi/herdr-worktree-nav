@@ -140,6 +140,16 @@ for path in $(grep -oE '`[A-Za-z_][A-Za-z_0-9]*(::[A-Za-z_0-9]+)+`' "$needles" \
                grep -rlE "(^|[^A-Za-z_0-9])(pub[[:space:]]+)?(struct|enum|trait|type|union|mod)[[:space:]]+$holder([^A-Za-z_0-9]|$)" \
                    src tests --include='*.rs'
              } 2>/dev/null | sort -u )
+    # A type declared in a directory module has its methods wherever that directory put
+    # them: splitting one `impl` across sibling files by responsibility is the shape this
+    # tree is in, and `PanesState::handle_key` is no less resolvable for living in
+    # `panes/keys.rs`. So a sibling of the declaring `mod.rs` counts as the holder too.
+    for file in $files; do
+        case "$file" in */mod.rs)
+            files="$files $(find "${file%/mod.rs}" -maxdepth 1 -name '*.rs')" ;;
+        esac
+    done
+    files=$(printf '%s\n' $files | sort -u)
     if [ -z "$files" ]; then
         fail "a doc or comment names \`$path\`, and nothing in src or tests defines \`$holder\`"
         continue

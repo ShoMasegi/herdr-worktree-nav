@@ -516,9 +516,9 @@ mod tests {
     use crate::domain::model::{CheckoutPath, RepoKey, WorkingTree};
 
     use super::*;
+    use crate::ui::panes::PanesState;
     use crate::ui::render::fixtures::*;
     use crate::ui::render::panes::draw;
-    use crate::ui::state::PanesState;
     use ratatui::backend::TestBackend;
     use ratatui::crossterm::event::KeyCode;
     use ratatui::Terminal;

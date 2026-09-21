@@ -108,7 +108,7 @@ impl Dirty {
     ///
     /// Says nothing about whether anything needs redrawing: which answers are worth a rebuild
     /// is asked where the rows are —
-    /// [`PanesState::set_working_trees`](crate::ui::state::PanesState::set_working_trees).
+    /// [`PanesState::set_working_trees`](crate::ui::panes::PanesState::set_working_trees).
     ///
     /// This is also the pump, so a view that stops draining stops the walk: with more
     /// checkouts than `MAX_IN_FLIGHT`, the remainder waits for the panes view to come back.
@@ -135,7 +135,7 @@ impl Dirty {
     /// What git has said so far, by checkout. A checkout that has been asked and not yet
     /// answered is absent rather than present with a guess, so "nobody knows" and "clean" stay
     /// different facts all the way to the caller — which is what
-    /// [`ui::state::PanesState::ask_to_remove`](crate::ui::state::PanesState::ask_to_remove)
+    /// [`ui::panes::PanesState::ask_to_remove`](crate::ui::panes::PanesState::ask_to_remove)
     /// refuses on, and what `docs/adr/0011-what-may-be-swept.md` decides on.
     pub fn answers(&self) -> BTreeMap<CheckoutPath, WorkingTree> {
         self.answers

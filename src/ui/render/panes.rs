@@ -11,7 +11,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::domain::rows::{marks, marks_reserve, DisplayLine, Row};
-use crate::ui::state::PanesState;
+use crate::ui::panes::PanesState;
 use crate::ui::theme::Theme;
 
 /// Blank columns between the longest label and the meta column, so the two read as

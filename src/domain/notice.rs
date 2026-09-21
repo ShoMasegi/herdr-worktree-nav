@@ -10,7 +10,7 @@
 //!
 //! An **event** is true at a moment: a removal was refused, a key did not apply here. That
 //! half is pushed rather than derived, and retires on the next act that could have answered
-//! it. `ui::state` owns it.
+//! it. `ui::panes` owns it.
 //!
 //! Getting the two the wrong way round is what issues #64 and #35 are about, and
 //! `docs/en/error-handling.md` is where the distinction is written down.
