@@ -2046,9 +2046,10 @@ mod tests {
 
     #[test]
     fn a_second_dropped_ref_reaches_the_line_once_there_is_room_for_it() {
-        // git says it once per ref, so two broken refs are two warnings and the sentence is
-        // 120 columns with the repository's name on the front. The prompt line shows what
-        // fits: at 92 that is the first ref and nothing of the second.
+        // git says it once per ref, so two broken refs are two warnings in one sentence,
+        // with the repository's name on the front. The prompt line shows what fits and cuts
+        // the rest from the right, so the second refname arrives only once the line has
+        // room for the whole of the first.
         let mut tree = tree();
         tree.repos[0].refs = Refs::Unreadable(TWO_REFS_REFUSAL.into());
         let state = PanesState::new(tree, None);
@@ -2080,12 +2081,12 @@ mod tests {
     }
 
     #[test]
-    fn the_call_this_sentence_no_longer_carries_was_never_what_hid_the_second_ref() {
-        // What leaving it off bought, which is not reach: `refusal` appends the call after
-        // both refnames and the prompt line cuts from the right, so it moved the width the
-        // second one arrives at by the single column the ellipsis takes — 133 to 134 —
-        // while making the sentence 305 columns instead of 120. Drawn rather than
-        // remembered: the reason for dropping it is what no assertion was holding.
+    fn appending_the_call_costs_the_second_refname_the_ellipsis_and_no_more() {
+        // `refusal` appends the call after both refnames and the prompt line cuts from the
+        // right, so what carrying the call costs the second refname is the one column the
+        // ellipsis takes. It makes the sentence several times as long, which is what it
+        // costs the reader — but reach is not what it costs, and that is the part a reader
+        // deciding whether to put the call back would guess wrong.
         let with_the_call = format!(
             "{TWO_REFS_REFUSAL} (`git for-each-ref \
              --format=%(refname)%09%(committerdate:unix)%09%(upstream:short)%09\
@@ -2230,22 +2231,21 @@ mod tests {
             state.set_waiting(waiting);
             for width in 24..=92u16 {
                 let line = prompt_line(&state, width);
-                // The spinner's `  ⠋ reading working trees…` is 26 columns of its own, so
-                // with the sentence cut to nothing ` / ` and it and `5 panes` are 36. Below
-                // that the spinner is what pushes the count off the line, which is not what
-                // this measures.
-                if !waiting || width >= 36 {
+                // Below this the spinner takes enough of the line that it, and not the cut,
+                // is what pushes the count off — which is not what this measures.
+                const COUNT_KEPT_BESIDE_THE_SPINNER: u16 = 36;
+                if !waiting || width >= COUNT_KEPT_BESIDE_THE_SPINNER {
                     assert!(
                         line.trim_end().ends_with("5 panes"),
                         "the count is still there at {width}: {line}"
                     );
                 }
-                // The sentence up to and including git's verdict is 53 columns; the frame
-                // around it (` / `, two columns of gap, the count, one trailing) is 13, and
-                // a cut keeps one column for the ellipsis — so from 67 the verdict is whole.
-                // With the spinner's 26 columns on the line too that is 93, past the widest
-                // width here, so the whole verdict is measured without it.
-                if !waiting && width >= 67 {
+                // From here up the line has room for the sentence as far as git's verdict,
+                // the frame around it, and the column a cut keeps for its ellipsis. Below
+                // it the cut reaches into git's words. Measured without the spinner, which
+                // would put the same point past the widest width this walks.
+                const VERDICT_WHOLE: u16 = 67;
+                if !waiting && width >= VERDICT_WHOLE {
                     assert!(
                         line.contains("ignoring broken ref"),
                         "git's words are what fits at {width}: {line}"
@@ -2387,11 +2387,11 @@ mod tests {
 
     #[test]
     fn a_removal_in_flight_says_so_at_every_width_the_picker_supports() {
-        // The rule that keeps a row's name in a narrow pane took this away for every width
-        // from 37 to 48: a removal running somewhere the picker cannot see was drawn as a
-        // perfectly ordinary row — no note, no spinner — while the cursor silently would not
-        // stop on it and `Shift-D` could not reach it. It is the whole of what the picker
-        // adds over the toast, and the row it is on has nothing left to decide about.
+        // The rule that keeps a row's name in a narrow pane must not take this note with
+        // it. Without the note a removal the picker cannot see is drawn as a perfectly
+        // ordinary row — no note, no spinner — while the cursor silently will not stop on
+        // it and `Shift-D` cannot reach it. It is the whole of what the picker adds over
+        // the toast, and the row it is on has nothing left to decide about.
         let mut state = PanesState::new(tree(), None);
         state.set_removing(vec![CheckoutPath::for_test("/wt/fix-crash")]);
         for width in [46u16, 53, 60, 92] {
@@ -2468,13 +2468,13 @@ mod tests {
 
     #[test]
     fn a_note_never_pushes_the_path_off_the_row() {
-        // Measured rather than reasoned about, at every width from 24 to 92: the marked row
-        // and the row being removed keep the tail of their path throughout, and each note
-        // appears at the width its path first keeps `MIN_PATH` columns beside it — 39 for
-        // `PR #1234 merged`, 34 for `deleting` — and at every width above. Before this rule
-        // the marked row at 28 to 31 columns was a box, a reason, and no path at all, and
-        // from 32 to 44 a path elided down to as little as `…`. (Narrower than 28 the meta
-        // column is short of the path on every row, note or no note; that is `MIN_META_WIDTH`.)
+        // The rule: a note may never take a path's last `MIN_PATH` columns, so each note
+        // waits for the width where its own length leaves the path that much beside it,
+        // and is drawn at every width above. Walked rather than reasoned about, because
+        // the width each note arrives at falls out of how long that note is — the two
+        // here are a different length and arrive in different places. (Narrower than the
+        // meta column's own floor the path is short on every row, note or no note; that
+        // is `MIN_META_WIDTH`.)
         let mut marked = swept();
         let answered = SettledPullRequests::All(vec![SettledPullRequest {
             number: 1234,
@@ -2503,9 +2503,9 @@ mod tests {
                 width >= 39,
                 "the reason, at {width}: {row}"
             );
-            // Whole from 45, where the note leaves it the room, and from 28 to 38, where
-            // there is no note. Narrower than 28 the meta column itself is short of the
-            // path, note or no note.
+            // Whole from where the note leaves it the room, and again below the width the
+            // note arrives at, where there is no note to make room for. Between the two it
+            // is elided; below the meta column's own floor it is short whatever the note.
             assert_eq!(
                 row.contains("/wt/chore-deps"),
                 width >= 45 || (28..=38).contains(&width),
@@ -2527,10 +2527,11 @@ mod tests {
 
     #[test]
     fn a_path_shorter_than_min_path_asks_only_for_its_own_length() {
-        // `MIN_PATH` is a floor for paths that have that much to show. A four-character
-        // path is whole in four columns, and holding its note back until eight were free
-        // would have dropped the reason at 35 to 38 columns for nothing. Measured: with
-        // `/w/x` the note appears from 35; with `/wt/chore-deps` it appears from 39.
+        // `MIN_PATH` is a floor for paths with that much to show, not a toll every path
+        // pays. A path shorter than the floor is whole in its own length, so holding its
+        // note back until the whole floor was free would drop the reason for nothing. The
+        // two cases below are the same note against a short path and a long one, and the
+        // short one lets it in first.
         let mut state = swept();
         let mut tree = state.tree().clone();
         tree.repos[1].worktrees[1].checkout_path = "/w/x".to_string();
@@ -2630,9 +2631,9 @@ mod tests {
     fn a_row_in_a_repository_whose_refs_git_would_not_read_says_so_in_a_sweep() {
         // The prompt line names the repository; the row says which half of the question
         // went unanswered, and goes on saying it once marked — the same rule `PR unknown`
-        // is under, and as wide as `PR #1234 merged`, which the width tests measure. The row is
-        // found by its path's tail because at 46 columns the note takes the label's place,
-        // which is the rule for every note a sweep draws, marked or not.
+        // is under, and as wide as `PR #1234 merged`, which the width tests measure. The
+        // row is found by its path's tail because at this width the note takes the label's
+        // place, which is the rule for every note a sweep draws, marked or not.
         let mut state = swept();
         let mut tree = state.tree().clone();
         tree.repos[1].refs = Refs::Unreadable("fatal: bad ref".into());
@@ -2843,8 +2844,8 @@ mod tests {
 
     #[test]
     fn a_state_chip_and_a_typed_query_sit_beside_each_other() {
-        // Both can be on at once, and the chip used to be drawn in place of the query —
-        // so the letters went in and nothing appeared.
+        // Both can be on at once, and they share the search line, so a chip drawn in the
+        // query's place is a field the letters go into with nothing appearing.
         let mut state = PanesState::new(tree(), None);
         press(&mut state, KeyCode::Char('b'));
         press(&mut state, KeyCode::Char('/'));

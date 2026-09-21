@@ -260,8 +260,8 @@ mod tests {
 
     #[test]
     fn the_diagram_takes_about_half_of_what_it_could() {
-        // Width-limited here: 160 columns would hold a 250-column tab whole, so half of it
-        // is 80 wide, and the height follows to keep the shape.
+        // Width-limited here: the canvas would hold this tab whole, so the diagram takes
+        // half of the width it could have had, and the height follows to keep the shape.
         let (width, height) = Fit::new(rect(0, 0, 250, 79), 160, 60).unwrap().size();
         assert_eq!((width, height), (80, 25));
     }

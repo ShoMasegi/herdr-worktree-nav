@@ -317,9 +317,9 @@ mod tests {
 
     #[test]
     fn a_repository_whose_refs_could_not_be_read_says_so_and_marks_nothing() {
-        // What the read failing used to do — nothing — is still what the rows do: no marker
-        // beats a wrong one. What is new is that the repository carries git's words, so the
-        // prompt line can say which it was. The other repository is untouched either way.
+        // A failed read marks nothing, because no marker beats a wrong one, and the
+        // repository carries git's words so the prompt line can say which it was. The
+        // other repository is untouched either way.
         let mut app = repo(
             "me/app",
             "/src/app",
@@ -349,9 +349,9 @@ mod tests {
 
     #[test]
     fn a_checkout_herdr_did_not_list_still_gets_what_git_said_about_it() {
-        // The path the index-based lookup used to take, and the reason it was replaced: it
-        // reached into `repos` by an index that was only valid because `nodes` happened to
-        // be built from it in order.
+        // The path an index-based lookup gets wrong: reaching into `repos` by an index is
+        // only valid while `nodes` happens to be built from it in order, and nothing makes
+        // that so.
         let mut input = repo(
             "me/app",
             "/src/app",
@@ -767,10 +767,10 @@ mod tests {
     #[test]
     fn a_repository_whose_refs_were_not_read_has_no_track_to_draw_from() {
         // What `Refs::Unreadable` promises: every checkout under it is missing its markers.
-        // A stale entry in another repository is what used to break that promise, and it
-        // broke it where it matters most — `domain::sweep::judge` reads `gone` before it
-        // reads `refs`, so the row was offered for deletion by default while the prompt
-        // line said the refs could not be read.
+        // A stale entry in another repository is what breaks that promise, and it breaks
+        // it where it matters most — `domain::sweep::judge` reads `gone` before it reads
+        // `refs`, so the row is offered for deletion by default while the prompt line says
+        // the refs could not be read.
         let shared = "/wt/shared";
         let mut stale = repo("me/old", "/src/old", vec![]);
         stale.refs = Ok(vec![local_ref("old", Some(shared), Some(Track::Gone))]);

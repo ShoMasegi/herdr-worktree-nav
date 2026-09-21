@@ -915,10 +915,9 @@ mod tests {
     }
 
     /// `None` is a checkout nobody has answered for, which is a third thing and not a
-    /// synonym for clean. The bool this replaced could not say which of the two it was
-    /// exercising, because the old `Row` could not hold the difference either: one `false`
-    /// stood for both. So the behaviour was pinned and the *state* was not, and the arm that
-    /// now says `Clean` had nothing naming it.
+    /// synonym for clean. Taking a bool here would collapse the two into one `false`,
+    /// which pins the behaviour while naming neither state — and `Clean` is then an arm
+    /// nothing in these tests asks for by name.
     fn marks_for(working_tree: Option<WorkingTree>, track: Option<Track>) -> String {
         let mut tree = tree();
         tree.repos[0].worktrees[2].track = track;

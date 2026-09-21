@@ -76,6 +76,47 @@ never become a value a legitimate answer could also have produced, and a finding
 change in front of it only when it is a wrong claim or when that change is what made it
 reachable. Everything else is filed rather than argued.
 
+## What a comment is for
+
+A comment carries what stays true when the code changes. Anything else is a second copy of a
+fact the code already holds, and the second copy is the one nothing checks: it goes on
+reading correctly for exactly as long as nobody touches the first.
+
+Write:
+
+- **What a type or a function promises**, and what a caller may assume. `WorkingTree` having
+  three answers rather than two is the shape of the thing, not a detail of today's code.
+- **Facts about the world outside this crate.** What git prints when it drops a ref, what
+  herdr does with a tab that empties, what `gh` answers for a fork. A reader cannot get
+  these from the code, and getting them again costs an experiment. Say which version you
+  measured against.
+- **The alternative that looks obvious and is wrong**, and why. Same test as an ADR: would a
+  later reader be tempted to undo it? Where an ADR already carries the decision, link it
+  rather than summarising it — a summary is one more copy to keep in step with the record.
+
+Do not write:
+
+- **A measured number.** A column width in prose is a value with no test holding it, and it
+  is usually sitting directly above an assertion carrying the same value, which does. Name a
+  constant or state the rule, and let the assertion keep the number.
+- **What the code used to be.** `git log` has it, and an ADR has it where the decision earned
+  a record. What is left when the narration goes is the constraint itself, which is still
+  true and still worth saying: not "both were wrong once", but what makes both easy to get
+  wrong.
+- **The step the line below already takes.** A reader who wants the how has it in front of
+  them; what they cannot see is why it is that way.
+
+Tests are held to the same rule. A test name here is a sentence, so a comment above it
+saying the same thing again is the copy that rots — what belongs there is the failure the
+test would catch.
+
+`check-invariants.sh` gates the first two of the three, and gates one more: a name in
+backticks has to be the name of something. It reads comments as well as the pages that ship,
+and it searches the code with the comment lines taken out, so a name surviving only in the
+sentence that names it no longer satisfies it. A name belonging to git, herdr, std or one of
+the crates goes on the `external` list in that script — the one place to say "this one is
+not ours to keep current".
+
 ## Things worth knowing before changing behaviour
 
 herdr's own API shapes some decisions in ways that are not obvious from the code. Three of
