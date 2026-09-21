@@ -44,21 +44,22 @@ impl Notice {
 /// than one repository belongs in front of both — issues #33 and #56 are the two that will
 /// want that, and this is the function they add a line to.
 ///
-/// `sweep_trouble` is already one sentence for however many repositories `gh` could not be
-/// asked about; `app::settled` builds it, because which repositories were asked is not
-/// something the tree knows.
-pub fn conditions(tree: &Tree, sweep_trouble: Option<&str>) -> Vec<Notice> {
-    let mut notices: Vec<Notice> = tree
-        .repos
-        .iter()
-        .filter_map(|repo| match &repo.refs {
-            Refs::Read => None,
-            Refs::Unreadable(words) => Some(Notice::new(format!(
-                "{}: refs unreadable: {words}",
-                repo.display_name
-            ))),
-        })
-        .collect();
+/// `stale` and `sweep_trouble` are passed in rather than read off the tree. The first is
+/// about the reading that built it, which a tree cannot report about itself; the second is
+/// already one sentence for however many repositories `gh` could not be asked about, which
+/// `app::settled` builds because which repositories were asked is not something the tree
+/// knows.
+pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>) -> Vec<Notice> {
+    // In front of the rest: the others are about what a row is missing, and this one is
+    // about whether the rows are the right rows at all.
+    let mut notices: Vec<Notice> = stale.map(Notice::new).into_iter().collect();
+    notices.extend(tree.repos.iter().filter_map(|repo| match &repo.refs {
+        Refs::Read => None,
+        Refs::Unreadable(words) => Some(Notice::new(format!(
+            "{}: refs unreadable: {words}",
+            repo.display_name
+        ))),
+    }));
     notices.extend(sweep_trouble.map(Notice::new));
     notices
 }
@@ -101,8 +102,8 @@ mod tests {
     #[test]
     fn a_tree_git_answered_for_with_no_sweep_trouble_has_nothing_to_say() {
         let tree = tree(vec![repo("me/app", Refs::Read)]);
-        assert_eq!(conditions(&tree, None), Vec::new());
-        assert_eq!(summarize(&conditions(&tree, None)), None);
+        assert_eq!(conditions(&tree, None, None), Vec::new());
+        assert_eq!(summarize(&conditions(&tree, None, None)), None);
     }
 
     #[test]
@@ -115,7 +116,7 @@ mod tests {
                 Refs::Unreadable("fatal: index file corrupt".into()),
             ),
         ]);
-        let notices = conditions(&tree, None);
+        let notices = conditions(&tree, None, None);
         assert_eq!(
             notices,
             vec![
@@ -131,7 +132,7 @@ mod tests {
             "me/app",
             Refs::Unreadable("fatal: bad ref".into()),
         )]);
-        let notices = conditions(&tree, Some("me/app: gh could not be run"));
+        let notices = conditions(&tree, None, Some("me/app: gh could not be run"));
         assert_eq!(
             notices.iter().map(|n| n.text.as_str()).collect::<Vec<_>>(),
             vec![
@@ -146,7 +147,12 @@ mod tests {
     fn what_gh_said_stands_alone_once_git_has_answered() {
         let tree = tree(vec![repo("me/app", Refs::Read)]);
         assert_eq!(
-            summarize(&conditions(&tree, Some("me/app: gh could not be run"))).as_deref(),
+            summarize(&conditions(
+                &tree,
+                None,
+                Some("me/app: gh could not be run")
+            ))
+            .as_deref(),
             Some("me/app: gh could not be run")
         );
     }
@@ -161,7 +167,12 @@ mod tests {
             ),
         ]);
         assert_eq!(
-            summarize(&conditions(&tree, Some("me/app: gh could not be run"))).as_deref(),
+            summarize(&conditions(
+                &tree,
+                None,
+                Some("me/app: gh could not be run")
+            ))
+            .as_deref(),
             Some("me/app: refs unreadable: fatal: bad ref (+2 more)"),
             "the count covers everything unsaid, gh included: a reader who is told about one \
              of three and nothing about the other two has been told the wrong thing"

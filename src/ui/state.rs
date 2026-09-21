@@ -91,6 +91,14 @@ pub struct PanesState {
     /// The sweep's question waiting on a yes. Nothing on disk has been touched yet.
     pending_sweep: Option<SweepRemoval>,
     message: Option<String>,
+    /// What went wrong the last time the list was read, while it is still true.
+    ///
+    /// A condition rather than a message: the rows on screen are behind until a reading
+    /// works, and the reading that puts it right is the one that clears this —
+    /// `replace_tree`, which is the only place a read lands. Pushed as a message it had
+    /// nothing to retire it, so a frame whose reading worked sat under a sentence saying
+    /// the list could not be read. Issue #64.
+    stale: Option<String>,
     /// Frame of the spinner on the rows being removed. Advanced by the loop that owns the
     /// clock, the same way the branches view does it — `domain` is not allowed to read one.
     tick: usize,
@@ -164,6 +172,7 @@ impl PanesState {
             pending_removal: None,
             pending_sweep: None,
             message: None,
+            stale: None,
             tick: 0,
             waiting: false,
             sweep: None,
@@ -190,6 +199,9 @@ impl PanesState {
         // The row, whichever kind it is. Anchored to a pane alone, a cursor on a checkout
         // was put back by line index against a list that had just got shorter — onto the
         // next checkout down, with the user's `Space` about to land on it.
+        // The reading that produced this tree is the one that puts the list right, so
+        // whatever the last failed reading left behind stops being true here.
+        self.stale = None;
         let anchor = self.anchor();
         let at = self.cursor;
         self.tree = tree;
@@ -402,6 +414,15 @@ impl PanesState {
         self.message.as_deref()
     }
 
+    /// Say that the list on screen is behind, and why, until a reading puts it right.
+    ///
+    /// Unlike [`set_message`](Self::set_message) this is not taken back by a keypress: the
+    /// rows go on being wrong whatever the user presses, and the only thing that makes it
+    /// untrue is a reading that works.
+    pub fn set_stale(&mut self, words: String) {
+        self.stale = Some(words.split_whitespace().collect::<Vec<_>>().join(" "));
+    }
+
     pub fn tree(&self) -> &Tree {
         &self.tree
     }
@@ -549,7 +570,7 @@ impl PanesState {
     /// The prompt line can hold one of these; this is what the count on the end of it is
     /// standing in for, and what a reader who wants the rest is shown.
     pub fn conditions(&self) -> Vec<Notice> {
-        notice::conditions(&self.tree, self.sweep_trouble())
+        notice::conditions(&self.tree, self.stale.as_deref(), self.sweep_trouble())
     }
 
     /// Whether a sweep has been entered since this was last asked. True once per entry.

@@ -20,9 +20,14 @@ use crate::ui::theme::Theme;
 const TICK: std::time::Duration = std::time::Duration::from_millis(80);
 
 /// What the line says when the list could not be read again after something that changed it
-/// or may have. Appended to the account of what happened rather than written over it: the
-/// panes that stopped are what that account is for, and a sentence about the list does not
-/// replace it.
+/// or may have.
+///
+/// A condition, not a report: it is true of the rows on screen for as long as no reading
+/// works, whatever the user presses in the meantime, and the reading that puts the list
+/// right is what takes it back. So it is held by `PanesState::set_stale` and drawn beside
+/// the account of what happened rather than joined to it — the panes that stopped are what
+/// that account is for, and a sentence about the list neither replaces it nor belongs to
+/// the same moment.
 const STALE: &str = "the list could not be read again";
 
 /// That sentence with herdr's own words on the end of it.
@@ -31,9 +36,10 @@ fn could_not_read(error: &anyhow::Error) -> String {
 }
 
 /// And what it says where the list is the only answer there is: a removal this side could get
-/// no outcome from, so the checkout may be gone and may be standing. Said once a frame, like
-/// [`STALE`] and for the same reason — there is one list — so it is worded for however many
-/// endings nobody could read.
+/// no outcome from, so the checkout may be gone and may be standing. Said once a frame,
+/// because there is one list, so it is worded for however many endings nobody could read.
+/// Unlike [`STALE`] this one is a report: it is about a reading that happened, in this
+/// frame, and nothing later makes it untrue.
 ///
 /// It says what was done and stops there. "A row that has gone is a checkout that has gone"
 /// would be the useful sentence and it is not a sound one: the tree is built from the panes
@@ -244,13 +250,16 @@ fn drain_finished(
                 // choosing the row and pressing the key; an `Enter` that never became one
                 // leaves every mark standing, so `Enter` again is the whole of it. That
                 // second sentence is `re_read`'s, for the same state reached the other way.
-                said.push(match state.cancel_removal() {
-                    Cancelled::Question => {
-                        format!("{STALE}, so the question went back: {error:#}")
-                    }
-                    Cancelled::Enter => format!("{STALE}, so nothing was asked: {error:#}"),
-                    Cancelled::Nothing => could_not_read(&error),
-                });
+                state.set_stale(could_not_read(&error));
+                // What the failed reading cost, which is an account of this moment and not
+                // a description of the list: it stays a push. The list being behind is the
+                // condition beside it, and it retires when a reading works rather than when
+                // a key is pressed.
+                match state.cancel_removal() {
+                    Cancelled::Question => said.push("the question went back".to_string()),
+                    Cancelled::Enter => said.push("nothing was asked".to_string()),
+                    Cancelled::Nothing => {}
+                }
             }
         }
     }
@@ -291,11 +300,11 @@ fn re_read(
         Err(error) => {
             // A sweep's question waiting on this goes with it — `cancel_removal` says why —
             // and the line says so, since no box is the only other sign.
-            state.cancel_removal();
-            state.set_message(match why {
-                ReRead::Key => format!("{error:#}"),
-                ReRead::ForSweep => format!("{STALE}, so nothing was asked: {error:#}"),
-            });
+            let cancelled = state.cancel_removal();
+            state.set_stale(could_not_read(&error));
+            if matches!(why, ReRead::ForSweep) && cancelled != Cancelled::Nothing {
+                state.set_message("nothing was asked".to_string());
+            }
         }
     }
 }
@@ -387,26 +396,18 @@ fn start_removal(
     // The `bool` is dropped rather than said: a question cannot be up here, because
     // `handle_key` takes `pending_removal` in the act of returning the action this is
     // carrying out, and `Shift-D` is ignored inside a sweep.
-    let stale = if removal.panes().is_empty() {
-        None
-    } else {
-        catch_up(state, dirty, herdr, git)
-            .err()
-            .as_ref()
-            .map(could_not_read)
-    };
-
-    match (refused, stale) {
-        (None, None) => {}
-        // Not fatal, but not silent either: rows for panes that have certainly stopped are
-        // on screen until this works.
-        (None, Some(stale)) => state.set_message(format!("the panes closed, but {stale}")),
-        (Some(message), None) => state.set_message(message),
-        // The account of what happened, and the list appended to it. Written over it instead,
-        // a sentence about the list would take the place of the one naming what went wrong
-        // and how far it got — which is the half no other thing on screen will say, and
-        // which on this arm may be a refusal that stopped nothing at all.
-        (Some(message), Some(stale)) => state.set_message(format!("{message}; {stale}")),
+    if !removal.panes().is_empty() {
+        if let Err(error) = catch_up(state, dirty, herdr, git) {
+            // Not fatal, but not silent either: rows for panes that have certainly stopped
+            // are on screen until a reading works, which is exactly a condition's shape.
+            state.set_stale(could_not_read(&error));
+        }
+    }
+    // The account of what happened. It no longer shares the line with a sentence about the
+    // list, so it is never the half that gets written over: on this arm it may be a refusal
+    // that stopped nothing at all, and that is the half no other thing on screen will say.
+    if let Some(message) = refused {
+        state.set_message(message);
     }
 }
 
@@ -1372,9 +1373,10 @@ mod tests {
         settle(&mut state, &mut pending);
 
         assert!(state.pending_sweep().is_none());
+        assert_eq!(state.message(), Some("nothing was asked"));
         assert_eq!(
-            state.message(),
-            Some("the list could not be read again, so nothing was asked: herdr is not answering")
+            state.trouble().as_deref(),
+            Some("the list could not be read again: herdr is not answering")
         );
         assert_eq!(
             state.handle_key(key(KeyCode::Char('y'))),
@@ -1826,8 +1828,12 @@ mod tests {
 
         assert_eq!(
             state.message(),
-            Some("the panes closed, but the list could not be read again: herdr is not answering"),
+            None,
             "the removal started; it is the list that could not be caught up"
+        );
+        assert_eq!(
+            state.trouble().as_deref(),
+            Some("the list could not be read again: herdr is not answering")
         );
         assert!(
             state.rows().iter().any(|row| row.is_removing),
@@ -1896,13 +1902,10 @@ mod tests {
             &removal,
         );
 
+        assert_eq!(state.message(), Some("could not close w2:p2: herdr rejected pane.close: no such pane (not_found) — 1 of its 2 panes was closed first, and the checkout was not removed"));
         assert_eq!(
-            state.message(),
-            Some(
-                "could not close w2:p2: herdr rejected pane.close: no such pane (not_found) \
-                 — 1 of its 2 panes was closed first, and the checkout was not removed; the \
-                 list could not be read again: herdr is not answering"
-            )
+            state.trouble().as_deref(),
+            Some("the list could not be read again: herdr is not answering")
         );
     }
 
@@ -1929,13 +1932,10 @@ mod tests {
             &removal,
         );
 
+        assert_eq!(state.message(), Some("could not close w2:p1: herdr rejected pane.close: no such pane (not_found) — none of its 2 panes were closed, and the checkout was not removed"));
         assert_eq!(
-            state.message(),
-            Some(
-                "could not close w2:p1: herdr rejected pane.close: no such pane (not_found) \
-                 — none of its 2 panes were closed, and the checkout was not removed; the \
-                 list could not be read again: herdr is not answering"
-            )
+            state.trouble().as_deref(),
+            Some("the list could not be read again: herdr is not answering")
         );
     }
 
@@ -2018,9 +2018,11 @@ mod tests {
     }
 
     #[test]
-    fn a_reload_that_fails_says_only_what_failed() {
-        // `r` asks no question, so its failure has nothing to withdraw and says herdr's
-        // words alone.
+    fn a_reload_that_fails_leaves_the_list_saying_it_is_behind() {
+        // `r` asks no question, so its failure has nothing to withdraw: there is no account
+        // of this moment to give, only the list still being what it was. That is the same
+        // condition a removal's failed reading leaves, reached the other way, and it says so
+        // in the same words rather than in herdr's alone.
         let session = Arc::new(Session::new(false, false));
         let (mut state, mut pending) = enter_pressed(&session);
         re_read(
@@ -2030,7 +2032,11 @@ mod tests {
             &*session,
             ReRead::Key,
         );
-        assert_eq!(state.message(), Some("herdr is not answering"));
+        assert_eq!(state.message(), None);
+        assert_eq!(
+            state.trouble().as_deref(),
+            Some("the list could not be read again: herdr is not answering")
+        );
     }
 
     #[test]
@@ -2208,12 +2214,10 @@ mod tests {
             removals.is_empty()
         });
 
+        assert_eq!(state.message(), Some("the removal of feat/login ended without saying what happened — its 1 pane was closed first"));
         assert_eq!(
-            state.message(),
-            Some(
-                "the removal of feat/login ended without saying what happened — its 1 pane \
-                 was closed first; the list could not be read again: herdr is not answering"
-            )
+            state.trouble().as_deref(),
+            Some("the list could not be read again: herdr is not answering")
         );
     }
 
@@ -2237,8 +2241,9 @@ mod tests {
             removals.is_empty()
         });
 
+        assert_eq!(state.message(), None);
         assert_eq!(
-            state.message(),
+            state.trouble().as_deref(),
             Some("the list could not be read again: herdr is not answering")
         );
     }
@@ -2303,10 +2308,11 @@ mod tests {
 
         assert_eq!(
             state.message(),
-            Some(
-                "could not remove feat/login: fatal: refused — its 1 pane was closed first; \
-                 the list could not be read again: herdr is not answering"
-            )
+            Some("could not remove feat/login: fatal: refused — its 1 pane was closed first")
+        );
+        assert_eq!(
+            state.trouble().as_deref(),
+            Some("the list could not be read again: herdr is not answering")
         );
     }
 
@@ -2340,10 +2346,13 @@ mod tests {
         assert_eq!(
             state.message(),
             Some(
-                "removed feat/login, branch kept: error: not fully merged; the list could \
-                 not be read again, so the question went back: herdr is not answering"
+                "removed feat/login, branch kept: error: not fully merged; the question went back"
             ),
             "and not `WITHDRAWN`, which would say the list changed when nothing replaced it"
+        );
+        assert_eq!(
+            state.trouble().as_deref(),
+            Some("the list could not be read again: herdr is not answering")
         );
     }
 
@@ -2406,10 +2415,15 @@ mod tests {
         let line = state
             .message()
             .expect("two endings nobody could read are said");
+        assert!(
+            !line.contains(STALE),
+            "what became of the list is not one of the reports: {line:?}"
+        );
         assert_eq!(
-            line.matches(STALE).count(),
-            1,
-            "one list, one sentence: {line:?}"
+            state.trouble().as_deref(),
+            Some("the list could not be read again: herdr is not answering"),
+            "one list, one sentence — and being a condition is what makes it one, however \
+             many removals reported over the reading that failed"
         );
         assert!(
             !line.contains(READ_AGAIN),
@@ -2417,8 +2431,60 @@ mod tests {
         );
         assert_eq!(
             line.matches("; ").count(),
-            2,
-            "two reports and the one sentence: {line:?}"
+            1,
+            "the two reports, and nothing else on the line: {line:?}"
+        );
+    }
+
+    #[test]
+    fn a_reading_that_worked_takes_back_the_sentence_saying_one_could_not() {
+        // Issue #64's sequence, and the reason the list being behind is a condition rather
+        // than a push. Two removals from one sweep report in different frames with no key
+        // pressed between them, which is the ordinary case — ADR 0014 has the user carrying
+        // on while they run. The first frame's reading fails. The second frame's works, and
+        // `removal::message` has nothing to say about a removal that simply worked, so there
+        // is no second sentence to write over the first: what retires it has to be the
+        // reading itself.
+        let session = Arc::new(Session::new(false, false));
+        let (_, tree) = collect::collect_tree(&*session, &*session).expect("the first reading");
+        let mut state = PanesState::new(tree, None);
+        let mut pending = pending(Dirty::new(session.clone()));
+        // The session answers as both, because the second frame's reading has to work.
+        let git = session.clone();
+
+        let mut lost = Removals::new(&Lost);
+        let first = Removal::sweeping("/src/app", &state.tree().repos[0].worktrees[1]);
+        lost.remove(&Recorder::default(), &first).unwrap();
+        until("the first reported", || lost.reported() == 1);
+        // A herdr that will not describe itself takes this frame's one reading.
+        drain_finished(
+            &mut state,
+            &mut pending,
+            &mut lost,
+            &Recorder::default(),
+            &*git,
+        );
+        assert_eq!(
+            state.trouble().as_deref(),
+            Some("the list could not be read again: herdr is not answering"),
+            "the rows are behind, and the line says so"
+        );
+
+        let mut removed = Removals::new(&Reports(RemovalOutcome::Removed));
+        let second = Removal::sweeping("/src/app", &state.tree().repos[0].worktrees[2]);
+        removed.remove(&Recorder::default(), &second).unwrap();
+        until("the second reported", || removed.reported() == 1);
+        drain_finished(&mut state, &mut pending, &mut removed, &*session, &*git);
+
+        assert_eq!(
+            state.trouble(),
+            None,
+            "and the reading that put the list right is what takes the sentence back"
+        );
+        assert!(
+            !state.message().unwrap_or_default().contains(STALE),
+            "with nothing else on screen still saying it either: {:?}",
+            state.message()
         );
     }
 
@@ -2448,15 +2514,12 @@ mod tests {
             removals.is_empty()
         });
 
+        assert_eq!(state.message(), Some("the removal of feat/login ended without saying what happened; nothing was asked"), "the `Enter` went, and the line says which of the two it was: nothing was asked, so the marks stand and `Enter` again is the whole of the way back");
         assert_eq!(
-            state.message(),
+            state.trouble().as_deref(),
             Some(
-                "the removal of feat/login ended without saying what happened; the list \
-                 could not be read again, so nothing was asked: sending session.snapshot to \
-                 herdr: broken pipe"
-            ),
-            "the `Enter` went, and the line says which of the two it was: nothing was asked, \
-             so the marks stand and `Enter` again is the whole of the way back"
+                "the list could not be read again: sending session.snapshot to herdr: broken pipe"
+            )
         );
         settle(&mut state, &mut pending);
         assert!(
@@ -2490,13 +2553,10 @@ mod tests {
         });
 
         assert!(state.pending_removal().is_none(), "and it went back");
+        assert_eq!(state.message(), Some("the removal of feat/login ended without saying what happened — its 1 pane was closed first; the question went back"));
         assert_eq!(
-            state.message(),
-            Some(
-                "the removal of feat/login ended without saying what happened — its 1 pane \
-                 was closed first; the list could not be read again, so the question went \
-                 back: herdr is not answering"
-            )
+            state.trouble().as_deref(),
+            Some("the list could not be read again: herdr is not answering")
         );
     }
 
@@ -2558,11 +2618,11 @@ mod tests {
             &removal,
         );
 
+        assert_eq!(state.message(), None);
         assert_eq!(
-            state.message(),
+            state.trouble().as_deref(),
             Some(
-                "the panes closed, but the list could not be read again: sending \
-                 session.snapshot to herdr: broken pipe"
+                "the list could not be read again: sending session.snapshot to herdr: broken pipe"
             )
         );
     }
@@ -2664,12 +2724,11 @@ mod tests {
             removals.is_empty()
         });
 
+        assert_eq!(state.message(), Some("the removal of feat/login ended without saying what happened; the question went back"));
         assert_eq!(
-            state.message(),
+            state.trouble().as_deref(),
             Some(
-                "the removal of feat/login ended without saying what happened; the list \
-                 could not be read again, so the question went back: sending \
-                 session.snapshot to herdr: broken pipe"
+                "the list could not be read again: sending session.snapshot to herdr: broken pipe"
             )
         );
     }
