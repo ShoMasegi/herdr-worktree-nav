@@ -7,8 +7,7 @@
 //!
 //! Each repository's remote is asked once and remembered for as long as the picker is up —
 //! `Tab` to the panes view and back included, which is why the cache is owned by the caller.
-//! Walking between repositories, and between the two views, is common enough that a round
-//! trip in front of every frame would be felt.
+//! Walking between repositories is common enough that a round trip per frame would be felt.
 
 use std::collections::HashMap;
 use std::sync::mpsc::{self, TryRecvError};
@@ -129,13 +128,8 @@ pub fn run(
             // user read is also what `herdr plugin log list` has.
             let mut failure: Option<anyhow::Error> = None;
 
-            // Reading one repository: the local refs synchronously because they are a few
-            // milliseconds, the remote and the pull requests on a thread because they are a
-            // network round trip.
-            //
-            // A remote an earlier visit already heard back from is not asked again. That is
-            // what `listings` is carried across a view switch for: `Tab` away and back is a
-            // frame, not a round trip.
+            // The local refs synchronously because they are a few milliseconds, the remote
+            // and the pull requests on a thread because they are a network round trip.
             let read = |repo_root: &str, listings: &mut listing::Cache| -> BranchData {
                 let local_refs = listed(git, repo_root);
                 if let Some(remote) = listings.get(repo_root).filter(|remote| !remote.loading) {
@@ -194,10 +188,9 @@ pub fn run(
                 match receiver.try_recv() {
                     Ok(Update::Fetched { repo_root, result }) => {
                         match result {
-                            // Everything the fetch wrote is in the refs, so the answer is
-                            // to read the repository again rather than to patch what is on
-                            // screen. It also has to be: `--prune` deleted refs, and the
-                            // remote listing cached here would put them straight back.
+                            // Read the repository again rather than patch what is on
+                            // screen: `--prune` deleted refs, and the remote listing cached
+                            // here would otherwise put them straight back.
                             Ok(()) => {
                                 listing::apply(listings, &repo_root, listing::Answer::Refetched);
                                 let fresh = read(&repo_root, listings);
@@ -296,16 +289,13 @@ pub fn run(
                         });
                     }
                     // `thread::scope` joins every background thread before this function
-                    // can return, and a fetch can be a long way from done. Nothing the
-                    // picker does on the way out is worth that wait, so leave the process
-                    // instead. It is safe for the same reason in both cases: a `git fetch`
-                    // that outlives us only ever writes `refs/remotes`, and a step that
-                    // could leave something half-made does not offer Ctrl-C at all — see
-                    // `Stage::interruptible`.
+                    // can return, and a fetch can be a long way from done, so leave the
+                    // process instead. Safe because a `git fetch` that outlives us only ever
+                    // writes `refs/remotes`, and a step that could leave something half-made
+                    // does not offer Ctrl-C at all — see `Stage::interruptible`.
                     //
                     // A failure is the exception: it is raised again on the way out so that
-                    // `herdr plugin log list` gets it. By then the work has finished, so
-                    // the join costs nothing.
+                    // `herdr plugin log list` gets it, and by then the work has finished.
                     BranchAction::Quit if failure.is_none() => {
                         ratatui::try_restore()?;
                         std::process::exit(0);
@@ -317,9 +307,8 @@ pub fn run(
         })?;
 
     // `thread::scope` has joined every thread this view spawned, so whatever is still in the
-    // channel is a finished answer that landed after the last frame. Folding it in here is
-    // what makes coming back to this view a frame rather than another round trip — and it is
-    // what keeps a cached entry from being left claiming it is still loading.
+    // channel is a finished answer that landed after the last frame. Folding it in keeps a
+    // cached entry from being left claiming it is still loading.
     while let Ok(update) = receiver.try_recv() {
         let Some(repo_root) = update.repo_root().map(str::to_string) else {
             continue;
@@ -373,9 +362,8 @@ fn answer(update: Update) -> listing::Answer {
 /// answers about whatever base repository it picks out of the remotes, and for a fork that is
 /// the parent, with a zero exit and nothing to say so.
 ///
-/// No slug, no question. A repository GitHub has never heard of has no name to ask about, and
-/// git failing to say is the same silence from here; both cost nothing but the annotation,
-/// which is what `docs/adr/0003-git-first-gh-optional.md` promises.
+/// No slug, no question, and a repository GitHub has never heard of has none. That costs
+/// nothing but the annotation, which is `docs/adr/0003-git-first-gh-optional.md`'s promise.
 fn annotations(git: &dyn GitPort, gh: &dyn GhPort, repo_root: &str) -> Vec<PullRequest> {
     match git.github_slug(repo_root) {
         Ok(Some(slug)) => gh.pull_requests(&slug),
@@ -386,11 +374,10 @@ fn annotations(git: &dyn GitPort, gh: &dyn GhPort, repo_root: &str) -> Vec<PullR
 /// The branches to list, including when git dropped a ref it could not read.
 ///
 /// The refs git did list are real whatever it left out, and this list is read as a list of
-/// branches: one missing from it is one that is missing. An empty list is not that — it says
+/// branches: one missing from it is one that is missing. An empty list says instead that
 /// every branch here exists only on the remote, which sends `Enter` off to fetch a branch
-/// git already has locally. So the walk's own words are not this view's to
-/// act on. The panes view makes the opposite choice for the opposite reason, and
-/// [`crate::port::RefWalk`] holds both.
+/// git already has locally. The panes view makes the opposite choice for the opposite
+/// reason, and [`crate::port::RefWalk`] holds both.
 ///
 /// A walk git refused outright is still nothing: no branch is worse than a wrong one here
 /// too, and the repository step already lists the repository.
@@ -467,10 +454,10 @@ fn open(
             create(herdr, repo_root, &branch, base)?
         }
         BranchPlan::FetchThenCreate { branch, base } => {
-            // What to fetch is what `base` names, not what is being created. The two are the
-            // same branch when the user picked a never-fetched row — `base` is
+            // What to fetch is what `base` names, not what is being created. The two are
+            // the same branch when the user picked a never-fetched row — `base` is
             // `origin/<branch>` there — and different when they started a new branch from
-            // one. Reading it off `branch` was right only by coincidence.
+            // one.
             let fetch = base.strip_prefix(&format!("{REMOTE}/")).unwrap_or(&base);
             report(Stage::Fetching {
                 remote: REMOTE.to_string(),
@@ -575,9 +562,7 @@ mod tests {
         }
     }
 
-    /// A `gh` that answers nothing and remembers what it was asked about. The first fake of
-    /// this port in the repository — its absence is why a `gh` command that could never run
-    /// shipped, and shipped again after the first fix.
+    /// A `gh` that answers nothing and remembers what it was asked about.
     #[derive(Default)]
     struct Asked(Mutex<Vec<String>>);
 
@@ -649,13 +634,9 @@ mod tests {
 
     #[test]
     fn a_branch_git_could_read_is_still_listed_when_another_ref_was_dropped() {
-        // The panes view answers a dropped ref by dropping the whole repository's markers,
-        // and a list of branches given that answer would be empty. Empty is not "nothing to
-        // report" here: `domain::resolve` reads a branch absent from the local refs but
-        // present on the remote as `RemoteOnly`, so `Enter` on a branch git already has
-        // fetches `origin/<branch>` instead of cutting a worktree from what is there. A
-        // branch that is checked out is safe either way — `domain::resolve` lets an open
-        // worktree override whatever the refs said — which is what makes this quiet.
+        // `domain::resolve` reads a branch absent from the local refs but present on the
+        // remote as `RemoteOnly`, so an empty list sends `Enter` off to fetch a branch git
+        // already has instead of cutting a worktree from what is there.
         let dropped = Walked(Ok(RefWalk {
             refs: vec![a_ref("feat/login")],
             dropped: Some("warning: ignoring broken ref refs/heads/x".to_string()),
@@ -668,16 +649,13 @@ mod tests {
             vec!["feat/login"]
         );
 
-        // A walk git refused is a different thing: nothing was read, so there is nothing to
-        // list, and no branch beats a wrong one here as well.
+        // A walk git refused is a different thing: nothing was read, so there is nothing
+        // to list.
         assert!(listed(&Walked(Err(())), "/src/app").is_empty());
     }
 
     #[test]
     fn gh_is_asked_by_name_and_never_by_directory() {
-        // `gh` given a directory answers about whatever base repository it picks out of the
-        // remotes — the parent, for a fork. That is not a failure it reports; it is another
-        // repository's pull requests, arriving with a zero exit.
         let gh = Asked::default();
         assert!(
             annotations(&Origin(Ok(Slug::owner_repo("me", "app"))), &gh, "/src/app").is_empty()
@@ -687,8 +665,8 @@ mod tests {
 
     #[test]
     fn a_repository_github_has_never_heard_of_is_not_asked_about_at_all() {
-        // And neither is one git would not answer for. Both cost the annotation and nothing
-        // else, which is ADR 0003's promise — what neither may cost is a wrong answer.
+        // And neither is one git would not answer for. Both cost the annotation and
+        // nothing else, which is ADR 0003's promise.
         for slug in [Ok(None), Err(())] {
             let gh = Asked::default();
             assert!(annotations(&Origin(slug), &gh, "/src/app").is_empty());

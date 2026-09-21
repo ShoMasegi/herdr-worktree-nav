@@ -2,7 +2,7 @@
 //!
 //! The destination step asks the user to choose where a worktree pane goes; this works out
 //! the answer for whichever row the cursor is on, so the choice can be seen rather than
-//! imagined. Pure: it takes herdr's current layouts and returns the predicted one.
+//! imagined.
 //!
 //! The prediction is exact rather than approximate. Verified against herdr 0.7.4's
 //! `pane.move`: a destination with no target pane splits the tab's focused pane, the split
@@ -51,7 +51,6 @@ pub fn predict(snapshot: &Snapshot, destination: &Destination, branch: &str) -> 
             direction,
         } => split_into(snapshot, tab_id, Some(target_pane_id), *direction, branch),
         Destination::ExistingTab { tab_id, .. } => {
-            // No target pane: herdr splits whichever pane that tab has focused.
             split_into(snapshot, tab_id, None, SplitDirection::Right, branch)
         }
         Destination::ExistingSpace {
@@ -290,7 +289,6 @@ mod tests {
         assert_eq!(caption, "w1  app / agents");
         assert_eq!(panes.len(), 3);
 
-        // The target keeps the left half.
         let claude = find(&panes, "claude");
         assert_eq!(
             claude.rect,
@@ -301,7 +299,6 @@ mod tests {
                 height: 40
             }
         );
-        // The branch takes the right half of what the target had.
         let arriving = find(&panes, "feat/login");
         assert_eq!(
             arriving.rect,
@@ -314,7 +311,6 @@ mod tests {
         );
         assert!(arriving.is_new);
         assert!(arriving.id.is_empty(), "it does not have an id yet");
-        // The pane that was not split is untouched.
         assert_eq!(
             find(&panes, "shell").rect,
             LayoutRect {
@@ -356,7 +352,6 @@ mod tests {
 
     #[test]
     fn a_tab_with_no_target_named_splits_the_pane_it_has_focused() {
-        // Mirrors herdr: pane.move with no target_pane_id uses the tab's focused pane.
         let destination = Destination::ExistingTab {
             tab_id: "w1:t1".into(),
             label: "w1  app / agents".into(),

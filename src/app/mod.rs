@@ -30,10 +30,8 @@ use crate::ui::theme::Theme;
 /// What the panes view has asked for behind the first frame.
 ///
 /// Kept across a `Tab` and across leaving a sweep, so that a trip through the branches view
-/// asks none of it again — an answer that cost a round of processes is worth more than the
-/// frame it took to get. Both are here rather than passed separately because they are the
-/// same shape: a question put to a port on a thread, drained by the loop, and drawn on the
-/// rows as it lands.
+/// asks none of it again. Both are here because they are the same shape: a question put to a
+/// port on a thread, drained by the loop, and drawn on the rows as it lands.
 pub struct Pending {
     /// Which checkouts are holding uncommitted work. One process per checkout, so it is
     /// asked as soon as the picker opens and fills the list in behind the first frame.
@@ -88,8 +86,7 @@ pub struct Summoned {
 ///
 /// git says its piece over as many lines as it likes, and the two places these words are
 /// shown are a line each: the prompt line, and the line `dump` gives a repository under its
-/// name. A sentence that keeps its newlines wraps in the first and indents its tail like a
-/// checkout of its own in the second, so it is folded once here rather than by every reader.
+/// name. Folded once here rather than by every reader.
 pub(crate) fn one_line(words: &str) -> String {
     words.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -134,9 +131,7 @@ pub fn run_picker(
         repo_root,
     };
 
-    // The picker owns the terminal for as long as it is up, and the views borrow it. Putting
-    // it back between them would leave herdr's popup framing the empty primary screen for
-    // however long the next view takes to gather what it draws — see
+    // The picker owns the terminal for as long as it is up, and the views borrow it — see
     // `docs/adr/0009-the-picker-owns-the-terminal.md`.
     let mut terminal = ratatui::try_init()?;
     let result = views(
@@ -169,15 +164,12 @@ fn views(
     start: Entrypoint,
     mut summoned: Summoned,
 ) -> Result<()> {
-    // What each repository's remote answered, kept across the switch. Re-reading it every
-    // time `Tab` came back would be a network round trip in front of every frame.
+    // What each repository's remote answered. Re-reading it every time `Tab` came back
+    // would be a network round trip in front of every frame.
     let mut listings = listing::Cache::new();
-    // Removals in flight, kept across the switch for the same reason and one more: they
-    // outlive the picker entirely, so the view that started one is not necessarily the view
-    // that is up when it finishes.
+    // Removals outlive the picker entirely, so the view that started one is not necessarily
+    // the view that is up when it finishes.
     let mut removals = Removals::new(remover);
-    // Kept for the same reason, and with one of its own: walking a working tree to see
-    // whether it is dirty is the one answer here that costs a process per checkout.
     let mut pending = Pending {
         dirty: Dirty::new(Arc::clone(&git)),
         settled: Settled::new(Arc::clone(&git), Arc::clone(&gh)),
@@ -187,8 +179,8 @@ fn views(
     loop {
         match view.current {
             Entrypoint::Branches => {
-                // No repository in hand is not a failure: the picker opens on its list of
-                // them. It falls back to the panes view only when there are none at all.
+                // No repository in hand is not a failure: the branches picker opens on its
+                // list of them, and falls back to the panes view only when there are none.
                 match branches::run(
                     terminal,
                     herdr,
@@ -221,8 +213,6 @@ fn views(
                         repo_root,
                         show_worktrees_without_panes: show,
                     } => {
-                        // `None` when the cursor was not in a repository; the branches picker
-                        // then simply starts with nothing preselected.
                         summoned.repo_root = repo_root;
                         view.show_branches(show);
                     }

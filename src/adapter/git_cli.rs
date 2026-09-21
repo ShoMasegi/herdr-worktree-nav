@@ -25,8 +25,8 @@ pub struct GitCli;
 ///
 /// Both streams, because a clean exit is not always a whole answer: `for-each-ref` drops a
 /// ref it cannot read, says so on stderr, and exits 0 — see `local_refs`. Every other call
-/// here reads a clean exit's `stdout` and ignores its `stderr`, which is what they always
-/// did; a non-zero exit's `stderr` is what `run` turns into the error, as it always did.
+/// here reads a clean exit's `stdout` and ignores its `stderr`; a non-zero exit's `stderr`
+/// is what `run` turns into the error.
 struct Said {
     stdout: String,
     stderr: String,
@@ -64,8 +64,7 @@ struct Said {
 const GIT_LOCALE: (&str, &str) = ("LC_ALL", "C");
 
 impl GitCli {
-    /// The command every call here runs, before its arguments: git, in `dir`, with no stdin
-    /// and a pinned locale.
+    /// The command every call here runs, before its arguments.
     fn command(dir: &str) -> Command {
         let mut command = Command::new("git");
         command
@@ -92,8 +91,7 @@ impl GitCli {
             }));
         }
         // Matching the exit code alone would turn every fatal error into "not a git
-        // repository" — a diagnosis that sends the reader looking in entirely the wrong
-        // place when what actually happened was that a fetch could not reach the remote.
+        // repository", a diagnosis that sends the reader looking in entirely the wrong place.
         if output.status.code() == Some(GIT_FATAL)
             && NOT_A_REPOSITORY.iter().any(|said| stderr.contains(said))
         {
@@ -114,8 +112,7 @@ impl GitCli {
 /// The other way round puts the call first, and `local_refs` carries a `--format=` string
 /// long enough on its own to push git's words past the right edge of every prompt line the
 /// picker draws — so the sentence that exists to show them shows the plugin's own argv
-/// instead. What a reader needs is what git said; which call it was is the part that can be
-/// cut.
+/// instead.
 fn refusal(args: &[&str], stderr: &str) -> String {
     let said = stderr.trim();
     match said.is_empty() {
@@ -134,28 +131,19 @@ fn refusal(args: &[&str], stderr: &str) -> String {
 ///
 /// In git's English, which git translates and [`GIT_LOCALE`] is what keeps it in.
 ///
-/// Two prefixes rather than "stderr said something", which is what this was and what made a
-/// healthy repository read as an unreadable one: `GIT_TRACE`, `GIT_TRACE_PERFORMANCE` and
-/// `GIT_TRACE2` are read from the environment herdr launched the plugin in, and each writes
-/// a timestamped line per call to stderr while listing every ref correctly. So does an
-/// `error: commit-graph file is too small`, which is about the graph and not the refs.
+/// Two prefixes rather than "stderr said something": `GIT_TRACE`, `GIT_TRACE_PERFORMANCE`
+/// and `GIT_TRACE2` are read from the environment herdr launched the plugin in, and each
+/// writes a timestamped line per call to stderr while listing every ref correctly. So does
+/// an `error: commit-graph file is too small`, which is about the graph and not the refs.
 ///
 /// Only the matching lines are kept, and all of them: git says it once per ref, and a reader
 /// told about one who fixes it and is then told about the next has been given half of what
-/// git already knew. With a trace variable set as well, the sentence should be git's warning
-/// rather than the trace line it happened to follow.
+/// git already knew.
 ///
 /// Not passed through [`refusal`], which is the one place these words are not followed by the
 /// call that produced them. It is always this call, so naming it tells a reader nothing they
 /// could act on, and it is not small: most of what `refusal` appends is the `--format=`
 /// string.
-///
-/// Not for reach, though. The call goes on after both refnames and the prompt line cuts from
-/// the right, so leaving it off moves the width at which a second refname arrives by exactly
-/// one column — the one the ellipsis takes. `src/ui/render.rs` draws both and asserts both
-/// widths. What it buys is every width below that one, where the line spends itself on git's
-/// words rather than on an argv that is the same on every call; `dump` writes the whole
-/// sentence at any width either way.
 ///
 /// A ref git drops in silence — an unreadable directory under `refs/heads`, a dangling
 /// symref — is not here and cannot be: the walk exits 0 with nothing said. That is issue
@@ -179,11 +167,9 @@ fn dropped_refs(stderr: &str) -> Option<String> {
 /// OS's words where git's would be. This is the case the usage page names — a `git` that
 /// is not on the path herdr launched the plugin with.
 ///
-/// It reaches the prompt line the way a refusal does for every call made about a repository
-/// the tree already has, so it has to read the same way round. Ahead of that it reaches
-/// nobody: `app::collect::identify_one` reads a git it could not run as "this pane is not in
-/// a repository", so with no git at all the picker draws every pane ungrouped and says
-/// nothing about why.
+/// Ahead of the prompt line it reaches nobody: `app::collect::identify_one` reads a git it
+/// could not run as "this pane is not in a repository", so with no git at all the picker
+/// draws every pane ungrouped and says nothing about why.
 fn could_not_run(args: &[&str], error: &std::io::Error) -> String {
     refusal(args, &format!("git could not be run: {error}"))
 }
@@ -289,8 +275,8 @@ impl GitPort for GitCli {
         // `rev-list --count` per branch and a `worktree list` on top.
         //
         // The subject goes last because it is the field most likely to contain a tab. A
-        // checkout path could too, which would mis-split the line; nothing here can prevent
-        // that, and a path with a tab in it would be the least of that user's problems.
+        // checkout path could too, which would mis-split the line, and nothing here can
+        // prevent that.
         let args = [
             "for-each-ref",
             "--format=%(refname)%09%(committerdate:unix)%09%(upstream:short)%09%(upstream:track)%09%(push:track)%09%(worktreepath)%09%(contents:subject)",
@@ -359,10 +345,9 @@ impl GitPort for GitCli {
                 worktree_path,
             });
         }
-        // A clean exit is not a whole answer here: the refs above are every ref git could
-        // read, and a ref it could not is missing from them. That is a checkout with no
-        // marker, which is what a branch with nothing to report looks like, so the walk
-        // carries git's words for whoever cannot afford the ambiguity — see [`RefWalk`].
+        // The refs above are every ref git could read, and a ref it could not is missing
+        // from them, so the walk carries git's words for whoever cannot afford to read that
+        // silence as nothing to report — see [`Said`] and [`RefWalk`].
         Ok(RefWalk {
             refs,
             dropped: dropped_refs(&said.stderr),
@@ -499,8 +484,6 @@ mod tests {
 
     #[test]
     fn anything_unrecognised_is_no_marker_rather_than_a_guess() {
-        // A marker that is wrong is worse than none: these exist so the user does not have
-        // to leave the picker to check.
         assert_eq!(parse_track("[ahead many]"), None);
         assert_eq!(parse_track("[sideways 2]"), None);
         assert_eq!(parse_track("gone"), None);
@@ -527,9 +510,8 @@ mod tests {
 
     #[test]
     fn a_refusal_reads_gits_words_first_and_names_the_call_after_them() {
-        // The order is the point — see `refusal` — and the empty case has to say that git
-        // said nothing, since a sentence that is only a call in parentheses reads as a
-        // sentence with its first half missing.
+        // The empty case has to say that git said nothing, since a sentence that is only a
+        // call in parentheses reads as one with its first half missing.
         assert_eq!(
             refusal(&["fetch", "origin"], "fatal: could not read from remote\n"),
             "fatal: could not read from remote (`git fetch origin`)"
@@ -543,11 +525,9 @@ mod tests {
     #[test]
     fn the_command_every_call_is_built_from_asks_for_the_locale() {
         // One third of the claim, and only that third: this sees the command the helper
-        // hands back, so it says nothing about whether a call uses the helper. Two things
-        // here are decided by reading git's English — whether the path is a repository, and
-        // whether a ref was dropped — and git translates both, so the other two thirds are
-        // `scripts/check-invariants.sh`, which counts the places a git is started, and
-        // `tests/git_locale.rs`, which watches a real git obey.
+        // hands back, so it says nothing about whether a call uses the helper. The other two
+        // thirds are `scripts/check-invariants.sh`, which counts the places a git is
+        // started, and `tests/git_locale.rs`, which watches a real git obey.
         let command = GitCli::command("/src/app");
         let locale: Vec<_> = command
             .get_envs()
@@ -591,9 +571,7 @@ mod tests {
         );
 
         // Two broken refs are two warnings — measured, one per ref — and the prompt line is
-        // one line, so they are joined with a space rather than run together. All of them,
-        // not the first: a reader told about one broken ref who fixes it and finds another
-        // has been told half of what git said.
+        // one line, so they are joined with a space rather than run together.
         assert_eq!(
             dropped_refs(
                 "warning: ignoring broken ref refs/heads/chore/deps\n\
@@ -613,7 +591,6 @@ mod tests {
             dropped_refs("  warning: ignoring broken ref refs/heads/wip \r\n").as_deref(),
             Some("warning: ignoring broken ref refs/heads/wip")
         );
-        // And the lone `\r`, which is the one `lines()` leaves for the trim to take.
         assert_eq!(
             dropped_refs("warning: ignoring broken ref refs/heads/wip\r").as_deref(),
             Some("warning: ignoring broken ref refs/heads/wip")
@@ -623,8 +600,7 @@ mod tests {
     #[test]
     fn a_git_that_could_not_be_started_reads_the_same_way_round_as_a_refusal() {
         // The spawn failure is the one easiest to build the other way round — the call,
-        // then the OS — because the OS's words are not git's. It is also the failure the
-        // usage page names, so it is the one a reader is most likely to meet.
+        // then the OS — because the OS's words are not git's.
         let words = could_not_run(
             &["fetch", "origin"],
             &std::io::Error::from(std::io::ErrorKind::NotFound),

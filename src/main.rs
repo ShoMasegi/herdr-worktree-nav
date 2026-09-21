@@ -3,11 +3,9 @@
 //! - `action <id>` — a keybinding fired a plugin action. Opens the picker where the user is.
 //! - `pane <entrypoint>` — herdr is starting the plugin pane itself. Runs the picker.
 //!
-//! `dump` is a third, diagnostic mode for troubleshooting what the plugin sees.
-//!
-//! `remove` is the fourth, and the only one herdr does not start: the picker starts it, in
-//! a session of its own, so that deleting a checkout outlives the window that asked for it.
-//! See `docs/adr/0014-removing-outlives-the-picker.md`.
+//! `dump` and `remove` are the other two commands, and herdr starts neither. The picker
+//! starts `remove` in a session of its own, so that deleting a checkout outlives the window
+//! that asked for it. See `docs/adr/0014-removing-outlives-the-picker.md`.
 
 use std::process::ExitCode;
 
@@ -76,11 +74,9 @@ herdr-worktree-nav — navigate herdr panes by repo and worktree
 fn pane(start: Entrypoint) -> Result<()> {
     run_picker(
         &SocketHerdr::from_env()?,
-        // Shared rather than borrowed: the threads asking whether each checkout is dirty
+        // Shared rather than borrowed: the threads that ask git and `gh` about each checkout
         // outlive the view that started them, so they cannot borrow from one.
         std::sync::Arc::new(GitCli),
-        // Shared for the same reason: the sweep asks `gh` about each repository on a thread
-        // that outlives the view that entered it.
         std::sync::Arc::new(GhCli),
         &DetachedRemovals,
         start,

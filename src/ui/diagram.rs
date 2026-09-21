@@ -130,8 +130,6 @@ impl Fit {
         let scale = by_width.min(by_height) / SHRINK;
         let width = (area.width as usize * scale / 1000).min(canvas_width);
         let height = (area.height as usize * scale / 1000).min(canvas_height);
-        // Halving means a panel that could once have shown a tiny diagram now shows none,
-        // which is better than a box too small to hold a label.
         if width < MIN_DIAGRAM || height < 3 {
             return None;
         }
@@ -194,7 +192,6 @@ mod tests {
         }
     }
 
-    /// Render a frame to text, for tests.
     fn draw(frame: &Frame, width: usize, height: usize) -> String {
         (0..height)
             .map(|y| (0..width).map(|x| frame.glyph_at(x, y)).collect::<String>())
@@ -211,8 +208,6 @@ mod tests {
 
     #[test]
     fn two_rectangles_sharing_an_edge_meet_at_a_junction() {
-        // The shared column is one cell wide, so the corners have to resolve to ┬ and ┴
-        // rather than each box drawing its own.
         let mut frame = Frame::new(9, 3);
         frame.add(rect(0, 0, 5, 3));
         frame.add(rect(4, 0, 5, 3));
@@ -246,7 +241,6 @@ mod tests {
 
     #[test]
     fn fitting_keeps_the_shape_of_the_tab_it_stands_for() {
-        // A 250x79 tab is about 3:1; the diagram must be too, not stretched to the canvas.
         let fit = Fit::new(rect(0, 0, 250, 79), 100, 50).unwrap();
         let (width, height) = fit.size();
         assert!(height < 50, "not stretched to the full canvas height");
@@ -260,16 +254,13 @@ mod tests {
 
     #[test]
     fn the_diagram_takes_about_half_of_what_it_could() {
-        // Width-limited here: the canvas would hold this tab whole, so the diagram takes
-        // half of the width it could have had, and the height follows to keep the shape.
+        // Width-limited: the canvas would hold the tab whole, so the height follows.
         let (width, height) = Fit::new(rect(0, 0, 250, 79), 160, 60).unwrap().size();
         assert_eq!((width, height), (80, 25));
     }
 
     #[test]
     fn a_canvas_that_would_only_yield_a_smudge_produces_no_fit() {
-        // Halving means a panel that could have shown a tiny diagram now shows none, which
-        // is better than a box too small to hold a label.
         assert!(Fit::new(rect(0, 0, 250, 79), 10, 6).is_none());
         assert!(Fit::new(rect(0, 0, 250, 79), 60, 20).is_some());
     }

@@ -47,7 +47,8 @@ impl Notice {
 /// `stale` and `sweep_trouble` are passed in rather than read off the tree. The first is
 /// about the reading that built it, which a tree cannot report about itself; the second is
 /// already one sentence for however many repositories `gh` could not be asked about, which
-/// `app::settled` builds because which repositories were asked is not something the tree
+/// [`app::settled`](crate::app::settled) builds because which repositories were asked is
+/// not something the tree
 /// knows.
 pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>) -> Vec<Notice> {
     // In front of the rest: the others are about what a row is missing, and this one is

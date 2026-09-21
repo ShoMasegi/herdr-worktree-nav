@@ -7,8 +7,7 @@
 //!
 //! Protocol: connect, write one JSON request terminated by a newline, read one JSON
 //! response terminated by a newline. The server closes the connection after replying, so
-//! every call gets its own connection. Connecting to a Unix socket is cheap enough that
-//! this costs less than spawning the CLI would.
+//! every call gets its own connection.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;

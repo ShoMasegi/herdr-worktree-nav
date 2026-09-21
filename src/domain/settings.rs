@@ -1,6 +1,6 @@
 //! The preferences from the plugin configuration file.
 //!
-//! The parser stays pure. The adapter finds and reads the file.
+//! The adapter finds and reads the file; this decides what it means.
 
 use serde::Deserialize;
 
@@ -11,7 +11,6 @@ pub struct Settings {
     pub panes: Panes,
 }
 
-/// Preferences for the panes view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Panes {
@@ -22,13 +21,11 @@ pub struct Panes {
 impl Default for Panes {
     fn default() -> Self {
         Self {
-            // Preserve the view from releases before this toggle existed.
             show_worktrees_without_panes: true,
         }
     }
 }
 
-/// Read plugin settings from TOML.
 pub fn parse(config_toml: &str) -> Result<Settings, toml::de::Error> {
     toml::from_str(config_toml)
 }

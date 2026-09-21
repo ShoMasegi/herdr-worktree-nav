@@ -1,4 +1,4 @@
-//! Gathering the inputs `domain::tree::build` needs.
+//! Gathering the inputs [`domain::tree::build`](crate::domain::tree::build) needs.
 //!
 //! This is the impure half of building the panes view: it asks herdr for the session, works
 //! out which repository and checkout every pane is in, and asks herdr for each repository's
@@ -31,11 +31,11 @@ pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapsho
 /// cost of them.
 ///
 /// In front of the first frame on purpose: unlike whether a checkout is dirty, these are
-/// known the moment git answers, so there is nothing to be gained by drawing the list
-/// without them first.
+/// known the moment git answers.
 ///
 /// A repository git could not answer for carries no markers and says so: git's words go on
-/// the repository, and the prompt line names it once — `domain::notice::conditions`.
+/// the repository, and the prompt line names it once —
+/// [`domain::notice::conditions`](crate::domain::notice::conditions).
 fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
     // No chunking: repositories are however many the user has panes open in, which is a
     // handful — unlike working directories, where every pane can have its own.
@@ -45,12 +45,10 @@ fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
             .map(|repo| {
                 let repo_root = repo.repo_root.clone();
                 scope.spawn(move || {
-                    // Two ways this repository ends up with no markers, and the rows cannot
-                    // tell them apart from having nothing to report either way: git refused
-                    // the call, or git answered without a ref it could not read. The second
-                    // is the whole answer for a checkout whose ref that was, so it is a
-                    // refusal here as well — `port::RefWalk` says why the branches view
-                    // makes the other choice.
+                    // A walk that dropped a ref is a refusal here too: that ref is the
+                    // whole answer for the checkout it belongs to, and no marker beats the
+                    // wrong one — `port::RefWalk` says why the branches view chooses
+                    // otherwise.
                     match git.local_refs(&repo_root) {
                         Err(error) => Err(one_line(&format!("{error:#}"))),
                         Ok(walk) => match walk.dropped {
@@ -62,12 +60,10 @@ fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
             })
             .collect();
         for (repo, handle) in repos.iter_mut().zip(handles) {
-            // `join` fails for one reason: the thread panicked. In the shipped binary that
-            // is unreachable — `panic = "abort"` in the release profile ends the process
-            // before this line — so what is chosen here only applies to a debug build,
-            // where ratatui's hook has already restored the terminal and the picker would
-            // carry on drawing onto it either way. That repository's markers are missing,
-            // and it says so like any other repository whose refs were not read.
+            // `join` fails for one reason: the thread panicked, which only a debug build
+            // reaches — `panic = "abort"` in the release profile ends the process before
+            // this line. That repository's markers are missing, and it says so like any
+            // other repository whose refs were not read.
             repo.refs = handle
                 .join()
                 .unwrap_or_else(|_| Err("the thread reading them did not finish".to_string()));
@@ -244,7 +240,6 @@ mod tests {
     /// refused outright, or answered with a ref it had to drop.
     struct RefsFailFor(&'static str, Trouble);
 
-    /// Which of the two ways the walk went wrong.
     enum Trouble {
         Refused,
         Dropped,
@@ -259,10 +254,9 @@ mod tests {
                 Trouble::Refused => {
                     anyhow::bail!("fatal: bad ref for\n  refs/heads/x (`git for-each-ref …`)")
                 }
-                // A warning as the port allows one: the refs git could read, and its words
-                // about the ones it could not. `GitCli` folds its own words to a line
-                // already and `RefWalk::dropped` promises nothing about lines, so a fake is
-                // the only place `one_line` can be seen doing anything on this path.
+                // `GitCli` folds its own words to a line already and `RefWalk::dropped`
+                // promises nothing about lines, so a fake is the only place `one_line` can
+                // be seen doing anything on this path.
                 Trouble::Dropped => Ok(crate::port::RefWalk {
                     refs: vec![crate::port::GitRef {
                         name: "main".to_string(),
@@ -359,8 +353,7 @@ mod tests {
     #[test]
     fn a_ref_walk_that_failed_keeps_gits_words_on_one_line_and_touches_no_other_repository() {
         // Why not `unwrap_or_default()`: the failure would become an empty list, which is
-        // also what a repository with nothing to report looks like. The words are what the
-        // prompt line shows, and it is one line, so git's several are folded here.
+        // also what a repository with nothing to report looks like.
         let mut repos = vec![repo_input("/src/app"), repo_input("/src/site")];
         read_refs(&RefsFailFor("/src/app", Trouble::Refused), &mut repos);
         assert_eq!(
@@ -378,9 +371,8 @@ mod tests {
     fn a_walk_git_dropped_a_ref_from_is_not_this_repository_s_refs() {
         // git exits 0 and lists everything it could read, so the refs are right there and
         // one of them even carries a `gone`. Believing them is believing that the checkout
-        // whose ref went missing has nothing to report, which is the wrong marker ADR 0011
-        // will not have — so the panes view takes the words instead and every row of the
-        // repository goes bare. The branches view is where the other choice is made.
+        // whose ref went missing has nothing to report — the wrong marker ADR 0011 will
+        // not have.
         let mut repos = vec![repo_input("/src/app"), repo_input("/src/site")];
         read_refs(&RefsFailFor("/src/app", Trouble::Dropped), &mut repos);
         assert_eq!(
@@ -401,10 +393,9 @@ mod tests {
 
     #[test]
     fn a_ref_walk_whose_thread_did_not_finish_is_not_an_empty_answer() {
-        // Debug builds only — the release profile aborts on a panic — but the string is what
-        // `Refs::Unreadable` carries, and this line is one `unwrap_or_default` away from
-        // the silence #21 was about. The panic prints on stderr; that is the thread's, not
-        // this test's.
+        // Debug builds only — the release profile aborts on a panic — but the string is
+        // what `Refs::Unreadable` carries, and this line is one `unwrap_or_default` away
+        // from the silence #21 was about. The panic prints on stderr, from the thread.
         let mut repos = vec![repo_input("/src/app")];
         read_refs(&RefsPanic, &mut repos);
         assert_eq!(
@@ -418,8 +409,8 @@ mod tests {
             Ok(WorktreeList {
                 source: WorktreeSource {
                     repo_key: "/src/app/.git".into(),
-                    // What herdr calls it, which is the directory. The fallback, and the
-                    // thing a slug is supposed to be better than.
+                    // What herdr calls it, which is the directory: the fallback a slug is
+                    // supposed to be better than.
                     repo_name: "app".into(),
                     repo_root: "/src/app".into(),
                     source_checkout_path: "/src/app".into(),
@@ -524,9 +515,8 @@ mod tests {
 
     #[test]
     fn a_repository_is_labelled_by_what_github_calls_it() {
-        // The header row above every repository's worktrees, on every picker open. Nothing
-        // else in the suite reads it, so blanking it here costs nothing that a test notices
-        // and everything that a user does.
+        // Nothing else in the suite reads the header row above a repository's worktrees,
+        // so blanking it costs nothing a test notices and everything a user does.
         assert_eq!(
             named(Ok(Slug::owner_repo("ShoMasegi", "app"))),
             "ShoMasegi/app"
@@ -591,7 +581,7 @@ mod tests {
     fn one_repository_is_asked_about_once_however_many_panes_are_in_it() {
         // Two `RepoInput`s for one repository would let a readable answer reach the
         // checkouts of an unreadable node in `domain::tree::tracks`, whose key tells
-        // repositories apart and not spellings of one. This is where that cannot happen.
+        // repositories apart and not spellings of one.
         let port = Repository {
             slug: Ok(Slug::owner_repo("ShoMasegi", "app")),
         };
@@ -622,9 +612,8 @@ mod tests {
     #[test]
     fn a_placement_carries_one_spelling_of_a_repository_key_whichever_answered() {
         // The `BTreeMap` above compares the strings it is given, so two spellings of one
-        // repository would be two entries. Both places a `PanePlacement` is made normalize
-        // `repo_key` first. Here herdr and git each spell it with a slash, and one pane
-        // takes each route.
+        // repository would be two entries. Here herdr and git each spell it with a
+        // trailing slash, and one pane takes each route.
         let snapshot: Snapshot = serde_json::from_value(serde_json::json!({
             "version": "0.7.4",
             "protocol": 16,
@@ -675,7 +664,6 @@ mod tests {
 
     #[test]
     fn rejects_a_sibling_directory_that_merely_shares_a_prefix() {
-        // The case that a naive starts_with would get wrong.
         assert!(!is_inside("/src/app-tools", "/src/app"));
         assert!(!is_inside("/src/other", "/src/app"));
         assert!(!is_inside("/src", "/src/app"));

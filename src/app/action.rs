@@ -1,9 +1,7 @@
 //! What a keybinding actually runs.
 //!
 //! herdr invokes an action with the plugin directory as its working directory, so the action
-//! is not the picker — it is the thing that opens the picker in the right place. It reads
-//! `HERDR_PLUGIN_CONTEXT_JSON` to learn where the user was, and forwards what the pane
-//! process cannot work out for itself.
+//! is not the picker — it is the thing that opens the picker in the right place.
 
 use anyhow::{bail, Result};
 
