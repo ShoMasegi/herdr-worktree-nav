@@ -893,4 +893,87 @@ mod tests {
             "nothing else has one to give"
         );
     }
+    /// A snapshot with one ordinary tab, one zoomed tab and one workspace, so that
+    /// [`crate::domain::dest::destinations`] offers every kind of destination there is a sentence for.
+    fn offered() -> crate::port::Snapshot {
+        serde_json::from_value(serde_json::json!({
+            "version": "0.7.4",
+            "protocol": 16,
+            "workspaces": [
+                {"workspace_id": "w1", "label": "app", "number": 1, "focused": true,
+                 "active_tab_id": "w1:t1", "agent_status": "idle"}
+            ],
+            "tabs": [
+                {"tab_id": "w1:t1", "workspace_id": "w1", "label": "agents", "number": 1,
+                 "focused": true, "pane_count": 1, "agent_status": "idle"},
+                {"tab_id": "w3:t1", "workspace_id": "w3", "label": "zoomed", "number": 1,
+                 "focused": false, "pane_count": 1, "agent_status": "idle"}
+            ],
+            "panes": [
+                {"pane_id": "w1:p1", "tab_id": "w1:t1", "workspace_id": "w1",
+                 "terminal_id": "t1", "focused": true, "agent_status": "idle"}
+            ],
+            "layouts": [
+                {"tab_id": "w1:t1", "workspace_id": "w1", "zoomed": false,
+                 "area": {"x": 0, "y": 0, "width": 100, "height": 40},
+                 "focused_pane_id": "w1:p1",
+                 "panes": [{"pane_id": "w1:p1", "focused": true,
+                            "rect": {"x": 0, "y": 0, "width": 100, "height": 40}}]},
+                {"tab_id": "w3:t1", "workspace_id": "w3", "zoomed": true,
+                 "area": {"x": 0, "y": 0, "width": 100, "height": 40},
+                 "focused_pane_id": "w3:p1",
+                 "panes": [{"pane_id": "w3:p1", "focused": true,
+                            "rect": {"x": 0, "y": 0, "width": 100, "height": 40}}]}
+            ]
+        }))
+        .expect("snapshot fixture should deserialize")
+    }
+
+    /// Every sentence a destination gets, built from the destinations the picker is
+    /// actually given rather than from ones written out here.
+    ///
+    /// A hand-written `Destination` can say something the builder would never
+    /// produce, and then the row, the caption and the breadcrumb agree with each other
+    /// about a screen nobody will see. Going through the builder is what stops that.
+    #[test]
+    fn the_destinations_the_picker_offers_read_as_they_do_on_screen() {
+        let snapshot = offered();
+        let said: Vec<(String, String)> =
+            crate::domain::dest::destinations(&snapshot, Some("w1:p1"))
+                .iter()
+                .map(|offer| {
+                    let caption =
+                        match crate::domain::preview::predict(&snapshot, offer, "feat/login") {
+                            crate::domain::preview::Preview::Layout { at, .. }
+                            | crate::domain::preview::Preview::Blocked { at, .. } => landing(&at),
+                            crate::domain::preview::Preview::Unavailable => String::new(),
+                        };
+                    (destination(offer), caption)
+                })
+                .collect();
+
+        assert_eq!(
+            said,
+            vec![
+                ("split right".to_string(), "w1  app / agents".to_string()),
+                ("split down".to_string(), "w1  app / agents".to_string()),
+                // The tab herdr will not take the pane into says so in the row, and the
+                // caption names the tab itself rather than repeating the marker.
+                (
+                    "w3 / zoomed  (zoomed)".to_string(),
+                    "w3 / zoomed".to_string()
+                ),
+                // The row offers a new tab in the space; the caption says the same thing
+                // once, rather than reading "w1  app \u{2192} new tab \u{2014} a new tab".
+                (
+                    "w1  app \u{2192} new tab".to_string(),
+                    "w1  app \u{2014} a new tab".to_string()
+                ),
+                (
+                    "on its own".to_string(),
+                    "a space of its own \u{2014} a new space".to_string()
+                ),
+            ]
+        );
+    }
 }

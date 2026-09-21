@@ -211,12 +211,20 @@ fi
 CODE_CAP=800
 for file in $(find src -name '*.rs' | sort); do
     case "$file" in */tests.rs|*/fixtures.rs) continue ;; esac
-    first=$(grep -n '^#\[cfg(test)\]' "$file" | head -n 1 | cut -d: -f1)
-    if [ -n "$first" ]; then
-        code=$((first - 1))
-    else
-        code=$(wc -l < "$file" | tr -d ' ')
-    fi
+    # The count stops at the test module, which is a `#[cfg(test)]` over a `mod` that opens
+    # its block here. A `#[cfg(test)]` over an import, or over a `mod fixtures;` that lives
+    # in a file of its own, is one test-only line in the middle of the code rather than the
+    # end of it, and stopping there would leave the rest of the module unmeasured.
+    code=$(awk '
+        /^#\[cfg\(test\)\]$/ { held = NR; next }
+        held && /^[[:space:]]*(pub([(][a-z]+[)])?[[:space:]]+)?mod[[:space:]]+[a-z_]+[[:space:]]*[{]/ {
+            print held - 1
+            found = 1
+            exit
+        }
+        { held = 0 }
+        END { if (!found) print NR }
+    ' "$file")
     [ "$code" -le "$CODE_CAP" ] || \
         fail "$file carries $code lines of code, over the $CODE_CAP-line cap. Split it along what it is responsible for, not down the middle; see docs/adr/0017-modules-split-by-responsibility.md"
 done
