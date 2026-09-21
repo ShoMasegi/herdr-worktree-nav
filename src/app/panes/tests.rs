@@ -1734,7 +1734,7 @@ fn a_reading_that_worked_takes_back_the_sentence_saying_one_could_not() {
     // than a push. Two removals from one sweep report in different frames with no key
     // pressed between them, which is the ordinary case — ADR 0014 has the user carrying
     // on while they run. The first frame's reading fails. The second frame's works, and
-    // `removal::message` has nothing to say about a removal that simply worked, so there
+    // `words::message` has nothing to say about a removal that simply worked, so there
     // is no second sentence to write over the first: what retires it has to be the
     // reading itself.
     let session = Arc::new(Session::new(false, false));

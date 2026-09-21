@@ -5,6 +5,7 @@ use crate::domain::dest::Destination;
 use crate::domain::preview::{self, Preview};
 use crate::domain::resolve::{BranchState, Chosen};
 use crate::ui::branches::*;
+use crate::ui::words;
 
 impl BranchesState {
     /// The breadcrumb under the repository list: the full path of the row under the cursor.
@@ -80,7 +81,7 @@ impl BranchesState {
     /// Whether the destination under the cursor can actually take the pane.
     pub(super) fn destination_is_blocked(&self) -> Option<String> {
         match self.preview() {
-            Preview::Blocked { reason, .. } => Some(reason),
+            Preview::Blocked { reason, .. } => Some(words::refusal(reason)),
             _ => None,
         }
     }
@@ -100,11 +101,11 @@ impl BranchesState {
                 "{branch} opens beside the pane you came from, split {}",
                 direction.as_str()
             ),
-            Destination::ExistingTab { label, .. } => {
-                format!("{branch} opens as a new pane in {label}")
+            Destination::ExistingTab { tab, .. } => {
+                format!("{branch} opens as a new pane in {}", words::tab(tab))
             }
-            Destination::ExistingSpace { workspace_id, .. } => {
-                format!("{branch} opens as a new tab in {workspace_id}")
+            Destination::ExistingSpace { space } => {
+                format!("{branch} opens as a new tab in {}", space.workspace_id)
             }
             Destination::NewSpace => {
                 format!("{branch} opens in a space of its own, as herdr would")
@@ -116,6 +117,7 @@ impl BranchesState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::dest::fixtures::tab_name;
     use crate::ui::branches::fixtures::*;
     use ratatui::crossterm::event::KeyCode;
 
@@ -127,8 +129,8 @@ mod tests {
             vec![repo()],
             Some("/src/app"),
             vec![Destination::ExistingTab {
-                tab_id: "w3:t1".into(),
-                label: "w3  zoomed".into(),
+                tab: tab_name("w3", "", "w3:t1", "zoomed"),
+                zoomed: true,
             }],
             snapshot(),
             None,
@@ -162,6 +164,8 @@ mod tests {
             panic!("expected a layout, got {:?}", state.preview());
         };
         assert_eq!(panes.len(), 2);
-        assert!(panes.iter().any(|p| p.is_new && p.label == "chore/deps"));
+        assert!(panes
+            .iter()
+            .any(|p| p.is_new && p.label.as_deref() == Some("chore/deps")));
     }
 }

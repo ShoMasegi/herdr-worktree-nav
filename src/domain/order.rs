@@ -29,14 +29,6 @@ impl SortKey {
         Self::CYCLE[(at + 1) % Self::CYCLE.len()]
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            SortKey::State => "state",
-            SortKey::Updated => "updated",
-            SortKey::Name => "name",
-        }
-    }
-
     /// Whether the key reads high-to-low until someone reverses it. A date and a state are
     /// worth having busiest-and-newest first; a name is only ever worth having a to z.
     fn descends_naturally(self) -> bool {
@@ -70,10 +62,10 @@ impl Order {
 
     /// `updated \u{2193}`. The arrow is about the values, not the rows: `\u{2193}` is
     /// descending, so it means newest, busiest, or z first.
-    pub fn label(self) -> String {
-        let descending = self.key.descends_naturally() != self.reversed;
-        let arrow = if descending { '\u{2193}' } else { '\u{2191}' };
-        format!("{} {arrow}", self.key.label())
+    /// Which way the list runs: the key's natural direction, turned around if the user
+    /// asked for that.
+    pub fn descending(self) -> bool {
+        self.key.descends_naturally() != self.reversed
     }
 
     pub fn compare(self, a: &BranchEntry, b: &BranchEntry) -> Ordering {
@@ -225,19 +217,19 @@ mod tests {
     }
 
     #[test]
-    fn the_arrow_describes_the_values_rather_than_the_rows() {
-        assert_eq!(Order::default().label(), "state \u{2193}");
-        assert_eq!(Order::default().cycle().label(), "updated \u{2193}");
-        assert_eq!(
-            Order::default().cycle().reverse().label(),
-            "updated \u{2191}"
-        );
-        // a to z is ascending, so the name key points the other way to begin with.
-        assert_eq!(Order::default().cycle().cycle().label(), "name \u{2191}");
-        assert_eq!(
-            Order::default().cycle().cycle().reverse().label(),
-            "name \u{2193}"
-        );
+    fn each_key_starts_off_running_the_way_that_key_reads_best() {
+        // Most-recent-first and worst-state-first are what a reader wants without asking;
+        // a to z is, so the name key starts the other way round.
+        assert!(Order::default().descending());
+        assert!(Order::default().cycle().descending());
+        assert!(!Order::default().cycle().cycle().descending());
+    }
+
+    #[test]
+    fn reversing_flips_whichever_way_the_key_was_running() {
+        assert!(!Order::default().reverse().descending());
+        assert!(!Order::default().cycle().reverse().descending());
+        assert!(Order::default().cycle().cycle().reverse().descending());
     }
 
     #[test]

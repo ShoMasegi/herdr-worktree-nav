@@ -9,6 +9,7 @@ use std::io::Write;
 
 use anyhow::Result;
 
+use crate::app::words;
 use crate::domain::removal;
 use crate::port::{GitPort, HerdrPort, RemovalOutcome};
 
@@ -86,7 +87,7 @@ pub fn run(
     // The toast first, and deliberately: the write below can end this process early, since
     // the picker may have closed and a pipe with no reader left is what that looks like from
     // this side. herdr declining to show it is herdr's answer to give, so it is not retried.
-    let _ = herdr.notify(&removal::notification(
+    let _ = herdr.notify(&words::notification(
         label,
         checkout_path,
         &outcome,

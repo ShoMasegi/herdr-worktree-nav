@@ -5,3 +5,4 @@ pub mod diagram;
 pub mod render;
 pub mod state;
 pub mod theme;
+pub mod words;

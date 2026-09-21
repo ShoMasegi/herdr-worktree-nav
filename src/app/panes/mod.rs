@@ -8,8 +8,9 @@ use crate::app::collect;
 use crate::app::dirty::Dirty;
 use crate::app::home_dir;
 use crate::app::removals::Removals;
+use crate::app::words;
 use crate::app::Pending;
-use crate::domain::removal::{self, Removal, SweepRemoval};
+use crate::domain::removal::{Removal, SweepRemoval};
 use crate::port::{GitPort, HerdrPort, PaneSplit, SplitDirection, WorktreeOpen};
 use crate::ui::render;
 use crate::ui::state::{Action, Cancelled, PanesState, WITHDRAWN};
@@ -228,7 +229,7 @@ fn drain_finished(
                 // Nothing to say when it worked: the row leaving the list is the report,
                 // and the toast has already said it to whoever was not looking.
                 if let Some(message) =
-                    removal::message(&finished.label, &outcome, finished.panes_closed)
+                    words::message(&finished.label, &outcome, finished.panes_closed)
                 {
                     said.push(message);
                 }
@@ -238,10 +239,7 @@ fn drain_finished(
             // own. The panes are gone either way, which `refusal` adds.
             Err(error) => {
                 unknown = true;
-                said.push(removal::refusal(
-                    &format!("{error:#}"),
-                    finished.panes_closed,
-                ));
+                said.push(words::refusal(&format!("{error:#}"), finished.panes_closed));
             }
         }
     }

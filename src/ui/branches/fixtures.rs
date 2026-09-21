@@ -3,6 +3,7 @@
 //! Here rather than in one submodule's `mod tests` because a key test, a list test and a
 //! detail test all start from the same picker over the same two repositories.
 
+use crate::domain::dest::fixtures::space_name;
 use crate::domain::dest::Destination;
 use crate::domain::model::RepoNode;
 use crate::domain::progress::Stage;
@@ -95,8 +96,7 @@ pub(crate) fn destinations() -> Vec<Destination> {
             direction: SplitDirection::Right,
         },
         Destination::ExistingSpace {
-            workspace_id: "w3".into(),
-            label: "w3 \u{2192} new tab".into(),
+            space: space_name("w3", ""),
         },
         Destination::NewSpace,
     ]

@@ -12,6 +12,7 @@ pub mod panes;
 pub mod removals;
 pub mod remove;
 pub mod settled;
+pub mod words;
 
 use anyhow::Result;
 use ratatui::DefaultTerminal;

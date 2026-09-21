@@ -13,8 +13,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
+use crate::app::words;
 use crate::domain::model::CheckoutPath;
-use crate::domain::removal::{self, Removal};
+use crate::domain::removal::Removal;
 use crate::port::{HerdrPort, RemovalOutcome, RemovalPort};
 
 /// One removal that has been started and has not reported back.
@@ -92,7 +93,7 @@ impl<'a> Removals<'a> {
             format!(
                 "could not start removing {}: {}",
                 removal.label(),
-                removal::refusal(&format!("{error:#}"), removal.panes().len())
+                words::refusal(&format!("{error:#}"), removal.panes().len())
             )
         })
     }
@@ -108,7 +109,7 @@ impl<'a> Removals<'a> {
         for (closed, pane) in removal.panes().iter().enumerate() {
             let pane_id = &pane.pane_id;
             if let Err(error) = herdr.pane_close(pane_id) {
-                return Err(removal::interrupted(
+                return Err(words::interrupted(
                     pane_id,
                     &format!("{error:#}"),
                     closed,

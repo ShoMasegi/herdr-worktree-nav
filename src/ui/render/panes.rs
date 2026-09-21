@@ -2,6 +2,7 @@
 
 use super::prompt::{render_conditions, render_removal, render_sweep_removal};
 use super::*;
+use crate::ui::words;
 
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -9,7 +10,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::domain::notice;
 use crate::domain::rows::{marks, marks_reserve, DisplayLine, Row};
 use crate::ui::state::PanesState;
 use crate::ui::theme::Theme;
@@ -333,7 +333,7 @@ fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'stat
     let condition = if state.is_filtering() {
         None
     } else {
-        notice::summarize(&conditions)
+        words::conditions_line(&conditions)
     };
     // Two columns of gap before it, so it reads as its own thing beside the field.
     let badge = format!("!{}", conditions.len());
