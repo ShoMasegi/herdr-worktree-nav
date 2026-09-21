@@ -3,10 +3,9 @@
 //!
 //! herdr's socket API exposes no theme or palette — verified against every method in
 //! `herdr api schema` — so the only way to match is to read the user's config. Just two
-//! values are taken: the accent colour, which drives the border, the selected row, the
-//! repository rows and the current-row marker; and the agent status glyph set.
+//! values are taken: the accent colour and the agent status glyph set.
 //!
-//! Parsing is pure: the caller reads the file, this decides what it means.
+//! The caller reads the file; this decides what it means.
 
 use serde::Deserialize;
 
@@ -59,8 +58,7 @@ impl Default for Chrome {
 /// The accent of each theme herdr ships, taken from `Palette::from_name`.
 ///
 /// Only the accent is mirrored, not the whole palette: it is the one colour the navigator
-/// uses for structure, and a single value per theme stays cheap to keep current. A theme
-/// this table has never heard of falls back to herdr's default rather than guessing.
+/// uses for structure, and a single value per theme stays cheap to keep current.
 fn theme_accent(name: &str) -> Option<Accent> {
     let accent = match normalize_theme_name(name).as_str() {
         "catppuccin" => Accent::Rgb(137, 180, 250),
@@ -255,7 +253,6 @@ mod tests {
 
     #[test]
     fn a_ui_accent_left_at_its_default_does_not_beat_the_theme() {
-        // "cyan" is herdr's default, so it means "not chosen" rather than "chosen cyan".
         let chrome = parse("[theme]\nname = \"dracula\"\n[ui]\naccent = \"cyan\"\n");
         assert_eq!(chrome.accent, Accent::Rgb(189, 147, 249));
     }

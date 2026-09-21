@@ -32,12 +32,11 @@ fn git(dir: &Path, args: &[&str]) {
 fn repository() -> TempDir {
     let dir = tempfile::tempdir().expect("a temp dir");
     let path = dir.path();
-    // The ref format is pinned rather than inherited, for the reason `push.default` is
-    // below: two tests here reach into `.git/refs` and `.git/packed-refs` directly, and
-    // under a global `init.defaultRefFormat = reftable` neither file exists, so both fail
-    // on a machine whose git is configured that way while the other twenty pass. `-c` on
-    // the command rather than `--ref-format=`, which git 2.43 on CI does not know: an
-    // unknown configuration key is ignored where an unknown flag is fatal.
+    // The ref format is pinned rather than inherited: two tests here reach into `.git/refs`
+    // and `.git/packed-refs` directly, and under a global `init.defaultRefFormat = reftable`
+    // neither file exists. `-c` on the command rather than `--ref-format=`, which git 2.43 on
+    // CI does not know: an unknown configuration key is ignored where an unknown flag is
+    // fatal.
     git(
         path,
         &[
@@ -659,12 +658,10 @@ fn a_checkout_git_will_not_look_at_is_an_error_rather_than_a_clean_one() {
 
 #[test]
 fn a_ref_git_cannot_read_is_named_and_every_other_ref_is_still_listed() {
-    // git drops a broken loose ref with a warning and exits 0. Read as a clean exit, that
-    // is one checkout with no marker — which is what a branch with nothing to report looks
-    // like — and the repository saying nothing, which is the silence issue #21 was about.
-    // So the walk carries git's words. It carries the refs git could read as well: they are
-    // a list of branches, and the branches view reads an empty one as "every branch here is
-    // only on the remote".
+    // git drops a broken loose ref with a warning and exits 0. Read as a clean exit that is
+    // one checkout with no marker and a repository saying nothing, which is the silence
+    // issue #21 was about. The walk carries git's words, and the refs git could read: the
+    // branches view reads an empty list as "every branch here is only on the remote".
     let repo = repository();
     std::fs::write(
         repo.path().join(".git/refs/heads/feat/login"),
@@ -700,9 +697,7 @@ fn a_ref_git_cannot_read_is_named_and_every_other_ref_is_still_listed() {
 fn every_ref_git_dropped_is_named_and_not_just_the_first() {
     // git says it once per ref, so a repository with two broken refs gets two lines, and the
     // words carry both: a reader told about one, who fixes it and is then told about the
-    // next, has been given half of what git already knew. What the prompt line can show of
-    // them is a question of width — `src/ui/render.rs` measures that, and `dump` prints the
-    // whole sentence either way.
+    // next, has been given half of what git already knew.
     let repo = repository();
     git(repo.path(), &["branch", "chore/deps"]);
     for branch in ["feat/login", "chore/deps"] {
@@ -807,10 +802,8 @@ fn worktree_path_of<'a>(
 /// Two worktrees, one of which now sits at the path the other's entry still names. Returns
 /// that path.
 ///
-/// The way a person reaches it: one directory moved out of the way and the other moved into
-/// its place. `feat/login`'s entry names a path that `chore/deps`'s checkout is now sitting
-/// in, and `chore/deps`'s own entry still names the directory it left. The test below adds
-/// the one step that takes it somewhere.
+/// The way a person reaches it: one directory moves out of the way and the other moves into
+/// its place, leaving `chore/deps`'s own entry naming the directory it left.
 fn a_checkout_at_another_entrys_path(repo: &TempDir) -> String {
     git(repo.path(), &["branch", "chore/deps"]);
     let one = repo.path().join("one");
@@ -833,14 +826,10 @@ fn a_checkout_at_another_entrys_path(repo: &TempDir) -> String {
 fn two_repositories_can_name_one_path_and_prune_will_not_part_them() {
     // Half of what `domain::tree::tracks` is keyed by repository for, and all of why
     // `git worktree prune` is not the answer instead. git goes on naming the path a moved
-    // worktree had; let another repository put a worktree there and a prune in the first
-    // one leaves that entry alone, so both repositories name the path with nothing to
-    // clear it. Issue #31.
+    // worktree had, and a prune in one repository leaves the other's entry alone, so both
+    // name the path with nothing to clear it. Issue #31.
     //
-    // The prune below is a negative control: deleting it leaves this test green, because
-    // what it asserts is that prune does nothing here.
-    // `a_prune_that_does_clear_a_stale_entry` is the other half: with nothing left at the
-    // path, prune does clear the entry.
+    // The prune below is a negative control: deleting it leaves this test green.
     let old = repository();
     let app = repository();
     let shared = old.path().join("shared");
@@ -872,10 +861,8 @@ fn two_repositories_can_name_one_path_and_prune_will_not_part_them() {
 #[test]
 fn a_prune_that_does_clear_a_stale_entry() {
     // The positive control for
-    // `two_repositories_can_name_one_path_and_prune_will_not_part_them`: with nothing
-    // sitting at the path, prune clears the entry and the ref stops naming it. Without
-    // this, "prune will not part them" would be a sentence no test could tell from "prune
-    // does nothing at all".
+    // `two_repositories_can_name_one_path_and_prune_will_not_part_them`: with nothing at the
+    // path, prune clears the entry, which is what makes "will not part them" say anything.
     let repo = repository();
     let gone = repo.path().join("gone");
     git(
@@ -932,9 +919,9 @@ fn one_repository_can_name_one_path_from_two_refs() {
 
 #[test]
 fn a_worktree_whose_directory_moved_is_still_listed_at_the_path_it_had() {
-    // The first premise `domain::tree::tracks` is keyed by repository for: git does not
-    // stop reporting a linked worktree when its directory goes away, it goes on naming the
-    // path the worktree had. The tests above build what that leads to.
+    // The first premise `domain::tree::tracks` is keyed by repository for: git does not stop
+    // reporting a linked worktree when its directory goes away, it goes on naming the path
+    // the worktree had.
     let repo = repository();
     let worktree = repo.path().join("wt");
     git(
@@ -978,19 +965,16 @@ fn a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out() {
     // `port::Worktree::branch`, and there is no herdr in CI to hold it.
     let (repo, _remote) = with_origin();
     let shared = a_checkout_at_another_entrys_path(&repo);
-    // Both, because which entry repair binds to the directory is git's own business and
-    // not the same everywhere: whichever one is left naming the path has to be the one
-    // carrying the marker. Where `feat/login` is the one left, the `chore/deps` half of
-    // this push and of the delete below is inert, and deleting it leaves the test green;
-    // it is here for the machines where the other one is left.
+    // Both, because which entry repair binds to the directory is git's own business and not
+    // the same everywhere: whichever one is left naming the path has to carry the marker. On
+    // a machine where `feat/login` is the one left, the `chore/deps` half is inert.
     git(
         repo.path(),
         &["push", "-q", "-u", "origin", "feat/login", "chore/deps"],
     );
-    // Deleting this leaves the test green, and it still has to be here: repair is what
-    // makes git list a second, branchless entry at `shared`, which is the half `build`
-    // reads. `GitCli` has no way to list worktrees, so nothing below can see it — the
-    // fixture is faithful to the state, and the assertions reach only the ref side of it.
+    // Deleting this leaves the test green, and it still has to be here: repair is what makes
+    // git list a second, branchless entry at `shared`, which is the half `build` reads and
+    // `GitCli` has no way to see.
     git(repo.path(), &["worktree", "repair", &shared]);
     git(
         repo.path(),

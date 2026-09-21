@@ -21,8 +21,7 @@ const TICK: std::time::Duration = std::time::Duration::from_millis(80);
 
 /// What the line says when the list could not be read again after something that changed it
 /// or may have. Appended to the account of what happened rather than written over it: the
-/// panes that stopped are what that account is for, and a sentence about the list does not
-/// replace it.
+/// panes that stopped are what no other thing on screen will say.
 const STALE: &str = "the list could not be read again";
 
 /// That sentence with herdr's own words on the end of it.
@@ -39,9 +38,7 @@ fn could_not_read(error: &anyhow::Error) -> String {
 /// would be the useful sentence and it is not a sound one: the tree is built from the panes
 /// herdr reports, so a repository whose last pane this removal just closed is not listed at
 /// all afterwards — every one of its rows goes, none of its checkouts did — and a repository
-/// `worktree.list` refused is dropped in silence. Issues #56 and #33. Read against those, a
-/// decision procedure on the rows is a wrong answer given confidently, which is worse than
-/// the one it replaces.
+/// `worktree.list` refused is dropped in silence. Issues #56 and #33.
 const READ_AGAIN: &str = "the list has been read again since";
 
 /// What the picker was left wanting when it closed. The caller decides whether that means
@@ -66,8 +63,8 @@ pub struct Options<'a> {
 }
 
 /// Run the picker to completion on the terminal the picker already holds. `run_picker` puts
-/// it back on every path out, so a failure still surfaces as text rather than as a corrupted
-/// screen — it is simply printed after the picker has finished rather than before.
+/// it back on every path out, so a failure surfaces as text rather than as a corrupted
+/// screen.
 pub fn run(
     terminal: &mut DefaultTerminal,
     herdr: &dyn HerdrPort,
@@ -82,12 +79,9 @@ pub fn run(
     if let Some(complaint) = options.config_complaint {
         state.set_message(complaint);
     }
-    // Both outlive this view: a removal started before a trip through the branches view is
-    // still going, and a working tree walked once does not need walking again. Only
-    // `set_removing` has to be seeded, because `show_answers` never touches it — the
-    // removals are not its to know about. `set_working_trees` and `set_waiting` need no
-    // seeding: `show_answers` sets both every frame, and the first frame runs before the
-    // first draw.
+    // Both outlive this view, so both are picked up rather than started again. Only
+    // `set_removing` has to be seeded, because `show_answers` never touches it — it sets
+    // the working trees and the spinner itself, every frame, before the first draw.
     pending.dirty.ask(state.tree());
     state.set_removing(removals.paths());
     if let Some(pane_id) = options.initial_pane {
@@ -99,10 +93,8 @@ pub fn run(
     let mut last_tick = std::time::Instant::now();
     let outcome = loop {
         let still_coming = show_answers(&mut state, pending);
-        // Everything the loop is waiting on, not only the removals: `waiting` is both what
-        // advances the spinner and what makes this poll instead of blocking on a key. Left
-        // out, `asking gh…` draws frame zero for ever and the answer lands whenever the user
-        // next happens to press something.
+        // Everything the loop is waiting on, not only the removals: this is both what
+        // advances the spinner and what makes the loop poll instead of blocking on a key.
         let waiting = !removals.is_empty() || still_coming;
         if waiting && last_tick.elapsed() >= TICK {
             state.tick();
@@ -119,8 +111,6 @@ pub fn run(
 
         drain_finished(&mut state, pending, removals, herdr, git);
 
-        // With nothing in flight there is nothing to wake up for, so the loop blocks on the
-        // key and draws no frames at all until one arrives.
         if waiting && !event::poll(TICK)? {
             continue;
         }
@@ -129,17 +119,11 @@ pub fn run(
         };
         match state.handle_key(key) {
             Action::Consumed | Action::Ignored => {}
-            // `r` is the only thing outside a sweep that asks about the working trees
-            // again, so a reload that quietly does nothing is a reload the user reads as
-            // "still dirty, then".
             Action::Reload => re_read(&mut state, pending, herdr, git, ReRead::Key),
-            // A sweep's `Enter`: the same re-read, and `show_answers` puts the question up
-            // once the walk has answered.
+            // A sweep's `Enter`: `show_answers` puts the question up once the walk answers.
             Action::SweepReload => re_read(&mut state, pending, herdr, git, ReRead::ForSweep),
             // Deleting is housekeeping, and housekeeping comes in batches: the picker stays
-            // open on the list the deletion is changing rather than closing over it — and
-            // the deletion itself goes to a process of its own, so that neither the loop
-            // nor the user has to wait for git to walk a working tree. See
+            // open on the list the deletion is changing rather than closing over it. See
             // `docs/adr/0014-removing-outlives-the-picker.md`.
             Action::RemoveWorktree(removal) => start_removal(
                 &mut state,
@@ -160,11 +144,6 @@ pub fn run(
 /// Take in every removal that has reported back since the last frame — including from before
 /// the last trip to the branches view, since the removals outlive both views and the picker
 /// itself — and say on the prompt line what they said.
-///
-/// Out of the loop for the reason `show_answers` is: this is the arm with consequences. That
-/// reports share the line is held by `two_removals_reporting_in_one_frame_share_the_line`,
-/// and that a withdrawal is said after them by `a_question_the_re_read_took_back_is_said_last`
-/// and `a_question_taken_back_after_two_reports_is_still_said_last`.
 fn drain_finished(
     state: &mut PanesState,
     pending: &mut Pending,
@@ -172,14 +151,13 @@ fn drain_finished(
     herdr: &dyn HerdrPort,
     git: &dyn GitPort,
 ) {
-    // Several can report in one frame — a sweep starts them together — and each names
-    // its own checkout, so they share the line rather than overwrite it. A question the
-    // re-read below takes back is said on the same line, last: the reports have their
-    // toasts, and the withdrawal has nothing else.
+    // Several can report in one frame — a sweep starts them together — and each names its
+    // own checkout, so they share the line rather than overwrite it. A question the re-read
+    // below takes back is said last: the reports have their toasts, the withdrawal has
+    // nothing else.
     let mut said: Vec<String> = Vec::new();
-    // Whether anything reported at all, and whether any of them left nobody able to say what
-    // became of the checkout.
     let mut reported = false;
+    // Whether any of them left nobody able to say what became of the checkout.
     let mut unknown = false;
     while let Some(finished) = removals.finished() {
         reported = true;
@@ -194,10 +172,9 @@ fn drain_finished(
                     said.push(message);
                 }
             }
-            // Nobody knows how this one ended. `Detached::wait` is explicit that the removal
+            // Nobody knows how this one ended: `Detached::wait` is explicit that the removal
             // may well have happened, and the toast that would have said so is the child's
-            // own and does not come back through here — so the list is the only answer there
-            // is. The panes are gone either way, which `refusal` adds.
+            // own. The panes are gone either way, which `refusal` adds.
             Err(error) => {
                 unknown = true;
                 said.push(removal::refusal(
@@ -207,17 +184,13 @@ fn drain_finished(
             }
         }
     }
-    // Once, after all of them, because there is one list. Read per removal it is read N
-    // times for the one answer, every reading but the last thrown away — and the line is
-    // left to reconcile a reading that failed with a later one that worked, about the one
-    // list. Here it also puts the order the reader needs beyond reach of a mistake: what
-    // became of the list, and then the question that went with it.
+    // Once, after all of them, because there is one list: read per removal, the line is
+    // left to reconcile a reading that failed with a later one that worked about the same
+    // list.
     //
-    // Whatever they reported, including a refusal, which changes nothing by itself: a
-    // reading `start_removal` could not finish leaves rows standing for panes that have
-    // stopped, that failure is a sentence and nothing more, and this is the only thing that
-    // tries again on a frame nobody pressed a key for. Skipping the ones that changed
-    // nothing buys a herdr round trip and gives back the bug above it.
+    // Whatever they reported, a refusal included. A reading `start_removal` could not finish
+    // leaves rows standing for panes that have stopped, and this is the only thing that
+    // tries again on a frame nobody pressed a key for.
     if reported {
         match catch_up(state, &mut pending.dirty, herdr, git) {
             Ok(withdrawn) => {
@@ -232,18 +205,14 @@ fn drain_finished(
             }
             Err(error) => {
                 // A question waiting on this goes back with it, the way `re_read` takes one
-                // back and for the same reason: the removal that has just reported is the
-                // change the box would be answered over, and the reading that would have
-                // noticed is the one that failed. `replace_tree` never ran, so nothing else
-                // will take it.
+                // back: the removal that has just reported is the change the box would be
+                // answered over, and the reading that would have noticed is the one that
+                // failed.
                 //
-                // Not `WITHDRAWN`, which says the list changed: nothing was replaced here,
-                // and the rows are the ones that were already there. What happened is that
-                // the reading failed, so this says that and what it cost — and which of the
-                // two it cost, because the way back differs. A box is asked again by
-                // choosing the row and pressing the key; an `Enter` that never became one
-                // leaves every mark standing, so `Enter` again is the whole of it. That
-                // second sentence is `re_read`'s, for the same state reached the other way.
+                // Not `WITHDRAWN`, which says the list changed: nothing was replaced here.
+                // Which of the two it cost is said, because the way back differs — a box is
+                // asked again by choosing the row and pressing the key, and an `Enter` that
+                // never became one leaves every mark standing.
                 said.push(match state.cancel_removal() {
                     Cancelled::Question => {
                         format!("{STALE}, so the question went back: {error:#}")
@@ -304,17 +273,14 @@ fn re_read(
 /// went with it.
 ///
 /// The other half of [`re_read`], and the difference is who asked. `r` and a sweep's `Enter`
-/// are the user asking, and what they get is every working tree walked again — and, for `r`
-/// alone, `gh` forgotten as well. This is the picker catching up with panes it closed and
-/// checkouts that may have gone, so the working trees are only brought up to the new tree:
-/// `ask` walks the checkouts that have just appeared and forgets the ones that have left, and
+/// are the user asking, and what they get is every working tree walked again. This is the
+/// picker catching up with itself, so the working trees are only brought up to the new tree:
 /// a removal is no reason to doubt an answer git has already given about anything else.
 ///
 /// `Err` is herdr's own words and only ever herdr's: the one `?` inside `collect_tree` is the
-/// session, and every git call under it keeps what it can and drops the rest. They are handed
+/// session, and every git call under it keeps what it can and drops the rest. It is handed
 /// back rather than put on the line, because what to say about a reading that failed depends
-/// on what else the frame has to say — beside an account of what happened where there is one,
-/// and alone where there is not.
+/// on what else the frame has to say.
 fn catch_up(
     state: &mut PanesState,
     dirty: &mut Dirty,
@@ -330,10 +296,9 @@ fn catch_up(
 /// Start every removal a sweep's `y` agreed to, in the order the box listed them.
 ///
 /// Each that will not start is said on the prompt line, together — a refusal with no toast
-/// behind it, since the child never ran — and none stops the rest: ADR 0011 has a
-/// refused checkout reported on its own while the sweep carries on. No re-read afterwards:
-/// a swept checkout has no panes, so nothing on screen is known wrong the way it is after
-/// `start_removal` has closed some.
+/// behind it, since the child never ran — and none stops the rest: ADR 0011 has a refused
+/// checkout reported on its own while the sweep carries on. No re-read afterwards, because a
+/// swept checkout has no panes and nothing on screen is known wrong.
 fn start_sweep(
     state: &mut PanesState,
     removals: &mut Removals,
@@ -355,10 +320,7 @@ fn start_sweep(
 /// Carry out a removal the user has said yes to, and put what happened on the screen.
 ///
 /// Out of the loop for the reason `show_answers` is: `run` needs a terminal and a keyboard,
-/// so nothing in it is reachable from a test, and this is the arm with consequences. What
-/// deleting it looks like is a picker where `y` closes the confirmation box and does
-/// nothing else — no error, no message, the row unchanged — which is a shape that reads
-/// as working and is not caught by anything else here.
+/// so nothing in it is reachable from a test, and this is the arm with consequences.
 fn start_removal(
     state: &mut PanesState,
     dirty: &mut Dirty,
@@ -369,20 +331,15 @@ fn start_removal(
 ) {
     let refused = removals.remove(herdr, removal).err();
     // The row says what is happening to it; nothing to add here. Unconditionally, as
-    // `start_sweep` does: a removal that never started pushed nothing, so this is what it
-    // already was.
+    // `start_sweep` does: a removal that never started pushed nothing.
     state.set_removing(removals.paths());
 
-    // Wherever the removal named panes, and whatever became of it. On the way through, every
-    // one of them closed; on the way out, either everything up to the one that refused, or —
-    // where it was the start that failed — every one of them. And a `pane_close` that failed
-    // is no evidence the pane survived: the adapter answers `Ok` for a pane herdr no longer
-    // knows about, so an `Err` is a call this side cannot account for. Every way round, a
-    // row standing for a pane that has stopped is one the cursor lands on, and `Enter` on it
-    // takes the whole picker down: `pane_focus` fails, and the `?` in `perform` carries that
-    // out of `run` with only the log to say why. An empty checkout's removal changes nothing
-    // on screen yet and leaves the cursor where it was, which is where the next thing to
-    // tidy up usually is.
+    // Wherever the removal named panes, and whatever became of it. A `pane_close` that
+    // failed is no evidence the pane survived, so every way round a row may be standing for
+    // a pane that has stopped — and `Enter` on such a row takes the whole picker down, since
+    // `pane_focus` fails and the `?` in `perform` carries that out of `run`. An empty
+    // checkout's removal changes nothing on screen yet, and leaves the cursor where the next
+    // thing to tidy up usually is.
     //
     // The `bool` is dropped rather than said: a question cannot be up here, because
     // `handle_key` takes `pending_removal` in the act of returning the action this is
@@ -398,14 +355,11 @@ fn start_removal(
 
     match (refused, stale) {
         (None, None) => {}
-        // Not fatal, but not silent either: rows for panes that have certainly stopped are
-        // on screen until this works.
+        // Not silent: rows for panes that have certainly stopped are on screen until this
+        // works.
         (None, Some(stale)) => state.set_message(format!("the panes closed, but {stale}")),
         (Some(message), None) => state.set_message(message),
-        // The account of what happened, and the list appended to it. Written over it instead,
-        // a sentence about the list would take the place of the one naming what went wrong
-        // and how far it got — which is the half no other thing on screen will say, and
-        // which on this arm may be a refusal that stopped nothing at all.
+        // The account of what happened, and the list appended to it, as `STALE` says.
         (Some(message), Some(stale)) => state.set_message(format!("{message}; {stale}")),
     }
 }
@@ -416,24 +370,17 @@ fn start_removal(
 /// Split out of the loop because everything the loop does is otherwise untestable — it needs
 /// a terminal and a keyboard — and this is the part with consequences. `set_working_trees` in
 /// particular has to run every frame and not only when a marker moved: a clean answer moves
-/// none, and it is exactly the answer that turns a refusal into an offer. Left out, every
-/// checkout with panes in it answers "still reading that working tree" for the life of the
-/// picker, and nothing on screen or in the suite says why.
+/// none, and it is exactly the answer that turns a refusal into an offer.
 fn show_answers(state: &mut PanesState, pending: &mut Pending) -> bool {
     let Pending { dirty, settled } = pending;
     dirty.drain();
-    // Unconditionally, and not only when a marker moved: `PanesState` keeps every answer and
-    // decides for itself what is worth redrawing. What is *known* about a working tree and
-    // what is *drawn* about it are different questions, and a removal turns on the first.
     state.set_working_trees(dirty.answers());
     let reading = dirty.is_waiting();
     state.set_waiting(reading);
 
-    // The heavier of the two `gh` calls, so it is asked when a sweep is entered rather than
-    // when the picker opens — ADR 0011. Asked from here rather than from the key that
-    // enters the sweep because `ask` is the same question every time and answers it once:
-    // a `Tab` away and back, or a sweep left and re-entered, costs a map lookup rather than
-    // another round of `gh`.
+    // Asked from here rather than from the key that enters the sweep because `ask` is the
+    // same question every time and answers it once: a `Tab` away and back, or a sweep left
+    // and re-entered, costs a map lookup rather than another round of `gh`.
     if state.is_sweeping() {
         // On the frame after `Shift-S`, and on no other: a `gh` that could not answer when
         // the sweep was last entered is asked again, and one that answered is not.
@@ -450,8 +397,7 @@ fn show_answers(state: &mut PanesState, pending: &mut Pending) -> bool {
     state.set_settled(answered, trouble, asking);
     state.confirm_sweep_if_settled();
 
-    // Both, because the loop's clock has to run while either is out — and because a sweep
-    // entered on a slow network is exactly when a frozen spinner reads as a finished answer.
+    // Both, because the loop's clock has to run while either is out.
     reading || asking
 }
 
@@ -529,11 +475,9 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
-    /// Answers every working tree at once and calls it clean, which is what makes the
-    /// difference between "asked" and "answered" observable in one drain.
-    /// A git that gives the same answer for every working tree, or the same failure.
-    /// All three matter: clean is what lets a removal through, and dirty and unreadable are
-    /// what the two refusals protecting a working agent are made of.
+    /// A git that gives the same answer for every working tree, or the same failure. All
+    /// three matter: clean is what lets a removal through, and dirty and unreadable are what
+    /// the two refusals protecting a working agent are made of.
     struct Answers(Option<bool>);
 
     impl GitPort for Answers {
@@ -1011,9 +955,8 @@ mod tests {
     /// that answers for it. One repository: its own checkout, and `feat/login` with two panes
     /// in it.
     ///
-    /// `Recorder` cannot reach this ground. It refuses to describe itself at all, which is
-    /// the other half of the same question — what the list says once some of the panes have
-    /// gone is only answerable by a herdr that answers.
+    /// `Recorder` cannot reach this ground: it refuses to describe itself at all, and what
+    /// the list says once some of the panes have gone needs a herdr that answers.
     struct Closing {
         /// The one pane it will not close. Everything the removal names ahead of that does
         /// close, which is what makes a close that stopped partway reachable at all.
@@ -1062,8 +1005,7 @@ mod tests {
             let mut workspaces = vec![workspace("w1", "/src/app", false)];
             // The repository is only in the tree at all while a pane of it is: `collect`
             // probes from pane placements. The checkout that goes here takes the last of its
-            // own panes with it, so this keeps one in the main checkout — otherwise the whole
-            // repository leaves with it and there is nothing left to be forgotten.
+            // own panes with it, so this keeps one in the main checkout.
             let mut panes = match self.removed_with_its_panes {
                 true => vec![snapshot_pane("w1:p9", "/src/app")],
                 false => Vec::new(),
@@ -1175,8 +1117,7 @@ mod tests {
 
     /// A herdr whose refusal has a cause under it, which is the shape the socket adapter
     /// makes: `with_context` over the io error that actually happened. Every other fake here
-    /// refuses with one flat sentence, so the alternate form that prints the chain is
-    /// invisible to them.
+    /// refuses with one flat sentence.
     struct Chained;
 
     impl HerdrPort for Chained {
@@ -1358,7 +1299,7 @@ mod tests {
 
     #[test]
     fn a_re_read_that_fails_asks_nothing_over_the_old_facts() {
-        // `Enter` asked for the re-read so that the box is about the disk as it is; with
+        // `Enter` asks for the re-read so that the box is about the disk as it is; with
         // herdr not answering, a box would be about the disk as it was.
         let session = Arc::new(Session::new(false, false));
         let (mut state, mut pending) = enter_pressed(&session);
@@ -1390,8 +1331,7 @@ mod tests {
 
     #[test]
     fn enter_keeps_what_gh_said_and_r_does_not() {
-        // `gh` only widens the sweep (ADR 0011), so the re-read `Enter` asks for keeps its
-        // answers; `r` reads everything again, `gh` included.
+        // `gh` only widens the sweep, so `Enter`'s re-read keeps its answers — ADR 0011.
         let session = Arc::new(Session::new(false, false));
         let (mut state, mut pending) = enter_pressed(&session);
         assert_eq!(
@@ -1497,12 +1437,10 @@ mod tests {
 
     #[test]
     fn the_loop_hands_on_a_dirty_answer_too_or_nothing_is_ever_protected() {
-        // The negative twin of the test below, and the one with teeth. A `Clean` answer alone
-        // is what clears "still reading"; the dirty answer is what the refusal is made of.
-        // Hand on the first without the second and `Shift-D` walks straight into the
-        // confirmation box for a checkout full of working agents. `y` then closes every one
-        // of their panes before git refuses to remove the checkout — so git saves the work
-        // and nothing saves the agents.
+        // A clean answer alone is what clears "still reading"; the dirty answer is what the
+        // refusal is made of. Hand on the first without the second and `Shift-D` walks into
+        // the confirmation box for a checkout full of working agents, and `y` closes every
+        // one of their panes before git refuses to remove it.
         let mut state = PanesState::new(one_pane_tree(), None);
         let mut dirty = Dirty::new(std::sync::Arc::new(Answers(Some(true))));
         dirty.ask(state.tree());
@@ -1571,9 +1509,7 @@ mod tests {
     #[test]
     fn gh_is_asked_when_a_sweep_is_entered_and_not_before() {
         // The heavier of the two `gh` calls, so ADR 0011 defers it: most sessions never
-        // sweep, and one that does should not pay for it on every picker open. Every line
-        // between `show_answers` and the screen could be deleted with the whole gate green
-        // — including the call that hands the answers over at all.
+        // sweep, and one that does should not pay for it on every picker open.
         let port = std::sync::Arc::new(Answering::default());
         let mut state = PanesState::new(no_pane_tree(), None);
         let mut pending = Pending {
@@ -1690,9 +1626,8 @@ mod tests {
     #[test]
     fn entering_a_sweep_again_asks_gh_again_where_it_refused() {
         // A `gh` that could not answer when `Shift-S` was first pressed is not one that can
-        // never answer. The only other way to ask again is `r`, which a sweep does not take
-        // and the footer does not send the user out to press — so a network that was out
-        // for one keypress was out for the life of the picker.
+        // never answer, and the only other way to ask again is `r`, which a sweep does not
+        // take: a network out for one keypress would be out for the life of the picker.
         let port = std::sync::Arc::new(Recovering::default());
         let mut state = PanesState::new(no_pane_tree(), None);
         let mut pending = Pending {
@@ -1721,10 +1656,8 @@ mod tests {
 
     #[test]
     fn the_loop_keeps_its_clock_while_the_sweep_is_waiting_on_gh() {
-        // `show_answers`' answer is what the loop turns the spinner on, and what makes it
-        // poll instead of blocking in `event::read()`. With `gh` left out of it, `asking gh…`
-        // draws frame zero for ever and the answer reaches the rows only when the user
-        // happens to press a key.
+        // With `gh` left out of what `show_answers` answers, `asking gh…` draws frame zero
+        // for ever and the answer reaches the rows only when the user presses a key.
         let mut state = PanesState::new(no_pane_tree(), None);
         let mut pending = pending_on_gh(Dirty::new(std::sync::Arc::new(Answers(Some(false)))));
 
@@ -1745,8 +1678,8 @@ mod tests {
 
     #[test]
     fn a_yes_starts_the_removal_and_says_on_the_row_that_it_is_going() {
-        // The arm behind `y`. Deleted, the confirmation box closes and nothing happens —
-        // no error, no message, the row unchanged — and the whole gate stays green.
+        // The arm behind `y`. Deleted, the confirmation box closes and nothing happens: no
+        // error, no message, the row unchanged.
         let recorder = Recorder::default();
         let port = Started(&recorder);
         let mut removals = Removals::new(&port);
@@ -1803,11 +1736,9 @@ mod tests {
 
     #[test]
     fn panes_that_have_certainly_closed_are_not_left_on_screen_without_a_word() {
-        // The branch the other two never enter: both use a checkout with no panes, so the
-        // guard's direction is pinned and its body is not. Here the panes did close, so the
-        // list on screen is known wrong rather than merely stale — and when it cannot be
-        // read again, saying nothing leaves rows for panes that have stopped, with the
-        // cursor able to jump to them.
+        // The branch the other two never enter: both use a checkout with no panes. Here the
+        // panes did close, so saying nothing leaves rows for panes that have stopped, with
+        // the cursor able to jump to them.
         let recorder = Recorder::default();
         let port = Started(&recorder);
         let mut removals = Removals::new(&port);
@@ -1837,11 +1768,10 @@ mod tests {
 
     #[test]
     fn a_close_that_stopped_partway_takes_the_panes_it_closed_off_the_list() {
-        // The `Err` arm's half of the certainty the `Ok` arm already acts on: one pane is
-        // gone and the other is not, so the list is known wrong rather than merely stale.
-        // Left drawn, the row for the one that is gone is one the cursor stops on, and
-        // `Enter` there fails `pane_focus` and carries that out of `run` through `perform`
-        // — the picker disappears, with the reason only in the log.
+        // One pane is gone and the other is not, so the list is known wrong rather than
+        // merely stale. Left drawn, `Enter` on the row for the one that is gone fails
+        // `pane_focus` and carries that out of `run` through `perform` — the picker
+        // disappears, with the reason only in the log.
         let herdr = Arc::new(Closing::refusing(SECOND_PANE));
         let mut removals = Removals::new(&Refuses);
         let (_, tree) = collect::collect_tree(&*herdr, &*herdr).expect("the first reading");
@@ -1876,10 +1806,8 @@ mod tests {
 
     #[test]
     fn a_close_that_stopped_partway_says_so_when_the_list_will_not_be_read_either() {
-        // Two things went wrong and the line carries both, in that order: the panes that
-        // stopped are what nothing else on screen will mention, and a list that could not be
-        // caught up is what the reader is about to act on. It is the order that is pinned
-        // here; writing the list over the account is what `start_removal`'s last arm refuses.
+        // The order is what is pinned here: the panes that stopped are what nothing else on
+        // screen will mention, so the list is appended rather than written over them.
         let recorder = Recorder::refusing(SECOND_PANE);
         let git = Answers(Some(false));
         let mut removals = Removals::new(&Refuses);
@@ -1908,11 +1836,10 @@ mod tests {
 
     #[test]
     fn a_close_that_refused_at_the_first_pane_reads_the_list_anyway() {
-        // A count of none is not the same as nothing having happened. `pane_close` answers
+        // A count of none is not the same as nothing having happened: `pane_close` answers
         // `Ok` for a pane that had already gone, so an `Err` is a call this side cannot
-        // account for — the pane may be closed and the row for it wrong. `Recorder` will not
-        // describe itself, so the reading asked for here arrives as a clause on the end of
-        // this line; with herdr answering it would cost one round trip and say nothing.
+        // account for. `Recorder` will not describe itself, so the reading asked for here
+        // arrives as a clause on the end of this line.
         let recorder = Recorder::refusing(FIRST_PANE);
         let git = Answers(Some(false));
         let mut removals = Removals::new(&Refuses);
@@ -1941,9 +1868,8 @@ mod tests {
 
     #[test]
     fn a_working_tree_git_would_not_read_is_handed_on_as_its_own_refusal() {
-        // Not the same as dirty and not the same as clean. Folded into either, a checkout
-        // git could not answer for is offered for removal on the strength of an answer
-        // nobody gave.
+        // Folded into dirty or into clean, a checkout git could not answer for is offered
+        // for removal on the strength of an answer nobody gave.
         let mut state = PanesState::new(one_pane_tree(), None);
         let mut dirty = Dirty::new(std::sync::Arc::new(Answers(None)));
         dirty.ask(state.tree());
@@ -1967,9 +1893,8 @@ mod tests {
 
     #[test]
     fn the_loop_hands_on_what_the_walk_answered_or_nothing_can_be_deleted() {
-        // The wiring that shipped dead once, and would ship dead again silently: with the
-        // answers never handed on, every checkout with panes says "still reading that
-        // working tree" for the life of the picker and the feature is unreachable.
+        // With the answers never handed on, every checkout with panes says "still reading
+        // that working tree" for the life of the picker and the feature is unreachable.
         let mut state = PanesState::new(one_pane_tree(), None);
         let mut dirty = Dirty::new(std::sync::Arc::new(Answers(Some(false))));
         dirty.ask(state.tree());
@@ -2035,8 +1960,7 @@ mod tests {
 
     #[test]
     fn two_removals_reporting_in_one_frame_share_the_line() {
-        // A sweep starts them together, so they can come home together; each names its own
-        // checkout and neither overwrites the other.
+        // A sweep starts them together, so they can come home together.
         let session = Arc::new(Session::new(false, false));
         let (mut state, mut pending) = sweep_asked(&session);
         let port = Reports(RemovalOutcome::BranchKept("error: not fully merged".into()));
@@ -2047,7 +1971,7 @@ mod tests {
         start_sweep(&mut state, &mut removals, &Recorder::default(), &sweep);
         // Both answers in the channel before the one drain. Draining until it empties is not
         // the same test: the two can arrive in separate frames, and the second report then
-        // replaces the first on the line rather than sharing it with it.
+        // replaces the first on the line.
         until("both reported", || removals.reported() == 2);
         drain_finished(
             &mut state,
@@ -2073,8 +1997,7 @@ mod tests {
 
     #[test]
     fn a_question_the_re_read_took_back_is_said_last() {
-        // A removal started earlier reports while the sweep's box is up; the re-read that
-        // follows takes the box back, and that is the one thing on the line with no toast.
+        // The withdrawal is the one thing on the line with no toast behind it.
         let session = Arc::new(Session::new(false, false));
         let (mut state, mut pending) = sweep_asked(&session);
         let port = Reports(RemovalOutcome::BranchKept("error: not fully merged".into()));
@@ -2148,13 +2071,9 @@ mod tests {
 
     #[test]
     fn a_removal_that_ended_without_saying_what_happened_reads_the_list_again_and_says_so() {
-        // Nothing can be told from the report: `Detached::wait` cannot separate a removal
-        // that worked from one that did not, and the toast that could is the child's own and
-        // does not come back through here. So the list is the only answer there is — read
-        // again, and said to have been. Left out, the row simply stops spinning and reads as
-        // a checkout that is still standing, which is the one thing nobody knows.
-        // A session whose second reading differs from its first, so that the list having
-        // been read again is something this can see rather than something the line claims.
+        // Left out, the row simply stops spinning and reads as a checkout that is still
+        // standing, which is the one thing nobody knows. The session's second reading differs
+        // from its first, so the list having been read is something this can see.
         let session = Arc::new(Session::new(true, false));
         let (_, tree) = collect::collect_tree(&*session, &*session).expect("the first reading");
         let mut state = PanesState::new(tree, None);
@@ -2191,10 +2110,8 @@ mod tests {
 
     #[test]
     fn an_ending_nobody_could_read_and_a_list_nobody_could_read_are_both_said() {
-        // The same ending against a herdr that will not describe itself. Neither reading got
-        // an answer — the child's, and this side's — so the sentence saying the list has
-        // been read is not said, and what could not be read is, once, on the end of the
-        // line.
+        // Neither reading got an answer — the child's, and this side's — so the sentence
+        // saying the list has been read is not said, and what could not be read is.
         let recorder = Recorder::default();
         let git = Answers(Some(false));
         let mut state = PanesState::new(one_pane_tree(), None);
@@ -2221,8 +2138,7 @@ mod tests {
     fn a_removal_that_worked_says_when_the_list_could_not_be_caught_up_with_it() {
         // Saying nothing is the report when it worked, because the row leaves the list. When
         // the list cannot be read again the row does not leave, and saying nothing then says
-        // the opposite of what happened — with the checkout's panes drawn as live rows the
-        // cursor stops on, which is where `Enter` takes the picker down.
+        // the opposite of what happened.
         let recorder = Recorder::default();
         let git = Answers(Some(false));
         let port = Reports(RemovalOutcome::Removed);
@@ -2245,10 +2161,8 @@ mod tests {
 
     #[test]
     fn what_became_of_the_list_is_said_before_the_question_that_went_with_it() {
-        // Both in the one frame: an ending nobody could read, and a sweep's box taken back by
-        // the reading after it. The withdrawal is about the box rather than about any
-        // removal, so it stays last; ahead of the sentence about the list it would read as a
-        // remark on the list instead of on the box that has just gone.
+        // The withdrawal is about the box rather than about any removal, so it stays last;
+        // ahead of the sentence about the list it would read as a remark on the list.
         let session = Arc::new(Session::new(false, false));
         let (mut state, mut pending) = sweep_asked(&session);
         let mut removals = Removals::new(&Lost);
@@ -2281,12 +2195,10 @@ mod tests {
 
     #[test]
     fn a_refusal_reads_the_list_again_too_because_nothing_else_retries_it() {
-        // git declined, so the refusal changes nothing by itself. What it does not know is
-        // whether `start_removal`'s own reading got through when it closed this checkout's
-        // panes: if it did not, rows for panes that have stopped are on screen and the
-        // failure was a sentence the next keypress wiped. This frame is the only thing that
-        // reads the list again without the user asking, so it reads. `Recorder` will not
-        // describe itself, so that reading arrives as a clause on the end of the line.
+        // git declined, so the refusal changes nothing by itself — but if `start_removal`'s
+        // own reading did not get through when it closed this checkout's panes, rows for
+        // stopped panes are on screen and that failure was a sentence the next keypress
+        // wiped. `Recorder` will not describe itself, so the reading arrives as a clause.
         let recorder = Recorder::default();
         let git = Answers(Some(false));
         let port = Reports(RemovalOutcome::Refused("fatal: refused".into()));
@@ -2313,10 +2225,9 @@ mod tests {
     #[test]
     fn a_question_over_a_list_this_could_not_read_goes_back_with_it() {
         // `re_read` takes a question back when its reading fails; this is the same situation
-        // reached the other way. The removal that has just reported is the change the box
-        // would be answered over, and the reading that would have noticed is the one that
-        // failed. Left standing, `y` acts on a pane list taken before that removal — which
-        // is ADR 0010's hazard, `git worktree remove` over a pane nobody closed.
+        // reached the other way. Left standing, `y` acts on a pane list taken before the
+        // removal that just reported — ADR 0010's hazard, `git worktree remove` over a pane
+        // nobody closed.
         let session = Arc::new(Session::new(false, false));
         let (mut state, mut pending) = sweep_asked(&session);
         let port = Reports(RemovalOutcome::BranchKept("error: not fully merged".into()));
@@ -2349,8 +2260,7 @@ mod tests {
 
     #[test]
     fn two_endings_nobody_could_read_are_settled_by_the_one_list_once() {
-        // The sentence is about the list, and there is one list however many came home in
-        // the frame. Said per report it would say the same thing twice about one reading.
+        // Said per report it would say the same thing twice about one reading.
         let session = Arc::new(Session::new(false, false));
         let (_, tree) = collect::collect_tree(&*session, &*session).expect("the first reading");
         let mut state = PanesState::new(tree, None);
@@ -2387,8 +2297,7 @@ mod tests {
 
     #[test]
     fn two_reports_over_one_reading_that_failed_say_what_failed_once() {
-        // The same rule for the other sentence. Both reports are here; only one reading was
-        // taken, so only one thing can be said about it.
+        // The same rule for the other sentence: one reading was taken, so one thing is said.
         let session = Arc::new(Session::new(false, false));
         let (_, tree) = collect::collect_tree(&*session, &*session).expect("the first reading");
         let mut state = PanesState::new(tree, None);
@@ -2424,11 +2333,10 @@ mod tests {
 
     #[test]
     fn a_sweeps_enter_still_waiting_for_its_box_goes_back_too() {
-        // The third thing `cancel_removal` takes, and the one no caller can see from
-        // outside: between `Enter` and the box, the question lives in the sweep rather than
-        // in a `pending_*`, because `confirm_sweep_if_settled` will not put a box up over a
-        // walk that has not answered. Missed, the user's `Enter` is eaten — no box ever
-        // comes, the marks stay on screen, and the line says nothing about the sweep.
+        // Between `Enter` and the box the question lives in the sweep rather than in a
+        // `pending_*`, because `confirm_sweep_if_settled` will not put a box up over a walk
+        // that has not answered. Missed, the user's `Enter` is eaten — no box ever comes,
+        // the marks stay on screen, and the line says nothing about the sweep.
         let session = Arc::new(Session::new(false, false));
         let (mut state, mut pending) = enter_pressed(&session);
         assert!(
@@ -2439,9 +2347,8 @@ mod tests {
         let earlier = Removal::sweeping("/src/app", &state.tree().repos[0].worktrees[1]);
         removals.remove(&Recorder::default(), &earlier).unwrap();
 
-        // A herdr that will not describe itself takes the frame's one reading, and says why
-        // in two halves: this arm formats the error itself rather than going through
-        // `could_not_read`, so it is a second place the whole chain has to reach the line.
+        // This arm formats the error itself rather than going through `could_not_read`, so
+        // it is a second place the whole chain has to reach the line.
         let git = Answers(Some(false));
         until("it reported", || {
             drain_finished(&mut state, &mut pending, &mut removals, &Chained, &git);
@@ -2467,8 +2374,8 @@ mod tests {
 
     #[test]
     fn a_shift_d_box_over_a_list_this_could_not_read_goes_back_too() {
-        // The other of the two boxes. Nothing else reaches this arm: `pending_removal` and
-        // `pending_sweep` are never up together, so the sweep's test cannot stand in for it.
+        // `pending_removal` and `pending_sweep` are never up together, so the sweep's test
+        // cannot stand in for this one.
         let mut state = PanesState::new(one_pane_tree(), None);
         let mut dirty = Dirty::new(std::sync::Arc::new(Answers(Some(false))));
         dirty.ask(state.tree());
@@ -2503,9 +2410,8 @@ mod tests {
     #[test]
     fn a_checkout_that_left_the_list_is_forgotten_by_the_walk() {
         // `catch_up` hands the new tree to `Dirty`, which is the only thing that scopes the
-        // walk to what is there now. Dropped, answers pile up for checkouts that have gone —
-        // and a checkout that arrives is never walked at all, so its row answers "still
-        // reading that working tree" for the life of the picker and can never be removed.
+        // walk to what is there now. Dropped, a checkout that arrives is never walked at all,
+        // so its row answers "still reading that working tree" and can never be removed.
         let herdr = Arc::new(Closing::where_the_checkout_goes_too());
         let recorder = Recorder::default();
         let port = Started(&recorder);
@@ -2540,8 +2446,8 @@ mod tests {
     #[test]
     fn what_herdr_said_reaches_the_line_with_its_cause_under_it() {
         // The socket adapter wraps: `sending session.snapshot to herdr` over the io error
-        // that actually happened. Printed without the alternate form, the line carries the
-        // wrapper and drops the only half that says what went wrong.
+        // that actually happened. Without the alternate form the line carries the wrapper
+        // and drops the half that says what went wrong.
         let recorder = Recorder::default();
         let port = Started(&recorder);
         let mut removals = Removals::new(&port);
@@ -2569,10 +2475,10 @@ mod tests {
 
     #[test]
     fn a_frame_with_nothing_to_take_in_leaves_the_list_alone() {
-        // The guard, read the only way it can be: a herdr that will not describe itself, so a
-        // reading nobody asked for arrives as a sentence rather than as silence. Without it
-        // the picker reads the whole session and every repository's refs on every tick a
-        // removal is in flight for, and a box goes back on the frame after it came up.
+        // A herdr that will not describe itself, so a reading nobody asked for arrives as a
+        // sentence rather than as silence. Without the guard the picker reads the whole
+        // session on every tick a removal is in flight for, and a box goes back on the frame
+        // after it came up.
         let recorder = Recorder::default();
         let git = Answers(Some(false));
         let mut state = PanesState::new(one_pane_tree(), None);
@@ -2590,10 +2496,8 @@ mod tests {
 
     #[test]
     fn a_removal_that_worked_over_a_list_that_read_says_nothing_at_all() {
-        // The ordinary ending, and the contract ADR 0014 and the changelog state: the row
-        // leaving the list is the report. It holds only while the list keeps up, which is
-        // what the other three arms of this are about — so this is the one that says what
-        // "keeps up" looks like when it does.
+        // The contract ADR 0014 and the changelog state: the row leaving the list is the
+        // report. It holds only while the list keeps up.
         let herdr = Arc::new(Closing::where_the_checkout_goes_too());
         let port = Reports(RemovalOutcome::Removed);
         let mut removals = Removals::new(&port);
@@ -2618,9 +2522,8 @@ mod tests {
 
     #[test]
     fn a_sweeps_enter_still_waiting_survives_a_reading_that_worked() {
-        // The positive control for the arm above. `replace_tree` leaves `confirming` alone on
-        // purpose — the reading it waits on is the one that just happened — so an unrelated
-        // removal reporting must not cost the user their `Enter`.
+        // `replace_tree` leaves `confirming` alone on purpose — the reading it waits on is
+        // the one that just happened — so an unrelated removal must not cost an `Enter`.
         let session = Arc::new(Session::new(false, false));
         let (mut state, mut pending) = enter_pressed(&session);
         let port = Reports(RemovalOutcome::Removed);
@@ -2649,9 +2552,8 @@ mod tests {
 
     #[test]
     fn a_reading_that_failed_reaches_the_line_with_its_cause_under_it_too() {
-        // The arm that formats the error itself rather than going through `could_not_read`.
-        // `Chained` is the only fake here whose refusal has a cause under it, and this is the
-        // one place the alternate form is written out a second time.
+        // `Chained` is the only fake here whose refusal has a cause under it, and this arm
+        // formats the error itself rather than going through `could_not_read`.
         let session = Arc::new(Session::new(false, false));
         let (mut state, mut pending) = sweep_asked(&session);
         let mut removals = Removals::new(&Lost);
@@ -2676,9 +2578,8 @@ mod tests {
 
     #[test]
     fn a_removal_that_could_not_be_waited_on_reaches_the_line_whole() {
-        // `Detached::wait`'s other failure, where the wait itself fails and the context names
-        // the removal over what the OS said. Both halves are the report: the wrapper says
-        // which removal, and the cause says why nobody can tell what became of it.
+        // `Detached::wait`'s other failure, where the wait itself fails. Both halves are the
+        // report: the wrapper says which removal, the cause says why nobody can tell.
         let session = Arc::new(Session::new(false, false));
         let (_, tree) = collect::collect_tree(&*session, &*session).expect("the first reading");
         let mut state = PanesState::new(tree, None);
@@ -2710,8 +2611,7 @@ mod tests {
     #[test]
     fn one_ending_nobody_could_read_among_reports_that_worked_is_settled_once() {
         // `unknown` is a fact about the frame, not about a report, so the sentence lands
-        // after both and is said once — not attached to the report that happened to be
-        // unreadable, and not repeated for the one that was not.
+        // after both and is said once.
         let session = Arc::new(Session::new(false, false));
         let (_, tree) = collect::collect_tree(&*session, &*session).expect("the first reading");
         let mut state = PanesState::new(tree, None);
@@ -2744,8 +2644,7 @@ mod tests {
 
     #[test]
     fn a_refused_removal_stops_its_row_spinning_when_it_reports() {
-        // The `deleting` note and its spinner are for a process still running; git's
-        // refusal is the end of it.
+        // The `deleting` note and its spinner are for a process still running.
         let session = Arc::new(Session::new(false, false));
         let (mut state, mut pending) = sweep_asked(&session);
         let port = Reports(RemovalOutcome::Refused("fatal: refused".into()));

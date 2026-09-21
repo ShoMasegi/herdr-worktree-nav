@@ -2,7 +2,7 @@
 //!
 //! Only the accent and the status glyph set come from herdr's configuration; everything
 //! else uses the terminal's own sixteen colours, so the pickers inherit whatever palette
-//! the user's terminal is set to rather than fighting it.
+//! the user's terminal is set to.
 
 use ratatui::style::{Color, Modifier, Style};
 

@@ -60,8 +60,8 @@ fn a_gh_on_the_path_is_given_the_budget_and_no_more() {
     let _path = PathWith::front(dir.path());
     let slug = Slug::owner_repo("me", "app").unwrap();
 
-    // A `gh` that never exits: the sweep's question is refused within the budget, with a
-    // reason, rather than waited on for ever.
+    // A `gh` that never exits: refused within the budget, with a reason, rather than waited
+    // on for ever.
     std::fs::write(dir.path().join("mode"), "hang").unwrap();
     let asked = Instant::now();
     let refused = GhCli
@@ -74,7 +74,6 @@ fn a_gh_on_the_path_is_given_the_budget_and_no_more() {
         waited < GH_BUDGET + Duration::from_secs(3),
         "and not much longer: {waited:?}"
     );
-    // And the process is gone, not left to sleep on: `kill -0` on its pid finds nothing.
     let pid = std::fs::read_to_string(dir.path().join("pid")).unwrap();
     let alive = std::process::Command::new("kill")
         .args(["-0", pid.trim()])

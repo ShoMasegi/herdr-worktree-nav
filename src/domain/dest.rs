@@ -158,7 +158,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// Two spaces: w1 "app" with tabs t1 and t2, and w2 "notes" with t1.
     fn snapshot() -> Snapshot {
         serde_json::from_value(json!({
             "version": "0.7.4",
@@ -240,7 +239,6 @@ mod tests {
 
     #[test]
     fn falls_back_to_tabs_and_spaces_when_there_is_no_pane_to_split() {
-        // Summoned from somewhere herdr could not attribute to a pane.
         let destinations = destinations(&snapshot(), None);
         assert!(!destinations
             .iter()

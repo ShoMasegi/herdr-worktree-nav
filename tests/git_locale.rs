@@ -73,9 +73,8 @@ fn language_of(locale: &str) -> &str {
 /// A locale existing is not the same as git having a translation for it — `pt_BR.UTF-8` is
 /// generated here and git answers in English under it — so picking by name would pass
 /// without ever leaving English. And git's messages are separate translation units: probing
-/// with `not a git repository`, which an earlier version of this did, accepts `el_GR`, where
-/// that one is translated and this one is not, so the test would then assert English against
-/// English and hold nothing.
+/// with `not a git repository` instead accepts `el_GR`, where that one is translated and
+/// this one is not, so the test would assert English against English and hold nothing.
 fn a_locale_git_hides_the_warning_in(broken: &Path) -> Result<String, NoLocale> {
     let listed = Command::new("locale")
         .arg("-a")
@@ -90,10 +89,8 @@ fn a_locale_git_hides_the_warning_in(broken: &Path) -> Result<String, NoLocale> 
         .filter(|name| !name.is_empty())
         .collect();
     // A list is a list whatever the exit code: `locale -a` can name every locale here and
-    // still complain about one of them, and refusing it would throw away a measurement that
-    // would have worked. No list at all is the thing that cannot be worked with, and it is
-    // "could not ask" rather than "nothing is translated" — the other arm would report a
-    // measurement that never happened.
+    // still complain about one of them. No list at all is what cannot be worked with, and
+    // that is "could not ask": the other arm would report a measurement that never happened.
     if names.is_empty() {
         return Err(NoLocale::CannotAsk(format!(
             "`locale -a` listed nothing ({status}): {complained}"
@@ -184,10 +181,9 @@ fn git_is_read_in_the_language_its_messages_are_matched_in() {
     let _locale = Locale::set(&locale);
 
     // The guard has to be alive from here to the end of the test, and one character decides
-    // it: `let _ = Locale::set(…)` drops it on that line instead, the two halves below then
-    // run in whatever locale the suite was started in, git answers in English, both hold, and
-    // the test measures nothing. That is the shape this file was rewritten to remove, so it
-    // is checked rather than trusted.
+    // it: `let _ = Locale::set(…)` drops it on that line instead, the two halves below run in
+    // whatever locale the suite was started in, git answers in English, both hold, and the
+    // test measures nothing. So it is checked rather than trusted.
     assert_eq!(
         (std::env::var("LC_ALL").ok(), std::env::var("LANGUAGE").ok()),
         (Some(locale.clone()), Some(language_of(&locale).to_string())),

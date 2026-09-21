@@ -67,9 +67,8 @@ impl Args {
 /// listening. `delete_branch` asks for `git branch -d` on `label` once the checkout has
 /// gone, and only then: a refused removal never reaches the branch.
 ///
-/// `panes_closed` is what the picker stopped to get here. It is passed in rather than
-/// worked out because by the time this runs the panes are already gone: the grouping this
-/// process could rebuild for itself would be a grouping with nothing in it.
+/// `panes_closed` is what the picker stopped to get here. It is passed in because by the
+/// time this runs the panes are gone and cannot be counted again.
 ///
 /// git declining is an outcome rather than a failure, so this returns `Ok` either way and
 /// the answer travels in the report instead of in an exit code.
@@ -84,11 +83,9 @@ pub fn run(
 ) -> Result<()> {
     let outcome = outcome(git, repo_root, checkout_path, label, delete_branch);
 
-    // The toast first, and deliberately. It is the report that always happens, and the
-    // write below is the one thing here that can end this process early: the picker may
-    // have closed, and a pipe with no reader left is what that looks like from this side.
-    // herdr declining to show it is herdr's answer to give, so it is not retried or
-    // reported anywhere else.
+    // The toast first, and deliberately: the write below can end this process early, since
+    // the picker may have closed and a pipe with no reader left is what that looks like from
+    // this side. herdr declining to show it is herdr's answer to give, so it is not retried.
     let _ = herdr.notify(&removal::notification(
         label,
         checkout_path,
@@ -130,8 +127,8 @@ mod tests {
     };
     use std::sync::Mutex;
 
-    /// Keeps the toast it was asked to show, which is the only report that reaches somebody
-    /// who has closed the picker.
+    /// Keeps the toast, which is the only report that reaches somebody who has closed the
+    /// picker.
     #[derive(Default)]
     struct Shown(Mutex<Vec<Notification>>);
 
@@ -178,11 +175,11 @@ mod tests {
         }
     }
 
-    /// A removal refused: the words `removing_a_worktree_with_uncommitted_work_refuses_and_says_why`
-    /// in `tests/git_adapter.rs` asserts on.
+    /// The words `removing_a_worktree_with_uncommitted_work_refuses_and_says_why` in
+    /// `tests/git_adapter.rs` asserts on.
     const DIRTY: &str = "fatal: '/wt/feat-login' contains modified or untracked files";
-    /// A `-d` declined: the words `a_branch_git_does_not_call_merged_is_kept_and_git_says_why`
-    /// in `tests/git_adapter.rs` asserts on.
+    /// The words `a_branch_git_does_not_call_merged_is_kept_and_git_says_why` in
+    /// `tests/git_adapter.rs` asserts on.
     const NOT_MERGED: &str =
         "error: the branch 'feat/login' is not fully merged (`git branch -d feat/login`)";
 
@@ -266,7 +263,6 @@ mod tests {
 
     #[test]
     fn running_it_by_hand_stays_three_arguments() {
-        // The count is the picker's to supply; a person typing this has closed nothing.
         let read = Args::read(
             &mut ["/src/app", "/wt/x", "fix/crash"]
                 .iter()
@@ -276,9 +272,8 @@ mod tests {
         assert_eq!(read.panes_closed, 0);
         assert!(!read.delete_branch, "and asked for no branch to go");
 
-        // A fourth argument that is neither a count nor the flag is refused: read as a
-        // count of none it would have swallowed `delete-branch` typed in its place. A near
-        // miss of the flag is refused the same way, not read as the flag.
+        // Read as a count of none, a fourth argument would swallow `delete-branch` typed in
+        // its place, and a near miss of the flag would pass for it.
         for odd in ["later", "delete-branches", "delete_branch"] {
             assert!(
                 Args::read(
@@ -296,10 +291,8 @@ mod tests {
 
     #[test]
     fn the_panes_this_closed_reach_the_one_report_a_departed_user_gets() {
-        // The count travels from the picker through argv into this process for one purpose,
-        // and the toast is where it has to arrive: whoever closed the picker has no other
-        // channel, and a refusal that does not mention the panes reads as "nothing
-        // happened" over an emptied tab.
+        // A refusal that does not mention the panes reads as "nothing happened" to somebody
+        // looking at an emptied tab.
         let herdr = Shown::default();
         run(
             &herdr,
@@ -322,7 +315,6 @@ mod tests {
 
     #[test]
     fn with_the_branch_asked_for_a_d_git_takes_is_reported_as_removed() {
-        // The checkout first, then the branch, and one plain `removed` for the pair.
         let git = Git::new(Ok(()), Some(Ok(())));
         let outcome = outcome(&git, "/src/app", "/wt/feat-login", "feat/login", true);
         assert_eq!(git.asked(), ["remove /wt/feat-login", "delete feat/login"]);

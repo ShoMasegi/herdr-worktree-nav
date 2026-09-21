@@ -69,7 +69,8 @@ impl RemovalPort for DetachedRemovals {
     }
 }
 
-/// What the child is told, in the order `app::remove::Args::read` expects to read it.
+/// What the child is told, in the order
+/// [`app::remove::Args::read`](crate::app::remove::Args::read) expects to read it.
 ///
 /// Split out because it is one half of a wire format: the other half parses it, in another
 /// module, in another process. Kept together only by a test that runs one into the other.
@@ -87,8 +88,7 @@ fn arguments(
         label.to_string(),
         panes_closed.to_string(),
     ];
-    // Absent rather than `false`, so a removal that keeps the branch is the line it always
-    // was.
+    // Absent rather than `false`: the child reads a missing word as keeping the branch.
     if delete_branch {
         arguments.push("delete-branch".to_string());
     }

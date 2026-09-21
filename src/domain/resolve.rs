@@ -44,10 +44,9 @@ pub struct BranchEntry {
     /// from a local ref: a branch that exists nowhere but the remote has nothing to be
     /// measured against.
     ///
-    /// The whole value rather than the one bit the branches view draws today. The bit is a
-    /// projection anybody can take — see [`BranchEntry::upstream_gone`] — and taking it at
-    /// the boundary instead threw away ahead/behind on the way in, so a later reader wanting
-    /// what the panes view already shows would have had to rebuild the boundary to get it.
+    /// The whole value rather than the one bit the branches view draws. The bit is a
+    /// projection anybody can take — see [`BranchEntry::upstream_gone`] — while narrowing it
+    /// at the boundary would throw away the ahead/behind the panes view shows.
     ///
     /// `None` is four different situations and does not tell them apart: the branch is level
     /// with what it tracks, it tracks nothing at all, git printed something unreadable, or
@@ -340,8 +339,7 @@ mod tests {
 
     #[test]
     fn a_branch_that_has_merely_moved_is_not_gone() {
-        // `Track` grew from "gone or not" to four states, and `upstream_gone` is the
-        // projection that has to stay narrow. Widened to "git said anything", every branch
+        // `upstream_gone` has to stay narrow. Widened to "git said anything", every branch
         // that is simply ahead reads as `gone` — and `docs/adr/0011-what-may-be-swept.md`
         // marks on `gone`, so the sweep would offer to delete the one class of branch whose
         // commits exist nowhere else.
@@ -628,8 +626,6 @@ mod tests {
         );
     }
 
-    /// The base has no local ref at all, so it is fetched first — and what is cut from is the
-    /// remote-tracking ref, which is the branch the remote actually has.
     #[test]
     fn a_never_fetched_base_is_fetched_before_the_branch_is_cut_from_it() {
         let base = &resolve(&repo(vec![]), &[], &["feat/search".into()], &[])[0];

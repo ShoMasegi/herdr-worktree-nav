@@ -141,14 +141,11 @@ pub struct BranchesState {
     /// `/` search mode: typing edits the query instead of running commands. Both lists
     /// have one, and it is the same flag — only one of them is ever on screen.
     filtering: bool,
-    /// Frame of the spinner shown beside anything the picker is waiting for. Advanced by
-    /// the caller's draw loop rather than read from a clock, so nothing here has to know
-    /// the time.
+    /// Frame of the spinner shown beside anything the picker is waiting for.
     tick: usize,
 
     step: Step,
-    /// Set for as long as a new branch is being started, including while its destination is
-    /// being chosen — that is what lets `Esc` there come back to the name.
+    /// Set while a new branch is being started, including while its destination is chosen.
     naming: Option<Naming>,
     destinations: Vec<Destination>,
     destination_cursor: usize,
@@ -273,7 +270,6 @@ impl BranchesState {
         self.tick = self.tick.wrapping_add(1);
     }
 
-    /// Which frame of the spinner anything currently being waited for should show.
     pub fn frame(&self) -> usize {
         self.tick
     }
@@ -578,12 +574,10 @@ impl BranchesState {
         self.repo_cursor = 0;
     }
 
-    /// Reorder without losing the branch the cursor is on.
     /// Reorder and go to the top.
     ///
-    /// What a new order is for is seeing what is now first. Following the branch that was
-    /// under the cursor would leave it wherever that row happened to land, which is the one
-    /// place the answer is not.
+    /// What a new order is for is seeing what is now first. Following the branch under the
+    /// cursor would leave it wherever that row happened to land.
     fn reorder(&mut self, order: Order) {
         self.order = order;
         self.refilter();
@@ -819,7 +813,6 @@ impl BranchesState {
     fn handle_branch_search_key(&mut self, key: KeyEvent) -> BranchAction {
         match key.code {
             // Esc abandons the search rather than keeping it, as it does in the panes view.
-            // What survives a search here is done with `Ctrl-`, which works in both modes.
             KeyCode::Esc => {
                 self.filtering = false;
                 self.query.clear();
@@ -839,8 +832,7 @@ impl BranchesState {
                 self.refilter();
                 BranchAction::Consumed
             }
-            // Enter picks rather than committing the search: narrowing the list here is how
-            // you reach the branch you are about to open, not a state worth stopping in.
+            // Enter picks rather than committing the search, as on the repository step.
             KeyCode::Enter => self.choose_branch(),
             KeyCode::Char(c) => {
                 self.query.push(c);
@@ -962,8 +954,6 @@ impl BranchesState {
     fn handle_destination_key(&mut self, key: KeyEvent) -> BranchAction {
         match key.code {
             KeyCode::Esc | KeyCode::Backspace => {
-                // One step back rather than all the way out: a name that has just been typed
-                // is worth keeping while its destination is reconsidered.
                 self.step = if self.naming.is_some() {
                     Step::Name
                 } else {
@@ -1065,7 +1055,7 @@ mod tests {
         }
     }
 
-    /// Open the search box and type into it, which is what most of these tests are after.
+    /// Open the search box and type into it.
     fn search(state: &mut BranchesState, text: &str) {
         state.handle_key(key(KeyCode::Char('/')));
         assert!(state.is_filtering(), "`/` should have taken the keyboard");
@@ -1236,7 +1226,6 @@ mod tests {
         let mut state = state();
         assert!(!state.is_filtering());
 
-        // `j` and `k` move rather than typing themselves into the query.
         assert_eq!(
             state.handle_key(key(KeyCode::Char('j'))),
             BranchAction::Consumed
@@ -1310,9 +1299,8 @@ mod tests {
 
     #[test]
     fn the_offer_to_create_sits_last_and_survives_a_partial_match() {
-        // Typing `feat/login-v2` while `feat/login` exists must still offer to create it,
-        // so the offer cannot be conditional on the list being empty. It goes last so it
-        // never gets in the way of an existing branch.
+        // The offer cannot be conditional on an empty list: a query can match a branch and
+        // still be a name worth creating.
         let mut state = state();
         search(&mut state, "dep");
         let rows = state.rows();
@@ -1324,7 +1312,6 @@ mod tests {
         assert_eq!(rows.last().unwrap().state, BranchState::New);
     }
 
-    /// The row the cursor is on when the picker opens.
     fn under_cursor(state: &BranchesState) -> String {
         state.rows()[state.cursor()].name.clone()
     }
@@ -1340,8 +1327,6 @@ mod tests {
         assert_eq!(state.naming(), Some((base.as_str(), "")));
     }
 
-    /// The base is settled when `n` is pressed, so the list underneath is inert. Moving the
-    /// cursor while typing must not quietly change what the branch is cut from.
     #[test]
     fn the_base_does_not_move_while_the_name_is_being_typed() {
         let mut state = state();
@@ -1374,7 +1359,6 @@ mod tests {
         }
     }
 
-    /// Reconsidering the destination is not reconsidering the name.
     #[test]
     fn esc_from_the_destination_comes_back_to_the_name_still_typed() {
         let mut state = state();
@@ -1412,8 +1396,6 @@ mod tests {
         assert_eq!(state.naming().map(|(_, name)| name), Some(""));
     }
 
-    /// Refused here rather than by git, which would only say so after the picker had
-    /// committed to a destination and started work.
     #[test]
     fn a_name_that_is_empty_invalid_or_taken_is_refused_at_the_prompt() {
         for bad in ["", "  ", "feat/..x", "main"] {
@@ -1428,9 +1410,6 @@ mod tests {
         }
     }
 
-    /// Which is also what keeps the offer to create out of reach as a base: it is only ever
-    /// on screen while something is being typed, and there is no commit to cut from until
-    /// choosing it has made it exist.
     #[test]
     fn n_is_text_while_the_search_box_has_the_keyboard() {
         let mut state = state();
@@ -1544,7 +1523,6 @@ mod tests {
         assert!(!state.is_loading());
         assert_eq!(state.rows()[state.cursor()].name, before);
 
-        // The new branch is there once the filter allows it.
         for _ in 0..5 {
             state.handle_key(key(KeyCode::Backspace));
         }
@@ -1641,7 +1619,6 @@ mod tests {
         let mut state = state();
         search(&mut state, "chore");
         state.handle_key(key(KeyCode::Enter));
-        // The first destination splits w1:t1, which holds one pane.
         let Preview::Layout { panes, .. } = state.preview() else {
             panic!("expected a layout, got {:?}", state.preview());
         };
@@ -1685,9 +1662,6 @@ mod tests {
 
     #[test]
     fn a_worktree_checkout_still_finds_the_repository_it_belongs_to() {
-        // The picker is handed wherever the user was, which for a pane in a linked worktree
-        // is the checkout, not the repository root. Matching only the root would drop the
-        // cursor on whatever happens to be first.
         let state = two_repos("/wt/feat-live");
         assert_eq!(state.repo().display_name, "me/app");
         assert_eq!(state.repo_cursor(), 0);
@@ -1742,7 +1716,6 @@ mod tests {
         ctrl(&mut state, 'u');
         assert_eq!(repo_names(&state).len(), 2);
 
-        // Two checkouts of one fork are told apart by where they are, not by their name.
         search(&mut state, "src/app");
         assert_eq!(repo_names(&state), ["me/app"]);
     }
@@ -1798,12 +1771,10 @@ mod tests {
         state.handle_key(key(KeyCode::Down));
         assert_eq!(state.rows()[state.cursor()].name, "chore/deps");
 
-        // A different key: the cursor takes the first row of the new order.
         state.handle_key(key(KeyCode::Char('i')));
         assert_eq!(state.cursor(), 0);
         assert_eq!(state.rows()[0].name, "main", "the most recently committed");
 
-        // And so does a reversal, which is asked for to see the other end.
         state.handle_key(key(KeyCode::Down));
         state.handle_key(KeyEvent::new(KeyCode::Char('I'), KeyModifiers::SHIFT));
         assert_eq!(state.cursor(), 0);
@@ -1817,7 +1788,6 @@ mod tests {
 
     #[test]
     fn new_data_arriving_still_leaves_the_cursor_where_it_was() {
-        // The remote listing landing is not a reason to move: nobody asked for it.
         let mut state = state();
         state.handle_key(key(KeyCode::Down));
         let before = state.rows()[state.cursor()].name.clone();
@@ -1831,8 +1801,6 @@ mod tests {
 
     #[test]
     fn the_chosen_order_outranks_the_fuzzy_score() {
-        // Sorting the filtered list by score would quietly override the order the user
-        // picked, the moment they typed anything.
         let mut state = state();
         search(&mut state, "a");
         assert_eq!(names(&state)[0], "feat/live", "by state, it is running");
@@ -1904,8 +1872,6 @@ mod tests {
 
     #[test]
     fn the_spinner_runs_on_its_own_rather_than_per_wait() {
-        // One counter for every wait there is, so it never restarts: not when the step
-        // changes, and not when a fetch starts while something else is already turning.
         let mut state = fetching();
         state.tick();
         state.tick();
@@ -1961,7 +1927,6 @@ mod tests {
         );
         assert!(error.contains("remote repository"));
 
-        // Anything that means "I have read it" closes; nothing else does.
         assert_eq!(state.handle_key(key(KeyCode::Down)), BranchAction::Ignored);
         assert_eq!(state.handle_key(key(KeyCode::Enter)), BranchAction::Quit);
         assert_eq!(state.handle_key(key(KeyCode::Esc)), BranchAction::Quit);
@@ -1969,8 +1934,6 @@ mod tests {
 
     #[test]
     fn a_multi_line_failure_is_flattened_into_the_one_line_it_has_to_fit_on() {
-        // git says its piece over several lines. A newline in a one-line widget draws as
-        // nothing useful.
         let mut state = fetching();
         state.fail("fatal: could not read from remote\nfatal: could not fetch".into());
         let Activity::Failed { error, .. } = state.activity() else {

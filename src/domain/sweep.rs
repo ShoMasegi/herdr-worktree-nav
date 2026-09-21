@@ -1,34 +1,24 @@
 //! Which checkouts a sweep may offer to delete, and why.
 //!
-//! `Shift-D` never had to answer this: it acts on the row under the cursor because a person
-//! put the cursor there. A sweep has to decide for itself, so the reasoning is here, pure,
-//! where it can be read and tested without a git or a `gh` —
-//! `docs/adr/0011-what-may-be-swept.md` is the decision this carries out.
-//!
-//! Two rules shape everything below. **A mark is a suggestion with its reason attached**, so
-//! nothing is offered without a `Reason` to show beside it. And **`gh` may only widen**: it
-//! never clears a mark git put there, never gates the mode, and when it cannot be asked the
-//! rows it would have judged say so rather than looking like rows with nothing to find.
+//! `Shift-D` acts on the row under the cursor because a person put the cursor there; a sweep
+//! has to decide for itself. The decision is `docs/adr/0011-what-may-be-swept.md`, and this
+//! carries it out pure, where it can be read and tested without a git or a `gh`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::domain::model::{CheckoutPath, RepoKey, RepoNode, Tree, WorkingTree, WorktreeNode};
 use crate::port::{PullRequestOutcome, SettledPullRequest, SettledPullRequests, Track};
 
-/// Why a checkout is offered for deletion. Shown beside the mark, because a mark whose
-/// reason is invisible is one the user either trusts blindly or clears wholesale.
+/// Why a checkout is offered for deletion. The row shows it beside the mark.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reason {
     /// git cannot find the ref this branch tracks — the ordinary end of a branch whose pull
     /// request was merged and whose head the remote then deleted.
     Gone,
-    /// The branch's pull request is finished with. Only reached where git did not already
-    /// offer the row itself, since `gh` widens and never overrides — which is narrower than
-    /// "git had nothing to say": `Ahead`, `Behind` and `Diverged` all arrive here, so a
-    /// branch carrying commits its upstream has not got can be offered on a merged pull
-    /// request. ADR 0011 removes the checkout and then runs `git branch -d`, which refuses
-    /// an unmerged branch, so the commits outlive the sweep — but they are not a reason the
-    /// sweep weighs, and this is where they would be weighed.
+    /// The branch's pull request is finished with. Reached wherever git did not already
+    /// offer the row, `Ahead`, `Behind` and `Diverged` included, so a branch carrying commits
+    /// its upstream has not got can be offered on a merged pull request. The `git branch -d`
+    /// that follows refuses an unmerged branch, so those commits outlive the sweep.
     PullRequest {
         number: u64,
         outcome: PullRequestOutcome,
@@ -60,10 +50,10 @@ pub enum Refusal {
     /// Panes are running in it. Closing somebody's panes is one deliberate act — see
     /// `docs/adr/0010-closing-the-panes-first.md` — and a batch is not where it belongs.
     Running,
-    /// Its removal is already going, in a process of its own. The one refusal never asked
-    /// for: the cursor does not stop on a row being removed, sweep or no sweep, and
-    /// `deleting` on the row is what says so — `domain::rows::Row::is_selectable`. The
-    /// variant is still needed, because it is what keeps the row out of `chosen`.
+    /// Its removal is already going, in a process of its own. Never read out: the cursor does
+    /// not stop on a row being removed, sweep or no sweep — see
+    /// [`domain::rows::Row::is_selectable`](crate::domain::rows::Row::is_selectable). The
+    /// variant still keeps the row out of [`chosen`].
     Removing,
 }
 
@@ -81,15 +71,13 @@ impl Refusal {
 /// Which half of the question nobody could answer.
 ///
 /// A sweep asks two things of a checkout — git, whether its upstream is gone; `gh`, whether
-/// its pull request is finished with — and a row that neither could settle says which one
-/// went unanswered, since they are fixed in different places. ADR 0011 puts it as saying
-/// "which half it is missing"; this is the half.
+/// its pull request is finished with — and the two are fixed in different places, so a row
+/// neither could settle says which one went unanswered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Half {
     /// git would not read the repository's refs, so `gone` was never on offer — for every
-    /// checkout of the repository at once. Named ahead of `gh` when both are missing: it
-    /// was known before the first frame, it is true outside a sweep too, and the three track
-    /// markers on the row — ahead, behind, `gone` — went with it.
+    /// checkout of the repository at once. Named ahead of `gh` when both are missing: it is
+    /// true outside a sweep too, and the ahead, behind and `gone` markers are missing with it.
     Refs,
     /// `gh` could not settle it: could not be asked, asked and the window it was given came
     /// back full, or asked and answered in a state this does not know.
@@ -115,21 +103,15 @@ pub enum Candidate {
     ///
     /// Only where the answer would have changed something: a clean checkout on a branch,
     /// which is what both halves are asked about. A dirty one, a detached one, a refused one
-    /// and one whose working tree has not been read or could not be are all rows nothing was
-    /// going to offer, so nothing about them is unknown that matters.
+    /// and one whose working tree has not been read are rows nothing was going to offer
+    /// anyway, so nothing about them is unknown that matters.
     ///
-    /// The row says so, because a sweep that quietly finds less when it could not look is
-    /// worse than one that says which half it could not see. Three ways `gh` fails to settle
-    /// a row, and only the first is a missing dependency: it could not be asked at all; it
-    /// answered but the window it was given was full, so a branch absent from the list may
-    /// simply be further back than it reached; or it answered and one of the entries was in
-    /// a state this does not know. One way git does: the ref walk failed, and every checkout
-    /// of the repository has `track: None` — which is also what a branch level with its
-    /// upstream has, so the row cannot tell and the repository carries the fact instead
-    /// (`domain::model::Refs`).
+    /// git's half fails one way: the ref walk failed, and every checkout of the repository
+    /// then has `track: None` — which is also what a branch level with its upstream has, so
+    /// the row cannot tell and the repository carries the fact instead
+    /// ([`domain::model::Refs`](crate::domain::model::Refs)).
     Unjudged(Half),
-    /// Nothing says it should go. `Space` still marks it: disagreeing with the sweep is the
-    /// same act as widening it, one row at a time.
+    /// Nothing says it should go, and `Space` still marks it.
     Available,
     /// Never swept.
     Refused(Refusal),
@@ -149,9 +131,8 @@ impl Candidate {
     /// Spelled out rather than written as `!matches!(_, Refused(_))`, which is the same
     /// answer today and would go on compiling as a variant was added — answering *yes* for
     /// it, because that is what the negation of a single pattern does. This is the predicate
-    /// that decides what may be deleted, so the direction it fails in is the whole question:
-    /// a fifth variant meant to be untouchable would have been markable, and nothing but a
-    /// second filter in [`chosen`] between it and a removal. The compiler asks now.
+    /// that decides what may be deleted, so a variant meant to be untouchable would reach a
+    /// removal with nothing but [`chosen`] in the way. The compiler asks now.
     pub fn is_markable(&self) -> bool {
         match self {
             Candidate::Offered(_) | Candidate::Unjudged(_) | Candidate::Available => true,
@@ -166,8 +147,7 @@ impl Candidate {
 /// `repo_key` (`/src/app/.git`) and `repo_root` (`/src/app`) — and a map keyed by the wrong
 /// one silently answers nothing for every checkout in the tree: no marks, no `Unjudged`, no
 /// error, nothing on screen. Outside this module [`RepoRoot::of`] is the only way to make
-/// one, so there is nothing for a caller to pick wrongly; inside it the field is in scope,
-/// and what pins the choice is a test rather than the compiler.
+/// one; inside it a test pins the choice rather than the compiler.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RepoRoot(String);
 
@@ -180,7 +160,8 @@ impl RepoRoot {
 /// Everything a sweep decides on that is not in the tree.
 pub struct Facts<'a> {
     /// What git said about each working tree, by checkout path. Absent is "not asked yet",
-    /// which is not clean — see `domain::model::WorkingTree`.
+    /// which is not clean — see
+    /// [`domain::model::WorkingTree`](crate::domain::model::WorkingTree).
     pub working_trees: &'a BTreeMap<CheckoutPath, WorkingTree>,
     /// What `gh` said, by repository root. `None` for a repository `gh` could not be asked
     /// about — the reason belongs on the prompt line, not in a decision — and a repository
@@ -212,15 +193,10 @@ fn judge(
     facts: &Facts,
 ) -> Candidate {
     // The refusals come first because they are about the checkout rather than about whether
-    // anyone is finished with it: a running pane is a reason not to sweep a branch whose
-    // upstream went, not a tie to be broken afterwards.
-    //
-    // Their order among themselves decides only which refusal a checkout that earns two of
-    // them carries, and it runs most permanent first: being the repository itself is not a
-    // state that passes, a removal already going will end, and panes close whenever somebody
-    // closes them. `which_refusal_a_checkout_that_earns_two_of_them_shows` is what says so.
-    // Only the first and the last are ever put into words — `Space` cannot reach a row being
-    // removed — so for `Removing` the order decides which variant it is, not what is read.
+    // anyone is finished with it. Their order among themselves decides only which refusal a
+    // checkout that earns two of them carries, and it runs most permanent first: being the
+    // repository itself is not a state that passes, a removal already going will end, and
+    // panes close whenever somebody closes them.
     if worktree.is_primary {
         return Candidate::Refused(Refusal::Primary);
     }
@@ -231,10 +207,9 @@ fn judge(
         return Candidate::Refused(Refusal::Running);
     }
 
-    // Everything below is a reason to *offer*, and every one of them needs a working tree
-    // with nothing in it to lose. Clean is a positive answer: dirty, unreadable and
-    // not-asked-yet are all "no", and the user may still mark those by hand for git to
-    // refuse. Marking one by default would be deleting on the strength of a silence.
+    // Every reason to offer below needs a working tree with nothing in it to lose. Clean is
+    // a positive answer: dirty, unreadable and not-asked-yet are all "no", and marking one of
+    // those by default would be deleting on the strength of a silence.
     let clean = facts
         .working_trees
         .get(path)
@@ -246,32 +221,27 @@ fn judge(
 
     // Below here `gh` is the only thing left that could say anything, so a row it could not
     // reach is `Unjudged` rather than `Available` — but only where its answer would have
-    // changed the outcome. A row already refused, already offered by git, or that git would
-    // refuse anyway was never a row a pull request was going to decide. The same gate holds
-    // for git's own half: `gone` was never going to offer a dirty or a detached checkout,
-    // so refs that were not read leave nothing unknown about those that matters.
+    // changed the outcome. The same gate holds for git's own half: `gone` was never going to
+    // offer a dirty or a detached checkout.
     let could_have_decided = clean && worktree.branch.is_some();
     let refs_unread = could_have_decided && !repo.refs.is_read();
     let settled = match settled {
-        // Nobody has asked `gh` yet. Not the same as asking and getting nothing, but there
-        // is nothing to say about it either: an answer is still on its way, and a permanent
-        // word on a temporary state is what the working-tree walk already avoids. git's
-        // half is not on its way — it was read before the first frame — so that is said now.
+        // Nobody has asked `gh` yet: an answer is still on its way, and a permanent word on
+        // a temporary state is what the working-tree walk already avoids. git's half is not
+        // on its way — the refs are read before the first frame — so that half is said now.
         None if refs_unread => return Candidate::Unjudged(Half::Refs),
         None => return Candidate::Available,
-        // Asked, and `gh` could not answer. This is the row that says so — unless git could
-        // not either, in which case the half named is git's: the track markers on the row
-        // are missing with it, and fixing it is what makes the `gh` half worth reading.
+        // Asked, and `gh` could not answer — unless git could not either, in which case the
+        // half named is git's, since fixing that is what makes `gh`'s half worth reading.
         Some(None) if refs_unread => return Candidate::Unjudged(Half::Refs),
         Some(None) if could_have_decided => return Candidate::Unjudged(Half::PullRequests),
         Some(None) => return Candidate::Available,
         Some(Some(settled)) => settled,
     };
 
-    // A hit and a miss are answered in the same breath, once per variant, because what a
-    // *miss* means is a fact about the list rather than about the branch. Written any other
-    // way the two meanings can end up in one arm, which is what a flag beside the list
-    // allowed and what this shape does not.
+    // A hit and a miss are answered once per variant, because what a *miss* means is a fact
+    // about the list rather than about the branch. A flag beside the list lets the two
+    // meanings land in one arm; this shape cannot.
     let found = worktree
         .branch
         .as_ref()
@@ -283,17 +253,15 @@ fn judge(
             number: pull_request.number,
             outcome: pull_request.outcome,
         }),
-        // Found, and the working tree has something in it. git would refuse the removal, so
-        // the sweep does not suggest it — the same rule the `gone` path is under.
+        // Found, and the working tree has something in it: git would refuse the removal.
         (Some(_), _) => Candidate::Available,
-        // Not found, and git never got to look for `gone`: whichever list this is, the row
-        // is one nobody judged, and git's is the half it says.
+        // Not found, and git never got to look for `gone`: nobody judged this row.
         (None, _) if refs_unread => Candidate::Unjudged(Half::Refs),
         // Missing from all of them: this branch has no finished pull request.
         (None, SettledPullRequests::All(_)) => Candidate::Available,
         // Missing from as many as `gh` was asked for: the window may not reach back far
-        // enough, and saying "nothing to sweep" on the strength of a page size is the
-        // confident wrong claim this whole distinction exists to prevent.
+        // enough, and "nothing to sweep" on the strength of a page size is a confident
+        // wrong claim.
         (None, SettledPullRequests::Window(_)) if could_have_decided => {
             Candidate::Unjudged(Half::PullRequests)
         }
@@ -309,10 +277,9 @@ fn judge(
 /// of a coincidence. `gh` may only widen a sweep, and a wrong mark is not a widening.
 ///
 /// A branch can have more than one — closed, then reopened and merged, or a name used twice —
-/// and taking whichever `gh` happened to list first would make the reason on the row depend
-/// on a sort order nothing here pins. Merged wins, because a branch with a merge behind it
-/// has landed whatever else also happened to it; between two of a kind the later number is
-/// the later story.
+/// and taking whichever `gh` lists first turns the row's reason on a sort order nothing here
+/// pins. Merged wins, because a branch with a merge behind it has landed whatever else also
+/// happened to it; between two of a kind the later number is the later story.
 fn finished_with<'a>(
     pull_requests: &'a [SettledPullRequest],
     branch: &str,
@@ -330,21 +297,16 @@ fn finished_with<'a>(
 
 /// What the user has said about the sweep's suggestions since it opened.
 ///
-/// **The decision, not the keypress.** `Space` flips the row it is on — the same key widens
-/// the sweep and narrows it, which is the whole of ADR 0011's "a mark is a suggestion" — but
-/// what is written down is where that left the row, not that it was pressed.
-///
-/// The difference is not academic. A stored flip is exclusive-or-ed against a suggestion,
-/// and `judge` recomputes the suggestion on every rebuild out of four things that all move
-/// while the sweep is on screen. So a flip changes meaning underneath itself. Mark a row
-/// `gh` had said nothing about, let `gh` land and agree, and the two cancel and the mark goes
-/// out. Clear the `gone` row, let the walk report it dirty, and the row comes back marked — a
-/// checkout the user said no to, going.
+/// **The decision, not the keypress.** `Space` flips the row it is on, and what is written
+/// down is where that left the row, not that it was pressed. A stored flip would be
+/// exclusive-or-ed against a suggestion `judge` recomputes on every rebuild, so it would
+/// change meaning underneath itself: mark a row `gh` says nothing about and let `gh` land and
+/// agree, and the two cancel and the mark goes out; clear the `gone` row and let the walk
+/// report it dirty, and a checkout the user said no to comes back marked.
 ///
 /// Keyed by repository and checkout path rather than by row index, because the row list is
-/// rebuilt underneath this every time a working tree answers. An index would move; a path
-/// stays with the checkout it names, and a path whose checkout has left the tree simply stops
-/// matching anything.
+/// rebuilt underneath this every time a working tree answers. A path stays with the checkout
+/// it names, and one whose checkout has left the tree stops matching anything.
 #[derive(Debug, Default, Clone)]
 pub struct Changes(BTreeMap<(RepoKey, CheckoutPath), Decision>);
 
@@ -356,16 +318,13 @@ struct Decision {
     /// A path outlives the checkout that had it: remove a worktree and make another in the
     /// same place — which `git worktree add` will do, and which a second herdr session can
     /// do while the picker is up — and the tree comes back through `replace_tree` with a
-    /// different branch at a path the user has already said yes to. Without this, that yes
-    /// is now about a branch nobody has seen, on the list `Enter` acts on. ADR 0011's
-    /// "nothing is deleted that was not on the screen with a mark against it" is about what
-    /// was on the screen, and a path is not that.
+    /// different branch at a path the user has already said yes to, on the list `Enter` acts
+    /// on.
     ///
-    /// `None` is a detached checkout, which is a thing the row shows too. Two of those at
-    /// one path are as different as two branches are, and this cannot tell them apart: a
-    /// `WorktreeNode` carries no commit, so an answer about one carries over to the other.
-    /// It takes a checkout removed and another made detached at the same path while the
-    /// sweep is up, and what closes it is a commit id on the node, which nothing reads yet.
+    /// `None` is a detached checkout. Two of those at one path are as different as two
+    /// branches are, and this cannot tell them apart: a `WorktreeNode` carries no commit, so
+    /// an answer about one carries over to the other. What would close that is a commit id on
+    /// the node, which nothing reads yet.
     branch: Option<String>,
     going: bool,
 }
@@ -376,9 +335,6 @@ impl Changes {
     /// Takes the [`Mark`] rather than only the path so that a refusal cannot be flipped into
     /// a mark by a keypress. `None` is that refusal: nothing was recorded, and the caller has
     /// a sentence from [`Mark::refusal`] to put on the prompt line.
-    ///
-    /// The `Mark` is also what the answer is read off. What a row is now is what it was not,
-    /// and it is written down as that rather than as "flipped" — see the note on the type.
     pub fn flip(&mut self, repo: &RepoNode, worktree: &WorktreeNode, mark: &Mark) -> Option<bool> {
         if !mark.is_markable() {
             return None;
@@ -400,9 +356,6 @@ impl Changes {
     /// one input that is not — it is what the user said, and it is meant to outlive a `gh`
     /// answer landing and a working tree reporting. What it must not outlive is the checkout
     /// it was said about. A path is reused; an answer is not transferable.
-    ///
-    /// Applied where the marks are made rather than where the tree is set, so there is no
-    /// call site that has to remember it.
     pub fn still_about(&self, tree: &Tree) -> Changes {
         let listed: BTreeMap<(RepoKey, CheckoutPath), Option<&str>> = tree
             .repos
@@ -435,11 +388,9 @@ impl Changes {
 ///
 /// The sweep's suggestion for every row the user has not spoken about, and the user's own
 /// answer for every row they have. This is the answer `Enter` acts on, so a refusal reaching
-/// it would be a checkout deleted that the picker had promised never to touch. It cannot:
-/// [`Changes::flip`] will not record one,
-/// and this filters again rather than trusting that, because a checkout somebody opens a
-/// pane in becomes `Refused(Running)` the next time the tree is read — which, while a sweep
-/// is on, is when a removal started before it reports back — with the user's answer still
+/// it would be a checkout deleted that the picker promised never to touch. It filters again
+/// rather than trusting [`Changes::flip`], because a checkout somebody opens a pane in
+/// becomes `Refused(Running)` the next time the tree is read, with the user's answer still
 /// written down against it.
 pub fn chosen<'a>(
     candidates: &'a BTreeMap<(RepoKey, CheckoutPath), Candidate>,
@@ -456,9 +407,9 @@ pub fn chosen<'a>(
 
 /// What one row shows while a sweep is on.
 ///
-/// Everything a row needs and nothing a row has to work out for itself, because the sweep's
-/// suggestions and the user's changes are two collections and a row that consulted both
-/// would be the third place the rule lives.
+/// Everything a row needs and nothing a row has to work out for itself: the sweep's
+/// suggestions and the user's changes are two collections, and a row that consulted both
+/// would be a third place the rule lives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mark {
     /// Going, for the reason shown: what the sweep found.
@@ -468,15 +419,13 @@ pub enum Mark {
     GoingByHand,
     /// Going because the user said so, on a row neither git nor `gh` could settle. The row
     /// goes on saying which: it is the one row on the list where what is being acted on is
-    /// nobody knows, and that is worth most on the row about to be acted on. Its own variant
-    /// rather than a flag beside [`GoingByHand`](Mark::GoingByHand), because a mark carrying
-    /// both a reason and "could not look" would be a state nothing here can mean.
+    /// nobody knows. Its own variant rather than a flag beside
+    /// [`GoingByHand`](Mark::GoingByHand), because a mark carrying both a reason and "could
+    /// not look" would be a state nothing here can mean.
     GoingUnjudged(Half),
     /// Staying, and the user may change that.
     Staying,
-    /// Staying, and one half of the question went unanswered. Says which, because a sweep
-    /// that quietly finds less when it could not look is worse than one that says which half
-    /// it could not see — `docs/adr/0011-what-may-be-swept.md`.
+    /// Staying, and one half of the question went unanswered. The row says which.
     Unjudged(Half),
     /// Never swept, and why.
     Refused(Refusal),
@@ -495,9 +444,8 @@ impl Mark {
     ///
     /// Exhaustive for the reason [`Candidate::is_markable`] is, and it has to agree with it:
     /// `Candidate` decides what may be deleted and this decides what the keyboard may touch,
-    /// and a variant added to one has to be answered in both. Written as a negation, each
-    /// would have said yes to a new variant on its own and gone on agreeing while both were
-    /// wrong.
+    /// so a variant added to one has to be answered in both. Written as negations, both would
+    /// say yes to a new variant and go on agreeing while both were wrong.
     pub fn is_markable(&self) -> bool {
         match self {
             Mark::Going(_)
@@ -511,19 +459,14 @@ impl Mark {
 
     /// What the row says beside its mark, or nothing.
     ///
-    /// Two things are deliberately not here, and both because the row already says them.
+    /// [`Reason::Gone`] is left out: [`domain::rows::marks`](crate::domain::rows::marks) draws
+    /// it as the branch's upstream marker on every row it is true of, and `judge` offers that
+    /// reason only where `track` is `Gone`, so repeating it puts the same word on the row
+    /// twice. (The converse does not hold: a row whose track is gone is not offered while it
+    /// is primary, running, being removed, or not known to be clean.)
     ///
-    /// `Reason::Gone` is drawn by `domain::rows::marks` as the branch's upstream marker on
-    /// every row it is true of — and `judge` offers that reason only where `track` is
-    /// `Gone`, so wherever the reason would go the marker already is. Repeating it puts the
-    /// same word on the row twice. (The converse does not hold: a row whose track is gone
-    /// is not offered while it is primary, running, being removed, or not known to be
-    /// clean.)
-    ///
-    /// A refusal is said by the absence of a box, and asked about with `Space`, which
-    /// answers on the prompt line — see [`refusal`](Mark::refusal). On the row it would be a
-    /// sentence as long as "panes are running in it" beside every primary checkout in the
-    /// list, which is where the label would otherwise go.
+    /// A refusal is left out too: the absence of a box says it, and `Space` answers on the
+    /// prompt line — see [`refusal`](Mark::refusal).
     pub fn note(&self) -> Option<String> {
         match self {
             Mark::Going(reason @ Reason::PullRequest { .. }) => Some(reason.label()),
@@ -536,8 +479,8 @@ impl Mark {
 
     /// Why `Space` did nothing here, for the prompt line.
     ///
-    /// On demand rather than on the row, because the answer is only wanted by somebody who
-    /// has just tried — and because these are sentences rather than labels.
+    /// On demand rather than on the row: the answer is only wanted by somebody who has just
+    /// tried, and these are sentences rather than labels.
     pub fn refusal(&self) -> Option<&'static str> {
         match self {
             Mark::Refused(refusal) => Some(refusal.label()),
@@ -548,9 +491,8 @@ impl Mark {
 
 /// What every checkout shows while a sweep is on, by repository and checkout path.
 ///
-/// Worked out once per rebuild rather than per row: `chosen` is the answer `Enter` acts on,
-/// and a row that recomputed it would be a second implementation of the same rule, free to
-/// disagree with the one that deletes things.
+/// Worked out once per rebuild rather than per row: a row that recomputed it would be a
+/// second implementation of the rule `chosen` deletes by, free to disagree with it.
 pub fn marks(
     candidates: &BTreeMap<(RepoKey, CheckoutPath), Candidate>,
     changes: &Changes,
@@ -560,10 +502,9 @@ pub fn marks(
         .iter()
         .map(|(key, candidate)| {
             // Flat, so that every pairing of what the sweep found and what the user said is
-            // an arm of its own. The nested `match` this was had a wildcard on its inside. A
-            // fifth `Candidate` did stop the compiler — at the outer arm — but the smallest
-            // edit that satisfied it left the inner wildcard to answer for the new variant,
-            // with `Going(None)`: a box with nothing beside it, and no second stop to say so.
+            // an arm of its own. Nested, a wildcard on the inside answers for a new
+            // `Candidate` with a box and nothing beside it, and the compiler stops only at
+            // the outer arm.
             let going = going.contains(key);
             let mark = match candidate {
                 Candidate::Refused(refusal) => Mark::Refused(*refusal),
@@ -703,9 +644,8 @@ mod tests {
 
     #[test]
     fn nothing_is_offered_on_a_working_tree_nobody_has_answered_for() {
-        // The state the picker opens in. Offering here would be deleting a checkout because
-        // a walk has not finished yet, which is the one direction that cannot be undone by
-        // waiting a moment longer.
+        // The state the picker opens in. Offering here deletes a checkout because a walk has
+        // not finished yet, which waiting a moment longer cannot undo.
         let mut wt = worktree("fix/crash", "/wt/fix-crash");
         wt.track = Some(Track::Gone);
         let nothing = BTreeMap::new();
@@ -717,8 +657,8 @@ mod tests {
     #[test]
     fn a_working_tree_git_would_not_read_is_never_offered() {
         // Not the same as reading it and finding nothing. `safe.directory`, or a checkout
-        // whose directory has gone: git said it could not look, and offering on that is
-        // offering to delete whatever was in there on the strength of a failed question.
+        // whose directory has gone: git said it could not look, and offering on that offers
+        // to delete whatever is in there on the strength of a failed question.
         let mut wt = worktree("fix/crash", "/wt/fix-crash");
         wt.track = Some(Track::Gone);
         let unreadable = BTreeMap::from([(
@@ -732,8 +672,7 @@ mod tests {
 
     #[test]
     fn a_detached_checkout_is_not_called_unjudged_when_gh_could_not_be_asked() {
-        // Nothing points at it, so there was never a pull request that could have decided
-        // it. Saying "PR unknown" would blame `gh` for a silence git is responsible for.
+        // Saying "PR unknown" would blame `gh` for a silence git is responsible for.
         let mut wt = worktree("feat/login", "/wt/detached");
         wt.branch = None;
         let trees = clean(&["/wt/detached"]);
@@ -744,8 +683,7 @@ mod tests {
 
     #[test]
     fn a_working_tree_holding_work_is_not_offered_but_can_still_be_marked() {
-        // git refuses it, and git's refusal is the answer rather than an obstacle: it says
-        // what would have been lost. What the sweep will not do is suggest it.
+        // git refuses the removal, and says what would have been lost.
         let mut wt = worktree("fix/crash", "/wt/fix-crash");
         wt.track = Some(Track::Gone);
         let dirty = BTreeMap::from([(CheckoutPath::for_test("/wt/fix-crash"), WorkingTree::Dirty)]);
@@ -824,8 +762,7 @@ mod tests {
     #[test]
     fn gh_widens_and_never_overrides() {
         // A branch git already called `gone` keeps git's reason even where a pull request
-        // would have given another, and an open pull request — which is not in the settled
-        // list at all — does not take the mark away.
+        // would have given another.
         let mut wt = worktree("fix/crash", "/wt/fix-crash");
         wt.track = Some(Track::Gone);
         let trees = clean(&["/wt/fix-crash"]);
@@ -881,11 +818,8 @@ mod tests {
     fn a_repository_whose_refs_git_would_not_read_says_so_on_the_rows_git_would_have_judged() {
         // git's half of ADR 0011's price. A failed ref walk leaves every checkout with
         // `track: None`, which is what a branch level with its upstream has too, so without
-        // this the repository offers nothing on git's account and looks like one with nothing
-        // to find.
-        // Known before `gh` is asked — the refs were read in front of the first frame — so
-        // it is said before `gh` is asked, and the gate is the one `gh`'s half is under: a
-        // dirty or a detached checkout was never going to be offered on `gone`.
+        // this the repository looks like one with nothing to find. The gate is the one
+        // `gh`'s half is under: a dirty or a detached checkout is never offered on `gone`.
         let judgeable = worktree("feat/login", "/wt/feat-login");
         let holding_work = worktree("fix/crash", "/wt/fix-crash");
         let mut detached = worktree("", "/wt/detached");
@@ -929,11 +863,9 @@ mod tests {
 
     #[test]
     fn gh_still_widens_a_repository_whose_refs_git_would_not_read() {
-        // `gh` may only widen, and a failed ref walk takes nothing away from it: a finished
-        // pull request offers the row exactly as it would have. Where `gh` has nothing to
-        // offer — no pull request, or no answer — the half the row names is git's, since
-        // the track markers on the row went with it and fixing it is what makes `gh`'s half
-        // worth reading.
+        // A failed ref walk takes nothing away from `gh`: a finished pull request offers the
+        // row exactly as it would otherwise. Where `gh` has nothing to offer — no pull
+        // request, or no answer — the half the row names is git's.
         let trees = clean(&["/wt/feat-login", "/wt/fix-crash"]);
         let both = vec![
             worktree("feat/login", "/wt/feat-login"),
@@ -974,9 +906,9 @@ mod tests {
             Candidate::Unjudged(Half::Refs)
         );
 
-        // And a window that does reach the branch offers it, whatever git could not read:
-        // the same widening as from the whole list. Pinned separately because the arms are
-        // separate, and a guard on the wrong one would leave this reading `Unjudged`.
+        // And a window that does reach the branch offers it, whatever git could not read.
+        // Pinned separately because the arms are separate, and a guard on the wrong one
+        // would leave this reading `Unjudged`.
         let reached = judged(
             &tree_unread(both),
             &facts(&trees, &told(vec![merged(7, "feat/login")], false)),
@@ -992,8 +924,7 @@ mod tests {
 
     #[test]
     fn asked_and_told_nothing_is_not_the_same_as_not_being_able_to_ask() {
-        // `Some(vec![])` against `None`. The first is a repository with no finished pull
-        // request, which is an answer; the second is no answer at all.
+        // `Some(vec![])` against `None`: an answer that found nothing, against no answer.
         let trees = clean(&["/wt/feat-login"]);
         let answered = judged(
             &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
@@ -1015,8 +946,7 @@ mod tests {
     #[test]
     fn a_branch_beyond_the_window_gh_was_given_is_not_called_finished_with() {
         // `gh` answers newest first and says nothing when it truncates, so "not in this
-        // list" from a full window is not "no pull request". Reading it as one would tell
-        // the user there is nothing to sweep on the strength of a page size.
+        // list" from a full window is not "no pull request".
         let trees = clean(&["/wt/feat-login"]);
         let truncated = told(vec![merged(1, "some/other")], false);
         let partial = judged(
@@ -1039,7 +969,7 @@ mod tests {
 
     #[test]
     fn a_branch_found_in_a_truncated_window_is_still_an_answer() {
-        // Truncation only casts doubt on absence. A pull request that *is* there was seen.
+        // Truncation only casts doubt on absence.
         let trees = clean(&["/wt/feat-login"]);
         let truncated = told(vec![merged(4, "feat/login")], false);
         let judged = judged(
@@ -1057,9 +987,9 @@ mod tests {
 
     #[test]
     fn a_repository_nobody_has_asked_gh_about_yet_is_not_reported_as_unseen() {
-        // An answer is still on its way. Saying "PR unknown" here would put a permanent
-        // word on a temporary state, which is the mistake the working-tree walk already
-        // avoids by drawing no marker until it knows.
+        // An answer is still on its way, and "PR unknown" is a permanent word on a temporary
+        // state — the mistake the working-tree walk avoids by drawing no marker until it
+        // knows.
         let trees = clean(&["/wt/feat-login"]);
         let none = BTreeMap::new();
         let judged = judged(
@@ -1071,9 +1001,8 @@ mod tests {
 
     #[test]
     fn a_pull_request_that_was_closed_is_not_reported_as_one_that_landed() {
-        // The two outcomes read very differently to whoever is deciding. "PR #4 merged"
-        // says the work is in; "PR #4 closed" says it was abandoned. Getting it the wrong
-        // way round tells someone their work landed as they delete the only copy of it.
+        // "PR #4 merged" says the work is in and "PR #4 closed" says it was abandoned, so
+        // the wrong way round tells someone their work landed as they delete the only copy.
         let trees = clean(&["/wt/feat-login"]);
         let abandoned = asked(vec![settled(4, "feat/login", PullRequestOutcome::Closed)]);
         let judged = judged(
@@ -1088,9 +1017,9 @@ mod tests {
 
     #[test]
     fn one_repositorys_pull_requests_never_judge_anothers_checkouts() {
-        // `feat/login` in two repositories is ordinary, and only one of them was asked
-        // about. Answering for both would offer to delete a checkout on the strength of a
-        // merge that happened somewhere else entirely.
+        // `feat/login` in two repositories is ordinary, and only one of them was asked about.
+        // Answering for both offers to delete a checkout on the strength of a merge that
+        // happened somewhere else entirely.
         let tree = Tree {
             repos: vec![
                 RepoNode {
@@ -1137,10 +1066,8 @@ mod tests {
 
     #[test]
     fn a_merged_pull_request_does_not_offer_a_checkout_holding_work() {
-        // The twin of the `gone` rule, and the one that was unpinned: a working tree with
-        // something in it is never offered, whatever GitHub says about the branch. git would
-        // refuse the removal anyway — but the sweep's job is not to suggest what git will
-        // refuse, it is to suggest what is finished with.
+        // The twin of the `gone` rule: a working tree with something in it is never offered,
+        // whatever GitHub says about the branch.
         for answer in [WorkingTree::Dirty, WorkingTree::Unreadable] {
             let trees = BTreeMap::from([(CheckoutPath::for_test("/wt/feat-login"), answer)]);
             let judged = judged(
@@ -1161,11 +1088,9 @@ mod tests {
 
     #[test]
     fn a_branch_that_landed_is_not_reported_by_whichever_pull_request_gh_listed_first() {
-        // Closed, then reopened and merged — or a branch name used twice. `gh` answers
-        // newest first, but nothing here pins that, and the row's reason must not turn on a
-        // sort order. Merged wins: a branch with a merge behind it has landed, whatever else
-        // also happened to it. Getting this the wrong way round tells someone their work was
-        // abandoned as they delete the only copy of it.
+        // Closed, then reopened and merged — or a branch name used twice. `gh` answers newest
+        // first, but nothing here pins that, and the wrong way round tells someone their work
+        // was abandoned as they delete the only copy of it.
         let trees = clean(&["/wt/feat-login"]);
         for order in [
             vec![
@@ -1191,8 +1116,7 @@ mod tests {
     #[test]
     fn a_merge_wins_over_a_closure_that_came_after_it() {
         // The half the ordering test cannot see: here the merge is the *older* entry, so
-        // preferring the later number alone would report the closure. The branch landed;
-        // whatever happened to a later pull request for the same name did not unland it.
+        // preferring the later number alone would report the closure.
         let trees = clean(&["/wt/feat-login"]);
         let judged = judged(
             &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
@@ -1212,8 +1136,7 @@ mod tests {
 
     #[test]
     fn two_of_a_kind_are_reported_by_the_later_one() {
-        // Nothing distinguishes them but which came second, and the second is the one whose
-        // story the branch is at the end of.
+        // Nothing distinguishes them but which came second.
         let trees = clean(&["/wt/feat-login"]);
         let judged = judged(
             &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
@@ -1235,8 +1158,7 @@ mod tests {
     fn a_branch_of_the_same_name_on_somebody_elses_fork_is_not_this_one() {
         // `gh` reports a fork's branch by its bare name, so a merged drive-by `patch-1`
         // arrives looking exactly like the local `patch-1` somebody is working on. On a
-        // repository that takes contributions this is the everyday collision, and offering
-        // it would be `gh` producing a wrong mark rather than widening a set.
+        // repository that takes contributions this is the everyday collision.
         let trees = clean(&["/wt/patch-1"]);
         let from_a_fork = asked(vec![SettledPullRequest {
             number: 42,
@@ -1253,8 +1175,7 @@ mod tests {
 
     #[test]
     fn a_row_git_would_refuse_anyway_is_not_called_unjudged() {
-        // `gh` failing is only worth saying where its answer could have changed something.
-        // A working tree holding work was never going to be offered whatever GitHub said.
+        // A working tree holding work is not offered whatever GitHub says about the branch.
         let dirty =
             BTreeMap::from([(CheckoutPath::for_test("/wt/feat-login"), WorkingTree::Dirty)]);
         let unavailable = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
@@ -1267,11 +1188,9 @@ mod tests {
 
     #[test]
     fn a_row_git_would_refuse_anyway_is_not_called_unjudged_by_a_full_window_either() {
-        // The same rule down the other road. `gh` answered — it just may not have reached
-        // back far enough — and the row it did not reach was one no pull request was going
-        // to decide. On a repository with more than a window of closed pull requests this is
-        // every row nobody has answered for yet, which is all of them on the first frame:
-        // `Unjudged` there buries the rows that genuinely could not be judged.
+        // On a repository with more than a window of closed pull requests this is every row
+        // nobody has answered for yet, which is all of them on the first frame: `Unjudged`
+        // there buries the rows that genuinely could not be judged.
         let holding_work = judged(
             &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
             &facts(
@@ -1295,10 +1214,8 @@ mod tests {
 
     #[test]
     fn which_refusal_a_checkout_that_earns_two_of_them_shows() {
-        // Every other test here gives a checkout exactly one refusal, so the order among
-        // them cancels out — and the order is the whole of what `Refusal::label` says. Most
-        // permanent first: the repository itself never stops being that, a removal ends, and
-        // panes close whenever somebody closes them.
+        // Every other test here gives a checkout exactly one refusal, so the order among them
+        // cancels out and only this pins it.
         let mut all_three = worktree("main", "/src/app");
         all_three.is_primary = true;
         all_three.panes = vec![PaneNode {
@@ -1324,10 +1241,9 @@ mod tests {
             Candidate::Refused(Refusal::Primary)
         );
 
-        // And the pair below it, which asserting only the top of the order leaves free. A
-        // checkout being removed that still has panes in it says "already being removed":
-        // the other way round sends the user back to close panes that a removal already
-        // running is about to take with it, and never says the removal is happening.
+        // And the pair below it, which asserting only the top of the order leaves free. The
+        // other way round sends the user back to close panes that a removal already running
+        // is about to take with it, and never says the removal is happening.
         let mut both = worktree("feat/login", "/wt/feat-login");
         both.panes = vec![PaneNode {
             pane_id: "w2:p1".into(),
@@ -1353,10 +1269,8 @@ mod tests {
 
     #[test]
     fn the_map_is_keyed_by_the_root_and_not_the_directory_beside_it() {
-        // `RepoNode` carries `/src/app/.git` and `/src/app` side by side, and keying on the
-        // wrong one answers nothing for every checkout in the tree: no marks, no `Unjudged`,
-        // no error, nothing on screen. Every other test here builds both sides of the map
-        // with `RepoRoot::of`, so the choice cancels out and only this pins it.
+        // Every other test here builds both sides of the map with `RepoRoot::of`, so the
+        // choice cancels out and only this pins it.
         assert_eq!(RepoRoot::of(&only_repo()), RepoRoot("/src/app".to_string()));
     }
 
@@ -1436,9 +1350,7 @@ mod tests {
 
     #[test]
     fn space_widens_the_sweep_and_narrows_it_with_the_same_key() {
-        // ADR 0011's "a mark is a suggestion" is this: disagreeing with the sweep costs
-        // exactly what agreeing with it extra does, one key on one row. A pair of add and
-        // remove keys would make one of the two the easier answer.
+        // A pair of add and remove keys would make one of the two the easier answer.
         let candidates = one_of_each();
         let mut changes = Changes::default();
 
@@ -1457,8 +1369,7 @@ mod tests {
             BTreeSet::from([&at("/wt/available")])
         );
 
-        // And back, because the same key has to undo itself — a user who marks the wrong row
-        // reaches for the key they just pressed.
+        // And back: a user who marks the wrong row reaches for the key they just pressed.
         assert_eq!(
             flip(&mut changes, &candidates, "/wt/available"),
             Some(false)
@@ -1472,16 +1383,14 @@ mod tests {
 
     #[test]
     fn gh_agreeing_with_a_mark_the_user_made_does_not_take_it_away() {
-        // Storing the keypress rather than the decision made this fail: a flip is
-        // exclusive-or-ed against a suggestion that moves, so `gh` arriving at the same
-        // answer the user had already given cancelled it out.
+        // A stored keypress is exclusive-or-ed against a suggestion that moves, so `gh`
+        // arriving at the answer the user already gave would cancel it out.
         let mut candidates = one_of_each();
         let mut changes = Changes::default();
         flip(&mut changes, &candidates, "/wt/available");
         assert!(chosen(&candidates, &changes).contains(&at("/wt/available")));
 
-        // `gh` answers: that branch's pull request is merged. The sweep now suggests what
-        // the user already said.
+        // `gh` answers, and the sweep now suggests what the user already said.
         candidates.insert(
             at("/wt/available"),
             Candidate::Offered(Reason::PullRequest {
@@ -1497,9 +1406,8 @@ mod tests {
 
     #[test]
     fn a_row_the_user_cleared_does_not_come_back_when_the_facts_move() {
-        // The same fault pointed the other way, and the dangerous direction: a checkout the
-        // user explicitly said no to, coming back marked while they are not looking, on the
-        // list that `Enter` will act on.
+        // The dangerous direction: a checkout the user said no to, coming back marked while
+        // they are not looking, on the list `Enter` will act on.
         let mut candidates = one_of_each();
         let mut changes = Changes::default();
         flip(&mut changes, &candidates, "/wt/gone");
@@ -1515,9 +1423,9 @@ mod tests {
 
     #[test]
     fn a_row_the_sweep_refuses_is_not_the_users_to_overrule() {
-        // The one thing a keypress may not do. `Shift-D` asks before it removes and this
-        // does not, so a refusal that could be flipped into a mark would be the picker
-        // deleting the repository's own checkout on two keys and no question.
+        // `Shift-D` asks before it removes and a sweep does not, so a refusal that could be
+        // flipped into a mark is the repository's own checkout gone on two keys and no
+        // question.
         let candidates = one_of_each();
         let mut changes = Changes::default();
         assert_eq!(flip(&mut changes, &candidates, "/src/app"), None);
@@ -1529,11 +1437,9 @@ mod tests {
 
     #[test]
     fn an_answer_is_about_the_checkout_it_was_given_about_and_not_about_the_path() {
-        // A path outlives the checkout that had it. Remove a worktree and make another in
-        // the same place — `git worktree add` will, and a second herdr session can while the
-        // picker is up — and the tree comes back with a different branch at a path the user
-        // has already said yes to. That yes is then about a branch nobody has seen, on the
-        // list `Enter` acts on.
+        // Remove a worktree and make another in the same place — `git worktree add` will,
+        // and a second herdr session can while the picker is up — and that yes is about a
+        // branch nobody has seen, on the list `Enter` acts on.
         let tree = tree_of(vec![worktree("feat/login", "/wt/feat-login")]);
         let candidates = BTreeMap::from([(at("/wt/feat-login"), Candidate::Available)]);
         let mut changes = Changes::default();
@@ -1551,15 +1457,13 @@ mod tests {
             "the answer was about feat/login, and feat/login is not there any more"
         );
 
-        // And a checkout that leaves the tree and comes back the same takes its answer with
-        // it: what the user said is still true of what they said it about.
+        // And a checkout that leaves the tree and comes back the same keeps its answer.
         assert!(chosen(&candidates, &changes.still_about(&tree)).contains(&at("/wt/feat-login")));
     }
 
     #[test]
     fn a_detached_checkout_is_not_the_same_checkout_as_a_branch_at_the_same_path() {
-        // Two checkouts with no branch at one path are as different as two branches are, and
-        // the row shows the difference either way.
+        // Two checkouts with no branch at one path are as different as two branches are.
         let mut detached = worktree("feat/login", "/wt/feat-login");
         detached.branch = None;
         let candidates = BTreeMap::from([(at("/wt/feat-login"), Candidate::Available)]);
@@ -1600,10 +1504,9 @@ mod tests {
 
     #[test]
     fn a_row_that_becomes_a_refusal_under_a_mark_stops_being_chosen() {
-        // The rows are judged again whenever `gh` answers or a removal starts, and a
-        // checkout somebody opened a pane in between two frames becomes `Refused(Running)`
-        // while the user's flip is still recorded against it. Filtering only on the way in
-        // would leave that mark standing on a row the sweep may not touch.
+        // A checkout somebody opens a pane in between two frames becomes `Refused(Running)`
+        // while the user's flip is still recorded against it, and filtering only on the way
+        // in would leave that mark standing on a row the sweep may not touch.
         let mut candidates = one_of_each();
         let mut changes = Changes::default();
         flip(&mut changes, &candidates, "/wt/available");
@@ -1619,9 +1522,7 @@ mod tests {
     #[test]
     fn a_flip_is_remembered_against_a_checkout_and_not_against_a_row() {
         // The list is rebuilt underneath the sweep every time a working tree answers, so a
-        // remembered row index would end up on a different checkout. And a checkout that
-        // leaves the tree takes its flip with it rather than passing it to whatever sorts
-        // into the same place.
+        // remembered row index would end up on a different checkout.
         let mut candidates = one_of_each();
         let mut changes = Changes::default();
         flip(&mut changes, &candidates, "/wt/available");
@@ -1692,9 +1593,9 @@ mod tests {
 
     #[test]
     fn the_reason_a_gone_branch_is_going_is_the_marker_the_row_already_carries() {
-        // The one place `Mark::note` stays quiet about a reason it has, and it is only right
-        // while `judge` offers `Gone` for exactly the rows `domain::rows::marks` draws
-        // `gone` on. If that ever comes apart, a row goes with nothing on it saying why.
+        // `Mark::note` stays quiet here, which is only right while `judge` offers `Gone` for
+        // exactly the rows `domain::rows::marks` draws `gone` on. If that comes apart, a row
+        // goes with nothing on it saying why.
         let mut worktree = worktree("feat/login", "/wt/feat-login");
         worktree.track = Some(Track::Gone);
         let judged = judged(
@@ -1727,8 +1628,7 @@ mod tests {
 
     #[test]
     fn a_row_the_user_marked_says_nothing_beside_its_mark() {
-        // "Because you said so" is not a finding, and putting one there would make the
-        // sweep look as though it had agreed.
+        // A note there would make the sweep look as though it had agreed.
         let candidates = one_of_each();
         let mut changes = Changes::default();
         flip(&mut changes, &candidates, "/wt/available");
@@ -1740,11 +1640,9 @@ mod tests {
 
     #[test]
     fn a_row_marked_where_gh_could_not_look_goes_on_saying_so() {
-        // The one exception to the above. `PR unknown` went away the moment the row was
-        // marked, which is the moment it starts to matter: a box on a row nobody could judge
-        // looked exactly like a box on a row `gh` had answered for, on the list `Enter` will
-        // act on. ADR 0011: a mark whose reason is invisible is one the user trusts blindly
-        // — and here the reason is that there is not one.
+        // The one exception to the row above, and the moment it starts to matter: without
+        // it, a box on a row nobody could judge reads exactly like a box on a row `gh`
+        // answered for, on the list `Enter` will act on.
         let candidates = one_of_each();
         let mut changes = Changes::default();
         flip(&mut changes, &candidates, "/wt/unjudged");
@@ -1760,9 +1658,8 @@ mod tests {
             Some("PR unknown")
         );
 
-        // And it comes off again. `is_markable` is what `flip` asks before it records
-        // anything, and a variant left out of its `true` arm is a mark the user can put on
-        // and never take off — on the one row where what is being acted on is nobody knows.
+        // And it comes off again: a variant left out of `is_markable`'s `true` arm is a mark
+        // the user can put on and never take off.
         flip(&mut changes, &candidates, "/wt/unjudged");
         let shown = marks(&candidates, &changes);
         assert_eq!(
@@ -1773,8 +1670,7 @@ mod tests {
 
     #[test]
     fn a_row_says_which_half_of_the_question_went_unanswered() {
-        // Two halves, two words, and the mark carries the half through: fixed in different
-        // places, so the row has to say which one to go and fix.
+        // The two halves are fixed in different places, so the row says which one to go to.
         let candidates = BTreeMap::from([
             (at("/wt/refs"), Candidate::Unjudged(Half::Refs)),
             (at("/wt/prs"), Candidate::Unjudged(Half::PullRequests)),
@@ -1800,7 +1696,7 @@ mod tests {
 
     #[test]
     fn a_row_the_user_cleared_stops_showing_the_reason_it_was_offered_for() {
-        // The reason is why the sweep would have taken it, and it no longer would.
+        // The reason is why the sweep would take it, and it no longer would.
         let candidates = one_of_each();
         let mut changes = Changes::default();
         flip(&mut changes, &candidates, "/wt/gone");
@@ -1812,9 +1708,8 @@ mod tests {
 
     #[test]
     fn what_a_row_shows_and_what_the_sweep_takes_are_the_same_answer() {
-        // Two collections decide this — the sweep's suggestions and the user's changes — and
-        // a row working it out for itself would be a second implementation of the rule, free
-        // to disagree with the one that deletes things. There is one, and this says so.
+        // A row working this out for itself would be a second implementation of the rule,
+        // free to disagree with the one that deletes things.
         let candidates = one_of_each();
         let mut changes = Changes::default();
         flip(&mut changes, &candidates, "/wt/available");
@@ -1872,8 +1767,7 @@ mod tests {
 
     #[test]
     fn a_detached_checkout_is_never_offered_by_a_pull_request() {
-        // Nothing points at it, so there is no head ref to match and no branch a pull
-        // request could have been for.
+        // Nothing points at it, so there is no head ref for a pull request to match.
         let mut wt = worktree("feat/login", "/wt/detached");
         wt.branch = None;
         let trees = clean(&["/wt/detached"]);

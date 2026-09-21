@@ -6,8 +6,8 @@
 //! working offline.
 //!
 //! The sweep's question is the exception, and only in one respect: it still never fails, but
-//! it says "could not ask" instead of "nothing to report". See `GhPort::settled_pull_requests`
-//! and `docs/adr/0011-what-may-be-swept.md`.
+//! it says "could not ask" instead of "nothing to report". See
+//! [`GhPort::settled_pull_requests`] and `docs/adr/0011-what-may-be-swept.md`.
 
 use std::io::Read;
 use std::process::{Command, Output, Stdio};
@@ -26,7 +26,7 @@ const LIMIT: &str = "100";
 
 /// A wider window than the open list, because it looks back over everything that has landed
 /// rather than at what is in flight. A repository busier than this is not told "no pull
-/// request" for the branches beyond it — see `SettledPullRequests::Window`.
+/// request" for the branches beyond it — see [`SettledPullRequests::Window`].
 const SETTLED_LIMIT: usize = 300;
 
 /// The arguments that pick out the finished pull requests, as one value so the shape can be
@@ -35,23 +35,18 @@ const SETTLED_LIMIT: usize = 300;
 /// Two of these are load-bearing, and both are easy to get wrong in a way that answers
 /// rather than fails.
 ///
-/// `-R` takes `[HOST/]OWNER/REPO`, so passing a filesystem path to it failed every call —
-/// but dropping it is not the fix. Without `-R`, `gh` picks a base repository out of the
-/// checkout's remotes, and for a fork that is the *parent*: it answers about a repository
-/// the user does not own, with a zero exit and nothing to say so. The slug is what pins it.
+/// `-R` takes `[HOST/]OWNER/REPO`, and a filesystem path is not one. Dropping it is not the
+/// fix either: without `-R`, `gh` picks a base repository out of the checkout's remotes, and
+/// for a fork that is the *parent* — it answers about a repository the user does not own,
+/// with a zero exit and nothing to say so. The slug is what pins it.
 ///
 /// The state is **`closed`, not `all`**: `gh` counts open pull requests against the same
 /// window and this throws them away, so asking for everything spends the window on the
 /// answers it is going to discard. `closed` covers merged, which is the case the sweep is
 /// mostly about.
 ///
-/// Owned strings and one argument, at the cost of ten allocations per sweep. One argument of
-/// one type cannot be handed its arguments the wrong way round, which is what the two-argument
-/// version could be. `--limit` is read from `SETTLED_LIMIT` here rather than passed in, which
-/// removes the *pair* — but not the second mention of the constant, which is in
-/// [`settled_answer`]. Those two still have to agree and only a test says they do: a window
-/// measured smaller than the one asked for makes every non-empty answer look truncated, and
-/// `domain::sweep` then calls every clean named branch `Unjudged`.
+/// `--limit` is read from `SETTLED_LIMIT` here and named again in [`settled_answer`]. Those
+/// two have to agree, and only a test says they do.
 fn settled_arguments(slug: &Slug) -> [String; 10] {
     [
         "pr".to_string(),
@@ -103,8 +98,8 @@ struct GhPullRequest {
 ///
 /// Separate from running the command so that what `gh` said can be tested without a network,
 /// a token, or a `gh` on the machine — whether an answer is the whole answer, and what each
-/// field means once it is here. What the command *asks* is the other half, and it is where
-/// this call's two shipped bugs both lived: see `settled_arguments`.
+/// field means once it is here. What the command *asks* is the other half: see
+/// `settled_arguments`.
 fn read_settled(stdout: &[u8], limit: usize) -> Result<SettledPullRequests, String> {
     // Output this cannot read is not "nothing is merged" either. It means `gh` is answering
     // in a shape this does not know, which is the same not-knowing as `gh` being absent.
@@ -144,10 +139,6 @@ fn read_settled(stdout: &[u8], limit: usize) -> Result<SettledPullRequests, Stri
 /// The decoration query, made but not run. `stderr` goes to `null` rather than being piped
 /// because nothing reads it: ADR 0003 says a missing `gh` costs the annotation and nothing
 /// else here, so there is no sentence to show and no half of the answer to name.
-///
-/// Split out for the reason the sweep's is, one bug earlier: this is where a checkout path
-/// was passed to `-R` first, and it stayed wrong for as long as it did because a picker that
-/// silently draws no annotations looks exactly like a repository with no pull requests.
 fn open_command(slug: &Slug) -> Command {
     let mut command = Command::new("gh");
     command
@@ -171,17 +162,15 @@ fn open_command(slug: &Slug) -> Command {
 /// The process, made but not run.
 ///
 /// Split out so that what is left inside `settled_pull_requests` is [`output_within`] and
-/// nothing else. What this call asks is where it goes wrong, and asking is now pinned: the
-/// program and the argument list are both assertable, and asserted.
+/// nothing else, and so that the program and the argument list are assertable.
 ///
 /// The redirections are not. `Command` has getters for the program, the arguments, the
 /// environment and the working directory, and none for `stdin`/`stdout`/`stderr`, so
 /// `.stderr(Stdio::null())` here would go unnoticed by any test that does not start a real
-/// `gh`. What that costs is not nothing: [`settled_answer`] reads `stderr` to find the
-/// sentence the user is shown, so a `stderr` sent to `null` makes every word of it
-/// unreachable and turns every refusal into "gh would not answer". Reaching it needs a `gh`
-/// on `PATH` that a test put there — `a_gh_on_the_path_is_given_the_budget_and_no_more` in
-/// `tests/gh_cli.rs` is that test.
+/// `gh`. [`settled_answer`] reads `stderr` to find the sentence the user is shown, so a
+/// `stderr` sent to `null` makes every word of it unreachable and turns every refusal into
+/// "gh would not answer". Reaching it needs a `gh` on `PATH` that a test put there —
+/// `a_gh_on_the_path_is_given_the_budget_and_no_more` in `tests/gh_cli.rs` is that test.
 ///
 /// `stdin` is the one redirection no test here can hold either way: what a test binary
 /// inherits is the harness's, and that is a terminal on one machine and `/dev/null` on the
@@ -197,19 +186,13 @@ fn settled_command(slug: &Slug) -> Command {
     command
 }
 
-/// What one run of the decoration query amounts to. `settled_answer`'s twin, and the half of
-/// this adapter that ships today.
+/// What one run of the decoration query amounts to. `settled_answer`'s twin.
 ///
 /// Every way this can come back empty means the same thing here — no `gh`, a `gh` that
 /// refused, output in a shape this cannot read — and all three are the annotation costing
 /// nothing, which is ADR 0003's promise. That is the opposite of the sweep's rule and it is
 /// why they are two functions: a sweep must say which half it could not see, and a branch
 /// list must never make the user's `gh` its problem.
-///
-/// Extracted because the argument list is not the only thing here that a green suite proved
-/// nothing about. Dropping the exit check, or asking for fewer `--json` fields, or swapping
-/// two `serde` renames, all left the whole gate green — and the second of those draws every
-/// row's branch and draft flag from the wrong field.
 fn open_answer(output: &Output) -> Vec<PullRequest> {
     if !output.status.success() {
         return Vec::new();
@@ -229,11 +212,7 @@ fn open_answer(output: &Output) -> Vec<PullRequest> {
 /// What one run of `gh` amounts to: an answer, or a sentence saying why there is not one.
 ///
 /// Separate from starting the process for the same reason [`read_settled`] is separate from
-/// this — everything above `Command::new` can then be tested, and this half decides three
-/// things a green suite otherwise proved nothing about: that a `gh` which exited non-zero is
-/// not read as an answer, that the window truncation is measured against the window that was
-/// asked for — both directions, since only a *smaller* one does damage — and which of `gh`'s
-/// own words the user is shown.
+/// this: everything above [`Command::new`] can then be tested.
 fn settled_answer(output: &Output) -> Result<SettledPullRequests, String> {
     if !output.status.success() {
         // `gh`'s own words, because the alternative is a picker that says a sweep could not
@@ -244,9 +223,8 @@ fn settled_answer(output: &Output) -> Result<SettledPullRequests, String> {
         let said = String::from_utf8_lossy(&output.stderr);
         let reason = said.lines().map(str::trim).find(|line| !line.is_empty());
         return Err(match reason {
-            // Not "gh: …". The two bugs this call has already had were malformed argv on
-            // this side, and both read to a user as "your gh is broken" — which is the one
-            // thing this cannot tell apart from GitHub saying no.
+            // Not "gh: …": a malformed argv on this side reads to a user as "your gh is
+            // broken", which is the one thing this cannot tell apart from GitHub saying no.
             Some(reason) => format!("gh refused the question this asked: {reason}"),
             None => format!("gh would not answer ({})", output.status),
         });
@@ -276,7 +254,7 @@ impl GhPort for GhCli {
 
 /// How long either call waits for `gh` before giving up on it. A `gh` on a network that has
 /// gone away, or at an auth prompt nobody can see under the alternate screen, never exits on
-/// its own, and `Command::output` would wait with it for ever — issue #26.
+/// its own, and [`Command::output`] would wait with it for ever — issue #26.
 pub const GH_BUDGET: Duration = Duration::from_secs(5);
 
 /// How often [`output_within`] looks for the process having exited.
@@ -295,7 +273,7 @@ const POLL: Duration = Duration::from_millis(25);
 ///
 /// The pipes are read on threads rather than in turn, because a process that fills one
 /// blocks on it and a caller reading the other first would deadlock — which is the thing
-/// `Command::output` does for itself and this has to do for itself too.
+/// [`Command::output`] does for itself and this has to do for itself too.
 fn output_within(command: &mut Command, budget: Duration) -> std::io::Result<Option<Output>> {
     let deadline = Instant::now() + budget;
     let mut child = command.stdout(Stdio::piped()).spawn()?;
@@ -356,14 +334,9 @@ mod tests {
 
     #[test]
     fn the_repository_is_named_rather_than_guessed_from_the_remotes() {
-        // Twice wrong here. `-R` was given a filesystem path, which it rejects outright, so
-        // every call failed on every machine. Dropping the flag fixed that and introduced a
-        // quieter fault: `gh` then picks a base repository out of the remotes, and for a
-        // fork it picks the parent — answering about somebody else's repository with a zero
-        // exit. A whole green suite noticed neither, because nothing else in it runs `gh`.
-        // Pinning the argument list is the cheapest thing that would have — and the third
-        // time it shipped, in `app::branches`, the argument list was right and the call site
-        // was not, which is why `Slug` is a type rather than a convention.
+        // Without `-R`, `gh` picks a base repository out of the remotes, and for a fork it
+        // picks the parent — answering about somebody else's repository with a zero exit.
+        // Nothing else in the suite runs `gh`, so the argument list is where that is caught.
         let arguments = settled_arguments(&slug());
         assert!(
             arguments.windows(2).any(|pair| pair == ["-R", "me/app"]),
@@ -388,10 +361,7 @@ mod tests {
 
     #[test]
     fn what_is_actually_started_is_gh_with_the_arguments_above() {
-        // The list being right has never been the whole of it: twice a correct list sat
-        // beside a call that did not use it. What is left in `settled_pull_requests` after
-        // this is `output_within`, and `stderr` is piped because `settled_answer` reads it —
-        // `tests/gh_cli.rs` is where a `stderr` sent to `null` would fail.
+        // A correct argument list can sit beside a call that does not use it.
         let command = settled_command(&slug());
         assert_eq!(command.get_program(), "gh");
         assert_eq!(
@@ -406,10 +376,9 @@ mod tests {
 
     #[test]
     fn the_decoration_query_names_the_repository_too() {
-        // Where the path-for-slug bug was first written. It never failed loudly: `gh` exits
-        // non-zero, `pull_requests` turns that into an empty list by design, and a picker
-        // drawing no annotations looks like a repository with no open pull requests. Nothing
-        // in this module was tested at all until #23, which is why it stayed.
+        // A wrong `-R` here never fails loudly: `gh` exits non-zero, `pull_requests` turns
+        // that into an empty list by design, and a picker drawing no annotations looks like
+        // a repository with no open pull requests.
         let command = open_command(&slug());
         assert_eq!(command.get_program(), "gh");
         let arguments = command
@@ -447,9 +416,7 @@ mod tests {
     #[test]
     fn the_window_asked_for_is_the_window_truncation_is_measured_against() {
         // Two numbers that must agree: what `gh` is told to return, and how many coming back
-        // means there may be more behind them. They agree by being one constant read twice
-        // rather than one value passed twice, so this asserts the reading rather than the
-        // passing — the argument that could have been given the wrong number is gone.
+        // means there may be more behind them.
         let arguments = settled_arguments(&slug());
         let asked_for = arguments
             .iter()
@@ -460,9 +427,6 @@ mod tests {
 
     #[test]
     fn closed_is_asked_for_rather_than_everything() {
-        // `--state all` returns open pull requests too, counted against the same window and
-        // then thrown away here — so a busy repository spends its whole window on the
-        // answers this does not want and truncates away the ones it does.
         let arguments = settled_arguments(&slug());
         let state = arguments
             .iter()
@@ -543,9 +507,8 @@ mod reading {
 
     #[test]
     fn a_full_window_is_not_reported_as_the_whole_answer() {
-        // `gh` returns exactly the limit and says nothing about what it cut off, so this is
-        // the only evidence there is. A branch missing from a list that stopped early is
-        // one this could not see, not one with no pull request.
+        // A branch missing from a list that stopped early is one this could not see, not
+        // one with no pull request.
         let entries: Vec<String> = (0..3)
             .map(|n| one(n, &format!("feat/{n}"), "MERGED", false))
             .collect();
@@ -561,9 +524,6 @@ mod reading {
 
     #[test]
     fn a_state_this_does_not_know_is_dropped_and_admitted_to() {
-        // Dropping is right — it is no reason to delete anything. Reporting the rest as the
-        // whole answer would turn "something here could not be read" into "there is nothing
-        // here", which is the one direction that matters.
         let read = read_settled(
             &json(&[
                 one(1, "feat/login", "MERGED", false),
@@ -591,11 +551,9 @@ mod reading {
 
 /// What one run of `gh` amounts to, over an `Output` this makes rather than one `gh` made.
 ///
-/// The half of this adapter that had no tests at all. `read_settled` was carefully pinned
-/// and `settled_arguments` exactly so, and between them sat a runner where a `gh` that
-/// exited non-zero could be parsed as an answer, the window could be measured against a
-/// different number from the one asked for, and the sentence shown to the user could be
-/// thrown away — none of it observable, because nothing in the suite runs `gh`.
+/// Three things nothing else in the suite watches, because nothing else in it runs `gh`: a
+/// `gh` that exited non-zero is not parsed as an answer, the window is measured against the
+/// number that was asked for, and the sentence shown to the user is `gh`'s own.
 #[cfg(test)]
 mod answering {
     use super::*;
@@ -613,10 +571,9 @@ mod answering {
 
     #[test]
     fn the_decoration_reads_every_field_it_asked_for() {
-        // Nothing else in the suite ever read this method's output. Dropping the exit check,
-        // asking for fewer `--json` fields, or swapping two `serde` renames all left the
-        // whole gate green — and the last of those draws every row's branch name and draft
-        // flag out of the wrong field, on the picker that ships today.
+        // Dropping the exit check, asking for fewer `--json` fields, or swapping two `serde`
+        // renames all leave the whole gate green — and the last of those draws every row's
+        // branch name and draft flag out of the wrong field.
         let listed = open_answer(&ran(
             0,
             r#"[{"number":7,"title":"Add a sweep","headRefName":"feat/sweep","isDraft":true}]"#,
@@ -686,9 +643,7 @@ mod answering {
         // is something to say, because `gh` puts a newline of its own ahead of some errors.
         // Blank is all this skips. A `gh` with an update notice to deliver leads with that,
         // and then the update notice is what the user is told the sweep failed on — which is
-        // wrong, and is not fixed by guessing at which prefixes are notices. It needs a `gh`
-        // on `PATH` that a test put there, which is the same thing the redirections need;
-        // see `settled_command`.
+        // wrong, and is not fixed by guessing at which prefixes are notices.
         let said = settled_answer(&ran(1, "", "\n  \nGraphQL: Could not resolve\n")).unwrap_err();
         assert!(
             said.contains("Could not resolve"),

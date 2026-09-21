@@ -112,6 +112,44 @@ for name in $( { grep -o '`[A-Za-z_][A-Za-z_0-9]*::[A-Za-z_0-9:]*`' "$needles" \
         fail "a doc or comment names \`$name\`, and nothing in src or tests is called that"
 done
 
+# 7. A qualified name resolves; it does not merely exist. Check 5 asks whether the last
+#    segment is the name of something anywhere in the tree, which `app::collect_repos`
+#    satisfied while naming a module the function is not in. rustdoc asks the real question
+#    — does this link resolve from where it is written — but only of a `///` line, and only
+#    where the target is reachable from there: a private function in another module is
+#    neither, and a `//` line is invisible to it. So the last two segments are asked here.
+#    Whatever defines the one before the end has to define the end: for `domain::sweep::judge`
+#    that is src/domain/sweep.rs, and for `Refs::Unreadable` it is whichever file declares
+#    `Refs`. A holder belonging to std, crossterm or a test crate goes on the list below;
+#    that list is about who owns the name, not about whether the check is convenient.
+external_holders='Command File Palette env event fs std str tempfile thread'
+
+defines() {
+    grep -qE "(^|[^A-Za-z_0-9])(fn|struct|enum|trait|type|const|static|union|mod)[[:space:]]+$2([^A-Za-z_0-9]|$)|^[[:space:]]*(pub[[:space:]]+)?$2[[:space:]]*:|^[[:space:]]{4,}$2[[:space:]]*(\{|\(|,|=|$)" "$1"
+}
+
+for path in $(grep -oE '`[A-Za-z_][A-Za-z_0-9]*(::[A-Za-z_0-9]+)+`' "$needles" \
+                | tr -d '`' | sort -u); do
+    last=${path##*::}
+    rest=${path%::*}
+    holder=${rest##*::}
+    [ "$holder" = "crate" ] && continue
+    case " $external_holders " in *" $holder "*) continue ;; esac
+    case " $(echo $external) " in *" $last "*) continue ;; esac
+    files=$( { find src tests -path "*/$holder.rs" -o -path "*/$holder/mod.rs"
+               grep -rlE "(^|[^A-Za-z_0-9])(pub[[:space:]]+)?(struct|enum|trait|type|union|mod)[[:space:]]+$holder([^A-Za-z_0-9]|$)" \
+                   src tests --include='*.rs'
+             } 2>/dev/null | sort -u )
+    if [ -z "$files" ]; then
+        fail "a doc or comment names \`$path\`, and nothing in src or tests defines \`$holder\`"
+        continue
+    fi
+    ok=0
+    for f in $files; do defines "$f" "$last" && { ok=1; break; }; done
+    [ "$ok" = 1 ] || \
+        fail "a doc or comment names \`$path\`, and \`$holder\` does not carry \`$last\`"
+done
+
 # 6. What a comment may not say, because the code beside it already says it and a comment
 #    repeating it is a second copy of the same fact to keep current. Both rules are in
 #    CONTRIBUTING.md under "What a comment is for"; this is where they bite.

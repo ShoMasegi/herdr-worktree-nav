@@ -31,6 +31,8 @@ herdr-worktree-nav dump          # from a pane inside a herdr session
 cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
 cargo test
+RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links -A rustdoc::private_intra_doc_links" \
+    cargo doc --no-deps --document-private-items
 ./scripts/check-invariants.sh
 ./scripts/check-docs-sync.sh origin/main
 ```
@@ -110,6 +112,30 @@ and it searches the code with the comment lines taken out, so a name surviving o
 sentence that names it no longer satisfies it. A name belonging to git, herdr, std or one of
 the crates goes on the `external` list in that script — the one place to say "this one is
 not ours to keep current".
+
+That check asks only whether a name exists somewhere, so a rustdoc link written on the wrong
+type — `[`forget`](Self::forget)` on a type with no `forget` — satisfies it as soon as some
+other type has one. `cargo doc` asks whether the link resolves from where it is written,
+which is the question, so it runs with `-D rustdoc::broken_intra_doc_links`.
+
+## Naming another item from a comment
+
+A sentence that points at something else in the crate is the part of a comment a rename
+breaks, and it breaks silently: the sentence goes on reading well while pointing at nothing.
+So write the pointer in the form that something checks.
+
+On a `///` or `//!` line, write it as an intra-doc link — `[`Removal::sweeping`]`, or
+`[`domain::rows::marks`](crate::domain::rows::marks)` where you want the path in the prose —
+and rustdoc will resolve it from where it is written. Two things it cannot resolve, and
+neither is worth bending the code for: a private item in another module, which is not
+reachable by path, and anything at all on a `//` line, which rustdoc does not read.
+
+Those keep the path in plain backticks, and `check-invariants.sh` takes the question instead:
+whatever defines the segment before the end has to define the end. `domain::sweep::judge`
+sends it to src/domain/sweep.rs, `Refs::Unreadable` to whichever file declares `Refs`. It is
+the last two segments only, which is enough to catch the rename and cheap enough to run on
+every comment in the tree, the pages under docs/ included. A holder belonging to std,
+crossterm or a test crate goes on the `external_holders` list in that script.
 
 ## Things worth knowing before changing behaviour
 

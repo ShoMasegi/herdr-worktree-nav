@@ -165,8 +165,7 @@ pub struct Pane {
 }
 
 impl Pane {
-    /// The directory this pane is really working in. Prefers the foreground process's cwd,
-    /// which follows the user into subdirectories, and falls back to the shell's.
+    /// The directory this pane is really working in, preferring the foreground process's.
     pub fn effective_cwd(&self) -> Option<&str> {
         self.foreground_cwd
             .as_deref()
@@ -207,11 +206,11 @@ pub struct WorktreeSource {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Worktree {
-    /// `domain::tree::build` reads `None`, an empty string, or `is_detached` as nothing
-    /// checked out, and draws no track marker on the strength of it. That herdr reports such
-    /// a checkout one of those ways is an assumption about its API that nothing here can
-    /// hold — there is no herdr in CI; the manual checklist in `docs/en/troubleshooting.md`
-    /// has an item for it.
+    /// [`domain::tree::build`](crate::domain::tree::build) reads `None`, an empty string, or
+    /// `is_detached` as nothing checked out, and draws no track marker on the strength of it.
+    /// That herdr reports such a checkout one of those ways is an assumption about its API
+    /// that nothing here can hold — there is no herdr in CI; the manual checklist in
+    /// `docs/en/troubleshooting.md` has an item for it.
     #[serde(default)]
     pub branch: Option<String>,
     pub path: String,

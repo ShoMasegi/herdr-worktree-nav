@@ -2,9 +2,7 @@
 //!
 //! Three keys rather than one fixed order, because the question "which branch do I want"
 //! has more than one shape: what is already running, what I touched last, or where a name
-//! is in the alphabet. Each key has a direction it is worth reading in before anyone
-//! reverses it, and switching key returns to that direction — nobody asking for "by date"
-//! meant "oldest first".
+//! is in the alphabet.
 
 use std::cmp::Ordering;
 
@@ -19,7 +17,6 @@ pub enum SortKey {
     State,
     /// Committer date of the branch's tip.
     Updated,
-    /// The branch name.
     Name,
 }
 
@@ -47,7 +44,6 @@ impl SortKey {
     }
 }
 
-/// A key and which way round it is being read.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Order {
     pub key: SortKey,
@@ -56,7 +52,8 @@ pub struct Order {
 }
 
 impl Order {
-    /// The next key, back at its natural direction.
+    /// The next key, back at its natural direction: nobody asking for "by date" meant
+    /// "oldest first".
     pub fn cycle(self) -> Self {
         Self {
             key: self.key.next(),
@@ -113,8 +110,6 @@ impl Order {
     }
 }
 
-/// Where a state sits when the list is ordered by state: work in progress first, then
-/// checkouts, then refs, then what is only on the remote.
 fn rank(state: &BranchState) -> u8 {
     match state {
         BranchState::New => 0,
@@ -194,8 +189,6 @@ mod tests {
 
     #[test]
     fn a_branch_with_no_date_stays_at_the_bottom_in_both_directions() {
-        // Reversing "by date" must not promote the rows that have no date to the top; they
-        // are the ones with the least to say about themselves.
         let updated = Order {
             key: SortKey::Updated,
             reversed: false,
