@@ -60,6 +60,24 @@ goes are all pure functions over plain data.
 | `domain::sweep` | which checkouts may a sweep offer to delete, why, and which could it not judge? |
 | `domain::chrome` | what accent and status glyphs is herdr configured for? |
 
+Every one of those answers is a value rather than a sentence. `domain` has no width to fit
+into, no theme to read and no terminal to draw on, so it is the worst-placed layer in the
+tree to decide how anything reads — and `ui::words` is the one place that turns a value it
+hands over into the words on screen. The tab a row offers, the caption over the preview of
+it and the step that lands a pane in it are the same call, so they cannot drift apart.
+
+The two entry points with no `ui` keep their own words beside the code that emits them:
+`app::words` for the removal toast, which runs detached with no terminal
+([ADR 0014](../adr/0014-removing-outlives-the-picker.md)), and `app::dump` for the page
+`--dump` writes.
+
+A module that grew past holding in your head is a directory rather than a longer file, split
+along what it is responsible for. `ui::panes` is the list, the sweep and the keymap;
+`ui::render::branches` is the step on screen, the two lists and the destination;
+`domain::rows` is the row, the shape of the list and the cursor's path through it. Check 8
+in `scripts/check-invariants.sh` caps a module's code — not its tests — and
+[ADR 0017](../adr/0017-modules-split-by-responsibility.md) says what to cut along.
+
 ## Talking to herdr
 
 Over the socket at `HERDR_SOCKET_PATH`, not the `herdr` CLI. The deciding factor is
@@ -226,6 +244,7 @@ getting wrong lives.
 | --- | --- |
 | `domain` | unit tests with fake ports; every branch state and every destination |
 | `ui` state | key handling is a pure state → action mapping, so the keymap is covered directly |
+| `ui::words` | every assertion about what something reads as, since that is where the words are |
 | `ui` drawing | `TestBackend` + `insta` snapshots of the rendered buffer |
 | `adapter` git | real repositories in a `tempfile::TempDir` |
 | `adapter` gh | nothing in CI runs `gh`, so each call is split into the command it builds and the answer it reads, and both halves are tested with no process at all — twice a malformed argument list shipped past a green suite. The process itself, and the redirections around it, are reached by `tests/gh_cli.rs` with a `gh` it puts on `PATH`: one that never answers, which the budget gives up on, and one that refuses on `stderr`, whose words have to reach the sentence the user sees. |

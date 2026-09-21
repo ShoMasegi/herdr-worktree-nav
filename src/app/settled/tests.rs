@@ -1,0 +1,726 @@
+use std::sync::Mutex;
+
+use anyhow::Result;
+
+use super::*;
+use crate::app::fakes::until;
+use crate::app::fakes::{fake_gh, fake_git, FakeGh, FakeGit};
+use crate::domain::model::{Refs, RepoNode};
+use crate::port::Slug;
+
+/// A git that names one repository, and a `gh` that answers about it — both counting
+/// what they were asked, because asking twice is the thing this is built not to do.
+#[derive(Default)]
+struct Remote {
+    /// `None` is a repository GitHub has never heard of.
+    slug: Option<&'static str>,
+    /// A git that will not answer at all, which is a third thing again.
+    refuses: bool,
+    /// What `gh` says, or the sentence it refuses with.
+    answer: Option<Result<SettledPullRequests, String>>,
+    asked: Mutex<Vec<String>>,
+    /// How often git was asked to name a repository — a process each time.
+    named: Mutex<usize>,
+}
+
+impl Remote {
+    fn asked(&self) -> Vec<String> {
+        self.asked.lock().unwrap().clone()
+    }
+
+    fn named(&self) -> usize {
+        *self.named.lock().unwrap()
+    }
+}
+
+impl FakeGit for Remote {
+    fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
+        *self.named.lock().unwrap() += 1;
+        if self.refuses {
+            return Err(anyhow::anyhow!("fatal: not a git repository"));
+        }
+        Ok(self
+            .slug
+            .and_then(|slug| slug.split_once('/'))
+            .and_then(|(owner, repo)| Slug::owner_repo(owner, repo)))
+    }
+}
+fake_git!(Remote);
+
+impl FakeGh for Remote {
+    fn settled_pull_requests(&self, slug: &Slug) -> Result<SettledPullRequests, String> {
+        self.asked.lock().unwrap().push(slug.as_str().to_string());
+        self.answer
+            .clone()
+            .unwrap_or_else(|| Ok(SettledPullRequests::All(Vec::new())))
+    }
+}
+fake_gh!(Remote);
+
+/// A `gh` that answers only when the test says so, and counts how many calls it has
+/// taken. The two rounds of a reload are otherwise a race nothing can pin.
+#[derive(Default)]
+struct Held {
+    /// The slug each call was for, in the order the calls reached this. Which
+    /// repository reaches it first is a race, so a test that cares asks by slug —
+    /// `call_for` — rather than by number.
+    started: Mutex<Vec<String>>,
+    /// The answer each call is waiting for, by the order it started in. Addressed
+    /// rather than queued, so the test decides which call finishes and in which order.
+    released: Mutex<BTreeMap<usize, Result<SettledPullRequests, String>>>,
+    /// Repositories git names no GitHub remote for.
+    no_remote: Vec<&'static str>,
+}
+
+impl Held {
+    fn started(&self) -> usize {
+        self.started.lock().unwrap().len()
+    }
+
+    /// Which call, counting from one, was for this slug.
+    fn call_for(&self, slug: &str) -> usize {
+        self.started
+            .lock()
+            .unwrap()
+            .iter()
+            .position(|started| started == slug)
+            .map(|index| index + 1)
+            .unwrap_or_else(|| panic!("no call for {slug} has started"))
+    }
+
+    /// Let the `nth` call to start finish, with this answer.
+    fn release(&self, nth: usize, answer: SettledPullRequests) {
+        self.released.lock().unwrap().insert(nth, Ok(answer));
+    }
+
+    /// Let the `nth` call to start finish by refusing.
+    fn release_err(&self, nth: usize, said: &str) {
+        self.released
+            .lock()
+            .unwrap()
+            .insert(nth, Err(said.to_string()));
+    }
+}
+
+impl FakeGit for Held {
+    fn github_slug(&self, repo_root: &str) -> Result<Option<Slug>> {
+        if self.no_remote.contains(&repo_root) {
+            return Ok(None);
+        }
+        // Named from the path, the way the test tree's repositories are.
+        let name = repo_root.rsplit('/').next().unwrap_or(repo_root);
+        Ok(Slug::owner_repo("me", name))
+    }
+}
+fake_git!(Held);
+
+impl FakeGh for Held {
+    fn settled_pull_requests(&self, slug: &Slug) -> Result<SettledPullRequests, String> {
+        let nth = {
+            let mut started = self.started.lock().unwrap();
+            started.push(slug.as_str().to_string());
+            started.len()
+        };
+        loop {
+            if let Some(answer) = self.released.lock().unwrap().remove(&nth) {
+                return answer;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+}
+fake_gh!(Held);
+
+fn settled_pr(number: u64, head_ref: &str) -> crate::port::SettledPullRequest {
+    crate::port::SettledPullRequest {
+        number,
+        head_ref: head_ref.to_string(),
+        from_a_fork: false,
+        outcome: crate::port::PullRequestOutcome::Merged,
+    }
+}
+
+fn repo(repo_root: &str) -> RepoNode {
+    // Named from the path, so a sentence can say which repository it is about.
+    let name = repo_root.rsplit('/').next().unwrap_or(repo_root);
+    RepoNode {
+        repo_key: format!("{repo_root}/.git"),
+        repo_root: repo_root.to_string(),
+        display_name: format!("me/{name}"),
+        refs: Refs::Read,
+        worktrees: Vec::new(),
+    }
+}
+
+fn tree(roots: &[&str]) -> Tree {
+    Tree {
+        repos: roots.iter().map(|root| repo(root)).collect(),
+        ungrouped: Vec::new(),
+    }
+}
+
+fn until_answered(settled: &mut Settled, tree: &Tree) {
+    until("gh never answered", || {
+        settled.drain();
+        !settled.is_waiting(tree)
+    });
+}
+
+fn asking(remote: Remote) -> (Arc<Remote>, Settled) {
+    let remote = Arc::new(remote);
+    let settled = Settled::new(remote.clone(), remote.clone());
+    (remote, settled)
+}
+
+#[test]
+fn each_repository_is_asked_about_once_however_often_the_sweep_is_entered() {
+    // Entering the sweep again is a frame, not another round of `gh` over the network
+    // on a key the user is holding down.
+    let (remote, mut settled) = asking(Remote {
+        slug: Some("me/app"),
+        ..Remote::default()
+    });
+    let tree = tree(&["/src/app"]);
+
+    settled.ask(&tree);
+    until_answered(&mut settled, &tree);
+    settled.ask(&tree);
+    settled.ask(&tree);
+    settled.drain();
+
+    assert_eq!(remote.asked(), ["me/app"]);
+}
+
+#[test]
+fn a_reload_asks_again_because_a_pull_request_can_land_while_the_picker_is_up() {
+    let (remote, mut settled) = asking(Remote {
+        slug: Some("me/app"),
+        ..Remote::default()
+    });
+    let tree = tree(&["/src/app"]);
+
+    settled.ask(&tree);
+    until_answered(&mut settled, &tree);
+    settled.forget();
+    settled.ask(&tree);
+    until_answered(&mut settled, &tree);
+
+    assert_eq!(remote.asked(), ["me/app", "me/app"]);
+}
+
+#[test]
+fn an_answer_from_before_a_reload_does_not_overwrite_the_one_after_it() {
+    // `mpsc` hands answers over in whatever order the calls finish, not the order they
+    // started, so a slow `gh` from before `r` can land after a fast one from after it.
+    let held = Arc::new(Held::default());
+    let mut settled = Settled::new(held.clone(), held.clone());
+    let tree = tree(&["/src/app"]);
+
+    settled.ask(&tree);
+    until("the first call never started", || held.started() == 1);
+
+    // `r`. The call already running belongs to the round this ends.
+    settled.forget();
+    settled.ask(&tree);
+    until("the second call never started", || held.started() == 2);
+
+    held.release(
+        2,
+        SettledPullRequests::All(vec![settled_pr(2, "feat/after")]),
+    );
+    until("the reload's answer never landed", || {
+        settled.drain();
+        settled.answers(&tree).len() == 1
+    });
+    held.release(
+        1,
+        SettledPullRequests::All(vec![settled_pr(1, "feat/before")]),
+    );
+    // Waited for, not assumed: with the stale reply still in the channel the assertion
+    // below holds whether or not `drain` drops it.
+    until("the stale answer never arrived", || settled.drain() > 0);
+
+    let listed = settled
+        .answers(&tree)
+        .into_values()
+        .next()
+        .flatten()
+        .expect("the repository answered");
+    assert_eq!(
+        listed.pull_requests()[0].head_ref,
+        "feat/after",
+        "the round the user asked for is the one on screen"
+    );
+}
+
+#[test]
+fn a_repository_github_has_never_heard_of_is_asked_and_answered_for() {
+    // Not absent, which would read as "still coming" and put a spinner on a row that
+    // will never fill in.
+    let (remote, mut settled) = asking(Remote::default());
+    let tree = tree(&["/src/app"]);
+
+    settled.ask(&tree);
+    until_answered(&mut settled, &tree);
+
+    assert!(
+        remote.asked().is_empty(),
+        "gh has nothing to be asked about"
+    );
+    let answers = settled.answers(&tree);
+    assert_eq!(answers.len(), 1, "the repository is in the answer");
+    assert!(
+        answers.values().all(Option::is_none),
+        "and its answer is that there is not one"
+    );
+    assert_eq!(
+        settled.trouble(&tree),
+        Some("me/app: no GitHub remote to ask about".to_string())
+    );
+}
+
+#[test]
+fn a_git_that_would_not_name_the_repository_says_so_rather_than_nothing() {
+    // Reporting it as an empty answer would be the conflation ADR 0011 exists to
+    // prevent — a sweep saying nothing is finished with, on a repository it never
+    // managed to ask about.
+    let (remote, mut settled) = asking(Remote {
+        refuses: true,
+        ..Remote::default()
+    });
+    let tree = tree(&["/src/app"]);
+
+    settled.ask(&tree);
+    until_answered(&mut settled, &tree);
+
+    assert!(
+        remote.asked().is_empty(),
+        "there was nothing to ask gh about"
+    );
+    assert_eq!(settled.answers(&tree).len(), 1, "but it was asked");
+    assert!(settled.answers(&tree).values().all(Option::is_none));
+    let said = settled
+        .trouble(&tree)
+        .expect("a sentence for the prompt line");
+    assert!(
+        said.contains("git could not name the repository"),
+        "and it says which half went wrong: {said}"
+    );
+}
+
+#[test]
+fn the_first_repository_on_screen_that_failed_is_the_one_named() {
+    // "First" is the order the screen lists them in, which is the same on every frame.
+    // A test asserting "the first thing that went wrong" instead races its own fake,
+    // which hands each sentence to whichever thread reaches it first.
+    let (_, mut settled) = asking(Remote {
+        slug: Some("me/app"),
+        answer: Some(Err("gh is out".to_string())),
+        ..Remote::default()
+    });
+    // Listed the other way round from how their paths sort, so that path order — which
+    // is what walking the map gives — is a different answer from screen order.
+    let tree = tree(&["/src/site", "/src/app"]);
+
+    settled.ask(&tree);
+    until_answered(&mut settled, &tree);
+
+    assert_eq!(
+        settled.trouble(&tree),
+        Some("me/site: gh is out (+1 more)".to_string())
+    );
+}
+
+#[test]
+fn a_repository_that_left_the_tree_leaves_the_prompt_line_with_it() {
+    // Read from the map instead, an error from a repository no longer listed puts a
+    // sentence on the prompt line with every row on screen answered.
+    let (_, mut settled) = asking(Remote {
+        slug: Some("me/app"),
+        answer: Some(Err("gh is out".to_string())),
+        ..Remote::default()
+    });
+    let listed = tree(&["/src/app"]);
+    let gone = tree(&[]);
+
+    settled.ask(&listed);
+    until_answered(&mut settled, &listed);
+    assert!(settled.trouble(&listed).is_some());
+
+    assert_eq!(settled.trouble(&gone), None);
+}
+
+#[test]
+fn entering_a_sweep_again_asks_again_where_gh_refused_and_nowhere_else() {
+    let held = Arc::new(Held::default());
+    let mut settled = Settled::new(held.clone(), held.clone());
+    let tree = tree(&["/src/app", "/src/site"]);
+
+    settled.ask(&tree);
+    until("both calls never started", || held.started() == 2);
+    held.release_err(1, "gh is out");
+    held.release(2, SettledPullRequests::All(Vec::new()));
+    until_answered(&mut settled, &tree);
+    assert!(settled.trouble(&tree).is_some());
+
+    settled.forget_failures();
+    settled.ask(&tree);
+    until("the refused one was not asked again", || {
+        held.started() == 3
+    });
+    held.release(3, SettledPullRequests::All(Vec::new()));
+    until_answered(&mut settled, &tree);
+
+    assert_eq!(settled.trouble(&tree), None);
+    assert_eq!(
+        held.started(),
+        3,
+        "the one that answered was not asked twice"
+    );
+}
+
+#[test]
+fn a_reload_stops_waiting_for_the_round_it_ended() {
+    // A count of calls started, rather than the map, leaves the spinner turning for a
+    // round the user has ended until every call from it comes home.
+    let held = Arc::new(Held::default());
+    let mut settled = Settled::new(held.clone(), held.clone());
+    let tree = tree(&["/src/app"]);
+
+    settled.ask(&tree);
+    until("the call never started", || held.started() == 1);
+    assert!(settled.is_waiting(&tree));
+
+    settled.forget();
+    assert!(
+        !settled.is_waiting(&tree),
+        "a round the user ended is not one the spinner turns for"
+    );
+
+    settled.ask(&tree);
+    until("the second call never started", || held.started() == 2);
+    assert!(settled.is_waiting(&tree), "the new round is");
+    // Only the new round's call comes home. Which round wins when both do is
+    // `an_answer_from_before_a_reload_does_not_overwrite_the_one_after_it`'s to say.
+    held.release(2, SettledPullRequests::All(vec![settled_pr(2, "fresh")]));
+    until_answered(&mut settled, &tree);
+
+    let listed = settled
+        .answers(&tree)
+        .into_values()
+        .next()
+        .flatten()
+        .expect("the repository answered");
+    assert_eq!(listed.pull_requests()[0].head_ref, "fresh");
+    held.release(1, SettledPullRequests::All(Vec::new()));
+}
+
+#[test]
+fn a_sweep_is_still_waiting_while_any_listed_repository_is() {
+    // Read as "all still out" instead of "any", the spinner stops when the fast one
+    // lands, the prompt reads as a finished sweep, and the slow one's answer then
+    // widens it under the cursor.
+    let held = Arc::new(Held::default());
+    let mut settled = Settled::new(held.clone(), held.clone());
+    let tree = tree(&["/src/app", "/src/site"]);
+
+    settled.ask(&tree);
+    until("both calls never started", || held.started() == 2);
+    held.release(1, SettledPullRequests::All(Vec::new()));
+    until("the first answer never landed", || {
+        settled.drain();
+        settled.answers(&tree).len() == 1
+    });
+
+    assert!(settled.is_waiting(&tree), "one answered, one is still out");
+    held.release(2, SettledPullRequests::All(Vec::new()));
+    until_answered(&mut settled, &tree);
+}
+
+#[test]
+fn nothing_is_wrong_while_an_answer_is_still_coming() {
+    let held = Arc::new(Held::default());
+    let mut settled = Settled::new(held.clone(), held.clone());
+    let tree = tree(&["/src/app"]);
+
+    settled.ask(&tree);
+    until("the call never started", || held.started() == 1);
+
+    assert!(settled.is_waiting(&tree));
+    assert_eq!(
+        settled.trouble(&tree),
+        None,
+        "still asking is not a failure"
+    );
+    held.release(1, SettledPullRequests::All(Vec::new()));
+    until_answered(&mut settled, &tree);
+}
+
+#[test]
+fn a_repository_that_answered_does_not_hide_the_one_after_it_that_could_not() {
+    // The test above has both repositories fail, so "the first repository that failed"
+    // and "the first repository, if it failed" give the same answer there. Here the
+    // first answered.
+    let held = Arc::new(Held::default());
+    let mut settled = Settled::new(held.clone(), held.clone());
+    let tree = tree(&["/src/app", "/src/site"]);
+
+    settled.ask(&tree);
+    until("both calls never started", || held.started() == 2);
+    held.release(
+        held.call_for("me/app"),
+        SettledPullRequests::All(Vec::new()),
+    );
+    held.release_err(held.call_for("me/site"), "gh is out");
+    until_answered(&mut settled, &tree);
+
+    assert_eq!(
+        settled.trouble(&tree),
+        Some("me/site: gh is out".to_string())
+    );
+}
+
+#[test]
+fn a_refusal_is_named_ahead_of_a_repository_with_nothing_to_ask() {
+    // Without the order, a scratch repository with no remote holds the prompt line for
+    // ever while the expired token on the one that matters is said nowhere.
+    let held = Arc::new(Held {
+        no_remote: vec!["/src/local"],
+        ..Held::default()
+    });
+    let mut settled = Settled::new(held.clone(), held.clone());
+    let tree = tree(&["/src/local", "/src/site"]);
+
+    settled.ask(&tree);
+    until("the site's call never started", || held.started() == 1);
+    until("the local repository never answered", || {
+        settled.drain();
+        settled.answers(&tree).len() == 1
+    });
+    assert_eq!(
+        settled.trouble(&tree),
+        Some("me/local: no GitHub remote to ask about".to_string()),
+        "the only trouble so far, while the other is still asking"
+    );
+
+    held.release_err(1, "gh refused the question this asked: no auth");
+    until_answered(&mut settled, &tree);
+
+    assert_eq!(
+        settled.trouble(&tree),
+        Some("me/site: gh refused the question this asked: no auth (+1 more)".to_string())
+    );
+}
+
+#[test]
+fn a_repository_with_no_github_remote_is_not_asked_again_on_the_way_back_in() {
+    // Asking is a `git remote get-url`: a process per repository per `Shift-S`, for an
+    // answer that cannot change while the picker is up.
+    let (remote, mut settled) = asking(Remote::default());
+    let tree = tree(&["/src/app"]);
+
+    settled.ask(&tree);
+    until_answered(&mut settled, &tree);
+    assert_eq!(remote.named(), 1);
+
+    settled.forget_failures();
+    settled.ask(&tree);
+    settled.drain();
+
+    assert_eq!(remote.named(), 1, "git was not asked to name it again");
+    assert_eq!(
+        settled.trouble(&tree),
+        Some("me/app: no GitHub remote to ask about".to_string()),
+        "and the answer is still the answer"
+    );
+}
+
+#[test]
+fn entering_a_sweep_again_leaves_a_question_still_out_alone() {
+    // Throw away the slot of a call still out and the next `ask` starts a second call
+    // for the same repository in the same round, with the older free to land last and
+    // win; end the round instead and its answer is disowned, so the spinner never
+    // stops.
+    let held = Arc::new(Held::default());
+    let mut settled = Settled::new(held.clone(), held.clone());
+    let tree = tree(&["/src/app", "/src/site"]);
+
+    settled.ask(&tree);
+    until("both calls never started", || held.started() == 2);
+    held.release_err(held.call_for("me/app"), "gh is out");
+    until("the refusal never landed", || {
+        settled.drain();
+        settled.trouble(&tree).is_some()
+    });
+
+    settled.forget_failures();
+    settled.ask(&tree);
+    until("the refused one was not asked again", || {
+        held.started() == 3
+    });
+    held.release(3, SettledPullRequests::All(Vec::new()));
+    held.release(
+        held.call_for("me/site"),
+        SettledPullRequests::All(Vec::new()),
+    );
+    until_answered(&mut settled, &tree);
+
+    assert_eq!(
+        held.started(),
+        3,
+        "the call still out was not started twice"
+    );
+    assert_eq!(
+        settled.answers(&tree).len(),
+        2,
+        "and its answer landed in the round it was asked in"
+    );
+}
+
+#[test]
+fn a_repository_that_left_the_list_and_came_back_is_asked_again() {
+    // Kept instead, a refusal from before it left is the sweep's answer about it for
+    // the life of the picker: there is no `r` inside a sweep to clear it.
+    let (remote, mut settled) = asking(Remote {
+        slug: Some("me/app"),
+        ..Remote::default()
+    });
+    let listed = tree(&["/src/app"]);
+    let gone = tree(&[]);
+
+    settled.ask(&listed);
+    until_answered(&mut settled, &listed);
+    settled.ask(&gone);
+    settled.ask(&listed);
+    until_answered(&mut settled, &listed);
+
+    assert_eq!(remote.asked(), ["me/app", "me/app"]);
+}
+
+#[test]
+fn a_call_still_out_keeps_its_slot_when_its_repository_leaves_the_list() {
+    // A call that has not come home keeps its slot, or its answer has nowhere to land
+    // and the repository coming back starts a second call in the same round.
+    let held = Arc::new(Held::default());
+    let mut settled = Settled::new(held.clone(), held.clone());
+    let listed = tree(&["/src/app"]);
+    let gone = tree(&[]);
+
+    settled.ask(&listed);
+    until("the call never started", || held.started() == 1);
+    settled.ask(&gone);
+    held.release(1, SettledPullRequests::All(Vec::new()));
+    until("the answer never arrived", || settled.drain() > 0);
+
+    assert_eq!(
+        settled.answers(&listed).len(),
+        1,
+        "its answer had somewhere to land"
+    );
+}
+
+#[test]
+fn the_spinner_turns_only_for_a_repository_on_the_list() {
+    // Read from the map instead, a call still out for a repository the user can no
+    // longer see keeps `asking gh…` turning with every visible row answered.
+    let held = Arc::new(Held::default());
+    let mut settled = Settled::new(held.clone(), held.clone());
+    let listed = tree(&["/src/app"]);
+    let gone = tree(&[]);
+
+    settled.ask(&listed);
+    until("the call never started", || held.started() == 1);
+
+    assert!(settled.is_waiting(&listed));
+    assert!(!settled.is_waiting(&gone));
+    held.release(1, SettledPullRequests::All(Vec::new()));
+    until_answered(&mut settled, &listed);
+}
+
+#[test]
+fn a_repository_still_being_asked_about_is_not_in_the_answer_at_all() {
+    // Reporting absent as `None` tells the user a sweep failed while it is still
+    // running.
+    let (_, mut settled) = asking(Remote {
+        slug: Some("me/app"),
+        ..Remote::default()
+    });
+    let tree = tree(&["/src/app"]);
+
+    settled.ask(&tree);
+    assert!(
+        settled.answers(&tree).is_empty(),
+        "nothing has come back yet"
+    );
+    assert!(settled.is_waiting(&tree), "and the prompt line says so");
+
+    until_answered(&mut settled, &tree);
+    assert_eq!(settled.answers(&tree).len(), 1);
+    assert!(!settled.is_waiting(&tree));
+}
+
+#[test]
+fn a_gh_that_refused_says_so_once_and_leaves_the_rows_to_say_the_rest() {
+    let (_, mut settled) = asking(Remote {
+        slug: Some("me/app"),
+        answer: Some(Err(
+            "gh refused the question this asked: no auth".to_string()
+        )),
+        ..Remote::default()
+    });
+    let tree = tree(&["/src/app", "/src/lib"]);
+
+    settled.ask(&tree);
+    until_answered(&mut settled, &tree);
+
+    assert_eq!(
+        settled.trouble(&tree),
+        Some("me/app: gh refused the question this asked: no auth (+1 more)".to_string()),
+        "one sentence however many repositories failed — it goes on one line, and counts"
+    );
+    let answers = settled.answers(&tree);
+    assert_eq!(answers.len(), 2, "both were asked");
+    assert!(
+        answers.values().all(Option::is_none),
+        "and neither could answer, which is what the rows say"
+    );
+}
+
+#[test]
+fn the_answer_is_keyed_by_the_root_and_not_the_directory_beside_it() {
+    // `RepoNode` carries `/src/app/.git` and `/src/app` side by side, and
+    // `domain::sweep` looks its facts up by the second: keying on the first answers
+    // nothing for every checkout in the tree, with no error to say so.
+    let (_, mut settled) = asking(Remote {
+        slug: Some("me/app"),
+        ..Remote::default()
+    });
+    let tree = tree(&["/src/app"]);
+
+    settled.ask(&tree);
+    until_answered(&mut settled, &tree);
+
+    assert_eq!(
+        settled.answers(&tree).into_keys().collect::<Vec<_>>(),
+        vec![RepoRoot::of(&repo("/src/app"))]
+    );
+}
+
+#[test]
+fn nothing_went_wrong_is_not_a_sentence() {
+    let (_, mut settled) = asking(Remote {
+        slug: Some("me/app"),
+        ..Remote::default()
+    });
+    let tree = tree(&["/src/app"]);
+
+    settled.ask(&tree);
+    until_answered(&mut settled, &tree);
+
+    assert_eq!(settled.trouble(&tree), None);
+    assert_eq!(
+        settled.answers(&tree).into_values().next(),
+        Some(Some(SettledPullRequests::All(Vec::new()))),
+        "an empty answer is an answer: nothing here is finished with"
+    );
+}

@@ -197,5 +197,29 @@ if [ -n "$comments" ]; then
     printf '%s\n' "$comments" >&2
 fi
 
+# 8. A module is small enough to hold in your head. The cap is on code rather than on the
+#    file: a page that is mostly `mod tests` is as long as its coverage is thorough, and
+#    cutting tests to fit a number is the opposite of what this is for. So the count stops
+#    at the first `#[cfg(test)]`, and a file that is nothing but test support is not counted
+#    at all.
+#
+#    What the number is for is the question a long file stops you asking: what is this
+#    module *for*. `src/ui/render.rs` reached four thousand lines by drawing two pickers and
+#    everything under them, and nothing in it was wrong — it was simply no longer a module
+#    with an answer. The cap does not say where to cut; it says when the cut is overdue, and
+#    `docs/adr/0017-modules-split-by-responsibility.md` says what to cut along.
+CODE_CAP=800
+for file in $(find src -name '*.rs' | sort); do
+    case "$file" in */tests.rs|*/fixtures.rs) continue ;; esac
+    first=$(grep -n '^#\[cfg(test)\]' "$file" | head -n 1 | cut -d: -f1)
+    if [ -n "$first" ]; then
+        code=$((first - 1))
+    else
+        code=$(wc -l < "$file" | tr -d ' ')
+    fi
+    [ "$code" -le "$CODE_CAP" ] || \
+        fail "$file carries $code lines of code, over the $CODE_CAP-line cap. Split it along what it is responsible for, not down the middle; see docs/adr/0017-modules-split-by-responsibility.md"
+done
+
 [ "$status" -eq 0 ] && printf 'invariants ok (version %s, rust %s)\n' "$manifest" "$pinned"
 exit "$status"

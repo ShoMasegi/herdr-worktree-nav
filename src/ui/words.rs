@@ -18,7 +18,8 @@ use crate::domain::order::{Order, SortKey};
 use crate::domain::preview::Refusal;
 use crate::domain::progress::Stage;
 use crate::domain::rows::{Row, RowRef, StateFilter};
-use crate::port::{AgentStatus, Track};
+use crate::domain::sweep::{Half, Mark, Reason, Refusal as SweepRefusal};
+use crate::port::{AgentStatus, PullRequestOutcome, Track};
 
 /// Shown for a pane herdr is not tracking an agent in.
 pub const UNNAMED_PANE: &str = "shell";
@@ -359,6 +360,50 @@ fn plural(count: usize, noun: &str) -> String {
     } else {
         format!("{noun}s")
     }
+}
+
+/// What a sweep's row says beside its mark, or nothing.
+///
+/// [`Reason::Gone`] is left out: [`marks`] draws it as the branch's upstream marker on every
+/// row it is true of, and `judge` offers that reason only where `track` is `Gone`, so
+/// repeating it puts the same word on the row twice. (The converse does not hold: a row
+/// whose track is gone is not offered while it is primary, running, being removed, or not
+/// known to be clean.)
+///
+/// A refusal is left out too: the absence of a box says it, and `Space` answers on the
+/// prompt line — see [`sweep_refusal`].
+pub fn sweep_note(mark: &Mark) -> Option<String> {
+    match mark {
+        Mark::Going(Reason::PullRequest { number, outcome }) => {
+            let what = match outcome {
+                PullRequestOutcome::Merged => "merged",
+                PullRequestOutcome::Closed => "closed",
+            };
+            Some(format!("PR #{number} {what}"))
+        }
+        Mark::Unjudged(half) | Mark::GoingUnjudged(half) => Some(unjudged(*half).to_string()),
+        Mark::Going(Reason::Gone) | Mark::GoingByHand | Mark::Staying | Mark::Refused(_) => None,
+    }
+}
+
+/// Which half of the sweep's question nobody could answer, as the row says it.
+fn unjudged(half: Half) -> &'static str {
+    match half {
+        Half::Refs => "refs unreadable",
+        Half::PullRequests => "PR unknown",
+    }
+}
+
+/// Why `Space` did nothing on this row, for the prompt line.
+///
+/// On demand rather than on the row: the answer is only wanted by somebody who has just
+/// tried, and these are sentences rather than labels.
+pub fn sweep_refusal(mark: &Mark) -> Option<&'static str> {
+    Some(match mark.refused()? {
+        SweepRefusal::Primary => "the repository itself",
+        SweepRefusal::Running => "panes are running in it",
+        SweepRefusal::Removing => "already being removed",
+    })
 }
 
 #[cfg(test)]
@@ -769,5 +814,83 @@ mod tests {
         assert_eq!(detail(&tree, RowRef::Worktree(0, 99)), "");
         assert_eq!(detail(&tree, RowRef::Pane(0, 0, 99)), "");
         assert_eq!(detail(&tree, RowRef::Ungrouped(99)), "");
+    }
+
+    #[test]
+    fn a_row_a_sweep_has_something_to_say_about_says_it_beside_its_mark() {
+        assert_eq!(
+            sweep_note(&Mark::Going(Reason::PullRequest {
+                number: 123,
+                outcome: PullRequestOutcome::Merged,
+            }))
+            .as_deref(),
+            Some("PR #123 merged"),
+            "the number is what makes the reason checkable"
+        );
+        assert_eq!(
+            sweep_note(&Mark::Going(Reason::PullRequest {
+                number: 4,
+                outcome: PullRequestOutcome::Closed,
+            }))
+            .as_deref(),
+            Some("PR #4 closed"),
+            "merged says the work is in and closed says it was abandoned, and the wrong \
+             way round tells someone their work landed as they delete the only copy"
+        );
+        assert_eq!(
+            sweep_note(&Mark::Unjudged(Half::PullRequests)).as_deref(),
+            Some("PR unknown"),
+            "a row gh could not judge says so rather than looking like one with nothing \
+             to find"
+        );
+        assert_eq!(
+            sweep_note(&Mark::GoingUnjudged(Half::Refs)).as_deref(),
+            Some("refs unreadable"),
+            "marked by hand, it still says nobody judged it — and which half"
+        );
+    }
+
+    #[test]
+    fn a_row_with_nothing_of_the_sweeps_to_show_shows_nothing() {
+        assert_eq!(
+            sweep_note(&Mark::Going(Reason::Gone)),
+            None,
+            "its reason is the upstream marker the row already draws, and saying it again \
+             would put the same word on the row twice"
+        );
+        assert_eq!(
+            sweep_note(&Mark::GoingByHand),
+            None,
+            "a note there would make the sweep look as though it had agreed"
+        );
+        assert_eq!(sweep_note(&Mark::Staying), None);
+        assert_eq!(
+            sweep_note(&Mark::Refused(SweepRefusal::Primary)),
+            None,
+            "a refusal is said by the absence of a box, not by a sentence where the label \
+             goes"
+        );
+    }
+
+    #[test]
+    fn every_refusal_says_which_one_it_is() {
+        // A row that simply cannot be marked, with no word for why, reads as a bug.
+        assert_eq!(
+            sweep_refusal(&Mark::Refused(SweepRefusal::Primary)),
+            Some("the repository itself")
+        );
+        assert_eq!(
+            sweep_refusal(&Mark::Refused(SweepRefusal::Running)),
+            Some("panes are running in it")
+        );
+        assert_eq!(
+            sweep_refusal(&Mark::Refused(SweepRefusal::Removing)),
+            Some("already being removed")
+        );
+        assert_eq!(
+            sweep_refusal(&Mark::Going(Reason::Gone)),
+            None,
+            "nothing else has one to give"
+        );
     }
 }

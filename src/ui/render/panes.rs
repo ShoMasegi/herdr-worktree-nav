@@ -101,14 +101,14 @@ const REMOVING_NOTE: &str = "  deleting ";
 ///
 /// Not `gone`, which the row already carries as its upstream marker, and not a refusal,
 /// which is said by the absence of a box.
-/// [`domain::sweep::Mark::note`](crate::domain::sweep::Mark::note) is where both of those
+/// [`ui::words::sweep_note`](crate::ui::words::sweep_note) is where both of those
 /// are decided and why.
 ///
 /// Left out of `label_end` for the reason `REMOVING_NOTE` is: it arrives on `Shift-S` and
 /// changes again when `gh` answers, and measuring it would move every path in the list
 /// sideways. The columns come out of the label of the row that wanted them.
 fn sweep_note(row: &Row) -> Option<String> {
-    Some(format!("  {}", row.sweep.as_ref()?.note()?))
+    Some(format!("  {}", words::sweep_note(row.sweep.as_ref()?)?))
 }
 
 /// How wide the note actually drawn on a row is — as opposed to how wide `label_end`
