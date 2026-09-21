@@ -52,7 +52,7 @@ rather than two.
 the tree the shape of the list, the cursor's path and the words drawn on it are each asked
 about, and it is one tree because three copies of it would drift.
 
-**Check 8 in `scripts/check-invariants.sh` caps a module at 800 lines of code.** Code, not
+**Check 8 in `scripts/check-invariants.sh` caps a module at 1,000 lines of code.** Code, not
 file: the count stops where the test module opens, and a file that is only test support is
 not counted. Trimming tests to fit a number is the opposite of what the cap is for. It stops
 at a `#[cfg(test)]` that opens a `mod` block rather than at the first one in the file,
