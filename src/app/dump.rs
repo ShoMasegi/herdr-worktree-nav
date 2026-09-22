@@ -171,10 +171,8 @@ pub fn report(
 
 /// `upstream origin/x  track gone` — the two facts a marker is drawn from, in words the
 /// marker cannot hold: `level` for a branch even with its upstream, `none` for one with no
-/// upstream to be even with, and `not read` when git would not read the refs at all.
-///
-/// There is no word for the walk that succeeded and printed a `:track` field this side could
-/// not read; such a ref is one of the branches called `level` here. That is #83.
+/// upstream to be even with, `unreadable` for one whose `:track` field git printed and the
+/// adapter could not read, and `not read` when git would not read the refs at all.
 ///
 /// A branch with no upstream is measured against where it would push — see
 /// [`adapter::git_cli`](crate::adapter::git_cli) — so `upstream none` can still be followed by
@@ -318,14 +316,20 @@ fn track_words(track: Track) -> String {
         Track::Ahead(ahead) => format!("\u{2191}{ahead}"),
         Track::Behind(behind) => format!("\u{2193}{behind}"),
         Track::Diverged { ahead, behind } => format!("\u{2191}{ahead}\u{2193}{behind}"),
+        // A word rather than nothing, because this page is the one surface with room for
+        // it: the row draws the same blank a branch with nothing to report draws, and
+        // somebody reading this page is reading it to find out which. `unreadable` is what
+        // the page already calls a working tree git would not look at.
+        Track::Unreadable => "unreadable".to_string(),
     }
 }
 
 /// The words for a track: the marker where git reported one, else `level` beside an
 /// upstream and `none` without one.
 ///
-/// `level` carries one case it has not earned — a ref whose `:track` field the adapter could
-/// not read arrives with nothing to draw, the same as a branch that is even. That is #83.
+/// Both of those are claims — even with the ref git named, and nothing to be even with —
+/// so neither may stand for a reading that did not read. [`Track::Unreadable`] is not an
+/// absence and does not arrive here as one.
 fn standing(track: Option<Track>, upstream: Option<&str>) -> String {
     match track {
         Some(track) => track_words(track),
