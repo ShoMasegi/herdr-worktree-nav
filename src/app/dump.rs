@@ -173,6 +173,9 @@ pub fn report(
 /// marker cannot hold: `level` for a branch even with its upstream, `none` for one with no
 /// upstream to be even with, and `not read` when git would not read the refs at all.
 ///
+/// There is no word for the walk that succeeded and printed a `:track` field this side could
+/// not read; such a ref is one of the branches called `level` here. That is #83.
+///
 /// A branch with no upstream is measured against where it would push — see
 /// [`adapter::git_cli`](crate::adapter::git_cli) — so `upstream none` can still be followed by
 /// a marker. Under `push.default = current` a branch nobody has pushed gets a push destination
@@ -320,6 +323,9 @@ fn track_words(track: Track) -> String {
 
 /// The words for a track: the marker where git reported one, else `level` beside an
 /// upstream and `none` without one.
+///
+/// `level` carries one case it has not earned — a ref whose `:track` field the adapter could
+/// not read arrives with nothing to draw, the same as a branch that is even. That is #83.
 fn standing(track: Option<Track>, upstream: Option<&str>) -> String {
     match track {
         Some(track) => track_words(track),

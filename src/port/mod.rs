@@ -196,7 +196,8 @@ pub struct GitRef {
     pub upstream: Option<String>,
     /// Where this branch stands against the upstream it tracks — or, for a branch with no
     /// upstream configured, against where it would push. `None` when it is level with
-    /// whichever of those it was measured against, and when there is neither.
+    /// whichever of those it was measured against, when there is neither, and when the
+    /// field git printed could not be read — three facts in one absence, which is #83.
     pub track: Option<Track>,
     /// The checkout that currently has this branch, when one does. git answers this in the
     /// same breath as everything else here, which is what ties a branch to a checkout
