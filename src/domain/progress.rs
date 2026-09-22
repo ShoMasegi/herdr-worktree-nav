@@ -23,26 +23,6 @@ pub enum Stage {
 }
 
 impl Stage {
-    pub fn label(&self) -> String {
-        match self {
-            Stage::Starting { branch } => format!("opening {branch}"),
-            Stage::Fetching { remote, branch } => format!("fetching {remote}/{branch}"),
-            Stage::Creating { branch } => format!("creating the worktree for {branch}"),
-            Stage::Opening { branch } => format!("opening the checkout for {branch}"),
-            Stage::Landing { destination } => match destination {
-                Destination::SplitHere { .. } => {
-                    "moving the pane beside the one you came from".to_string()
-                }
-                Destination::ExistingTab { label, .. }
-                | Destination::ExistingSpace { label, .. } => {
-                    format!("moving the pane into {label}")
-                }
-                // herdr already put it in a space of its own; there is nothing to move.
-                Destination::NewSpace => "focusing the new pane".to_string(),
-            },
-        }
-    }
-
     /// Whether `Ctrl-C` can still abandon the picker here.
     ///
     /// True only while nothing has been asked of herdr. Once a worktree has been created,
@@ -57,73 +37,6 @@ impl Stage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::port::SplitDirection;
-
-    #[test]
-    fn every_stage_says_what_it_is_doing_and_to_what() {
-        assert_eq!(
-            Stage::Starting {
-                branch: "feat/login".into()
-            }
-            .label(),
-            "opening feat/login"
-        );
-        assert_eq!(
-            Stage::Fetching {
-                remote: "origin".into(),
-                branch: "feat/login".into()
-            }
-            .label(),
-            "fetching origin/feat/login"
-        );
-        assert_eq!(
-            Stage::Creating {
-                branch: "feat/login".into()
-            }
-            .label(),
-            "creating the worktree for feat/login"
-        );
-        assert_eq!(
-            Stage::Opening {
-                branch: "fix/crash".into()
-            }
-            .label(),
-            "opening the checkout for fix/crash"
-        );
-    }
-
-    #[test]
-    fn landing_reads_as_what_happens_to_the_pane() {
-        assert_eq!(
-            Stage::Landing {
-                destination: Destination::SplitHere {
-                    tab_id: "w1:t1".into(),
-                    target_pane_id: "w1:p1".into(),
-                    direction: SplitDirection::Right,
-                }
-            }
-            .label(),
-            "moving the pane beside the one you came from"
-        );
-        assert_eq!(
-            Stage::Landing {
-                destination: Destination::ExistingTab {
-                    tab_id: "w1:t2".into(),
-                    label: "w1  app / logs".into(),
-                }
-            }
-            .label(),
-            "moving the pane into w1  app / logs"
-        );
-        assert_eq!(
-            Stage::Landing {
-                destination: Destination::NewSpace
-            }
-            .label(),
-            "focusing the new pane",
-            "nothing is moved: herdr already put it in a space of its own"
-        );
-    }
 
     #[test]
     fn only_the_stages_before_herdr_is_touched_can_be_interrupted() {

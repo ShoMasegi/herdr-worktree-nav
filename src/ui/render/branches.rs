@@ -18,6 +18,7 @@ use crate::port::LayoutRect;
 use crate::ui::branches::{Activity, BranchesState, Step};
 use crate::ui::diagram::{Fit, Frame as DiagramFrame};
 use crate::ui::theme::Theme;
+use crate::ui::words;
 
 const HELP_REPO: &[&str] = &[
     "\u{21b5} branches  j/k move  / search  \u{21e5} panes  q close",
@@ -214,7 +215,7 @@ fn branch_search_line(state: &BranchesState, theme: &Theme, width: u16) -> Parag
     // The order sits beside the count, where the eye already goes to read how long the list
     // is, and takes the accent once it is no longer the default: there is otherwise no way
     // to tell without reading the rows.
-    let order = format!("\u{21c5} {}", state.order().label());
+    let order = format!("\u{21c5} {}", words::order(state.order()));
     let count = count_of(state.rows().len(), "branch", "branches");
     let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
     let right = order.chars().count() + ORDER_GAP + count.chars().count();
@@ -389,12 +390,15 @@ fn destination_prompt(state: &BranchesState, theme: &Theme, width: u16) -> Parag
                 Span::raw(" "),
                 Span::styled(spinner(state.frame()), Style::default().fg(theme.accent)),
                 Span::raw(" "),
-                Span::styled(stage.label(), Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    words::stage(stage),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("\u{2026}", theme.dim()),
             ]));
         }
         Activity::Failed { stage, error } => {
-            let head = format!(" \u{d7} {}: ", stage.label());
+            let head = format!(" \u{d7} {}: ", words::stage(stage));
             // Cut out of the middle rather than the end: git puts the command it ran first
             // and its actual complaint last, and the complaint is the point.
             let error = middle_elide(
@@ -407,7 +411,7 @@ fn destination_prompt(state: &BranchesState, theme: &Theme, width: u16) -> Parag
                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    format!("{}: ", stage.label()),
+                    format!("{}: ", words::stage(stage)),
                     Style::default().add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(error, Style::default().fg(Color::Red)),
@@ -534,7 +538,7 @@ fn render_destination_rows(frame: &mut Frame, state: &BranchesState, theme: &The
     let group_column = state
         .destinations()
         .iter()
-        .map(|destination| destination.group().chars().count())
+        .map(|destination| words::destination_group(destination).chars().count())
         .max()
         .unwrap_or(0);
 
@@ -548,7 +552,7 @@ fn render_destination_rows(frame: &mut Frame, state: &BranchesState, theme: &The
 
     let mut last_group = "";
     for (index, destination) in state.destinations().iter().enumerate() {
-        let group = destination.group();
+        let group = words::destination_group(destination);
         let shown = if group == last_group { "" } else { group };
         last_group = group;
         if index < scroll || index >= end {
@@ -570,7 +574,7 @@ fn render_destination_rows(frame: &mut Frame, state: &BranchesState, theme: &The
                 ),
                 Span::raw("  "),
                 Span::styled(
-                    destination.label(),
+                    words::destination(destination),
                     if selected {
                         base.add_modifier(Modifier::BOLD)
                     } else {
@@ -620,13 +624,13 @@ fn destination_areas(body: Rect) -> (Rect, Option<Rect>) {
 fn render_preview(frame: &mut Frame, preview: &Preview, theme: &Theme, area: Rect) {
     match preview {
         Preview::Unavailable => {}
-        Preview::Blocked { caption, reason } => {
+        Preview::Blocked { at, reason } => {
             frame.render_widget(
                 Paragraph::new(vec![
-                    Line::from(Span::styled(caption.clone(), theme.dim())),
+                    Line::from(Span::styled(words::landing(at), theme.dim())),
                     Line::from(""),
                     Line::from(Span::styled(
-                        format!("\u{26a0} {reason}"),
+                        format!("\u{26a0} {}", words::refusal(*reason)),
                         Style::default().fg(Color::Yellow),
                     )),
                 ])
@@ -635,12 +639,12 @@ fn render_preview(frame: &mut Frame, preview: &Preview, theme: &Theme, area: Rec
             );
         }
         Preview::Layout {
-            caption,
+            at,
             area: tab,
             panes,
         } => {
             frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(caption.clone(), theme.dim()))),
+                Paragraph::new(Line::from(Span::styled(words::landing(at), theme.dim()))),
                 Rect::new(area.x, area.y, area.width, 1),
             );
             if area.height < 4 {
@@ -711,7 +715,10 @@ fn render_diagram(
             vec![
                 Span::styled("+ ", name_style),
                 Span::styled(
-                    truncate(&pane.label, inner.width.saturating_sub(2) as usize),
+                    truncate(
+                        pane.label.as_deref().unwrap_or(words::UNNAMED_PANE),
+                        inner.width.saturating_sub(2) as usize,
+                    ),
                     name_style,
                 ),
             ]
@@ -720,7 +727,10 @@ fn render_diagram(
                 Span::styled(glyph, glyph_style),
                 Span::raw(" "),
                 Span::styled(
-                    truncate(&pane.label, inner.width.saturating_sub(2) as usize),
+                    truncate(
+                        pane.label.as_deref().unwrap_or(words::UNNAMED_PANE),
+                        inner.width.saturating_sub(2) as usize,
+                    ),
                     name_style,
                 ),
             ]

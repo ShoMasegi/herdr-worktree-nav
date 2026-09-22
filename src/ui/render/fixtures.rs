@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use ratatui::style::Style;
 
 use crate::domain::chrome::Chrome;
+use crate::domain::dest::fixtures::{space_name, tab_name};
 use crate::domain::dest::Destination;
 use crate::domain::model::{PaneNode, Refs, RepoNode, Tree, WorktreeNode};
 use crate::domain::rows::DisplayLine;
@@ -364,17 +365,16 @@ pub(crate) fn branches_picker() -> BranchesState {
                 direction: SplitDirection::Down,
             },
             Destination::ExistingTab {
-                tab_id: "w1:t2".into(),
-                label: "w1  app / logs".into(),
+                tab: tab_name("w1", "app", "w1:t2", "logs"),
+                zoomed: false,
             },
             Destination::ExistingSpace {
-                workspace_id: "w3".into(),
-                label: "w3  notes \u{2192} new tab".into(),
+                space: space_name("w3", "notes"),
             },
             Destination::NewSpace,
             Destination::ExistingTab {
-                tab_id: "w3:t1".into(),
-                label: "w3  notes / zoomed".into(),
+                tab: tab_name("w3", "notes", "w3:t1", "zoomed"),
+                zoomed: true,
             },
         ],
         snapshot,

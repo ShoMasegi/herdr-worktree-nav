@@ -451,9 +451,8 @@ mod tests {
             panic!("expected a failure, got {:?}", state.activity());
         };
         assert!(
-            stage.label().contains("fetching"),
-            "it says which step failed: {}",
-            stage.label()
+            matches!(stage, Stage::Fetching { .. }),
+            "it carries which step failed: {stage:?}"
         );
         assert!(error.contains("remote repository"));
 

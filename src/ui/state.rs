@@ -8,11 +8,12 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::domain::model::{CheckoutPath, RepoKey, Tree, WorkingTree};
-use crate::domain::notice::{self, Notice};
+use crate::domain::notice::{self, Condition};
 use crate::domain::removal::{Removal, SweepRemoval};
 use crate::domain::rows::{self, DisplayLine, Row, RowRef, StateFilter, ViewOptions};
 use crate::domain::sweep::{self, Changes, Mark, RepoRoot};
 use crate::port::SettledPullRequests;
+use crate::ui::words;
 
 /// What the event loop should do about a key. Anything that touches herdr is returned
 /// rather than performed, so the terminal can be restored first.
@@ -545,7 +546,7 @@ impl PanesState {
     /// while `gh` is asked only during a sweep and about the half git could not decide. One
     /// sentence at a time, so the `gh` one waits behind the git one until that is fixed.
     pub fn trouble(&self) -> Option<String> {
-        notice::summarize(&self.conditions())
+        words::conditions_line(&self.conditions())
     }
 
     /// Whether the panel holding every condition in full is open.
@@ -557,7 +558,7 @@ impl PanesState {
     ///
     /// The prompt line can hold one of these; this is what the count on the end of it is
     /// standing in for, and what a reader who wants the rest is shown.
-    pub fn conditions(&self) -> Vec<Notice> {
+    pub fn conditions(&self) -> Vec<Condition> {
         notice::conditions(&self.tree, self.stale.as_deref(), self.sweep_trouble())
     }
 

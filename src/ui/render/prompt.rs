@@ -2,6 +2,7 @@
 //! a sweep asks, and the panel that reads out the conditions in full.
 
 use super::*;
+use crate::ui::words;
 
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -366,7 +367,7 @@ const PANEL_MIN_WIDTH: usize = 8;
 /// a clipped question is a different question — this is only ever read.
 pub(super) fn render_conditions(
     frame: &mut Frame,
-    conditions: &[notice::Notice],
+    conditions: &[notice::Condition],
     theme: &Theme,
     body: Rect,
 ) {
@@ -387,7 +388,7 @@ pub(super) fn render_conditions(
     );
     let wrapped: Vec<Vec<String>> = conditions
         .iter()
-        .map(|condition| wrap(&condition.text, inner))
+        .map(|condition| wrap(&words::condition(condition), inner))
         .collect();
 
     let blank = Line::from("");

@@ -17,22 +17,25 @@
 
 use crate::domain::model::{Refs, Tree};
 
-/// One thing the picker has to say, flattened to the single line it may have to fit on.
+/// One thing the picker has to say about the list it is showing.
 ///
-/// A struct rather than a bare `String` because the list is what the whole mechanism hangs
-/// on: [`summarize`] shows the first and counts the rest, and what is counted has to be
-/// readable somewhere. There is deliberately no severity here yet. Both conditions produced
-/// today are about one repository, so an ordering field would be a guess; the order is the
-/// order they are gathered in, and [`conditions`] says what that order means.
+/// A value rather than a sentence: which of these hold is derived every frame, and what
+/// each one reads as on a prompt line that may have no room for it is
+/// [`ui::words`](crate::ui::words)'s to decide. There is deliberately no severity here yet.
+/// Both conditions produced today are about one repository, so an ordering field would be a
+/// guess; the order is the order they are gathered in, and [`conditions`] says what that
+/// order means.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Notice {
-    pub text: String,
-}
-
-impl Notice {
-    pub fn new(text: impl Into<String>) -> Self {
-        Notice { text: text.into() }
-    }
+pub enum Condition {
+    /// The reading that built the list failed, so the rows may be behind. Carries the words
+    /// of whatever refused, which the picker has no better account of.
+    Stale(String),
+    /// git would not read this repository's refs, so every track marker in it is missing.
+    RefsUnreadable { repo: String, words: String },
+    /// What could not be asked of `gh` in this sweep, already counted by
+    /// [`app::settled`](crate::app::settled) because which repositories were asked is not
+    /// something the tree knows.
+    SweepTrouble(String),
 }
 
 /// Everything that is wrong right now, worst first.
@@ -50,32 +53,22 @@ impl Notice {
 /// [`app::settled`](crate::app::settled) builds because which repositories were asked is
 /// not something the tree
 /// knows.
-pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>) -> Vec<Notice> {
+pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>) -> Vec<Condition> {
     // In front of the rest: the others are about what a row is missing, and this one is
     // about whether the rows are the right rows at all.
-    let mut notices: Vec<Notice> = stale.map(Notice::new).into_iter().collect();
-    notices.extend(tree.repos.iter().filter_map(|repo| match &repo.refs {
+    let mut conditions: Vec<Condition> = stale
+        .map(|words| Condition::Stale(words.to_string()))
+        .into_iter()
+        .collect();
+    conditions.extend(tree.repos.iter().filter_map(|repo| match &repo.refs {
         Refs::Read => None,
-        Refs::Unreadable(words) => Some(Notice::new(format!(
-            "{}: refs unreadable: {words}",
-            repo.display_name
-        ))),
+        Refs::Unreadable(words) => Some(Condition::RefsUnreadable {
+            repo: repo.display_name.clone(),
+            words: words.clone(),
+        }),
     }));
-    notices.extend(sweep_trouble.map(Notice::new));
-    notices
-}
-
-/// The one-line form: the first sentence, and a count of what it is standing in for.
-///
-/// One line can hold one of these, so the rest are counted rather than dropped — a line
-/// that showed the first and said nothing about the others would read as the whole story.
-/// The count is what the reader follows to the unabridged list.
-pub fn summarize(notices: &[Notice]) -> Option<String> {
-    let first = notices.first()?;
-    Some(match notices.len() - 1 {
-        0 => first.text.clone(),
-        more => format!("{} (+{more} more)", first.text),
-    })
+    conditions.extend(sweep_trouble.map(|words| Condition::SweepTrouble(words.to_string())));
+    conditions
 }
 
 #[cfg(test)]
@@ -104,11 +97,10 @@ mod tests {
     fn a_tree_git_answered_for_with_no_sweep_trouble_has_nothing_to_say() {
         let tree = tree(vec![repo("me/app", Refs::Read)]);
         assert_eq!(conditions(&tree, None, None), Vec::new());
-        assert_eq!(summarize(&conditions(&tree, None, None)), None);
     }
 
     #[test]
-    fn every_repository_whose_refs_were_not_read_is_its_own_notice() {
+    fn every_repository_whose_refs_were_not_read_is_its_own_condition() {
         let tree = tree(vec![
             repo("me/app", Refs::Unreadable("fatal: bad ref".into())),
             repo("me/site", Refs::Read),
@@ -117,12 +109,17 @@ mod tests {
                 Refs::Unreadable("fatal: index file corrupt".into()),
             ),
         ]);
-        let notices = conditions(&tree, None, None);
         assert_eq!(
-            notices,
+            conditions(&tree, None, None),
             vec![
-                Notice::new("me/app: refs unreadable: fatal: bad ref"),
-                Notice::new("me/docs: refs unreadable: fatal: index file corrupt"),
+                Condition::RefsUnreadable {
+                    repo: "me/app".into(),
+                    words: "fatal: bad ref".into(),
+                },
+                Condition::RefsUnreadable {
+                    repo: "me/docs".into(),
+                    words: "fatal: index file corrupt".into(),
+                },
             ]
         );
     }
@@ -133,12 +130,14 @@ mod tests {
             "me/app",
             Refs::Unreadable("fatal: bad ref".into()),
         )]);
-        let notices = conditions(&tree, None, Some("me/app: gh could not be run"));
         assert_eq!(
-            notices.iter().map(|n| n.text.as_str()).collect::<Vec<_>>(),
+            conditions(&tree, None, Some("me/app: gh could not be run")),
             vec![
-                "me/app: refs unreadable: fatal: bad ref",
-                "me/app: gh could not be run",
+                Condition::RefsUnreadable {
+                    repo: "me/app".into(),
+                    words: "fatal: bad ref".into(),
+                },
+                Condition::SweepTrouble("me/app: gh could not be run".into()),
             ],
             "the track markers are missing sweep or no sweep; gh is only asked during one"
         );
@@ -148,35 +147,23 @@ mod tests {
     fn what_gh_said_stands_alone_once_git_has_answered() {
         let tree = tree(vec![repo("me/app", Refs::Read)]);
         assert_eq!(
-            summarize(&conditions(
-                &tree,
-                None,
-                Some("me/app: gh could not be run")
-            ))
-            .as_deref(),
-            Some("me/app: gh could not be run")
+            conditions(&tree, None, Some("me/app: gh could not be run")),
+            vec![Condition::SweepTrouble(
+                "me/app: gh could not be run".into()
+            )]
         );
     }
 
     #[test]
-    fn a_line_that_can_hold_one_says_how_many_it_is_standing_in_for() {
-        let tree = tree(vec![
-            repo("me/app", Refs::Unreadable("fatal: bad ref".into())),
-            repo(
-                "me/docs",
-                Refs::Unreadable("fatal: index file corrupt".into()),
-            ),
-        ]);
+    fn a_list_that_may_be_behind_is_said_before_what_any_one_row_is_missing() {
+        let tree = tree(vec![repo(
+            "me/app",
+            Refs::Unreadable("fatal: bad ref".into()),
+        )]);
         assert_eq!(
-            summarize(&conditions(
-                &tree,
-                None,
-                Some("me/app: gh could not be run")
-            ))
-            .as_deref(),
-            Some("me/app: refs unreadable: fatal: bad ref (+2 more)"),
-            "the count covers everything unsaid, gh included: a reader who is told about one \
-             of three and nothing about the other two has been told the wrong thing"
+            conditions(&tree, Some("herdr did not answer"), None)[0],
+            Condition::Stale("herdr did not answer".into()),
+            "whether these are the right rows at all comes before what one of them lacks"
         );
     }
 }

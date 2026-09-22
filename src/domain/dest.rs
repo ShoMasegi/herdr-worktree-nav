@@ -11,6 +11,38 @@
 
 use crate::port::{PaneDestination, Snapshot, SplitDirection, Tab, Workspace};
 
+/// A workspace as herdr has it: the id it is addressed by, and the name it was given.
+///
+/// Both halves, because both are shown: the id is what the user sees in herdr's own
+/// navigator, and the name is the only thing that says which project it is. Which of them a
+/// row reads as is [`ui::words`](crate::ui::words)'s to decide.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpaceName {
+    pub workspace_id: String,
+    /// `None` for a workspace herdr was never given a name for.
+    pub label: Option<String>,
+}
+
+/// A tab as herdr has it, and the space it sits in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabName {
+    pub space: SpaceName,
+    pub tab_id: String,
+    /// `None` for a tab herdr was never given a name for.
+    pub label: Option<String>,
+}
+
+/// Where the pane would land, for the preview and for the row that offers it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Landing {
+    /// A tab that is already open.
+    Tab(TabName),
+    /// A new tab in a space that is already open.
+    NewTabIn(SpaceName),
+    /// The space herdr makes for the worktree, left where it is.
+    NewSpace,
+}
+
 /// One row of the destination step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Destination {
@@ -21,37 +53,17 @@ pub enum Destination {
         direction: SplitDirection,
     },
     /// Split some other tab, at whichever pane herdr picks.
-    ExistingTab { tab_id: String, label: String },
+    ExistingTab {
+        tab: TabName,
+        /// herdr will not move a pane into a zoomed tab. Carried rather than filtered out:
+        /// the tab is on screen, and "it is not in the list" is a worse answer than "it is,
+        /// and here is why you cannot use it".
+        zoomed: bool,
+    },
     /// Add a tab to an existing space.
-    ExistingSpace { workspace_id: String, label: String },
+    ExistingSpace { space: SpaceName },
     /// Leave the workspace herdr made — the built-in behaviour.
     NewSpace,
-}
-
-impl Destination {
-    /// What the row reads as in the picker.
-    pub fn label(&self) -> String {
-        match self {
-            Destination::SplitHere { direction, .. } => {
-                format!("split {}", direction.as_str())
-            }
-            Destination::ExistingTab { label, .. } => label.clone(),
-            Destination::ExistingSpace { label, .. } => label.clone(),
-            // The group column already says "new space"; this says what happens to it.
-            Destination::NewSpace => "on its own".to_string(),
-        }
-    }
-
-    /// A heading for the group this row belongs to, when it starts one.
-    pub fn group(&self) -> &'static str {
-        match self {
-            Destination::SplitHere { .. } => "here",
-            Destination::ExistingTab { .. } => "existing tab",
-            Destination::ExistingSpace { .. } => "existing space",
-            // Its own group, so it does not read as one more "existing space".
-            Destination::NewSpace => "new space",
-        }
-    }
 }
 
 /// Where to move the freshly created root pane, or `None` to leave it where herdr put it.
@@ -66,14 +78,14 @@ pub fn placement_for(destination: &Destination) -> Option<PaneDestination> {
             split: *direction,
             target_pane_id: Some(target_pane_id.clone()),
         }),
-        Destination::ExistingTab { tab_id, .. } => Some(PaneDestination::Tab {
-            tab_id: tab_id.clone(),
+        Destination::ExistingTab { tab, .. } => Some(PaneDestination::Tab {
+            tab_id: tab.tab_id.clone(),
             split: SplitDirection::Right,
             // No target: herdr splits the tab's active pane.
             target_pane_id: None,
         }),
-        Destination::ExistingSpace { workspace_id, .. } => Some(PaneDestination::NewTab {
-            workspace_id: Some(workspace_id.clone()),
+        Destination::ExistingSpace { space } => Some(PaneDestination::NewTab {
+            workspace_id: Some(space.workspace_id.clone()),
         }),
         Destination::NewSpace => None,
     }
@@ -103,27 +115,19 @@ pub fn destinations(snapshot: &Snapshot, from_pane_id: Option<&str>) -> Vec<Dest
         if Some(tab.tab_id.as_str()) == current_tab {
             continue;
         }
-        // Marked here rather than filtered out: the tab is on screen, and "it is not in the
-        // list" is a worse answer than "it is, and here is why you cannot use it".
         let zoomed = snapshot
             .layouts
             .iter()
             .any(|layout| layout.tab_id == tab.tab_id && layout.zoomed);
-        let label = tab_label(snapshot, tab);
         destinations.push(Destination::ExistingTab {
-            tab_id: tab.tab_id.clone(),
-            label: if zoomed {
-                format!("{label}  (zoomed)")
-            } else {
-                label
-            },
+            tab: tab_name(snapshot, tab),
+            zoomed,
         });
     }
 
     for workspace in &snapshot.workspaces {
         destinations.push(Destination::ExistingSpace {
-            workspace_id: workspace.workspace_id.clone(),
-            label: format!("{} \u{2192} new tab", workspace_label(workspace)),
+            space: space_name(workspace),
         });
     }
 
@@ -131,25 +135,55 @@ pub fn destinations(snapshot: &Snapshot, from_pane_id: Option<&str>) -> Vec<Dest
     destinations
 }
 
-fn workspace_label(workspace: &Workspace) -> String {
-    if workspace.label.trim().is_empty() {
-        workspace.workspace_id.clone()
-    } else {
-        format!("{}  {}", workspace.workspace_id, workspace.label.trim())
+pub(crate) fn space_name(workspace: &Workspace) -> SpaceName {
+    let label = workspace.label.trim();
+    SpaceName {
+        workspace_id: workspace.workspace_id.clone(),
+        label: (!label.is_empty()).then(|| label.to_string()),
     }
 }
 
-pub(crate) fn tab_label(snapshot: &Snapshot, tab: &Tab) -> String {
+pub(crate) fn tab_name(snapshot: &Snapshot, tab: &Tab) -> TabName {
     let space = snapshot
         .workspaces
         .iter()
         .find(|workspace| workspace.workspace_id == tab.workspace_id)
-        .map(workspace_label)
-        .unwrap_or_else(|| tab.workspace_id.clone());
-    if tab.label.trim().is_empty() {
-        format!("{space} / {}", tab.tab_id)
-    } else {
-        format!("{space} / {}", tab.label.trim())
+        .map(space_name)
+        .unwrap_or(SpaceName {
+            workspace_id: tab.workspace_id.clone(),
+            label: None,
+        });
+    let label = tab.label.trim();
+    TabName {
+        space,
+        tab_id: tab.tab_id.clone(),
+        label: (!label.is_empty()).then(|| label.to_string()),
+    }
+}
+
+/// Names spelled out by hand, for tests about what is done with a destination rather than
+/// about how one is built.
+///
+/// Here rather than beside any one of them because a destination is named in the row that
+/// offers it, in the preview of where it leads and in the step that lands a pane there, and
+/// those tests live in three modules.
+#[cfg(test)]
+pub(crate) mod fixtures {
+    use super::{SpaceName, TabName};
+
+    pub(crate) fn space_name(workspace_id: &str, label: &str) -> SpaceName {
+        SpaceName {
+            workspace_id: workspace_id.into(),
+            label: (!label.is_empty()).then(|| label.to_string()),
+        }
+    }
+
+    pub(crate) fn tab_name(workspace_id: &str, space: &str, tab_id: &str, label: &str) -> TabName {
+        TabName {
+            space: space_name(workspace_id, space),
+            tab_id: tab_id.into(),
+            label: (!label.is_empty()).then(|| label.to_string()),
+        }
     }
 }
 
@@ -186,8 +220,23 @@ mod tests {
         .expect("snapshot fixture should deserialize")
     }
 
-    fn labels(destinations: &[Destination]) -> Vec<String> {
-        destinations.iter().map(Destination::label).collect()
+    /// The destinations by kind and by the id each one addresses, which is what the list
+    /// is: the wording every row reads as is [`ui::words`](crate::ui::words)'s, and asked
+    /// for there.
+    fn shape(destinations: &[Destination]) -> Vec<String> {
+        destinations
+            .iter()
+            .map(|destination| match destination {
+                Destination::SplitHere { direction, .. } => {
+                    format!("split {}", direction.as_str())
+                }
+                Destination::ExistingTab { tab, zoomed } => {
+                    format!("tab {}{}", tab.tab_id, if *zoomed { " zoomed" } else { "" })
+                }
+                Destination::ExistingSpace { space } => format!("space {}", space.workspace_id),
+                Destination::NewSpace => "new space".to_string(),
+            })
+            .collect()
     }
 
     #[test]
@@ -201,24 +250,60 @@ mod tests {
                 direction: SplitDirection::Right,
             }
         );
-        assert_eq!(labels(&destinations)[..2], ["split right", "split down"]);
+        assert_eq!(shape(&destinations)[..2], ["split right", "split down"]);
     }
 
     #[test]
     fn lists_every_other_tab_and_every_space_and_ends_with_a_new_one() {
         assert_eq!(
-            labels(&destinations(&snapshot(), Some("w1:p1"))),
+            shape(&destinations(&snapshot(), Some("w1:p1"))),
             [
                 "split right",
                 "split down",
                 // w1:t1 is missing on purpose: "split here" already covers it.
-                "w1  app / w1:t2",
-                "w2 / logs",
-                "w1  app \u{2192} new tab",
-                "w2 \u{2192} new tab",
-                "on its own",
+                "tab w1:t2",
+                "tab w2:t1",
+                "space w1",
+                "space w2",
+                "new space",
             ]
         );
+    }
+
+    #[test]
+    fn a_tab_carries_the_name_of_the_space_it_is_in() {
+        let destinations = destinations(&snapshot(), Some("w1:p1"));
+        let Some(Destination::ExistingTab { tab, .. }) = destinations
+            .iter()
+            .find(|d| matches!(d, Destination::ExistingTab { tab, .. } if tab.tab_id == "w2:t1"))
+        else {
+            panic!(
+                "expected w2:t1 to be offered, got {:?}",
+                shape(&destinations)
+            );
+        };
+        assert_eq!(tab.label.as_deref(), Some("logs"));
+        assert_eq!(tab.space.workspace_id, "w2");
+        assert_eq!(
+            tab.space.label, None,
+            "a workspace herdr gave no name is carried as having none, not as an empty one"
+        );
+    }
+
+    #[test]
+    fn a_tab_with_no_name_of_its_own_carries_none() {
+        let destinations = destinations(&snapshot(), Some("w1:p1"));
+        let Some(Destination::ExistingTab { tab, .. }) = destinations
+            .iter()
+            .find(|d| matches!(d, Destination::ExistingTab { tab, .. } if tab.tab_id == "w1:t2"))
+        else {
+            panic!(
+                "expected w1:t2 to be offered, got {:?}",
+                shape(&destinations)
+            );
+        };
+        assert_eq!(tab.label, None);
+        assert_eq!(tab.space.label.as_deref(), Some("app"));
     }
 
     #[test]
@@ -230,10 +315,10 @@ mod tests {
              "focused_pane_id": "w2:p1", "panes": []}
         ]))
         .unwrap();
-        let labels = labels(&destinations(&snapshot, Some("w1:p1")));
+        let shape = shape(&destinations(&snapshot, Some("w1:p1")));
         assert!(
-            labels.contains(&"w2 / logs  (zoomed)".to_string()),
-            "got {labels:?}"
+            shape.contains(&"tab w2:t1 zoomed".to_string()),
+            "got {shape:?}"
         );
     }
 
@@ -244,8 +329,8 @@ mod tests {
             .iter()
             .any(|d| matches!(d, Destination::SplitHere { .. })));
         assert_eq!(
-            labels(&destinations)[0],
-            "w1  app / agents",
+            shape(&destinations)[0],
+            "tab w1:t1",
             "with no current tab, every tab is offered"
         );
     }
@@ -270,8 +355,15 @@ mod tests {
     #[test]
     fn another_tab_is_split_wherever_herdr_thinks_best() {
         let destination = Destination::ExistingTab {
-            tab_id: "w2:t1".into(),
-            label: "w2 / logs".into(),
+            tab: TabName {
+                space: SpaceName {
+                    workspace_id: "w2".into(),
+                    label: None,
+                },
+                tab_id: "w2:t1".into(),
+                label: Some("logs".into()),
+            },
+            zoomed: false,
         };
         assert_eq!(
             placement_for(&destination),
@@ -286,8 +378,10 @@ mod tests {
     #[test]
     fn an_existing_space_gets_a_new_tab_rather_than_a_split() {
         let destination = Destination::ExistingSpace {
-            workspace_id: "w2".into(),
-            label: "w2 \u{2192} new tab".into(),
+            space: SpaceName {
+                workspace_id: "w2".into(),
+                label: None,
+            },
         };
         assert_eq!(
             placement_for(&destination),
