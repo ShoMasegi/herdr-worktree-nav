@@ -233,9 +233,10 @@ fn parse_track(field: &str) -> TrackField {
 /// nothing on the row to tell it from the one they did.
 ///
 /// So the push side is read in one case only: git named no upstream, so there was no first
-/// question and no answer to misrepresent. Two shapes are not that case and both had been
-/// falling through — a field git printed and this side could not read, and an empty field
-/// beside an upstream, which is git saying the branch is level with it.
+/// question and no answer to misrepresent. Two shapes reach this function looking like that
+/// one — a field git printed and this side could not read, and an empty field beside an
+/// upstream, which is git saying the branch is level with it — and the upstream name is what
+/// tells them from it.
 ///
 /// `gone` off the push side is dropped whichever way it got there. Under
 /// `push.default = current` or `matching`, the push destination of a branch nobody has
