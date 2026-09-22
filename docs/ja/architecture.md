@@ -50,6 +50,12 @@ src/
 | `domain::sweep` | 一括削除はどのチェックアウトを、どんな理由で提示してよいのか、そしてどれは判断できなかったのか |
 | `domain::chrome` | herdr はどの accent と状態グリフに設定されているか |
 
+これらの答えはすべて「文」ではなく「値」です。`domain` には収めるべき幅もテーマも描画先の端末も無く、何がどう読まれるかを決めるには木の中で最も不向きな層です。値を画面上の言葉に変えるのは `ui::words` ただ一箇所で、行が提示する tab・そのプレビューのキャプション・pane を着地させるステップは同じ呼び出しなので、互いにずれようがありません。
+
+`ui` を持たない 2 つの入口だけは、言葉を吐き出すコードの隣に自前で持ちます。端末を持たず detach して走る削除通知（[ADR 0014](../adr/0014-removing-outlives-the-picker.md)）のための `app::words` と、`--dump` が書くページのための `app::dump` です。
+
+頭に収まらなくなったモジュールは、ファイルを長くするのではなくディレクトリにして、責務の切れ目で分けます。`ui::panes` はリスト・sweep・キーマップ、`ui::render::branches` は表示中のステップ・2 つのリスト・行き先、`domain::rows` は行・リストの形・カーソルの通り道です。`scripts/check-invariants.sh` の check 8 がモジュールのコード行数（テストは数えません）に上限をかけ、どこで切るかは [ADR 0017](../adr/0017-modules-split-by-responsibility.md) が述べます。
+
 ## herdr との通信
 
 `herdr` CLI ではなく `HERDR_SOCKET_PATH` のソケット経由です。決め手は `pane.focus` で、これは CLI では表現できません（[ADR 0002](../adr/0002-socket-transport.md)）。
@@ -148,6 +154,7 @@ Shift-D, y ─▶ setsid herdr-worktree-nav remove …  ─┬─▶ git worktre
 | `domain` | Fake の port を注入した単体テスト。すべてのブランチ状態とすべての行き先を網羅 |
 | `ui` の状態 | キー処理は状態 → アクションの純粋な写像なので、キーマップを直接テスト |
 | `ui` の描画 | `TestBackend` + `insta` による描画バッファのスナップショット |
+| `ui::words` | 「何がどう読まれるか」の表明はすべてここ。言葉があるのがここだから |
 | `adapter` の git | `tempfile::TempDir` に実リポジトリを作成 |
 | `adapter` の gh | CI では `gh` を一度も起動しないため、各呼び出しを「組み立てるコマンド」と「読む答え」に分割し、両方をプロセス無しでテストする — 不正な引数列が緑のスイートを素通りして2度出荷されたため。プロセスそのものとその周りのリダイレクトには `tests/gh_cli.rs` が届く。テストが `PATH` に置いた `gh` を使う: 決して答えないもの（budget で見切る）と、`stderr` で断るもの（その言葉が利用者の見る文に届かねばならない） |
 | `adapter` の herdr | CI ではテスト不可（サーバーが無い）。手動確認手順は[トラブルシューティング](troubleshooting.md)を参照 |

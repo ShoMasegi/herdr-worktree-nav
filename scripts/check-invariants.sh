@@ -197,5 +197,39 @@ if [ -n "$comments" ]; then
     printf '%s\n' "$comments" >&2
 fi
 
+# 8. A module is small enough to hold in your head. The cap is on code rather than on the
+#    file: a page that is mostly `mod tests` is as long as its coverage is thorough, and
+#    cutting tests to fit a number is the opposite of what this is for. So the count stops
+#    where the test module opens, and a file that is nothing but test support is not counted
+#    at all. It is the `#[cfg(test)]` over a `mod` block rather than the first one in the
+#    file: a module may carry a test-only import or declare its fixtures in a file of their
+#    own, and those sit above code the cap still has to measure.
+#
+#    What the number is for is the question a long file stops you asking: what is this
+#    module *for*. `src/ui/render.rs` reached four thousand lines by drawing two pickers and
+#    everything under them, and nothing in it was wrong — it was simply no longer a module
+#    with an answer. The cap does not say where to cut; it says when the cut is overdue, and
+#    `docs/adr/0017-modules-split-by-responsibility.md` says what to cut along.
+CODE_CAP=1000
+for file in $(find src -name '*.rs' | sort); do
+    case "$file" in */tests.rs|*/fixtures.rs) continue ;; esac
+    # The count stops at the test module, which is a `#[cfg(test)]` over a `mod` that opens
+    # its block here. A `#[cfg(test)]` over an import, or over a `mod fixtures;` that lives
+    # in a file of its own, is one test-only line in the middle of the code rather than the
+    # end of it, and stopping there would leave the rest of the module unmeasured.
+    code=$(awk '
+        /^#\[cfg\(test\)\]$/ { held = NR; next }
+        held && /^[[:space:]]*(pub([(][a-z]+[)])?[[:space:]]+)?mod[[:space:]]+[a-z_]+[[:space:]]*[{]/ {
+            print held - 1
+            found = 1
+            exit
+        }
+        { held = 0 }
+        END { if (!found) print NR }
+    ' "$file")
+    [ "$code" -le "$CODE_CAP" ] || \
+        fail "$file carries $code lines of code, over the $CODE_CAP-line cap. Split it along what it is responsible for, not down the middle; see docs/adr/0017-modules-split-by-responsibility.md"
+done
+
 [ "$status" -eq 0 ] && printf 'invariants ok (version %s, rust %s)\n' "$manifest" "$pinned"
 exit "$status"

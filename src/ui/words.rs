@@ -18,7 +18,8 @@ use crate::domain::order::{Order, SortKey};
 use crate::domain::preview::Refusal;
 use crate::domain::progress::Stage;
 use crate::domain::rows::{Row, RowRef, StateFilter};
-use crate::port::{AgentStatus, Track};
+use crate::domain::sweep::{Half, Mark, Reason, Refusal as SweepRefusal};
+use crate::port::{AgentStatus, PullRequestOutcome, Track};
 
 /// Shown for a pane herdr is not tracking an agent in.
 pub const UNNAMED_PANE: &str = "shell";
@@ -359,6 +360,50 @@ fn plural(count: usize, noun: &str) -> String {
     } else {
         format!("{noun}s")
     }
+}
+
+/// What a sweep's row says beside its mark, or nothing.
+///
+/// [`Reason::Gone`] is left out: [`marks`] draws it as the branch's upstream marker on every
+/// row it is true of, and `judge` offers that reason only where `track` is `Gone`, so
+/// repeating it puts the same word on the row twice. (The converse does not hold: a row
+/// whose track is gone is not offered while it is primary, running, being removed, or not
+/// known to be clean.)
+///
+/// A refusal is left out too: the absence of a box says it, and `Space` answers on the
+/// prompt line — see [`sweep_refusal`].
+pub fn sweep_note(mark: &Mark) -> Option<String> {
+    match mark {
+        Mark::Going(Reason::PullRequest { number, outcome }) => {
+            let what = match outcome {
+                PullRequestOutcome::Merged => "merged",
+                PullRequestOutcome::Closed => "closed",
+            };
+            Some(format!("PR #{number} {what}"))
+        }
+        Mark::Unjudged(half) | Mark::GoingUnjudged(half) => Some(unjudged(*half).to_string()),
+        Mark::Going(Reason::Gone) | Mark::GoingByHand | Mark::Staying | Mark::Refused(_) => None,
+    }
+}
+
+/// Which half of the sweep's question nobody could answer, as the row says it.
+fn unjudged(half: Half) -> &'static str {
+    match half {
+        Half::Refs => "refs unreadable",
+        Half::PullRequests => "PR unknown",
+    }
+}
+
+/// Why `Space` did nothing on this row, for the prompt line.
+///
+/// On demand rather than on the row: the answer is only wanted by somebody who has just
+/// tried, and these are sentences rather than labels.
+pub fn sweep_refusal(mark: &Mark) -> Option<&'static str> {
+    Some(match mark.refused()? {
+        SweepRefusal::Primary => "the repository itself",
+        SweepRefusal::Running => "panes are running in it",
+        SweepRefusal::Removing => "already being removed",
+    })
 }
 
 #[cfg(test)]
@@ -769,5 +814,166 @@ mod tests {
         assert_eq!(detail(&tree, RowRef::Worktree(0, 99)), "");
         assert_eq!(detail(&tree, RowRef::Pane(0, 0, 99)), "");
         assert_eq!(detail(&tree, RowRef::Ungrouped(99)), "");
+    }
+
+    #[test]
+    fn a_row_a_sweep_has_something_to_say_about_says_it_beside_its_mark() {
+        assert_eq!(
+            sweep_note(&Mark::Going(Reason::PullRequest {
+                number: 123,
+                outcome: PullRequestOutcome::Merged,
+            }))
+            .as_deref(),
+            Some("PR #123 merged"),
+            "the number is what makes the reason checkable"
+        );
+        assert_eq!(
+            sweep_note(&Mark::Going(Reason::PullRequest {
+                number: 4,
+                outcome: PullRequestOutcome::Closed,
+            }))
+            .as_deref(),
+            Some("PR #4 closed"),
+            "merged says the work is in and closed says it was abandoned, and the wrong \
+             way round tells someone their work landed as they delete the only copy"
+        );
+        assert_eq!(
+            sweep_note(&Mark::Unjudged(Half::PullRequests)).as_deref(),
+            Some("PR unknown"),
+            "a row gh could not judge says so rather than looking like one with nothing \
+             to find"
+        );
+        assert_eq!(
+            sweep_note(&Mark::GoingUnjudged(Half::Refs)).as_deref(),
+            Some("refs unreadable"),
+            "marked by hand, it still says nobody judged it — and which half"
+        );
+    }
+
+    #[test]
+    fn a_row_with_nothing_of_the_sweeps_to_show_shows_nothing() {
+        assert_eq!(
+            sweep_note(&Mark::Going(Reason::Gone)),
+            None,
+            "its reason is the upstream marker the row already draws, and saying it again \
+             would put the same word on the row twice"
+        );
+        assert_eq!(
+            sweep_note(&Mark::GoingByHand),
+            None,
+            "a note there would make the sweep look as though it had agreed"
+        );
+        assert_eq!(sweep_note(&Mark::Staying), None);
+        assert_eq!(
+            sweep_note(&Mark::Refused(SweepRefusal::Primary)),
+            None,
+            "a refusal is said by the absence of a box, not by a sentence where the label \
+             goes"
+        );
+    }
+
+    #[test]
+    fn every_refusal_says_which_one_it_is() {
+        // A row that simply cannot be marked, with no word for why, reads as a bug.
+        assert_eq!(
+            sweep_refusal(&Mark::Refused(SweepRefusal::Primary)),
+            Some("the repository itself")
+        );
+        assert_eq!(
+            sweep_refusal(&Mark::Refused(SweepRefusal::Running)),
+            Some("panes are running in it")
+        );
+        assert_eq!(
+            sweep_refusal(&Mark::Refused(SweepRefusal::Removing)),
+            Some("already being removed")
+        );
+        assert_eq!(
+            sweep_refusal(&Mark::Going(Reason::Gone)),
+            None,
+            "nothing else has one to give"
+        );
+    }
+    /// A snapshot with one ordinary tab, one zoomed tab and one workspace, so that
+    /// [`crate::domain::dest::destinations`] offers every kind of destination there is a sentence for.
+    fn offered() -> crate::port::Snapshot {
+        serde_json::from_value(serde_json::json!({
+            "version": "0.7.4",
+            "protocol": 16,
+            "workspaces": [
+                {"workspace_id": "w1", "label": "app", "number": 1, "focused": true,
+                 "active_tab_id": "w1:t1", "agent_status": "idle"}
+            ],
+            "tabs": [
+                {"tab_id": "w1:t1", "workspace_id": "w1", "label": "agents", "number": 1,
+                 "focused": true, "pane_count": 1, "agent_status": "idle"},
+                {"tab_id": "w3:t1", "workspace_id": "w3", "label": "zoomed", "number": 1,
+                 "focused": false, "pane_count": 1, "agent_status": "idle"}
+            ],
+            "panes": [
+                {"pane_id": "w1:p1", "tab_id": "w1:t1", "workspace_id": "w1",
+                 "terminal_id": "t1", "focused": true, "agent_status": "idle"}
+            ],
+            "layouts": [
+                {"tab_id": "w1:t1", "workspace_id": "w1", "zoomed": false,
+                 "area": {"x": 0, "y": 0, "width": 100, "height": 40},
+                 "focused_pane_id": "w1:p1",
+                 "panes": [{"pane_id": "w1:p1", "focused": true,
+                            "rect": {"x": 0, "y": 0, "width": 100, "height": 40}}]},
+                {"tab_id": "w3:t1", "workspace_id": "w3", "zoomed": true,
+                 "area": {"x": 0, "y": 0, "width": 100, "height": 40},
+                 "focused_pane_id": "w3:p1",
+                 "panes": [{"pane_id": "w3:p1", "focused": true,
+                            "rect": {"x": 0, "y": 0, "width": 100, "height": 40}}]}
+            ]
+        }))
+        .expect("snapshot fixture should deserialize")
+    }
+
+    /// Every sentence a destination gets, built from the destinations the picker is
+    /// actually given rather than from ones written out here.
+    ///
+    /// A hand-written `Destination` can say something the builder would never
+    /// produce, and then the row, the caption and the breadcrumb agree with each other
+    /// about a screen nobody will see. Going through the builder is what stops that.
+    #[test]
+    fn the_destinations_the_picker_offers_read_as_they_do_on_screen() {
+        let snapshot = offered();
+        let said: Vec<(String, String)> =
+            crate::domain::dest::destinations(&snapshot, Some("w1:p1"))
+                .iter()
+                .map(|offer| {
+                    let caption =
+                        match crate::domain::preview::predict(&snapshot, offer, "feat/login") {
+                            crate::domain::preview::Preview::Layout { at, .. }
+                            | crate::domain::preview::Preview::Blocked { at, .. } => landing(&at),
+                            crate::domain::preview::Preview::Unavailable => String::new(),
+                        };
+                    (destination(offer), caption)
+                })
+                .collect();
+
+        assert_eq!(
+            said,
+            vec![
+                ("split right".to_string(), "w1  app / agents".to_string()),
+                ("split down".to_string(), "w1  app / agents".to_string()),
+                // The tab herdr will not take the pane into says so in the row, and the
+                // caption names the tab itself rather than repeating the marker.
+                (
+                    "w3 / zoomed  (zoomed)".to_string(),
+                    "w3 / zoomed".to_string()
+                ),
+                // The row offers a new tab in the space; the caption says the same thing
+                // once, rather than reading "w1  app \u{2192} new tab \u{2014} a new tab".
+                (
+                    "w1  app \u{2192} new tab".to_string(),
+                    "w1  app \u{2014} a new tab".to_string()
+                ),
+                (
+                    "on its own".to_string(),
+                    "a space of its own \u{2014} a new space".to_string()
+                ),
+            ]
+        );
     }
 }
