@@ -11,9 +11,8 @@ use std::sync::Mutex;
 use anyhow::{anyhow, Result};
 
 use crate::port::{
-    HerdrPort, Notification, OpenRefusal, Pane, PaneDestination, PaneSplit, PluginPaneOpen,
-    RemovalOutcome, RemovalPort, RunningRemoval, Snapshot, WorktreeCreate, WorktreeList,
-    WorktreeOpen, WorktreeOpened,
+    Notification, OpenRefusal, Pane, PaneDestination, PaneSplit, PluginPaneOpen, RemovalOutcome,
+    RemovalPort, RunningRemoval, Snapshot, WorktreeCreate, WorktreeOpen, WorktreeOpened,
 };
 
 /// Spin until `ready`, or fail the test with `what`.
@@ -67,7 +66,7 @@ impl Recorder {
     }
 }
 
-impl HerdrPort for Recorder {
+impl FakeHerdr for Recorder {
     fn pane_close(&self, pane_id: &str) -> Result<()> {
         if self.refuse.as_deref() == Some(pane_id) {
             return Err(anyhow!(
@@ -82,37 +81,8 @@ impl HerdrPort for Recorder {
     fn snapshot(&self) -> Result<Snapshot> {
         Err(anyhow::anyhow!("herdr is not answering"))
     }
-    fn worktree_list(&self, _cwd: &str) -> Result<WorktreeList> {
-        unreachable!("only pane_close is asked of Recorder's HerdrPort")
-    }
-    fn worktree_create(&self, _req: &WorktreeCreate) -> Result<WorktreeOpened> {
-        unreachable!("only pane_close is asked of Recorder's HerdrPort")
-    }
-    fn worktree_open(&self, _req: &WorktreeOpen) -> Result<WorktreeOpened> {
-        unreachable!("only pane_close is asked of Recorder's HerdrPort")
-    }
-    fn pane_focus(&self, _pane_id: &str) -> Result<()> {
-        unreachable!("only pane_close is asked of Recorder's HerdrPort")
-    }
-    fn pane_split(&self, _req: &PaneSplit) -> Result<Pane> {
-        unreachable!("only pane_close is asked of Recorder's HerdrPort")
-    }
-    fn pane_move(&self, _pane: &str, _dest: &PaneDestination, _focus: bool) -> Result<()> {
-        unreachable!("only pane_close is asked of Recorder's HerdrPort")
-    }
-    fn workspace_focus(&self, _workspace_id: &str) -> Result<()> {
-        unreachable!("only pane_close is asked of Recorder's HerdrPort")
-    }
-    fn tab_focus(&self, _tab_id: &str) -> Result<()> {
-        unreachable!("only pane_close is asked of Recorder's HerdrPort")
-    }
-    fn plugin_pane_open(&self, _req: &PluginPaneOpen) -> Result<Option<OpenRefusal>> {
-        unreachable!("only pane_close is asked of Recorder's HerdrPort")
-    }
-    fn notify(&self, _notification: &Notification) -> Result<()> {
-        unreachable!("only pane_close is asked of Recorder's HerdrPort")
-    }
 }
+fake_herdr!(Recorder);
 
 /// A `RemovalPort` that starts nothing; it only says that it was asked, into the same log
 /// the pane closes go to. That interleaving is the only place ADR 0010's ordering shows up
@@ -319,3 +289,226 @@ impl RemovalPort for Refuses {
         Err(anyhow!("could not spawn: no such file or directory"))
     }
 }
+
+/// What a fake in this layer answers, and what it therefore refuses.
+///
+/// Every method here refuses, so an `impl FakeGit for …` block *is* the list of what that
+/// fake's port is asked for: a method missing from it is a call that fails the test rather
+/// than one that hands back a value the test then goes on asserting about. That is the same
+/// rule [`Recorder`] is written to, moved out of each fake's own `impl` block and into one
+/// place — a port that grows a method grows it here and in [`fake_git`], and no fake has to
+/// be visited to go on refusing it.
+pub trait FakeGit {
+    fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+        refused("GitPort::identify")
+    }
+    fn github_slug(&self, _repo_root: &str) -> Result<Option<crate::port::Slug>> {
+        refused("GitPort::github_slug")
+    }
+    fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
+        refused("GitPort::local_refs")
+    }
+    fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
+        refused("GitPort::remote_heads")
+    }
+    fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+        refused("GitPort::fetch_branch")
+    }
+    fn fetch_all(&self, _repo_root: &str) -> Result<()> {
+        refused("GitPort::fetch_all")
+    }
+    fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
+        refused("GitPort::remove_worktree")
+    }
+    fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
+        refused("GitPort::delete_branch")
+    }
+    fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
+        refused("GitPort::is_dirty")
+    }
+    fn head_ref(&self, _repo_root: &str) -> Result<String> {
+        refused("GitPort::head_ref")
+    }
+}
+
+/// The `gh` half of the same arrangement — see [`FakeGit`].
+pub trait FakeGh {
+    fn pull_requests(&self, _slug: &crate::port::Slug) -> Vec<crate::port::PullRequest> {
+        refused("GhPort::pull_requests")
+    }
+    fn settled_pull_requests(
+        &self,
+        _slug: &crate::port::Slug,
+    ) -> std::result::Result<crate::port::SettledPullRequests, String> {
+        refused("GhPort::settled_pull_requests")
+    }
+}
+
+/// The herdr half of the same arrangement — see [`FakeGit`].
+pub trait FakeHerdr {
+    fn snapshot(&self) -> Result<crate::port::Snapshot> {
+        refused("HerdrPort::snapshot")
+    }
+    fn worktree_list(&self, _cwd: &str) -> Result<crate::port::WorktreeList> {
+        refused("HerdrPort::worktree_list")
+    }
+    fn worktree_create(&self, _req: &WorktreeCreate) -> Result<WorktreeOpened> {
+        refused("HerdrPort::worktree_create")
+    }
+    fn worktree_open(&self, _req: &WorktreeOpen) -> Result<WorktreeOpened> {
+        refused("HerdrPort::worktree_open")
+    }
+    fn pane_focus(&self, _pane_id: &str) -> Result<()> {
+        refused("HerdrPort::pane_focus")
+    }
+    fn pane_split(&self, _req: &PaneSplit) -> Result<Pane> {
+        refused("HerdrPort::pane_split")
+    }
+    fn pane_close(&self, _pane_id: &str) -> Result<()> {
+        refused("HerdrPort::pane_close")
+    }
+    fn pane_move(&self, _pane_id: &str, _dest: &PaneDestination, _focus: bool) -> Result<()> {
+        refused("HerdrPort::pane_move")
+    }
+    fn workspace_focus(&self, _workspace_id: &str) -> Result<()> {
+        refused("HerdrPort::workspace_focus")
+    }
+    fn tab_focus(&self, _tab_id: &str) -> Result<()> {
+        refused("HerdrPort::tab_focus")
+    }
+    fn plugin_pane_open(&self, _req: &PluginPaneOpen) -> Result<Option<OpenRefusal>> {
+        refused("HerdrPort::plugin_pane_open")
+    }
+    fn notify(&self, _notification: &Notification) -> Result<()> {
+        refused("HerdrPort::notify")
+    }
+}
+
+/// What every unanswered method does. `#[track_caller]` so the panic names the call the
+/// test made rather than this line.
+#[track_caller]
+fn refused(method: &str) -> ! {
+    unreachable!("{method} is not one of the answers this fake gives")
+}
+
+/// Make what `$fake` answers a `GitPort`.
+macro_rules! fake_git {
+    ($fake:ty) => {
+        impl $crate::port::GitPort for $fake {
+            fn identify(&self, cwd: &str) -> ::anyhow::Result<Option<$crate::port::RepoIdentity>> {
+                $crate::app::fakes::FakeGit::identify(self, cwd)
+            }
+            fn github_slug(&self, repo_root: &str) -> ::anyhow::Result<Option<$crate::port::Slug>> {
+                $crate::app::fakes::FakeGit::github_slug(self, repo_root)
+            }
+            fn local_refs(&self, repo_root: &str) -> ::anyhow::Result<$crate::port::RefWalk> {
+                $crate::app::fakes::FakeGit::local_refs(self, repo_root)
+            }
+            fn remote_heads(&self, repo_root: &str) -> ::anyhow::Result<Vec<String>> {
+                $crate::app::fakes::FakeGit::remote_heads(self, repo_root)
+            }
+            fn fetch_branch(&self, repo_root: &str, branch: &str) -> ::anyhow::Result<()> {
+                $crate::app::fakes::FakeGit::fetch_branch(self, repo_root, branch)
+            }
+            fn fetch_all(&self, repo_root: &str) -> ::anyhow::Result<()> {
+                $crate::app::fakes::FakeGit::fetch_all(self, repo_root)
+            }
+            fn remove_worktree(
+                &self,
+                repo_root: &str,
+                checkout_path: &str,
+            ) -> ::anyhow::Result<()> {
+                $crate::app::fakes::FakeGit::remove_worktree(self, repo_root, checkout_path)
+            }
+            fn delete_branch(&self, repo_root: &str, branch: &str) -> ::anyhow::Result<()> {
+                $crate::app::fakes::FakeGit::delete_branch(self, repo_root, branch)
+            }
+            fn is_dirty(&self, checkout_path: &str) -> ::anyhow::Result<bool> {
+                $crate::app::fakes::FakeGit::is_dirty(self, checkout_path)
+            }
+            fn head_ref(&self, repo_root: &str) -> ::anyhow::Result<String> {
+                $crate::app::fakes::FakeGit::head_ref(self, repo_root)
+            }
+        }
+    };
+}
+
+/// Make what `$fake` answers a `GhPort` — see [`fake_git`].
+macro_rules! fake_gh {
+    ($fake:ty) => {
+        impl $crate::port::GhPort for $fake {
+            fn pull_requests(&self, slug: &$crate::port::Slug) -> Vec<$crate::port::PullRequest> {
+                $crate::app::fakes::FakeGh::pull_requests(self, slug)
+            }
+            fn settled_pull_requests(
+                &self,
+                slug: &$crate::port::Slug,
+            ) -> ::std::result::Result<$crate::port::SettledPullRequests, String> {
+                $crate::app::fakes::FakeGh::settled_pull_requests(self, slug)
+            }
+        }
+    };
+}
+
+/// Make what `$fake` answers a `HerdrPort` — see [`fake_git`].
+macro_rules! fake_herdr {
+    ($fake:ty) => {
+        impl $crate::port::HerdrPort for $fake {
+            fn snapshot(&self) -> ::anyhow::Result<$crate::port::Snapshot> {
+                $crate::app::fakes::FakeHerdr::snapshot(self)
+            }
+            fn worktree_list(&self, cwd: &str) -> ::anyhow::Result<$crate::port::WorktreeList> {
+                $crate::app::fakes::FakeHerdr::worktree_list(self, cwd)
+            }
+            fn worktree_create(
+                &self,
+                req: &$crate::port::WorktreeCreate,
+            ) -> ::anyhow::Result<$crate::port::WorktreeOpened> {
+                $crate::app::fakes::FakeHerdr::worktree_create(self, req)
+            }
+            fn worktree_open(
+                &self,
+                req: &$crate::port::WorktreeOpen,
+            ) -> ::anyhow::Result<$crate::port::WorktreeOpened> {
+                $crate::app::fakes::FakeHerdr::worktree_open(self, req)
+            }
+            fn pane_focus(&self, pane_id: &str) -> ::anyhow::Result<()> {
+                $crate::app::fakes::FakeHerdr::pane_focus(self, pane_id)
+            }
+            fn pane_split(
+                &self,
+                req: &$crate::port::PaneSplit,
+            ) -> ::anyhow::Result<$crate::port::Pane> {
+                $crate::app::fakes::FakeHerdr::pane_split(self, req)
+            }
+            fn pane_close(&self, pane_id: &str) -> ::anyhow::Result<()> {
+                $crate::app::fakes::FakeHerdr::pane_close(self, pane_id)
+            }
+            fn pane_move(
+                &self,
+                pane_id: &str,
+                dest: &$crate::port::PaneDestination,
+                focus: bool,
+            ) -> ::anyhow::Result<()> {
+                $crate::app::fakes::FakeHerdr::pane_move(self, pane_id, dest, focus)
+            }
+            fn workspace_focus(&self, workspace_id: &str) -> ::anyhow::Result<()> {
+                $crate::app::fakes::FakeHerdr::workspace_focus(self, workspace_id)
+            }
+            fn tab_focus(&self, tab_id: &str) -> ::anyhow::Result<()> {
+                $crate::app::fakes::FakeHerdr::tab_focus(self, tab_id)
+            }
+            fn plugin_pane_open(
+                &self,
+                req: &$crate::port::PluginPaneOpen,
+            ) -> ::anyhow::Result<Option<$crate::port::OpenRefusal>> {
+                $crate::app::fakes::FakeHerdr::plugin_pane_open(self, req)
+            }
+            fn notify(&self, notification: &$crate::port::Notification) -> ::anyhow::Result<()> {
+                $crate::app::fakes::FakeHerdr::notify(self, notification)
+            }
+        }
+    };
+}
+
+pub(crate) use {fake_gh, fake_git, fake_herdr};

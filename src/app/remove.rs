@@ -121,10 +121,8 @@ fn outcome(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::port::{
-        Notification, Pane, PaneDestination, PaneSplit, PluginPaneOpen, RefWalk, RepoIdentity,
-        Snapshot, WorktreeCreate, WorktreeList, WorktreeOpen, WorktreeOpened,
-    };
+    use crate::app::fakes::{fake_git, fake_herdr, FakeGit, FakeHerdr};
+    use crate::port::Notification;
     use std::sync::Mutex;
 
     /// Keeps the toast, which is the only report that reaches somebody who has closed the
@@ -132,48 +130,13 @@ mod tests {
     #[derive(Default)]
     struct Shown(Mutex<Vec<Notification>>);
 
-    impl HerdrPort for Shown {
+    impl FakeHerdr for Shown {
         fn notify(&self, notification: &Notification) -> Result<()> {
             self.0.lock().unwrap().push(notification.clone());
             Ok(())
         }
-        fn snapshot(&self) -> Result<Snapshot> {
-            unreachable!()
-        }
-        fn worktree_list(&self, _cwd: &str) -> Result<WorktreeList> {
-            unreachable!()
-        }
-        fn worktree_create(&self, _req: &WorktreeCreate) -> Result<WorktreeOpened> {
-            unreachable!()
-        }
-        fn worktree_open(&self, _req: &WorktreeOpen) -> Result<WorktreeOpened> {
-            unreachable!()
-        }
-        fn pane_focus(&self, _pane_id: &str) -> Result<()> {
-            unreachable!()
-        }
-        fn pane_close(&self, _pane_id: &str) -> Result<()> {
-            unreachable!()
-        }
-        fn pane_split(&self, _req: &PaneSplit) -> Result<Pane> {
-            unreachable!()
-        }
-        fn pane_move(&self, _p: &str, _d: &PaneDestination, _f: bool) -> Result<()> {
-            unreachable!()
-        }
-        fn workspace_focus(&self, _workspace_id: &str) -> Result<()> {
-            unreachable!()
-        }
-        fn tab_focus(&self, _tab_id: &str) -> Result<()> {
-            unreachable!()
-        }
-        fn plugin_pane_open(
-            &self,
-            _req: &PluginPaneOpen,
-        ) -> Result<Option<crate::port::OpenRefusal>> {
-            unreachable!()
-        }
     }
+    fake_herdr!(Shown);
 
     /// The words `removing_a_worktree_with_uncommitted_work_refuses_and_says_why` in
     /// `tests/git_adapter.rs` asserts on.
@@ -205,7 +168,7 @@ mod tests {
         }
     }
 
-    impl GitPort for Git {
+    impl FakeGit for Git {
         fn remove_worktree(&self, _repo_root: &str, checkout_path: &str) -> Result<()> {
             self.asked
                 .lock()
@@ -213,36 +176,14 @@ mod tests {
                 .push(format!("remove {checkout_path}"));
             self.remove.map_err(|said| anyhow::anyhow!("{said}"))
         }
+
         fn delete_branch(&self, _repo_root: &str, branch: &str) -> Result<()> {
             self.asked.lock().unwrap().push(format!("delete {branch}"));
             let answer = self.delete.expect("no `-d` was to be asked for");
             answer.map_err(|said| anyhow::anyhow!("{said}"))
         }
-        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
-            unreachable!()
-        }
-        fn identify(&self, _cwd: &str) -> Result<Option<RepoIdentity>> {
-            unreachable!()
-        }
-        fn github_slug(&self, _repo_root: &str) -> Result<Option<crate::port::Slug>> {
-            unreachable!()
-        }
-        fn local_refs(&self, _repo_root: &str) -> Result<RefWalk> {
-            unreachable!()
-        }
-        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
-            unreachable!()
-        }
-        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!()
-        }
-        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
-            unreachable!()
-        }
-        fn head_ref(&self, _repo_root: &str) -> Result<String> {
-            unreachable!()
-        }
     }
+    fake_git!(Git);
 
     /// The toast `run` shows for this git, with no panes closed.
     fn toast(git: &Git, delete_branch: bool) -> Notification {

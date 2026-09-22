@@ -265,8 +265,9 @@ mod tests {
 
     use super::*;
     use crate::app::fakes::until;
+    use crate::app::fakes::{fake_gh, fake_git, FakeGh, FakeGit};
     use crate::domain::model::{Refs, RepoNode};
-    use crate::port::{PullRequest, Slug};
+    use crate::port::Slug;
 
     /// A git that names one repository, and a `gh` that answers about it — both counting
     /// what they were asked, because asking twice is the thing this is built not to do.
@@ -293,7 +294,7 @@ mod tests {
         }
     }
 
-    impl GitPort for Remote {
+    impl FakeGit for Remote {
         fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
             *self.named.lock().unwrap() += 1;
             if self.refuses {
@@ -304,39 +305,10 @@ mod tests {
                 .and_then(|slug| slug.split_once('/'))
                 .and_then(|(owner, repo)| Slug::owner_repo(owner, repo)))
         }
-        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn head_ref(&self, _repo_root: &str) -> Result<String> {
-            unreachable!("only github_slug is asked of this port")
-        }
     }
+    fake_git!(Remote);
 
-    impl GhPort for Remote {
-        fn pull_requests(&self, _slug: &Slug) -> Vec<PullRequest> {
-            unreachable!("the sweep does not decorate")
-        }
+    impl FakeGh for Remote {
         fn settled_pull_requests(&self, slug: &Slug) -> Result<SettledPullRequests, String> {
             self.asked.lock().unwrap().push(slug.as_str().to_string());
             self.answer
@@ -344,6 +316,7 @@ mod tests {
                 .unwrap_or_else(|| Ok(SettledPullRequests::All(Vec::new())))
         }
     }
+    fake_gh!(Remote);
 
     /// A `gh` that answers only when the test says so, and counts how many calls it has
     /// taken. The two rounds of a reload are otherwise a race nothing can pin.
@@ -390,7 +363,7 @@ mod tests {
         }
     }
 
-    impl GitPort for Held {
+    impl FakeGit for Held {
         fn github_slug(&self, repo_root: &str) -> Result<Option<Slug>> {
             if self.no_remote.contains(&repo_root) {
                 return Ok(None);
@@ -399,39 +372,10 @@ mod tests {
             let name = repo_root.rsplit('/').next().unwrap_or(repo_root);
             Ok(Slug::owner_repo("me", name))
         }
-        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn remote_heads(&self, _repo_root: &str) -> Result<Vec<String>> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn fetch_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn fetch_all(&self, _repo_root: &str) -> Result<()> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn remove_worktree(&self, _repo_root: &str, _checkout_path: &str) -> Result<()> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn delete_branch(&self, _repo_root: &str, _branch: &str) -> Result<()> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn is_dirty(&self, _checkout_path: &str) -> Result<bool> {
-            unreachable!("only github_slug is asked of this port")
-        }
-        fn head_ref(&self, _repo_root: &str) -> Result<String> {
-            unreachable!("only github_slug is asked of this port")
-        }
     }
+    fake_git!(Held);
 
-    impl GhPort for Held {
-        fn pull_requests(&self, _slug: &Slug) -> Vec<PullRequest> {
-            unreachable!("the sweep does not decorate")
-        }
+    impl FakeGh for Held {
         fn settled_pull_requests(&self, slug: &Slug) -> Result<SettledPullRequests, String> {
             let nth = {
                 let mut started = self.started.lock().unwrap();
@@ -446,6 +390,7 @@ mod tests {
             }
         }
     }
+    fake_gh!(Held);
 
     fn settled_pr(number: u64, head_ref: &str) -> crate::port::SettledPullRequest {
         crate::port::SettledPullRequest {
