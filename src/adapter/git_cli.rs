@@ -164,8 +164,9 @@ enum TrackField {
     /// git printed nothing. The ref is level with what it was measured against, or it has
     /// nothing to be measured against.
     Nothing,
-    /// git printed a position, and this is it.
-    Delta(Track),
+    /// git printed something this side understood, and this is it. Not always a position:
+    /// `gone` is git saying the ref it would have measured against is not there.
+    Read(Track),
     /// git printed something this could not read. A marker that is wrong is worse than no
     /// marker, because the whole point of these is to answer "which of these is behind"
     /// without leaving the picker to check.
@@ -190,7 +191,7 @@ fn parse_track(field: &str) -> TrackField {
         return TrackField::Unreadable;
     };
     if inside == "gone" {
-        return TrackField::Delta(Track::Gone);
+        return TrackField::Read(Track::Gone);
     }
     let mut ahead = None;
     let mut behind = None;
@@ -214,9 +215,9 @@ fn parse_track(field: &str) -> TrackField {
         }
     }
     match (ahead, behind) {
-        (Some(ahead), Some(behind)) => TrackField::Delta(Track::Diverged { ahead, behind }),
-        (Some(ahead), None) => TrackField::Delta(Track::Ahead(ahead)),
-        (None, Some(behind)) => TrackField::Delta(Track::Behind(behind)),
+        (Some(ahead), Some(behind)) => TrackField::Read(Track::Diverged { ahead, behind }),
+        (Some(ahead), None) => TrackField::Read(Track::Ahead(ahead)),
+        (None, Some(behind)) => TrackField::Read(Track::Behind(behind)),
         (None, None) => TrackField::Nothing,
     }
 }
@@ -242,10 +243,15 @@ fn parse_track(field: &str) -> TrackField {
 /// deletion on, and an unpushed branch is the one kind that exists nowhere else.
 fn read_track(upstream_track: &str, push_track: &str) -> Option<Track> {
     match parse_track(upstream_track) {
-        TrackField::Delta(track) => Some(track),
+        TrackField::Read(track) => Some(track),
+        // swallows: a field git printed and this could not read, which arrives here as the
+        // `None` a level branch also produces. The picker is right either way — it draws no
+        // marker for both — and `dump` is not: it prints `level` beside the upstream's name
+        // for a branch it has not measured. Telling the two apart past this point is a port
+        // change, which is #83.
         TrackField::Unreadable => None,
         TrackField::Nothing => match parse_track(push_track) {
-            TrackField::Delta(track) if track != Track::Gone => Some(track),
+            TrackField::Read(track) if track != Track::Gone => Some(track),
             _ => None,
         },
     }
@@ -485,18 +491,18 @@ mod tests {
 
     #[test]
     fn reads_every_shape_git_prints_for_upstream_track() {
-        assert_eq!(parse_track("[gone]"), TrackField::Delta(Track::Gone));
+        assert_eq!(parse_track("[gone]"), TrackField::Read(Track::Gone));
         assert_eq!(
             parse_track("[ahead 2]"),
-            TrackField::Delta(Track::Ahead(NonZeroU32::new(2).unwrap()))
+            TrackField::Read(Track::Ahead(NonZeroU32::new(2).unwrap()))
         );
         assert_eq!(
             parse_track("[behind 1]"),
-            TrackField::Delta(Track::Behind(NonZeroU32::new(1).unwrap()))
+            TrackField::Read(Track::Behind(NonZeroU32::new(1).unwrap()))
         );
         assert_eq!(
             parse_track("[ahead 2, behind 1]"),
-            TrackField::Delta(Track::Diverged {
+            TrackField::Read(Track::Diverged {
                 ahead: NonZeroU32::new(2).unwrap(),
                 behind: NonZeroU32::new(1).unwrap()
             })
