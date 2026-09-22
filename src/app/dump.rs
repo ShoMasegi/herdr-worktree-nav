@@ -282,9 +282,11 @@ fn each_of(named: &[&GitRef]) -> String {
 ///
 /// Two rows reach here: the checkout herdr listed with nothing out, and the one herdr never
 /// listed, which `build` makes for a pane and where a branch may well be out (issue #52). A
-/// marker on such a row means the second — [`WorktreeNode::branch`] names the test — and its
+/// track on such a row means the second — [`WorktreeNode::branch`] names the test — and its
 /// absence means nothing, so the refs git names at the path are named and not explained
-/// (issue #49). No `upstream …`: this row names no branch for one to be about.
+/// (issue #49). A track rather than a marker: [`Track::Unreadable`] is one of these rows
+/// having been measured and draws nothing. No `upstream …`: this row names no branch for one
+/// to be about.
 fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {
     let mut out = "no branch reported".to_string();
     match read {
@@ -295,7 +297,9 @@ fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {
             if !named.is_empty() {
                 let _ = write!(out, "  git names at this path: {}", each_of(&named));
             } else if worktree.track.is_some() {
-                // This page's walk names no ref here; the marker is the tree's.
+                // This page's walk names no ref here and the picker's walk did: a track on
+                // this row comes off a ref git named at this path, whether or not it is one
+                // the row can draw.
                 out.push_str("  no ref at this checkout");
             }
         }

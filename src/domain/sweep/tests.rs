@@ -122,6 +122,11 @@ fn a_position_that_went_unread_is_never_offered() {
     // and a field the adapter could not read says nothing about where the branch stands.
     // Read as "git said something", it would offer to delete a branch whose commits may
     // exist nowhere else.
+    //
+    // `Available` rather than `Unjudged(Half::Refs)`, which is the shape this is otherwise:
+    // git's half of the question went unanswered for this row. `Unjudged` puts a sentence
+    // on the row, and the same argument that keeps this state out of `domain::notice`
+    // keeps it from having one here — see `Track::Unreadable`.
     let mut wt = worktree("fix/crash", "/wt/fix-crash");
     wt.track = Some(Track::Unreadable);
     let trees = clean(&["/wt/fix-crash"]);
