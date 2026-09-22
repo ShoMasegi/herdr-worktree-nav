@@ -114,6 +114,10 @@ pub struct PanesState {
     /// The sweep, or `None` in the ordinary mode. Holding the changes here is what makes
     /// leaving the sweep forget them.
     sweep: Option<Sweeping>,
+    /// The user's home directory, so a path can be written the way their shell writes it.
+    /// Held here rather than passed to `domain`: `~` is a way of showing a path, not a fact
+    /// about one, so the shortening is [`relist`](Self::relist)'s.
+    home: Option<String>,
 }
 
 /// What the cursor is on, in terms that survive the row list being rebuilt.
@@ -146,7 +150,7 @@ struct Sweeping {
 /// The answers a row puts a marker on. Clean and not-yet-answered are both absent, and that
 /// is the point: they render identically, so a list rebuilt on the difference between them
 /// would draw the same thing. The rows do differ, which is why nothing but
-/// [`domain::rows::marks`](crate::domain::rows::marks) may read [`Row::working_tree`].
+/// [`ui::words::marks`](crate::ui::words::marks) may read [`Row::working_tree`].
 fn marked(answers: &BTreeMap<CheckoutPath, WorkingTree>) -> BTreeMap<&CheckoutPath, WorkingTree> {
     answers
         .iter()
@@ -166,10 +170,7 @@ impl PanesState {
     pub fn new(tree: Tree, home: Option<String>) -> Self {
         let mut state = Self {
             tree,
-            options: ViewOptions {
-                home,
-                ..ViewOptions::default()
-            },
+            options: ViewOptions::default(),
             rows: Vec::new(),
             lines: Vec::new(),
             cursor: 0,
@@ -182,6 +183,7 @@ impl PanesState {
             tick: 0,
             waiting: false,
             sweep: None,
+            home,
         };
         state.rebuild(None);
         state
@@ -216,7 +218,7 @@ impl PanesState {
     /// Say what git has said about each working tree so far. Arrives after the first frame,
     /// one answer at a time, so nothing may move under the reader: the cursor stays where it
     /// is, the row count cannot change, and the meta column is measured with room for these
-    /// already kept ([`domain::rows::marks_reserve`](crate::domain::rows::marks_reserve)).
+    /// already kept ([`ui::words::marks_reserve`](crate::ui::words::marks_reserve)).
     ///
     /// One map rather than a list of the dirty ones and a list of who has answered, because
     /// the difference between "clean" and "not asked" is what decides whether somebody's
@@ -357,7 +359,7 @@ impl PanesState {
 
     /// Shortens checkout paths to `~`, for anything drawn outside the rows.
     pub fn home(&self) -> Option<&str> {
-        self.options.home.as_deref()
+        self.home.as_deref()
     }
 
     /// Take back a question that could not be asked, and say what was taken. The picker calls
@@ -434,7 +436,7 @@ impl PanesState {
     /// The breadcrumb for the row under the cursor.
     pub fn detail(&self) -> String {
         match self.selected() {
-            Some(row) => rows::detail(&self.tree, row.reference),
+            Some(row) => words::detail(&self.tree, row.reference),
             None => String::new(),
         }
     }
@@ -458,6 +460,12 @@ impl PanesState {
     fn relist(&mut self) {
         self.options.sweep = self.judge();
         self.rows = rows::flatten(&self.tree, &self.options);
+        // `domain` hands back the path git has; writing it the way the user's shell writes
+        // it is this layer's, and here rather than at draw time because the meta column is
+        // measured over every row before any of them is drawn.
+        for row in &mut self.rows {
+            row.meta = words::abbreviate(&row.meta, self.home.as_deref());
+        }
         self.lines = rows::display_lines(&self.rows);
     }
 
@@ -732,7 +740,7 @@ mod tests {
             "the filtered list is a different list"
         );
         assert_eq!(
-            searching.selected().map(|row| row.label.as_str()),
+            searching.selected().and_then(|row| row.name.as_deref()),
             Some("claude"),
             "the first row the cursor can stop on"
         );
@@ -745,7 +753,7 @@ mod tests {
         state.set_removing(vec![CheckoutPath::for_test("/wt/app/fix-crash")]);
 
         assert_ne!(
-            state.selected().map(|row| row.label.as_str()),
+            state.selected().and_then(|row| row.name.as_deref()),
             Some("fix/crash")
         );
         assert_eq!(

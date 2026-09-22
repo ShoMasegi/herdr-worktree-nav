@@ -459,7 +459,7 @@ impl Mark {
 
     /// What the row says beside its mark, or nothing.
     ///
-    /// [`Reason::Gone`] is left out: [`domain::rows::marks`](crate::domain::rows::marks) draws
+    /// [`Reason::Gone`] is left out: the marks the picker draws draws
     /// it as the branch's upstream marker on every row it is true of, and `judge` offers that
     /// reason only where `track` is `Gone`, so repeating it puts the same word on the row
     /// twice. (The converse does not hold: a row whose track is gone is not offered while it
@@ -1594,7 +1594,7 @@ mod tests {
     #[test]
     fn the_reason_a_gone_branch_is_going_is_the_marker_the_row_already_carries() {
         // `Mark::note` stays quiet here, which is only right while `judge` offers `Gone` for
-        // exactly the rows `domain::rows::marks` draws `gone` on. If that comes apart, a row
+        // exactly the rows the marks the picker draws draws `gone` on. If that comes apart, a row
         // goes with nothing on it saying why.
         let mut worktree = worktree("feat/login", "/wt/feat-login");
         worktree.track = Some(Track::Gone);

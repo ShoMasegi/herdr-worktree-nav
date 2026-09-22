@@ -410,7 +410,7 @@ mod tests {
                 DisplayLine::Row(index) => index,
                 DisplayLine::Spacer => continue,
             }) {
-                reached.push(row.label.clone());
+                reached.push(words::row_label(row));
             }
             state.handle_key(key(KeyCode::Char('j')));
         }
@@ -590,7 +590,8 @@ mod tests {
         let row = state.selected().expect("the cursor is on a row");
         assert!(row.is_selectable(), "on a row it may stop on");
         assert_eq!(
-            row.label, "codex",
+            row.name.as_deref(),
+            Some("codex"),
             "the pane under the checkout, which is where to go"
         );
     }

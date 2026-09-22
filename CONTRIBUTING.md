@@ -131,7 +131,7 @@ breaks, and it breaks silently: the sentence goes on reading well while pointing
 So write the pointer in the form that something checks.
 
 On a `///` or `//!` line, write it as an intra-doc link — `[`Removal::sweeping`]`, or
-`[`domain::rows::marks`](crate::domain::rows::marks)` where you want the path in the prose —
+`[`ui::words::marks`](crate::ui::words::marks)` where you want the path in the prose —
 and rustdoc will resolve it from where it is written. Two things it cannot resolve, and
 neither is worth bending the code for: a private item in another module, which is not
 reachable by path, and anything at all on a `//` line, which rustdoc does not read.

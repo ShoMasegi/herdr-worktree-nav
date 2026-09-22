@@ -13,7 +13,6 @@ use crate::domain::model::RepoNode;
 use crate::domain::order::Order;
 use crate::domain::preview::{Preview, PreviewPane};
 use crate::domain::resolve::{BranchEntry, BranchState};
-use crate::domain::rows::abbreviate;
 use crate::port::LayoutRect;
 use crate::ui::branches::{Activity, BranchesState, Step};
 use crate::ui::diagram::{Fit, Frame as DiagramFrame};
@@ -360,7 +359,7 @@ fn render_repo_rows(frame: &mut Frame, state: &BranchesState, theme: &Theme, are
 
         let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
         let path = middle_elide(
-            &abbreviate(&row.repo.repo_root, state.home()),
+            &words::abbreviate(&row.repo.repo_root, state.home()),
             width.saturating_sub(used + 2),
         );
         if !path.is_empty() {

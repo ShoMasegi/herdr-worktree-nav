@@ -15,6 +15,7 @@ use crate::domain::sweep::Mark;
 use crate::port::AgentStatus;
 use crate::port::Track;
 use crate::ui::panes::{Action, PanesState};
+use crate::ui::words;
 
 /// The key a checkout of the fixture's one repository is judged under.
 pub(crate) fn at(state: &PanesState, path: &str) -> (RepoKey, CheckoutPath) {
@@ -96,7 +97,7 @@ pub(crate) fn select(state: &mut PanesState, label: &str) {
     let index = state
         .rows()
         .iter()
-        .position(|row| row.label == label)
+        .position(|row| words::row_label(row) == label)
         .unwrap_or_else(|| panic!("no row labelled {label}"));
     state.cursor = state
         .lines()
@@ -107,13 +108,13 @@ pub(crate) fn select(state: &mut PanesState, label: &str) {
 
 pub(crate) fn cursor_label(state: &PanesState) -> String {
     match state.lines()[state.cursor] {
-        DisplayLine::Row(index) => state.rows()[index].label.clone(),
+        DisplayLine::Row(index) => words::row_label(&state.rows()[index]),
         DisplayLine::Spacer => panic!("the cursor is on a spacer"),
     }
 }
 
 pub(crate) fn row_labels(state: &PanesState) -> Vec<String> {
-    state.rows().iter().map(|r| r.label.clone()).collect()
+    state.rows().iter().map(words::row_label).collect()
 }
 
 /// A sweep with git's answers in place, and one checkout in each shape the sweep can
@@ -150,7 +151,7 @@ pub(crate) fn mark_of(state: &PanesState, label: &str) -> Option<Mark> {
     state
         .rows()
         .iter()
-        .find(|row| row.label == label)
+        .find(|row| words::row_label(row) == label)
         .unwrap_or_else(|| panic!("no row labelled {label}"))
         .sweep
         .clone()

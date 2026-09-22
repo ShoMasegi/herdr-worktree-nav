@@ -20,6 +20,7 @@ use crate::ui::branches::BranchData;
 use crate::ui::branches::BranchesState;
 use crate::ui::panes::PanesState;
 use crate::ui::theme::Theme;
+use crate::ui::words;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
@@ -176,7 +177,7 @@ pub(crate) fn cell_style(state: &PanesState, width: u16, height: u16, x: u16, y:
 
 pub(crate) fn label_under_cursor(state: &PanesState) -> String {
     match state.lines()[state.cursor()] {
-        crate::domain::rows::DisplayLine::Row(index) => state.rows()[index].label.clone(),
+        crate::domain::rows::DisplayLine::Row(index) => words::row_label(&state.rows()[index]),
         crate::domain::rows::DisplayLine::Spacer => String::new(),
     }
 }
@@ -185,7 +186,7 @@ pub(crate) fn line_of(state: &PanesState, label: &str) -> u16 {
     let index = state
         .rows()
         .iter()
-        .position(|row| row.label == label)
+        .position(|row| words::row_label(row) == label)
         .unwrap_or_else(|| panic!("no row labelled {label}"));
     let at = state
         .lines()
