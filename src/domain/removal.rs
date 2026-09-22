@@ -29,9 +29,9 @@ use crate::port::RemovalOutcome;
 /// What that does *not* reach is a `WorktreeNode` that describes a checkout falsely, since its
 /// own fields are public — but such a node is a lie to the whole tree, and every row, marker
 /// and count drawn from it is wrong long before this type sees it. The production callers are
-/// [`ui::state::PanesState::ask_to_remove`](crate::ui::state::PanesState::ask_to_remove) and
+/// [`ui::panes::PanesState::ask_to_remove`](crate::ui::panes::PanesState::ask_to_remove) and
 /// [`SweepRemoval::of`];
-/// [`PanesState::replace_tree`](crate::ui::state::PanesState::replace_tree) withdraws either
+/// [`PanesState::replace_tree`](crate::ui::panes::PanesState::replace_tree) withdraws either
 /// question if the tree changes while it is up, so a `y` never acts on a list the user was not
 /// shown.
 #[derive(Debug, Clone, PartialEq, Eq)]

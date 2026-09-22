@@ -12,7 +12,7 @@ use crate::port::{
     AgentStatus, GitRef, RefKind, RefWalk, RemovalOutcome, Slug, Snapshot, Track, Workspace,
     WorkspaceWorktree, Worktree, WorktreeList, WorktreeSource,
 };
-use crate::ui::state::PanesState;
+use crate::ui::panes::PanesState;
 use anyhow::Result;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::BTreeMap;

@@ -18,7 +18,7 @@ use crate::domain::rows::DisplayLine;
 use crate::port::{AgentStatus, GitRef, PullRequest, RefKind, SplitDirection, Track};
 use crate::ui::branches::BranchData;
 use crate::ui::branches::BranchesState;
-use crate::ui::state::PanesState;
+use crate::ui::panes::PanesState;
 use crate::ui::theme::Theme;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
