@@ -185,10 +185,8 @@ pub fn report(
 
 /// `upstream origin/x  track gone` — the two facts a marker is drawn from, in words the
 /// marker cannot hold: `level` for a branch even with its upstream, `none` for one with no
-/// upstream to be even with, and `not read` when git would not read the refs at all.
-///
-/// There is no word for the walk that succeeded and printed a `:track` field this side could
-/// not read; such a ref is one of the branches called `level` here. That is #83.
+/// upstream to be even with, `unreadable` for one whose `:track` field git printed and the
+/// adapter could not read, and `not read` when git would not read the refs at all.
 ///
 /// A branch with no upstream is measured against where it would push — see
 /// [`adapter::git_cli`](crate::adapter::git_cli) — so `upstream none` can still be followed by
@@ -298,11 +296,12 @@ fn each_of(named: &[&GitRef]) -> String {
 ///
 /// Two rows reach here: the checkout herdr listed with nothing out, and the one herdr never
 /// listed, which `build` makes for a pane and where a branch may well be out (issue #52).
-/// Neither carries a marker — [`WorktreeNode::branch`] names the test — so the refs git names
+/// Neither carries a track — [`WorktreeNode::branch`] names the test — so the refs git names
 /// at the path are named and not explained (issue #49). The `track` arms stay because
-/// [`WorktreeNode`] does not make the state unrepresentable, and a page that dropped a marker
-/// it was handed would be the page lying rather than the tree. No `upstream …`: this row
-/// names no branch for one to be about.
+/// [`WorktreeNode`] does not make the state unrepresentable, and a page that dropped a track
+/// it was handed would be the page lying rather than the tree. A track rather than a marker:
+/// [`Track::Unreadable`] is one of these rows having been measured and draws nothing. No
+/// `upstream …`: this row names no branch for one to be about.
 fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {
     let mut out = "no branch reported".to_string();
     match read {
@@ -313,7 +312,9 @@ fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {
             if !named.is_empty() {
                 let _ = write!(out, "  git names at this path: {}", each_of(&named));
             } else if worktree.track.is_some() {
-                // This page's walk names no ref here; the marker is the tree's.
+                // This page's walk names no ref here and the picker's walk did: a track on
+                // this row comes off a ref git named at this path, whether or not it is one
+                // the row can draw.
                 out.push_str("  no ref at this checkout");
             }
         }
@@ -334,14 +335,20 @@ fn track_words(track: Track) -> String {
         Track::Ahead(ahead) => format!("\u{2191}{ahead}"),
         Track::Behind(behind) => format!("\u{2193}{behind}"),
         Track::Diverged { ahead, behind } => format!("\u{2191}{ahead}\u{2193}{behind}"),
+        // A word rather than nothing, because this page is the one surface with room for
+        // it: the row draws the same blank a branch with nothing to report draws, and
+        // somebody reading this page is reading it to find out which. `unreadable` is what
+        // the page already calls a working tree git would not look at.
+        Track::Unreadable => "unreadable".to_string(),
     }
 }
 
 /// The words for a track: the marker where git reported one, else `level` beside an
 /// upstream and `none` without one.
 ///
-/// `level` carries one case it has not earned — a ref whose `:track` field the adapter could
-/// not read arrives with nothing to draw, the same as a branch that is even. That is #83.
+/// Both of those are claims — even with the ref git named, and nothing to be even with —
+/// so neither may stand for a reading that did not read. [`Track::Unreadable`] is not an
+/// absence and does not arrive here as one.
 fn standing(track: Option<Track>, upstream: Option<&str>) -> String {
     match track {
         Some(track) => track_words(track),

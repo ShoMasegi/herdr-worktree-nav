@@ -59,6 +59,10 @@ pub enum Condition {
 /// markers are about every row of the repository and are true sweep or no sweep; `gh` is
 /// asked only during a sweep, and only about the half git could not decide.
 ///
+/// One state that draws no marker deliberately has no line here: a single ref whose
+/// `:track` field git printed and the adapter could not read. Why it does not is written
+/// where the state is, on [`Track::Unreadable`](crate::port::Track::Unreadable).
+///
 /// `stale` and `sweep_trouble` are passed in rather than read off the tree. The first is
 /// about the reading that built it, which a tree cannot report about itself; the second is
 /// already one sentence for however many repositories `gh` could not be asked about, which

@@ -398,6 +398,26 @@ fn page(tree: &Tree, refs: &RefsByRepo) -> String {
 }
 
 #[test]
+fn a_field_that_could_not_be_read_is_not_printed_as_a_branch_that_is_level() {
+    // `level` is a positive claim — the branch is even with the ref git named — and this
+    // is the page a bug report is made of. The picker draws the same blank for both, so
+    // there is nowhere else for a reader to find out which of the two they have.
+    let tree = one_repo(
+        Refs::Read,
+        vec![worktree(Some("main"), "/src/app", Some(Track::Unreadable))],
+    );
+    let refs = RefsByRepo::from([(
+        "/src/app".to_string(),
+        Ok(vec![local("main", "/src/app", Some("origin/main"))]),
+    )]);
+    assert!(
+        page(&tree, &refs).contains("      upstream origin/main  track unreadable  working tree"),
+        "got:\n{}",
+        page(&tree, &refs)
+    );
+}
+
+#[test]
 fn a_ref_at_the_same_checkout_spelled_with_a_trailing_slash_still_matches() {
     // git and herdr spell a path differently at the edge, and the tree matched them
     // through `normalize_path`; without it the page prints `none` for a branch that has

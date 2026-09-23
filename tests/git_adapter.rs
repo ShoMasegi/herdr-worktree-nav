@@ -624,6 +624,48 @@ fn a_branch_nobody_has_pushed_is_never_gone() {
 }
 
 #[test]
+fn a_branch_level_with_its_upstream_is_not_marked_with_the_push_destinations_delta() {
+    // `%(upstream:track)` is empty for a branch level with what it tracks, and that emptiness
+    // is git's answer rather than an absence of one. Reading the push field there measures
+    // against a ref the user never asked about — `remote.pushDefault` names a second remote
+    // here — and draws the difference beside the upstream's name, where nothing says which
+    // of the two comparisons is on screen.
+    let (repo, _origin) = with_origin();
+    let fork = tempfile::tempdir().unwrap();
+    git(fork.path(), &["init", "--bare", "--initial-branch=main"]);
+    git(
+        repo.path(),
+        &["remote", "add", "fork", fork.path().to_str().unwrap()],
+    );
+    git(repo.path(), &["push", "-q", "-u", "origin", "feat/login"]);
+    git(repo.path(), &["push", "-q", "fork", "feat/login"]);
+
+    // Commits that reach the upstream and not the push destination, so the two refs answer
+    // differently about the same branch.
+    git(repo.path(), &["checkout", "-q", "feat/login"]);
+    git(
+        repo.path(),
+        &["commit", "-q", "--allow-empty", "-m", "work"],
+    );
+    git(repo.path(), &["push", "-q", "origin", "feat/login"]);
+
+    git(repo.path(), &["config", "push.default", "current"]);
+    git(repo.path(), &["config", "remote.pushDefault", "fork"]);
+
+    let refs = GitCli.local_refs(&path_str(repo.path())).unwrap().refs;
+    assert_eq!(
+        upstream_of(&refs, "feat/login").as_deref(),
+        Some("origin/feat/login"),
+        "the branch tracks origin, which is the comparison a marker would be about"
+    );
+    assert_eq!(
+        track_of(&refs, "feat/login"),
+        None,
+        "level with origin/feat/login, whatever fork/feat/login is behind by"
+    );
+}
+
+#[test]
 fn an_upstream_deleted_on_the_remote_reads_as_gone() {
     // The ordinary end of a branch whose pull request was merged: GitHub deletes the head,
     // a pruning fetch drops the remote-tracking ref, and git starts calling it gone. It is
