@@ -47,6 +47,10 @@ pub enum Condition {
 /// than one repository belongs in front of both — issues #33 and #56 are the two that will
 /// want that, and this is the function they add a line to.
 ///
+/// One state that draws no marker deliberately has no line here: a single ref whose
+/// `:track` field git printed and the adapter could not read. Why it does not is written
+/// where the state is, on [`Track::Unreadable`](crate::port::Track::Unreadable).
+///
 /// `stale` and `sweep_trouble` are passed in rather than read off the tree. The first is
 /// about the reading that built it, which a tree cannot report about itself; the second is
 /// already one sentence for however many repositories `gh` could not be asked about, which

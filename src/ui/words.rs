@@ -228,8 +228,13 @@ pub fn track_mark(track: Option<Track>) -> String {
         Some(Track::Ahead(ahead)) => format!("  \u{2191}{ahead}"),
         Some(Track::Behind(behind)) => format!("  \u{2193}{behind}"),
         Some(Track::Diverged { ahead, behind }) => format!("  \u{2191}{ahead}\u{2193}{behind}"),
-        // Nothing to draw; what an absent track leaves open is not this row's to say.
-        None => String::new(),
+        // Nothing to draw; what an absent track leaves open is not this row's to say. A
+        // field git printed and the adapter could not read draws nothing either, and for
+        // the stronger reason: there is no position to draw, and a marker that is wrong is
+        // worse than none. That is what kind 4 of `docs/en/error-handling.md` asks for.
+        // Which of the two is which is `app::dump`'s to say; a line of the list has no
+        // room for it, and no git prints the second.
+        Some(Track::Unreadable) | None => String::new(),
     }
 }
 
@@ -701,6 +706,10 @@ mod tests {
             "one gap, not two: they are one answer"
         );
         assert_eq!(marks_for(None, Some(Track::Gone)), "  gone");
+        // A position that went unread draws what a row with nothing to report draws. The
+        // two are told apart on `app::dump`'s page, not here.
+        assert_eq!(marks_for(None, Some(Track::Unreadable)), "");
+        assert_eq!(marks_for(None, None), "");
     }
 
     #[test]

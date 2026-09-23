@@ -37,27 +37,30 @@ dump. It does not close the picker. The picker opens with the defaults and puts
 `plugin config.toml: …` on the prompt line. Fix that file, close the picker, and open it
 again.
 
-`track level` is a branch even with its upstream and `upstream none` one with no upstream to
-be even with — the same empty marker on a row. `working tree unreadable:` carries git's own
-words where the row shows `?`. A repository whose refs git would not read says
-`refs unreadable:` under its name, with git's words, and its checkouts read `not read`. If
-only this page's own second read of the refs failed — the picker read them once for its
-markers, and `dump` reads them again for the upstream names — the repository says
-`refs unreadable on the second read:` and its checkouts keep the track the picker is drawing,
-with `upstream not read`. A checkout git lists no ref at says `no ref at this checkout for
-<branch>`: git and herdr disagree about what is checked out where, which is the thing to
-look at. A checkout git names more than one ref at reads `more than one ref at this
-checkout:` and then each of them as `<branch> → <upstream> <where it stands>`; more than one
-of the repository's worktree registrations names that path, and which of them is stale is
-not something this page can tell you. The `track` after them is the marker the picker is
-drawing, or `not known` where it is drawing none — on the row itself, the same empty marker
-as `track level` and `upstream none`. A row with no branch on it reads
+`track level` is a branch even with its upstream, `upstream none` one with no upstream to
+be even with, and `track unreadable` one whose position git printed in a form the plugin
+could not read — the same empty marker on a row for all three, which is why this page has
+a word for each. `working tree unreadable:` carries git's own words where the row shows
+`?`. A repository whose refs git would not read says `refs unreadable:` under its name,
+with git's words, and its checkouts read `not read`. If only this page's own second read
+of the refs failed — the picker read them once for its markers, and `dump` reads them
+again for the upstream names — the repository says `refs unreadable on the second read:`
+and its checkouts keep the track the picker is drawing, with `upstream not read`. A
+checkout git lists no ref at says `no ref at this checkout for <branch>`: git and herdr
+disagree about what is checked out where, which is the thing to look at. A checkout git
+names more than one ref at reads `more than one ref at this checkout:` and then each of
+them as `<branch> → <upstream> <where it stands>`; more than one of the repository's
+worktree registrations names that path, and which of them is stale is not something this
+page can tell you. The `track` after them is what the picker's own walk found: its marker
+where it is drawing one, `unreadable` where it could not read the field git printed, and
+`not known` where it found nothing — on the row itself the last two are the same empty
+marker as `track level` and `upstream none`. A row with no branch on it reads
 `no branch reported`, then `git names at this path:` with that same list where git names
-refs there — or `no ref at this checkout` where it names none but the picker drew a marker
-— then the picker's marker as `track <marker>` where it draws one; where git would not read
-the refs it says `refs not read`, and `refs not read on the second read` where only this
-page's own read failed. Each checkout's working tree is walked in the open, one after
-another, so on many checkouts this takes a moment.
+refs there — or `no ref at this checkout` where it names none but the picker's walk found
+one — then what that walk found as `track <where it stands>` where it found anything;
+where git would not read the refs it says `refs not read`, and `refs not read on the
+second read` where only this page's own read failed. Each checkout's working tree is
+walked in the open, one after another, so on many checkouts this takes a moment.
 
 git's words arrive in English here and on the prompt line whatever language your git speaks
 in a terminal: the plugin runs git under `LC_ALL=C`, because it decides two things by reading
