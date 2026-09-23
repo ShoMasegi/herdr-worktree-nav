@@ -23,7 +23,10 @@ All notable changes to this project are documented here. The format follows
   a repository it could not answer for is named on the prompt line with its rows reading
   `PR unknown` rather than nothing — before and after you mark them — and one whose refs git
   would not read is named there ahead of it, the rows it would have judged reading
-  `refs unreadable`. `Space` marks and unmarks, and a mark keeps its reason at every width
+  `refs unreadable`, and a checkout more than one of the repository's refs names reads
+  `refs disagree` — one checkout rather than a whole repository, and a
+  `git worktree prune` rather than anything about git's answer.
+  `Space` marks and unmarks, and a mark keeps its reason at every width
   the picker supports. `Enter` removes what is marked: it reads the list and the working
   trees again first, asks once with the count, and then removes each checkout the way
   `Shift-D` does and, where it has one, deletes its branch with `git branch -d` — never
@@ -63,9 +66,14 @@ All notable changes to this project are documented here. The format follows
   report. The rows still draw nothing, since no marker beats a wrong one; the prompt line now
   names the repository with git's own words where the search hint was, and counts the rest.
 - **`dump` prints what the markers are drawn from.** Under each checkout: the upstream it
-  tracks, where it stands against it — `level`, `gone`, `↑2↓1`, or `none` when there is no
-  upstream and git said nothing about where it would push — and the working tree, with git's
-  own words where it would not read one.
+  tracks, where it stands against it — `level`, `gone`, `↑2↓1`, `none` when there is no
+  upstream and git said nothing about where it would push, or `unreadable` where git printed
+  a field this side could not read — and the working tree, with git's own words where it
+  would not read one. A checkout herdr never listed, which the picker shows for a pane whose
+  directory it recognized, says so rather than reading as a checkout with nothing out: the
+  refs git names at its path are named without a claim about which of them is out. A
+  checkout more than one of the repository's refs names reads `track contested`, which is
+  the picker declining to pick one of them rather than a branch level with its upstream.
 
 ### Changed
 

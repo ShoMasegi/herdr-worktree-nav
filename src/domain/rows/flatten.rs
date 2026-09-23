@@ -118,7 +118,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                     is_idle: worktree.panes.is_empty(),
                     is_removing: options.removing.contains(&path),
                     working_tree: options.working_trees.get(&path).copied(),
-                    track: worktree.track,
+                    position: worktree.position,
                     is_current: false,
                     matched: worktree_matches,
                     sweep: options
@@ -159,7 +159,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
             is_idle: false,
             is_removing: false,
             working_tree: None,
-            track: None,
+            position: Position::NotSaid,
             is_current: panes.iter().any(|pane| pane.focused),
             matched: repo_matches,
             sweep: None,
@@ -204,7 +204,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
                 is_idle: false,
                 is_removing: false,
                 working_tree: None,
-                track: None,
+                position: Position::NotSaid,
                 is_current: tree.ungrouped.iter().any(|pane| pane.focused),
                 matched: true,
                 sweep: None,
@@ -227,7 +227,7 @@ fn pane_row(reference: RowRef, depth: u8, pane: &PaneNode, matched: bool) -> Row
         is_idle: false,
         is_removing: false,
         working_tree: None,
-        track: None,
+        position: Position::NotSaid,
         is_current: pane.focused,
         matched,
         sweep: None,
@@ -258,7 +258,7 @@ fn urgency(status: AgentStatus) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{Refs, RepoNode, WorktreeNode};
+    use crate::domain::model::{Branch, Refs, RepoNode, WorktreeNode};
     use crate::domain::rows::fixtures::*;
     use crate::domain::sweep::Mark;
     use std::collections::BTreeMap;
@@ -514,7 +514,7 @@ mod tests {
         use crate::domain::sweep::{Half, Reason};
         let mut tree = tree();
         tree.repos[1].worktrees.push(WorktreeNode {
-            branch: Some("chore/deps".into()),
+            branch: Branch::Out("chore/deps".into()),
             ..worktree("fix/crash", vec![])
         });
         let at = |repo: usize| {

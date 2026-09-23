@@ -96,13 +96,13 @@ fn a_checkout_carries_what_git_said_about_the_branch_it_has_out() {
 
     let tree = build(&snapshot(json!([])), &[input], &HashMap::new());
     let worktrees = &tree.repos[0].worktrees;
-    assert_eq!(worktrees[0].track, None);
+    assert_eq!(worktrees[0].position, Position::Said(None));
     assert_eq!(
-        worktrees[1].track,
-        Some(Track::Diverged {
+        worktrees[1].position,
+        Position::Said(Some(Track::Diverged {
             ahead: NonZeroU32::new(2).unwrap(),
             behind: NonZeroU32::new(1).unwrap()
-        })
+        }))
     );
 }
 
@@ -130,9 +130,12 @@ fn a_repository_whose_refs_could_not_be_read_says_so_and_marks_nothing() {
         tree.repos[0].refs,
         Refs::Unreadable("fatal: bad ref (`git for-each-ref …`)".to_string())
     );
-    assert_eq!(tree.repos[0].worktrees[0].track, None);
+    assert_eq!(tree.repos[0].worktrees[0].position, Position::NotSaid);
     assert_eq!(tree.repos[1].refs, Refs::Read);
-    assert_eq!(tree.repos[1].worktrees[0].track, Some(Track::Gone));
+    assert_eq!(
+        tree.repos[1].worktrees[0].position,
+        Position::Said(Some(Track::Gone))
+    );
 }
 
 #[test]
@@ -159,7 +162,7 @@ fn a_checkout_herdr_did_not_list_still_gets_what_git_said_about_it() {
         .iter()
         .find(|worktree| worktree.checkout_path == "/elsewhere/manual")
         .expect("herdr did not list it, so the pane's own cwd put it there");
-    assert_eq!(synthesized.track, Some(Track::Gone));
+    assert_eq!(synthesized.position, Position::Said(Some(Track::Gone)));
 }
 
 #[test]
@@ -179,8 +182,15 @@ fn one_repositorys_branch_state_never_lands_on_anothers_checkout() {
     site.refs = Ok(vec![local_ref("main", Some("/src/site"), None)]);
 
     let tree = build(&snapshot(json!([])), &[app, site], &HashMap::new());
-    assert_eq!(tree.repos[0].worktrees[0].track, Some(Track::Gone));
-    assert_eq!(tree.repos[1].worktrees[0].track, None, "not the other's");
+    assert_eq!(
+        tree.repos[0].worktrees[0].position,
+        Position::Said(Some(Track::Gone))
+    );
+    assert_eq!(
+        tree.repos[1].worktrees[0].position,
+        Position::Said(None),
+        "not the other's"
+    );
 }
 
 #[test]
@@ -202,9 +212,9 @@ fn the_branch_is_matched_by_the_checkout_git_says_has_it() {
 
     let tree = build(&snapshot(json!([])), &[input], &HashMap::new());
     let worktrees = &tree.repos[0].worktrees;
-    assert_eq!(worktrees[0].track, Some(Track::Gone));
-    assert_eq!(worktrees[1].branch, None, "detached");
-    assert_eq!(worktrees[1].track, None);
+    assert_eq!(worktrees[0].position, Position::Said(Some(Track::Gone)));
+    assert_eq!(worktrees[1].branch, Branch::NothingOut, "detached");
+    assert_eq!(worktrees[1].position, Position::NotSaid);
 }
 
 fn placements(pairs: &[(&str, &str, &str)]) -> HashMap<String, PanePlacement> {
@@ -450,15 +460,15 @@ fn a_track_is_read_from_the_repository_that_owns_the_checkout() {
             .find(|repo| repo.display_name == "me/app")
             .expect("the live repository");
         assert_eq!(
-            app.worktrees[0].track,
-            Some(ahead),
+            app.worktrees[0].position,
+            Position::Said(Some(ahead)),
             "the repository that owns the checkout is what says where it stands"
         );
     }
 }
 
 #[test]
-fn two_tracked_refs_at_one_of_a_repository_s_own_paths_answer_nothing() {
+fn two_tracked_refs_at_one_of_a_repository_s_own_paths_are_contested() {
     // git does make this: `one_repository_can_name_one_path_from_two_refs` builds it.
     let shared = "/wt/shared";
     let mut app = repo(
@@ -476,7 +486,7 @@ fn two_tracked_refs_at_one_of_a_repository_s_own_paths_answer_nothing() {
     ]);
 
     let tree = build(&snapshot(json!([])), &[app], &HashMap::new());
-    assert_eq!(tree.repos[0].worktrees[0].track, None);
+    assert_eq!(tree.repos[0].worktrees[0].position, Position::Contested);
 }
 
 #[test]
@@ -503,7 +513,8 @@ fn a_second_ref_counts_even_where_git_had_nothing_to_report_about_it() {
 
         let tree = build(&snapshot(json!([])), &[app], &HashMap::new());
         assert_eq!(
-            tree.repos[0].worktrees[0].track, None,
+            tree.repos[0].worktrees[0].position,
+            Position::Contested,
             "listed as {order:?}"
         );
     }
@@ -538,7 +549,8 @@ fn a_pane_s_own_row_is_read_from_the_repository_the_pane_is_in() {
         .find(|worktree| worktree.checkout_path == shared)
         .expect("the row build made for the pane");
     assert_eq!(
-        synthesized.track, None,
+        synthesized.position,
+        Position::NotSaid,
         "me/old's ref is not me/app's answer"
     );
 }
@@ -566,7 +578,12 @@ fn a_repository_whose_refs_were_not_read_has_no_track_to_draw_from() {
         .iter()
         .find(|repo| repo.display_name == "me/app")
         .expect("the unreadable repository");
-    assert_eq!(app.worktrees[0].track, None, "refs: {:?}", app.refs);
+    assert_eq!(
+        app.worktrees[0].position,
+        Position::NotSaid,
+        "refs: {:?}",
+        app.refs
+    );
 }
 
 #[test]
@@ -586,8 +603,8 @@ fn a_remote_ref_at_a_checkout_is_not_a_second_ref_of_the_repositorys() {
 
     let tree = build(&snapshot(json!([])), &[app], &HashMap::new());
     assert_eq!(
-        tree.repos[0].worktrees[0].track,
-        Some(Track::Gone),
+        tree.repos[0].worktrees[0].position,
+        Position::Said(Some(Track::Gone)),
         "a remote ref is not a second ref at this checkout"
     );
 }
@@ -610,7 +627,10 @@ fn a_repository_key_spelled_with_a_trailing_slash_still_names_one_repository() {
     )]);
 
     let tree = build(&snapshot(json!([])), &[app], &HashMap::new());
-    assert_eq!(tree.repos[0].worktrees[0].track, Some(Track::Gone));
+    assert_eq!(
+        tree.repos[0].worktrees[0].position,
+        Position::Said(Some(Track::Gone))
+    );
 }
 
 #[test]
@@ -631,8 +651,8 @@ fn a_checkout_spelled_one_way_by_git_and_another_by_herdr_is_one_checkout() {
 
         let tree = build(&snapshot(json!([])), &[app], &HashMap::new());
         assert_eq!(
-            tree.repos[0].worktrees[0].track,
-            Some(Track::Gone),
+            tree.repos[0].worktrees[0].position,
+            Position::Said(Some(Track::Gone)),
             "herdr said {herdr_says}, git said {git_says}"
         );
     }
@@ -663,7 +683,7 @@ fn a_panes_repository_key_spelled_with_a_trailing_slash_still_reaches_its_refs()
         .iter()
         .find(|worktree| worktree.checkout_path == shared)
         .expect("the row build made for the pane");
-    assert_eq!(synthesized.track, Some(Track::Gone));
+    assert_eq!(synthesized.position, Position::Said(Some(Track::Gone)));
 }
 
 #[test]
@@ -694,7 +714,7 @@ fn a_repository_key_herdr_and_the_placement_spell_differently_is_one_repository(
         .iter()
         .find(|worktree| worktree.checkout_path == shared)
         .expect("the row build made for the pane");
-    assert_eq!(synthesized.track, Some(Track::Gone));
+    assert_eq!(synthesized.position, Position::Said(Some(Track::Gone)));
 }
 
 #[test]
@@ -724,16 +744,17 @@ fn a_panes_own_row_is_read_from_the_checkout_the_pane_is_in() {
         .find(|worktree| worktree.checkout_path == "/wt/shared")
         .expect("the row build made for the pane");
     assert_eq!(
-        synthesized.track, None,
+        synthesized.position,
+        Position::NotSaid,
         "git names no ref at the checkout this pane is in"
     );
 }
 
 #[test]
-fn two_refs_that_agree_about_where_they_stand_still_answer_nothing() {
+fn two_refs_that_agree_about_where_they_stand_are_contested_all_the_same() {
     // Two refs at one path disagree about which branch is there whatever their tracks
-    // say, and both `[gone]` is the ordinary way it happens. A rule that collapsed only
-    // on differing tracks would hand the row a `gone` built out of a contradiction.
+    // say, and both `[gone]` is the ordinary way it happens. A rule that refused only on
+    // differing tracks would hand the row a `gone` built out of a contradiction.
     let shared = "/wt/shared";
     let mut app = repo(
         "me/app",
@@ -746,16 +767,17 @@ fn two_refs_that_agree_about_where_they_stand_still_answer_nothing() {
     ]);
 
     let tree = build(&snapshot(json!([])), &[app], &HashMap::new());
-    assert_eq!(tree.repos[0].worktrees[0].track, None);
+    assert_eq!(tree.repos[0].worktrees[0].position, Position::Contested);
 }
 
 #[test]
 fn what_a_branchless_row_draws_turns_on_whether_herdr_listed_it() {
     // The two rows `build` makes, over one repository's identical git facts: a stale
     // registration goes on naming a path for `chore/deps`, whose upstream was deleted,
-    // and nothing is checked out there. Both rows carry `branch: None`, and only the one
-    // `build` makes for a pane draws `gone` about a branch it never names — issue #49,
-    // pinned here so the difference stays deliberate.
+    // and nothing is checked out there. Neither row names a branch, and the two say so
+    // differently: herdr spoke about the one it listed, and nobody spoke about the one
+    // `build` made for a pane. Only the second draws `gone` about a branch it never
+    // names — issue #49, pinned here so the difference stays deliberate.
     let shared = "/wt/shared";
     let stale = || local_ref("chore/deps", Some(shared), Some(Track::Gone));
 
@@ -791,13 +813,18 @@ fn what_a_branchless_row_draws_turns_on_whether_herdr_listed_it() {
         .expect("the row build made for the pane");
 
     assert_eq!(
-        (listed.branch.as_deref(), unlisted.branch.as_deref()),
-        (None, None),
-        "neither row names a branch"
+        (&listed.branch, &unlisted.branch),
+        (&Branch::NothingOut, &Branch::NotSaid),
+        "the two rows say who was silent"
     );
     assert_eq!(
-        (listed.track, unlisted.track),
-        (None, Some(Track::Gone)),
+        (listed.branch.name(), unlisted.branch.name()),
+        (None, None),
+        "and neither names a branch"
+    );
+    assert_eq!(
+        (listed.position, unlisted.position),
+        (Position::NotSaid, Position::Said(Some(Track::Gone))),
         "and only the one herdr spoke about is refused the marker"
     );
 }
@@ -826,6 +853,10 @@ fn a_checkout_herdr_flags_detached_draws_no_track_whatever_it_names() {
     )]);
 
     let row = &build(&snapshot(json!([])), &[app], &HashMap::new()).repos[0].worktrees[0];
-    assert_eq!(row.branch, None, "detached wins over whatever herdr named");
-    assert_eq!(row.track, None);
+    assert_eq!(
+        row.branch,
+        Branch::NothingOut,
+        "detached wins over whatever herdr named"
+    );
+    assert_eq!(row.position, Position::NotSaid);
 }

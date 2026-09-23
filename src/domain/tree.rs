@@ -5,7 +5,9 @@
 
 use std::collections::HashMap;
 
-use crate::domain::model::{normalize_path, PaneNode, Refs, RepoNode, Tree, WorktreeNode};
+use crate::domain::model::{
+    normalize_path, Branch, PaneNode, Position, Refs, RepoNode, Tree, WorktreeNode,
+};
 use crate::port::{GitRef, RefKind, Snapshot, Track, Worktree};
 
 /// A repository the caller has identified, together with the worktrees herdr reported for it.
@@ -36,12 +38,12 @@ pub struct RepoInput {
 /// Keyed on the path alone, whichever came last won, and a stale `[gone]` reached a live
 /// checkout in another repository: issue #31.
 ///
-/// A repository that names one of its own paths from two refs is answered with nothing
+/// A repository that names one of its own paths from two refs is answered with [`Named::More`]
 /// rather than with either: they disagree about which branch is at that path, and a marker
 /// picked by list order is not an answer. `one_repository_can_name_one_path_from_two_refs`
 /// is that state.
-fn tracks(repos: &[RepoInput]) -> HashMap<(&str, &str), Track> {
-    let mut found: HashMap<(&str, &str), Option<Track>> = HashMap::new();
+fn tracks(repos: &[RepoInput]) -> HashMap<(&str, &str), Named> {
+    let mut found: HashMap<(&str, &str), Named> = HashMap::new();
     for repo in repos {
         let repo_key = normalize_path(&repo.repo_key);
         for git_ref in repo.refs.as_deref().unwrap_or_default() {
@@ -53,14 +55,37 @@ fn tracks(repos: &[RepoInput]) -> HashMap<(&str, &str), Track> {
             };
             found
                 .entry((repo_key, normalize_path(path)))
-                .and_modify(|held| *held = None)
-                .or_insert(git_ref.track);
+                .and_modify(|held| *held = Named::More)
+                .or_insert(Named::One(git_ref.track));
         }
     }
     found
-        .into_iter()
-        .filter_map(|(key, track)| Some((key, track?)))
-        .collect()
+}
+
+/// How many of a repository's refs named one checkout, while [`tracks`] is counting them.
+///
+/// Two variants rather than a count: the walk stops distinguishing at two, because what
+/// every reader does with three is what it does with two. A key absent from [`tracks`]'s map
+/// is the third answer, none.
+#[derive(Debug, Clone, Copy)]
+enum Named {
+    /// One, with whatever it had to report about where its branch stands.
+    One(Option<Track>),
+    /// More than one, which is [`Position::Contested`]: the refusal this module works out
+    /// and used to drop.
+    More,
+}
+
+impl Named {
+    /// The refusal, as the node carries it. `None` — no ref named the path — becomes
+    /// [`Position::NotSaid`] here rather than at each call.
+    fn position(named: Option<Named>) -> Position {
+        match named {
+            Some(Named::One(track)) => Position::Said(track),
+            Some(Named::More) => Position::Contested,
+            None => Position::NotSaid,
+        }
+    }
 }
 
 /// Which repository and checkout a pane's working directory resolved to.
@@ -97,32 +122,36 @@ pub fn build(
                 .filter(|worktree| !worktree.is_bare)
                 .map(|worktree| {
                     let checkout_path = normalize_path(&worktree.path);
+                    // herdr listed this checkout, so `NothingOut` is herdr's own answer
+                    // and not an absence: `branch` absent or empty, or `is_detached`.
                     let branch = worktree
                         .branch
                         .clone()
                         .filter(|b| !b.is_empty())
-                        .filter(|_| !worktree.is_detached);
-                    // herdr says nothing is checked out here — `branch` absent or empty, or
-                    // `is_detached` — so no ref of this repository's is about it. git can
-                    // still name the path from a registration that lost its directory,
+                        .filter(|_| !worktree.is_detached)
+                        .map_or(Branch::NothingOut, Branch::Out);
+                    // Nothing is out, so no ref of this repository's is about this row. git
+                    // can still name the path from a registration that lost its directory,
                     // carrying `[gone]`:
                     // `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out`
                     // in `tests/git_adapter.rs`. The row `build` makes below for a pane
-                    // herdr never listed keeps its track: nothing in `build`'s inputs tells
-                    // that checkout from one with nothing out (#49).
-                    let track = if branch.is_some() {
-                        tracks
-                            .get(&(normalize_path(&repo.repo_key), checkout_path))
-                            .copied()
+                    // herdr never listed keeps what git said: the marker there is issue
+                    // #49, and that row's `NotSaid` is what a fix would turn on.
+                    let position = if branch.name().is_some() {
+                        Named::position(
+                            tracks
+                                .get(&(normalize_path(&repo.repo_key), checkout_path))
+                                .copied(),
+                        )
                     } else {
-                        None
+                        Position::NotSaid
                     };
                     WorktreeNode {
                         branch,
                         checkout_path: checkout_path.to_string(),
                         is_primary: !worktree.is_linked_worktree,
                         open_workspace_id: worktree.open_workspace_id.clone(),
-                        track,
+                        position,
                         panes: Vec::new(),
                     }
                 })
@@ -176,12 +205,15 @@ pub fn build(
                 // with `git worktree add` outside herdr. Showing it is better than dropping
                 // the pane into "ungrouped", where the user would not think to look.
                 repo.worktrees.push(WorktreeNode {
-                    branch: None,
+                    // Nobody said what is out here: herdr never listed the checkout, and
+                    // what git has at the path is a registration rather than an answer
+                    // about now.
+                    branch: Branch::NotSaid,
                     checkout_path: checkout.to_string(),
                     is_primary: false,
                     open_workspace_id: Some(node.workspace_id.clone()),
                     // git knows about it even where herdr does not.
-                    track: tracks.get(&(owner, checkout)).copied(),
+                    position: Named::position(tracks.get(&(owner, checkout)).copied()),
                     panes: vec![node],
                 });
             }

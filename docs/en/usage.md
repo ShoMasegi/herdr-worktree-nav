@@ -128,8 +128,11 @@ The same rule holds for git's own half. A repository whose refs git would not re
 `for-each-ref` that `gone` comes from — has no `gone` to offer, and the checkouts it would
 otherwise have judged — clean, on a branch, nothing running in them, and not the repository's
 own — read `refs unreadable` in a sweep, before and after you mark them by hand. The prompt
-line names the repository with git's words, as it does for `gh`. `gh` still widens the sweep
-there: a merged pull request marks the row as it would anywhere. When git and `gh` have both
+line names the repository with git's words, as it does for `gh`. A checkout more than one
+of the repository's refs names is the other way git's half goes unanswered — the walk worked
+and its answer here was two branches, so there is no one branch to be `gone` — and that row
+reads `refs disagree` instead, one checkout at a time. `gh` still widens the sweep in both:
+a merged pull request marks the row as it would anywhere. When git and `gh` have both
 failed, the prompt line names git's failure first — it is the one the track markers on the
 row went with — and counts `gh`'s behind it, so one being named does not read as the only
 thing wrong.

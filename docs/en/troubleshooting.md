@@ -51,16 +51,23 @@ disagree about what is checked out where, which is the thing to look at. A check
 names more than one ref at reads `more than one ref at this checkout:` and then each of
 them as `<branch> → <upstream> <where it stands>`; more than one of the repository's
 worktree registrations names that path, and which of them is stale is not something this
-page can tell you. The `track` after them is what the picker's own walk found: its marker
-where it is drawing one, `unreadable` where it could not read the field git printed, and
-`not known` where it found nothing — on the row itself the last two are the same empty
-marker as `track level` and `upstream none`. A row with no branch on it reads
-`no branch reported`, then `git names at this path:` with that same list where git names
-refs there — or `no ref at this checkout` where it names none but the picker's walk found
-one — then what that walk found as `track <where it stands>` where it found anything;
-where git would not read the refs it says `refs not read`, and `refs not read on the
-second read` where only this page's own read failed. Each checkout's working tree is
-walked in the open, one after another, so on many checkouts this takes a moment.
+page can tell you. The `track` after them is what the picker's own walk found: its
+marker where it is drawing one, `unreadable` where it could not read the field git
+printed, `contested` where its own walk found more than one ref here too and it would
+not choose between them, and `not known` where it found no ref at all — on the row
+itself the last three are the same empty marker as `track level` and `upstream none`.
+`track contested` beside a single ref of this page's own is the two walks disagreeing
+the other way round, and in a sweep that checkout reads `refs disagree`. A row with no
+branch on it says which kind of silence that is: `no branch reported` where herdr
+listed the checkout and said nothing is out, and `herdr did not list this checkout`
+where herdr never mentioned it — the picker shows that row for a pane whose directory
+it recognized, and a branch may well be out there. Either way `git names at this path:`
+follows with that same list where git names refs there — or `no ref at this checkout`
+where it names none but the picker's walk found one — then what that walk found as
+`track <where it stands>` where it found anything; where git would not read the refs it
+says `refs not read`, and `refs not read on the second read` where only this page's own
+read failed. Each checkout's working tree is walked in the open, one after another, so
+on many checkouts this takes a moment.
 
 git's words arrive in English here and on the prompt line whatever language your git speaks
 in a terminal: the plugin runs git under `LC_ALL=C`, because it decides two things by reading
@@ -226,8 +233,14 @@ through this against a real session.
 - [ ] `herdr-worktree-nav dump` from inside a pane prints, under each checkout, the upstream
       it tracks, where it stands against it and the working tree — `upstream origin/x`,
       `track gone`, `working tree clean`. A branch level with its upstream reads
-      `track level`; one with no upstream reads `upstream none`. A repository whose refs
+      `track level`; one with no upstream reads `upstream none`; one at a path more than one
+      of the repository's refs names reads `track contested`. A repository whose refs
       could not be read says `refs unreadable:` under its name, with git's words.
+- [ ] A checkout two of the repository's refs name — `one_repository_can_name_one_path_from_two_refs`
+      in `tests/git_adapter.rs` builds it: a second worktree registered onto an occupied path
+      with `git worktree repair`, which `git worktree prune -v --dry-run` then calls a
+      `duplicate entry`. Its row draws no marker, `dump` says `track contested` for it, and
+      under `Shift-S` it reads `refs disagree`.
 - [ ] With that ref still broken, `Shift-S` shows the checkouts it would otherwise have
       judged reading `refs unreadable`, and `Space` on one keeps that reason on the row.
       `Tab` to the branches view: every branch git could still read is listed there.
