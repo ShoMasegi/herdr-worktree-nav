@@ -155,13 +155,17 @@ let dirty = git.is_dirty(checkout_path.as_str()).ok();
 ```
 
 こちらは成り立たない同値を主張していて、
-[issue #33](https://github.com/ShoMasegi/herdr-worktree-nav/issues/33) そのものです。
+[issue #33](https://github.com/ShoMasegi/herdr-worktree-nav/issues/33) そのものでした。失敗を
+名指しする代わりに、コメントで失敗を言いくるめている形です。
 
 ```rust
 // A path that is not in a repository, and a git that failed, are the same thing here:
 // the pane is simply not grouped.
 let identity = git.identify(cwd).ok().flatten()?;
 ```
+
+いまの `app::collect::identify_one` は `Result<Option<PanePlacement>, String>` を返すので、
+2 つは区別され、どちらなのかをプロンプト行が言います。
 
 したがって、port の `Result` を素の値に変える箇所には、そこへ何が届きうるか・なぜ区別しなくてよ
 いかを述べる `// swallows:` の行を付けます。その行が無い箇所は、判断ではなく見落としとして読みま

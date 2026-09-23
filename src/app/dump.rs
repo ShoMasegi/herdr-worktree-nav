@@ -297,10 +297,12 @@ fn each_of(named: &[&GitRef]) -> String {
 /// What the page says about a row with no branch on it.
 ///
 /// Two rows reach here: the checkout herdr listed with nothing out, and the one herdr never
-/// listed, which `build` makes for a pane and where a branch may well be out (issue #52). A
-/// marker on such a row means the second — [`WorktreeNode::branch`] names the test — and its
-/// absence means nothing, so the refs git names at the path are named and not explained
-/// (issue #49). No `upstream …`: this row names no branch for one to be about.
+/// listed, which `build` makes for a pane and where a branch may well be out (issue #52).
+/// Neither carries a marker — [`WorktreeNode::branch`] names the test — so the refs git names
+/// at the path are named and not explained (issue #49). The `track` arms stay because
+/// [`WorktreeNode`] does not make the state unrepresentable, and a page that dropped a marker
+/// it was handed would be the page lying rather than the tree. No `upstream …`: this row
+/// names no branch for one to be about.
 fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {
     let mut out = "no branch reported".to_string();
     match read {

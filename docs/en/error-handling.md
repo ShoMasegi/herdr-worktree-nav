@@ -162,14 +162,18 @@ This one is right, and says so:
 let dirty = git.is_dirty(checkout_path.as_str()).ok();
 ```
 
-This one asserts an equivalence that does not hold, and is
-[issue #33](https://github.com/ShoMasegi/herdr-worktree-nav/issues/33):
+This one asserted an equivalence that does not hold, and was
+[issue #33](https://github.com/ShoMasegi/herdr-worktree-nav/issues/33) — the shape a site
+takes when the comment argues the failure away instead of naming it:
 
 ```rust
 // A path that is not in a repository, and a git that failed, are the same thing here:
 // the pane is simply not grouped.
 let identity = git.identify(cwd).ok().flatten()?;
 ```
+
+`app::collect::identify_one` answers `Result<Option<PanePlacement>, String>` now, so the two
+are told apart and the prompt line says which.
 
 So: a site that turns a port's `Result` into a plain value carries a `// swallows:` line
 naming what can arrive there and why it need not be told apart. A site with no such line is

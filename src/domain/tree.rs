@@ -179,10 +179,11 @@ pub fn build(
                 // at this path is a `worktreepath` off a registration, which says where a
                 // branch was checked out and not what is checked out there now — a
                 // `git worktree add --detach` at a path some stale registration still
-                // claims is both branchless and unlisted, and drew an unmissable `gone`
-                // beside a directory name. A missing marker beats a wrong one, which is the
-                // judgement #45 made one arm up. What git said is still on `dump`'s page,
-                // under `git names at this path:`, where naming it costs nothing. Issue #49.
+                // claims is both branchless and unlisted, and an unmissable `gone` beside a
+                // directory name is the wrong marker rather than a late one. A missing
+                // marker beats a wrong one, which is the judgement #45 makes one arm up.
+                // What git said is still on `dump`'s page, under `git names at this path:`,
+                // where naming it costs nothing. Issue #49.
                 repo.worktrees.push(WorktreeNode {
                     branch: None,
                     checkout_path: checkout.to_string(),

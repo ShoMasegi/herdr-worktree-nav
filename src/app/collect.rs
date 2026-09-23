@@ -83,10 +83,10 @@ fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
 /// is a worktree, its answer is reused instead of running git — but only for panes that are
 /// still somewhere under that checkout, since a pane is free to `cd` into another repository.
 ///
-/// A git that refused is kept apart from a path that is simply not in a repository. They
-/// looked the same from here and they are nothing alike: the second is an ordinary pane in an
-/// ordinary directory, and the first is every pane in the session at once when `git` is not
-/// on the path herdr launched the plugin with. Issue #33.
+/// A git that refused is kept apart from a path that is simply not in a repository. They are
+/// one value away from each other here and nothing alike to a reader: the second is an
+/// ordinary pane in an ordinary directory, and the first is every pane in the session at once
+/// when `git` is not on the path herdr launched the plugin with. Issue #33.
 fn resolve_placements(
     snapshot: &Snapshot,
     git: &dyn GitPort,
@@ -214,9 +214,9 @@ fn is_inside(path: &str, root: &str) -> bool {
 ///
 /// A repository herdr refuses to list comes back as the second half rather than as nothing.
 /// Dropped, it takes every checkout and every pane in it off the screen — and with a sweep's
-/// `Enter` reading the tree again before it asks, that happens between the marks going on and
-/// the question being asked, so what the user saw was `no longer marked:` with bare paths and
-/// no account of why. Issue #56.
+/// `Enter` reading the tree again before it asks, that lands between the marks going on and
+/// the question being asked, where `no longer marked:` with bare paths is all the reader
+/// gets unless the reason travels with the tree. Issue #56.
 fn collect_repos(
     herdr: &dyn HerdrPort,
     git: &dyn GitPort,

@@ -211,11 +211,11 @@ pub struct PaneNode {
 
 /// What the reading could not do, kept on the tree the way [`Refs`] is kept on a repository.
 ///
-/// [`Refs::Unreadable`] is the one place this model had for "the tool would not answer", and
-/// it hangs off a [`RepoNode`] — which is exactly the node that does not exist when herdr
-/// will not list the repository at all. So the fact has nowhere to go and the repository
-/// simply leaves the tree, with every checkout and every pane in it going too and nothing
-/// anywhere saying why. Here it travels with the tree, and the prompt line says it once.
+/// [`Refs::Unreadable`] hangs off a [`RepoNode`], and these are about nodes that do not
+/// exist: a repository herdr would not list, a pane git could not place. A repository that
+/// never reached the tree takes every checkout and every pane in it with it, so there is
+/// nothing on screen left to carry the reason. Here it travels with the tree, and the prompt
+/// line says it once.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Trouble {
     /// Repositories herdr refused to list the worktrees of.

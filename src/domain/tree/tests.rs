@@ -763,9 +763,9 @@ fn a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it() {
     // The two rows `build` makes, over one repository's identical git facts: a stale
     // registration goes on naming `/wt/shared` for `chore/deps`, whose upstream was
     // deleted, and nothing is checked out there. Neither row names a branch, so neither
-    // may carry a marker about one — the second used to, and drew an unmissable `gone`
-    // beside a directory name, about a branch it never named (issue #49). Pinned here as
-    // one rule over both arms, so the difference cannot come back.
+    // may carry a marker about one: `gone` beside a directory name is about a branch the
+    // row never names (issue #49). One rule over both arms, pinned here because the arms
+    // are far apart and each can be read as reasonable on its own.
     let shared = "/wt/shared";
     let stale = || local_ref("chore/deps", Some(shared), Some(Track::Gone));
 

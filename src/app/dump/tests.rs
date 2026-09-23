@@ -724,9 +724,9 @@ fn a_checkout_with_nothing_out_names_the_refs_git_still_has_at_its_path() {
 
 #[test]
 fn a_marker_on_a_checkout_with_nothing_out_is_on_the_page_too() {
-    // The row `domain::tree::build` makes for a pane herdr did not list keeps its
-    // track, so the picker draws `gone` beside a directory name about a branch nothing
-    // names — issue #49.
+    // A marker `build` will not produce on a branchless row (issue #49), handed to the
+    // page directly: what the page does with one is its own answer, and dropping it
+    // silently would be the page lying about what it was given.
     let tree = one_repo(
         Refs::Read,
         vec![worktree(None, "/wt/shared", Some(Track::Gone))],
