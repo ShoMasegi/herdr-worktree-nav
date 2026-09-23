@@ -227,44 +227,33 @@ fn could_not_run(args: &[&str], error: &std::io::Error) -> String {
     refusal(args, &format!("git could not be run: {error}"))
 }
 
-/// What one `:track` field said.
-///
-/// Three answers rather than two, because an absence is two different facts here and the
-/// caller owes each of them something different: git having nothing to report is an answer,
-/// and git reporting something this side cannot read is the answer going unread.
-#[derive(Debug, PartialEq, Eq)]
-enum TrackField {
-    /// git printed nothing. The ref is level with what it was measured against, or it has
-    /// nothing to be measured against.
-    Nothing,
-    /// git printed something this side understood, and this is it. Not always a position:
-    /// `gone` is git saying the ref it would have measured against is not there.
-    Read(Track),
-    /// git printed something this could not read. A marker that is wrong is worse than no
-    /// marker, because the whole point of these is to answer "which of these is behind"
-    /// without leaving the picker to check.
-    Unreadable,
-}
-
 /// Read a `:track` field — `%(upstream:track)` or `%(push:track)`, which share a grammar:
 /// `[gone]`, `[ahead 2]`, `[behind 1]`, `[ahead 2, behind 1]`, or nothing at all for a branch
 /// level with what it is being compared against, or with nothing to compare against.
 ///
-/// What `[gone]` *means* differs between the two, which is why the caller and not this
+/// `None` is that last shape, and [`Track::Unreadable`] is a field git printed that this
+/// cannot read — two answers a caller owes different things, which is why neither is the
+/// other's `None`. Nothing a git in use prints lands on the second: `for-each-ref` is
+/// plumbing, printing these counts as integers in a grammar of its own that no locale
+/// touches. Reaching it takes a count past `u32` or a git that changed that grammar, and
+/// the second is what this is for — a grammar this side does not know is not a branch that
+/// is level with its upstream, however much the empty marker they share suggests it.
+///
+/// What `[gone]` *means* differs between the two fields, which is why the caller and not this
 /// function decides whether to believe it.
-fn parse_track(field: &str) -> TrackField {
+fn parse_track(field: &str) -> Option<Track> {
     let field = field.trim();
     if field.is_empty() {
-        return TrackField::Nothing;
+        return None;
     }
     let Some(inside) = field
         .strip_prefix('[')
         .and_then(|rest| rest.strip_suffix(']'))
     else {
-        return TrackField::Unreadable;
+        return Some(Track::Unreadable);
     };
     if inside == "gone" {
-        return TrackField::Read(Track::Gone);
+        return Some(Track::Gone);
     }
     let mut ahead = None;
     let mut behind = None;
@@ -276,37 +265,40 @@ fn parse_track(field: &str) -> TrackField {
         // (Real git omits a level side rather than printing a zero, so this is about being
         // right on input rather than about anything `for-each-ref` produces today.)
         let Some((side, count)) = part.split_once(' ') else {
-            return TrackField::Unreadable;
+            return Some(Track::Unreadable);
         };
         let Ok(count) = count.parse::<u32>() else {
-            return TrackField::Unreadable;
+            return Some(Track::Unreadable);
         };
         match side {
             "ahead" => ahead = NonZeroU32::new(count),
             "behind" => behind = NonZeroU32::new(count),
-            _ => return TrackField::Unreadable,
+            _ => return Some(Track::Unreadable),
         }
     }
     match (ahead, behind) {
-        (Some(ahead), Some(behind)) => TrackField::Read(Track::Diverged { ahead, behind }),
-        (Some(ahead), None) => TrackField::Read(Track::Ahead(ahead)),
-        (None, Some(behind)) => TrackField::Read(Track::Behind(behind)),
-        (None, None) => TrackField::Nothing,
+        (Some(ahead), Some(behind)) => Some(Track::Diverged { ahead, behind }),
+        (Some(ahead), None) => Some(Track::Ahead(ahead)),
+        (None, Some(behind)) => Some(Track::Behind(behind)),
+        (None, None) => None,
     }
 }
 
-/// Read a ref's position from the two fields git printed for it.
+/// Read a ref's position from what git printed for it: the upstream it tracks, and the two
+/// `:track` fields.
 ///
 /// `%(upstream:track)` is the question this plugin is asking. `%(push:track)` answers a
-/// different one — where the branch stands against the ref git would push it to — and is
-/// worth asking only where the first field had nothing to say, since the two can name
-/// different refs: under `push.default = current` the push destination of a local branch
-/// tracking `origin/main` is `origin/<the branch's own name>`, and a marker drawn off that
-/// is a comparison the user never asked for, with nothing on the row to tell it from the
-/// one they did.
+/// different one — where the branch stands against the ref git would push it to — and the
+/// two can name different refs: under `push.default = current` the push destination of a
+/// local branch tracking `origin/main` is `origin/<the branch's own name>`. A marker drawn
+/// off the second and presented as the first is a comparison the user never asked for, with
+/// nothing on the row to tell it from the one they did.
 ///
-/// So a field this could not read stops here rather than falling through. A field that said
-/// nothing still does, and that includes a branch level with its upstream — #50.
+/// So the push side is read in one case only: git named no upstream, so there was no first
+/// question and no answer to misrepresent. The one other shape that reaches here empty
+/// handed is an empty field beside an upstream, which is git saying the branch is level with
+/// it, and the upstream name is what tells the two apart. A field git printed and this could
+/// not read leaves [`parse_track`] as [`Track::Unreadable`] and is neither of them.
 ///
 /// `gone` off the push side is dropped whichever way it got there. Under
 /// `push.default = current` or `matching`, the push destination of a branch nobody has
@@ -314,18 +306,15 @@ fn parse_track(field: &str) -> TrackField {
 /// the opposite of what this marker means, on the branches where being wrong matters most:
 /// `docs/adr/0011-what-may-be-swept.md` makes `gone` the signal a sweep marks a branch for
 /// deletion on, and an unpushed branch is the one kind that exists nowhere else.
-fn read_track(upstream_track: &str, push_track: &str) -> Option<Track> {
-    match parse_track(upstream_track) {
-        TrackField::Read(track) => Some(track),
-        // swallows: a field git printed and this could not read, which arrives here as the
-        // `None` a level branch also produces. The picker is right either way — it draws no
-        // marker for both — and `dump` is not: it prints `level` beside the upstream's name
-        // for a branch it has not measured. Telling the two apart past this point is a port
-        // change, which is #83.
-        TrackField::Unreadable => None,
-        TrackField::Nothing => match parse_track(push_track) {
-            TrackField::Read(track) if track != Track::Gone => Some(track),
-            _ => None,
+fn read_track(upstream: Option<&str>, upstream_track: &str, push_track: &str) -> Option<Track> {
+    match (parse_track(upstream_track), upstream) {
+        (Some(track), _) => Some(track),
+        // git named an upstream and reported nothing about it, which is the answer: the
+        // branch is level with it. The push ref is not the ref that answer is about.
+        (None, Some(_)) => None,
+        (None, None) => match parse_track(push_track) {
+            Some(Track::Gone) => None,
+            track => track,
         },
     }
 }
@@ -428,7 +417,7 @@ impl GitPort for GitCli {
                 .filter(|name| !name.is_empty());
             let upstream_track = parts.next().unwrap_or_default();
             let push_track = parts.next().unwrap_or_default();
-            let track = read_track(upstream_track, push_track);
+            let track = read_track(upstream_name.as_deref(), upstream_track, push_track);
             let worktree_path = parts
                 .next()
                 .map(str::to_string)
@@ -586,25 +575,25 @@ impl GitPort for GitCli {
 mod tests {
     use super::{
         could_not_run, dropped_refs, github_slug_from_url, no_such_remote, parse_track, read_track,
-        refusal, unread_paths, GitCli, Slug, TrackField, GIT_LOCALE,
+        refusal, unread_paths, GitCli, Slug, GIT_LOCALE,
     };
     use crate::port::Track;
     use std::num::NonZeroU32;
 
     #[test]
     fn reads_every_shape_git_prints_for_upstream_track() {
-        assert_eq!(parse_track("[gone]"), TrackField::Read(Track::Gone));
+        assert_eq!(parse_track("[gone]"), Some(Track::Gone));
         assert_eq!(
             parse_track("[ahead 2]"),
-            TrackField::Read(Track::Ahead(NonZeroU32::new(2).unwrap()))
+            Some(Track::Ahead(NonZeroU32::new(2).unwrap()))
         );
         assert_eq!(
             parse_track("[behind 1]"),
-            TrackField::Read(Track::Behind(NonZeroU32::new(1).unwrap()))
+            Some(Track::Behind(NonZeroU32::new(1).unwrap()))
         );
         assert_eq!(
             parse_track("[ahead 2, behind 1]"),
-            TrackField::Read(Track::Diverged {
+            Some(Track::Diverged {
                 ahead: NonZeroU32::new(2).unwrap(),
                 behind: NonZeroU32::new(1).unwrap()
             })
@@ -614,16 +603,16 @@ mod tests {
     #[test]
     fn a_field_that_reports_nothing_is_told_from_one_that_could_not_be_read() {
         // Which of the two rules an input is under is the whole of what the caller reads,
-        // so each of them is named here rather than left to a shared `None`.
+        // and the absence is only ever the first of them.
         //
         // Nothing to report: level with what it was measured against, or nothing to be
         // measured against. Both print empty, and a zero side is the same fact written out.
         for field in ["", "   ", "[ahead 0]", "[behind 0]", "[ahead 0, behind 0]"] {
-            assert_eq!(parse_track(field), TrackField::Nothing, "for {field:?}");
+            assert_eq!(parse_track(field), None, "for {field:?}");
         }
         // Could not be read: git said something, and this side does not know what.
         for field in ["[ahead many]", "[sideways 2]", "gone", "[]"] {
-            assert_eq!(parse_track(field), TrackField::Unreadable, "for {field:?}");
+            assert_eq!(parse_track(field), Some(Track::Unreadable), "for {field:?}");
         }
     }
 
@@ -632,36 +621,73 @@ mod tests {
         // Not just its own half. Believing the side that parsed would put a marker on the
         // row that is right about one direction and silent about the other, which reads as
         // a branch that is only ahead — a claim nothing in the input supports.
-        assert_eq!(parse_track("[ahead 2, behind zzz]"), TrackField::Unreadable);
-        assert_eq!(parse_track("[ahead zzz, behind 1]"), TrackField::Unreadable);
+        assert_eq!(
+            parse_track("[ahead 2, behind zzz]"),
+            Some(Track::Unreadable)
+        );
+        assert_eq!(
+            parse_track("[ahead zzz, behind 1]"),
+            Some(Track::Unreadable)
+        );
         // Syntactically a count, still not one this can hold.
         assert_eq!(
             parse_track("[ahead 4294967296, behind 2]"),
-            TrackField::Unreadable
+            Some(Track::Unreadable)
         );
     }
 
     #[test]
-    fn a_track_this_could_not_read_is_not_a_push_measurement() {
+    fn the_push_side_is_read_for_a_branch_git_named_no_upstream_for_and_for_no_other() {
         let behind = Track::Behind(NonZeroU32::new(3).unwrap());
-        // The fall-through asks git a second question, against a ref it picks itself. That
-        // is worth doing where the first question went unanswered, and is a different
-        // measurement presented as the first one where the answer merely went unread.
-        assert_eq!(read_track("[ahead many]", "[behind 3]"), None);
-        assert_eq!(read_track("", "[behind 3]"), Some(behind));
+        // The one case the second question belongs to: nothing was asked first, so nothing
+        // is being misrepresented by the answer.
+        assert_eq!(read_track(None, "", "[behind 3]"), Some(behind));
+        // Level with the upstream git named. The empty field is git's answer to the first
+        // question, and the push ref is not the ref it answered about.
+        assert_eq!(read_track(Some("origin/main"), "", "[behind 3]"), None);
+        // A field this could not read, with or without an upstream: the answer went unread,
+        // which is not the same as never having been asked. The push side is not read for
+        // it either — a question that went unanswered is still the question that was asked.
+        assert_eq!(
+            read_track(None, "[ahead many]", "[behind 3]"),
+            Some(Track::Unreadable)
+        );
+        assert_eq!(
+            read_track(Some("origin/main"), "[ahead many]", "[behind 3]"),
+            Some(Track::Unreadable)
+        );
         // And a field that was read wins outright, whatever the push side says.
         assert_eq!(
-            read_track("[ahead 2]", "[behind 3]"),
+            read_track(Some("origin/main"), "[ahead 2]", "[behind 3]"),
             Some(Track::Ahead(NonZeroU32::new(2).unwrap()))
         );
     }
 
     #[test]
     fn a_push_destination_that_has_never_existed_is_not_a_branch_whose_upstream_is_gone() {
-        assert_eq!(read_track("", "[gone]"), None);
-        assert_eq!(read_track("[gone]", ""), Some(Track::Gone));
-        // A push side this could not read is not a marker either.
-        assert_eq!(read_track("", "[ahead many]"), None);
+        assert_eq!(read_track(None, "", "[gone]"), None);
+        assert_eq!(
+            read_track(Some("origin/main"), "[gone]", ""),
+            Some(Track::Gone)
+        );
+        // A push side this could not read draws no marker either, and says so in the one
+        // place it is the answer: the branch git named no upstream for.
+        assert_eq!(
+            read_track(None, "", "[ahead many]"),
+            Some(Track::Unreadable)
+        );
+    }
+
+    #[test]
+    fn a_branch_a_field_went_unread_for_is_not_a_branch_that_is_level() {
+        // The two shapes `dump` has to tell apart, from one function: `level` is a claim
+        // that the branch is even with the ref git named, and the second input supports no
+        // claim at all.
+        assert_eq!(read_track(Some("origin/main"), "", ""), None);
+        assert_eq!(
+            read_track(Some("origin/main"), "[sideways 2]", ""),
+            Some(Track::Unreadable)
+        );
     }
 
     #[test]

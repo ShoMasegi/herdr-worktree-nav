@@ -195,9 +195,11 @@ pub struct GitRef {
     /// staring at a row with no `gone` on it is asking.
     pub upstream: Option<String>,
     /// Where this branch stands against the upstream it tracks — or, for a branch with no
-    /// upstream configured, against where it would push. `None` when it is level with
-    /// whichever of those it was measured against, when there is neither, and when the
-    /// field git printed could not be read — three facts in one absence, which is #83.
+    /// upstream configured, against where it would push. `None` is git having nothing to
+    /// report: the branch is level with whichever of those it was measured against, or
+    /// there is neither. Which of those two is [`upstream`](GitRef::upstream)'s to say; a
+    /// field git printed and this side could not read is [`Track::Unreadable`] and not an
+    /// absence at all.
     pub track: Option<Track>,
     /// The checkout that currently has this branch, when one does. git answers this in the
     /// same breath as everything else here, which is what ties a branch to a checkout
@@ -236,17 +238,20 @@ impl RefWalk {
     }
 }
 
-/// What git says about a branch's position relative to the upstream it tracks.
+/// What git said about a branch's position relative to the upstream it tracks.
 ///
 /// Read out of `%(upstream:track)`, or `%(push:track)` for a branch with no upstream
 /// configured, both of which the one `for-each-ref` this plugin already runs prints
 /// alongside everything else it is being asked for. The alternative is a `rev-list --count`
 /// per branch.
 ///
-/// Four variants for the four things git prints. A branch level with what it is measured
-/// against prints nothing at all, so there is no variant for it and no way to build one:
-/// `NonZeroU32` is what makes "at least one side is non-zero" a fact about the type rather
-/// than a sentence in a doc comment that two other modules had to defend against.
+/// Four positions for the four things git prints, and [`Unreadable`](Track::Unreadable) for
+/// a field it printed that this side could not read — the position going unread is an
+/// answer a caller has to be able to see, and it is not one of the four. A branch level with
+/// what it is measured against prints nothing at all, so there is no variant for it and no
+/// way to build one: `NonZeroU32` is what makes "at least one side is non-zero" a fact about
+/// the type rather than a sentence in a doc comment that two other modules had to defend
+/// against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Track {
     /// git could not find the ref this branch tracks. Usually that is a merged pull request
@@ -264,6 +269,32 @@ pub enum Track {
         ahead: NonZeroU32,
         behind: NonZeroU32,
     },
+    /// git printed a field for this ref and this side could not read it, so where the branch
+    /// stands is unknown.
+    ///
+    /// A variant rather than an absence, because an absence here is git's own answer that
+    /// there is nothing to report — a branch that is level. That is the kind 4 shape
+    /// `docs/en/error-handling.md` prescribes and
+    /// [`WorkingTree`](crate::domain::model::WorkingTree) and
+    /// [`Refs`](crate::domain::model::Refs) are already in: a reading that did not read gets
+    /// a state of its own, so no ordinary answer can stand in for it.
+    ///
+    /// The field's own text is not carried. What travels in
+    /// [`Refs::Unreadable`](crate::domain::model::Refs::Unreadable) is git
+    /// refusing, in git's words, which a person troubleshooting has to read; this is one
+    /// ref's line of `for-each-ref` output, and what is wrong with it is that it means
+    /// nothing on this side.
+    ///
+    /// Nothing draws a marker for it, which is the rest of kind 4 — no marker beats the
+    /// wrong marker. Kind 4 pairs that with a condition saying why the marker is missing,
+    /// and [`domain::notice`](crate::domain::notice) has none for this: no git reaches it,
+    /// for the reason `parse_track` in [`adapter::git_cli`](crate::adapter::git_cli)
+    /// records, so the sentence would be one no frame can produce. Keeping the state costs
+    /// a variant and keeps every reader of it honest; a sentence on the prompt line is a
+    /// screen feature, and it is one line in
+    /// [`conditions`](crate::domain::notice::conditions) on the day a git prints a field
+    /// this cannot read.
+    Unreadable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

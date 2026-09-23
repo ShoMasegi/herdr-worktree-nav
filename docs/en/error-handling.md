@@ -106,7 +106,9 @@ not enumerate. There *is* a value to store, and every ordinary value in range is
 **What it gets:** a state of its own, so that "we do not know" cannot be read as an answer.
 `WorkingTree` is `Clean | Dirty | Unreadable`, not a `bool`. `Refs` is
 `Read | Unreadable(String)`, carrying the words. The row then draws no marker — no marker
-beats the wrong marker — and a condition (kind 3) says why the markers are missing.
+beats the wrong marker — and, where a frame can produce the sentence, a condition (kind 3)
+says why the markers are missing. Where no reachable failure would produce it, the state is
+still carried and the reason for the silent row is written where the state is.
 
 This is the kind that costs the most when it is got wrong, because nothing looks broken. It
 is the subject of the rule in the next section.

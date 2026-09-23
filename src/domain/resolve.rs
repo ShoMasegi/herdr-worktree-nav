@@ -48,9 +48,11 @@ pub struct BranchEntry {
     /// projection anybody can take — see [`BranchEntry::upstream_gone`] — while narrowing it
     /// at the boundary would throw away the ahead/behind the panes view shows.
     ///
-    /// `None` is four different situations and does not tell them apart: the branch is level
-    /// with what it tracks, it tracks nothing at all, git printed something unreadable, or
-    /// the ref walk for that repository failed outright. That is deliberate and it is only
+    /// `None` is three different situations and does not tell them apart: the branch is
+    /// level with what it tracks, it tracks nothing at all, or the ref walk for that
+    /// repository failed outright. A field git printed and the adapter could not read is a
+    /// fourth, and it stays out of the absence: it arrives as [`Track::Unreadable`] and
+    /// draws nothing on its own account. Leaving the three together is deliberate and only
     /// safe while the drawing is *negative* — all four earn no marker, which is the honest
     /// rendering of every one of them. A positive marker for this being `None` (a `✓`, an
     /// "up to date") would say the second case is the first, and so tell every brand-new
@@ -361,6 +363,16 @@ mod tests {
                 "{track:?} is a branch that moved, not one whose upstream went"
             );
         }
+    }
+
+    #[test]
+    fn a_position_that_went_unread_is_not_an_upstream_that_is_gone() {
+        // The same narrowness, against the state that carries no position at all: a field
+        // the adapter could not read is not git saying the upstream is not there.
+        let mut local_ref = local("fix/crash", 20);
+        local_ref.track = Some(Track::Unreadable);
+        let entries = resolve(&repo(vec![]), &[local_ref], &[], &[]);
+        assert!(!entry_named(&entries, "fix/crash").upstream_gone());
     }
 
     fn entry_named<'a>(entries: &'a [BranchEntry], name: &str) -> &'a BranchEntry {
