@@ -62,7 +62,7 @@ impl Removal {
     /// `git branch -d`.
     pub fn sweeping(repo_root: &str, worktree: &WorktreeNode) -> Self {
         Self {
-            delete_branch: worktree.branch.is_some(),
+            delete_branch: worktree.branch.name().is_some(),
             ..Self::of(repo_root, worktree)
         }
     }
@@ -179,7 +179,7 @@ pub fn parse_report(line: &str) -> Option<RemovalOutcome> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::WorktreeNode;
+    use crate::domain::model::{Branch, WorktreeNode};
     use crate::port::RemovalOutcome;
 
     const REFUSAL: &str = "`git worktree remove /wt/fix-crash` failed: fatal: '/wt/fix-crash' \
@@ -191,7 +191,7 @@ mod tests {
     /// A checkout with nothing running in it, on `branch` or on nothing.
     fn checkout(branch: Option<&str>) -> WorktreeNode {
         WorktreeNode {
-            branch: branch.map(str::to_string),
+            branch: branch.map_or(Branch::NothingOut, |b| Branch::Out(b.to_string())),
             checkout_path: "/wt/fix-crash".to_string(),
             is_primary: false,
             open_workspace_id: None,

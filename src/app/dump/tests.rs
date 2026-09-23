@@ -1,6 +1,6 @@
 use super::*;
 use crate::app::fakes::{fake_git, FakeGit};
-use crate::domain::model::{PaneNode, WorktreeNode};
+use crate::domain::model::{Branch, PaneNode, WorktreeNode};
 use crate::domain::settings::{Panes, Settings};
 use crate::port::{AgentStatus, Track};
 use serde_json::json;
@@ -40,12 +40,21 @@ fn plugin_config(path: Option<&str>, show_no_panes: bool, complaint: Option<&str
 
 fn worktree(branch: Option<&str>, path: &str, track: Option<Track>) -> WorktreeNode {
     WorktreeNode {
-        branch: branch.map(str::to_string),
+        branch: branch.map_or(Branch::NothingOut, |b| Branch::Out(b.to_string())),
         checkout_path: path.to_string(),
         is_primary: branch == Some("main"),
         open_workspace_id: None,
         track,
         panes: Vec::new(),
+    }
+}
+
+/// The row `domain::tree::build` makes for a pane in a checkout herdr never listed. It is
+/// the only branchless row that can carry a track, and the only one a branch may be out at.
+fn unlisted(path: &str, track: Option<Track>) -> WorktreeNode {
+    WorktreeNode {
+        branch: Branch::NotSaid,
+        ..worktree(None, path, track)
     }
 }
 
@@ -687,7 +696,7 @@ fn a_ref_with_no_upstream_but_a_marker_keeps_its_marker_in_the_list() {
 fn a_checkout_with_nothing_out_names_the_refs_git_still_has_at_its_path() {
     // Named the same way the multi-ref line names them, and without saying what it
     // means, because on this row the page cannot know: see
-    // `a_row_with_a_branch_out_also_reads_as_no_branch_reported`.
+    // `a_checkout_herdr_never_listed_says_so_rather_than_that_no_branch_is_out`.
     let tree = one_repo(Refs::Read, vec![worktree(None, "/wt/shared", None)]);
     let mut deps = local("chore/deps", "/wt/shared", Some("origin/chore/deps"));
     deps.track = Some(Track::Gone);
@@ -703,18 +712,14 @@ fn a_checkout_with_nothing_out_names_the_refs_git_still_has_at_its_path() {
 }
 
 #[test]
-fn a_marker_on_a_checkout_with_nothing_out_is_on_the_page_too() {
-    // The row `domain::tree::build` makes for a pane herdr did not list keeps its
-    // track, so the picker draws `gone` beside a directory name about a branch nothing
-    // names — issue #49.
-    let tree = one_repo(
-        Refs::Read,
-        vec![worktree(None, "/wt/shared", Some(Track::Gone))],
-    );
+fn a_marker_on_a_checkout_herdr_did_not_list_is_on_the_page_too() {
+    // That row keeps its track, so the picker draws `gone` beside a directory name about
+    // a branch nothing names — issue #49.
+    let tree = one_repo(Refs::Read, vec![unlisted("/wt/shared", Some(Track::Gone))]);
     let refs = RefsByRepo::from([("/src/app".to_string(), Ok(Vec::new()))]);
     assert!(
         page(&tree, &refs).contains(
-            "      no branch reported  no ref at this checkout  track gone  working tree"
+            "      herdr did not list this checkout  no ref at this checkout  track gone  working tree"
         ),
         "got:\n{}",
         page(&tree, &refs)
@@ -759,15 +764,14 @@ fn a_checkout_with_nothing_out_says_which_read_of_the_refs_failed() {
 }
 
 #[test]
-fn a_row_with_a_branch_out_also_reads_as_no_branch_reported() {
-    // What `build` makes for a pane in a checkout herdr never listed: `branch: None`
-    // hard-coded, the track copied from git. Nothing says the checkout is branchless —
-    // `git worktree add` outside herdr leaves a branch out there. Issue #52 carries the
-    // shortage, #49 the marker half.
+fn a_checkout_herdr_never_listed_says_so_rather_than_that_no_branch_is_out() {
+    // What `build` makes for a pane in a checkout herdr never listed. `no branch reported`
+    // would be this side's inference in herdr's voice: `git worktree add` outside herdr
+    // leaves a branch out at a path herdr's list never mentions, and the ref named below
+    // may well be it. Issue #49 is the marker half of the same shortage.
     let tree = one_repo(
         Refs::Read,
-        vec![worktree(
-            None,
+        vec![unlisted(
             "/wt/feature",
             Some(Track::Ahead(NonZeroU32::new(1).unwrap())),
         )],
@@ -782,7 +786,7 @@ fn a_row_with_a_branch_out_also_reads_as_no_branch_reported() {
     )]);
     assert!(
         page(&tree, &refs).contains(
-            "      no branch reported  git names at this path: \
+            "      herdr did not list this checkout  git names at this path: \
                  feat/login \u{2192} origin/feat/login level  track \u{2191}1  working tree"
         ),
         "got:\n{}",
@@ -794,17 +798,15 @@ fn a_row_with_a_branch_out_also_reads_as_no_branch_reported() {
 fn a_marker_on_a_row_with_no_branch_survives_a_failed_second_read() {
     // The row with a branch keeps its marker when only the second read failed, and so
     // must this one — the marker issue #49 is about, on the row that can carry it.
-    let tree = one_repo(
-        Refs::Read,
-        vec![worktree(None, "/wt/shared", Some(Track::Gone))],
-    );
+    let tree = one_repo(Refs::Read, vec![unlisted("/wt/shared", Some(Track::Gone))]);
     let second_read_failed = RefsByRepo::from([(
         "/src/app".to_string(),
         Err("fatal: bad object HEAD (`git for-each-ref …`)".to_string()),
     )]);
     assert!(
         page(&tree, &second_read_failed).contains(
-            "      no branch reported  refs not read on the second read  track gone  working tree"
+            "      herdr did not list this checkout  refs not read on the second read  track gone  \
+                 working tree"
         ),
         "got:\n{}",
         page(&tree, &second_read_failed)
@@ -814,17 +816,14 @@ fn a_marker_on_a_row_with_no_branch_survives_a_failed_second_read() {
 #[test]
 fn a_marker_on_a_row_with_no_branch_that_git_names_no_ref_at_says_so() {
     // The clause turns on what is at the checkout, not on whether the list is empty.
-    let tree = one_repo(
-        Refs::Read,
-        vec![worktree(None, "/wt/shared", Some(Track::Gone))],
-    );
+    let tree = one_repo(Refs::Read, vec![unlisted("/wt/shared", Some(Track::Gone))]);
     let refs = RefsByRepo::from([(
         "/src/app".to_string(),
         Ok(vec![local("main", "/src/app", Some("origin/main"))]),
     )]);
     assert!(
         page(&tree, &refs).contains(
-            "      no branch reported  no ref at this checkout  track gone  working tree"
+            "      herdr did not list this checkout  no ref at this checkout  track gone  working tree"
         ),
         "got:\n{}",
         page(&tree, &refs)

@@ -4,7 +4,7 @@
 //! readers serve all three: a screen is drawn from one state and read back one cell at a
 //! time, and the readers are the same whichever picker drew it.
 
-use crate::domain::model::{CheckoutPath, WorkingTree};
+use crate::domain::model::{Branch, CheckoutPath, WorkingTree};
 use crate::ui::render::{branches, panes};
 use std::collections::BTreeMap;
 
@@ -51,7 +51,7 @@ pub(crate) fn pane(id: &str, name: Option<&str>, status: AgentStatus, focused: b
 
 pub(crate) fn worktree(branch: &str, primary: bool, panes: Vec<PaneNode>) -> WorktreeNode {
     WorktreeNode {
-        branch: Some(branch.into()),
+        branch: Branch::Out(branch.into()),
         checkout_path: format!("/wt/{}", branch.replace('/', "-")),
         is_primary: primary,
         open_workspace_id: panes.first().map(|p| p.workspace_id.clone()),

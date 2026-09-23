@@ -1,10 +1,10 @@
 use super::*;
-use crate::domain::model::{PaneNode, Refs, RepoNode, WorktreeNode};
+use crate::domain::model::{Branch, PaneNode, Refs, RepoNode, WorktreeNode};
 use crate::port::{AgentStatus, SettledPullRequest};
 
 fn worktree(branch: &str, path: &str) -> WorktreeNode {
     WorktreeNode {
-        branch: Some(branch.to_string()),
+        branch: Branch::Out(branch.to_string()),
         checkout_path: path.to_string(),
         is_primary: false,
         open_workspace_id: None,
@@ -167,7 +167,7 @@ fn a_working_tree_git_would_not_read_is_never_offered() {
 fn a_detached_checkout_is_not_called_unjudged_when_gh_could_not_be_asked() {
     // Saying "PR unknown" would blame `gh` for a silence git is responsible for.
     let mut wt = worktree("feat/login", "/wt/detached");
-    wt.branch = None;
+    wt.branch = Branch::NothingOut;
     let trees = clean(&["/wt/detached"]);
     let unavailable = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
     let judged = judged(&tree_of(vec![wt]), &facts(&trees, &unavailable));
@@ -312,7 +312,7 @@ fn a_repository_whose_refs_git_would_not_read_says_so_on_the_rows_git_would_have
     let judgeable = worktree("feat/login", "/wt/feat-login");
     let holding_work = worktree("fix/crash", "/wt/fix-crash");
     let mut detached = worktree("", "/wt/detached");
-    detached.branch = None;
+    detached.branch = Branch::NothingOut;
     let mut running = worktree("chore/tidy", "/wt/tidy");
     running.panes = vec![PaneNode {
         pane_id: "w3:p1".into(),
@@ -965,7 +965,7 @@ fn an_answer_is_about_the_checkout_it_was_given_about_and_not_about_the_path() {
 fn a_detached_checkout_is_not_the_same_checkout_as_a_branch_at_the_same_path() {
     // Two checkouts with no branch at one path are as different as two branches are.
     let mut detached = worktree("feat/login", "/wt/feat-login");
-    detached.branch = None;
+    detached.branch = Branch::NothingOut;
     let candidates = BTreeMap::from([(at("/wt/feat-login"), Candidate::Available)]);
 
     let mut changes = Changes::default();
@@ -1248,7 +1248,7 @@ fn what_the_sweep_marks_and_what_the_user_may_mark_are_different_questions() {
 fn a_detached_checkout_is_never_offered_by_a_pull_request() {
     // Nothing points at it, so there is no head ref for a pull request to match.
     let mut wt = worktree("feat/login", "/wt/detached");
-    wt.branch = None;
+    wt.branch = Branch::NothingOut;
     let trees = clean(&["/wt/detached"]);
     let settled = asked(vec![merged(9, "feat/login")]);
     let judged = judged(&tree_of(vec![wt]), &facts(&trees, &settled));

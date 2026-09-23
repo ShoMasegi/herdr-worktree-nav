@@ -203,7 +203,7 @@ fn the_branch_is_matched_by_the_checkout_git_says_has_it() {
     let tree = build(&snapshot(json!([])), &[input], &HashMap::new());
     let worktrees = &tree.repos[0].worktrees;
     assert_eq!(worktrees[0].track, Some(Track::Gone));
-    assert_eq!(worktrees[1].branch, None, "detached");
+    assert_eq!(worktrees[1].branch, Branch::NothingOut, "detached");
     assert_eq!(worktrees[1].track, None);
 }
 
@@ -753,9 +753,10 @@ fn two_refs_that_agree_about_where_they_stand_still_answer_nothing() {
 fn what_a_branchless_row_draws_turns_on_whether_herdr_listed_it() {
     // The two rows `build` makes, over one repository's identical git facts: a stale
     // registration goes on naming a path for `chore/deps`, whose upstream was deleted,
-    // and nothing is checked out there. Both rows carry `branch: None`, and only the one
-    // `build` makes for a pane draws `gone` about a branch it never names — issue #49,
-    // pinned here so the difference stays deliberate.
+    // and nothing is checked out there. Neither row names a branch, and the two say so
+    // differently: herdr spoke about the one it listed, and nobody spoke about the one
+    // `build` made for a pane. Only the second draws `gone` about a branch it never
+    // names — issue #49, pinned here so the difference stays deliberate.
     let shared = "/wt/shared";
     let stale = || local_ref("chore/deps", Some(shared), Some(Track::Gone));
 
@@ -791,9 +792,14 @@ fn what_a_branchless_row_draws_turns_on_whether_herdr_listed_it() {
         .expect("the row build made for the pane");
 
     assert_eq!(
-        (listed.branch.as_deref(), unlisted.branch.as_deref()),
+        (&listed.branch, &unlisted.branch),
+        (&Branch::NothingOut, &Branch::NotSaid),
+        "the two rows say who was silent"
+    );
+    assert_eq!(
+        (listed.branch.name(), unlisted.branch.name()),
         (None, None),
-        "neither row names a branch"
+        "and neither names a branch"
     );
     assert_eq!(
         (listed.track, unlisted.track),
@@ -826,6 +832,10 @@ fn a_checkout_herdr_flags_detached_draws_no_track_whatever_it_names() {
     )]);
 
     let row = &build(&snapshot(json!([])), &[app], &HashMap::new()).repos[0].worktrees[0];
-    assert_eq!(row.branch, None, "detached wins over whatever herdr named");
+    assert_eq!(
+        row.branch,
+        Branch::NothingOut,
+        "detached wins over whatever herdr named"
+    );
     assert_eq!(row.track, None);
 }

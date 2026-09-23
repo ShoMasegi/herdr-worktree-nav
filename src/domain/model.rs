@@ -115,15 +115,50 @@ impl Refs {
     }
 }
 
+/// What is checked out at a path, as far as anybody has said.
+///
+/// Three answers rather than two, because a row with no branch name on it is two different
+/// facts and nothing downstream can work out which: herdr listing the checkout and saying
+/// nothing is out is an answer about the checkout, and herdr never listing it is the
+/// question never having been put. `refs/heads/x` can be out at a path herdr did not list;
+/// it cannot be out at one herdr listed as detached.
+///
+/// [`domain::tree::build`](crate::domain::tree::build) writes each of the three at a
+/// construction site of its own, and
+/// `what_a_branchless_row_draws_turns_on_whether_herdr_listed_it` is the two that name no
+/// branch, over one repository's identical git facts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Branch {
+    /// herdr named the branch this checkout has out.
+    Out(String),
+    /// herdr listed the checkout and said nothing is out — an empty branch, or
+    /// `is_detached`. No ref of the repository is about this row, so a marker on it would
+    /// be about a branch the row does not name.
+    NothingOut,
+    /// Nobody said. `build` makes a row like this for a pane whose directory resolved to a
+    /// checkout herdr's worktree list did not mention — a `git worktree add` outside herdr
+    /// is the case its own comment names — so a branch may well be out and nothing on this
+    /// side has heard.
+    NotSaid,
+}
+
+impl Branch {
+    /// The name, where a branch was named. `None` for both of the other two, which is the
+    /// question [`Branch`] exists to keep answerable past this point.
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Branch::Out(name) => Some(name),
+            Branch::NothingOut | Branch::NotSaid => None,
+        }
+    }
+}
+
 /// One checkout of a repository: the primary one, or a linked worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeNode {
-    /// `None` for a checkout herdr listed with nothing out — and also for one herdr never
-    /// listed, which [`domain::tree::build`](crate::domain::tree::build) synthesizes for a
-    /// pane and where a branch may well be out. Only the second can carry a `track`:
-    /// `what_a_branchless_row_draws_turns_on_whether_herdr_listed_it`. Carrying the difference
-    /// is issue #52, and issue #49 is what it costs on the marker.
-    pub branch: Option<String>,
+    /// What is out here, and — where nothing is named — which of the two reasons that is.
+    /// Issue #49 is what the difference costs on the marker.
+    pub branch: Branch,
     pub checkout_path: String,
     pub is_primary: bool,
     /// The workspace herdr has this checkout open in, when it has one.
@@ -142,9 +177,11 @@ impl WorktreeNode {
         self.panes.is_empty()
     }
 
-    /// What to show for the checkout. Falls back to the directory name when detached.
+    /// What to show for the checkout. Falls back to the directory name where no branch is
+    /// named, which both of [`Branch`]'s other two answers are: the path is all either row
+    /// has to be called by, whatever the reason.
     pub fn label(&self) -> &str {
-        self.branch.as_deref().unwrap_or_else(|| {
+        self.branch.name().unwrap_or_else(|| {
             self.checkout_path
                 .rsplit('/')
                 .next()
@@ -269,7 +306,7 @@ mod tests {
     #[test]
     fn falls_back_to_the_directory_name_for_a_detached_checkout() {
         let detached = WorktreeNode {
-            branch: None,
+            branch: Branch::NothingOut,
             checkout_path: "/tmp/wt/detached-head".into(),
             is_primary: false,
             open_workspace_id: None,
@@ -279,7 +316,7 @@ mod tests {
         assert_eq!(detached.label(), "detached-head");
 
         let on_branch = WorktreeNode {
-            branch: Some("feat/login".into()),
+            branch: Branch::Out("feat/login".into()),
             ..detached
         };
         assert_eq!(on_branch.label(), "feat/login");

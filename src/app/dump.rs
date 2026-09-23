@@ -17,7 +17,7 @@ use std::fmt::Write;
 use crate::adapter::plugin_config::Loaded;
 use crate::app::one_line;
 use crate::domain::chrome::Chrome;
-use crate::domain::model::{normalize_path, Refs, RepoNode, Tree, WorktreeNode};
+use crate::domain::model::{normalize_path, Branch, Refs, RepoNode, Tree, WorktreeNode};
 use crate::port::{GitPort, GitRef, RefKind, Snapshot, Track};
 
 /// What the second ref walk — the one `main` makes for this page, for the upstream names —
@@ -187,7 +187,7 @@ pub fn report(
 /// better grounds. Issue #48 is the labels.
 fn branch_words(repo: &RepoNode, worktree: &WorktreeNode, refs: &RefsByRepo) -> String {
     let read = RefsRead::of(repo, refs);
-    let Some(branch) = worktree.branch.as_deref() else {
+    let Some(branch) = worktree.branch.name() else {
         return detached_words(worktree, read);
     };
     let tree_track = || match worktree.track {
@@ -280,15 +280,21 @@ fn each_of(named: &[&GitRef]) -> String {
 
 /// What the page says about a row with no branch on it.
 ///
-/// Two rows reach here: the checkout herdr listed with nothing out, and the one herdr never
-/// listed, which `build` makes for a pane and where a branch may well be out (issue #52). A
-/// track on such a row means the second — [`WorktreeNode::branch`] names the test — and its
-/// absence means nothing, so the refs git names at the path are named and not explained
-/// (issue #49). A track rather than a marker: [`Track::Unreadable`] is one of these rows
-/// having been measured and draws nothing. No `upstream …`: this row names no branch for one
-/// to be about.
+/// Two rows reach here and they are not the same news: the checkout herdr listed with
+/// nothing out, and the one herdr never listed, which `build` makes for a pane and where a
+/// branch may well be out. The row says which ([`Branch`]), so the page does too — on the
+/// second, `no branch reported` would be this side's inference dressed as herdr's answer.
+/// The refs git names at the path are still named and not explained, because which of them
+/// is out is what nobody said (issue #49).
+///
+/// No `upstream …` either way: this row names no branch for one to be about.
 fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {
-    let mut out = "no branch reported".to_string();
+    let mut out = match worktree.branch {
+        // Only a row naming no branch reaches here, `branch_words` having returned above
+        // for the rest.
+        Branch::NothingOut | Branch::Out(_) => "no branch reported".to_string(),
+        Branch::NotSaid => "herdr did not list this checkout".to_string(),
+    };
     match read {
         RefsRead::NotRead => out.push_str("  refs not read"),
         RefsRead::NotReadAgain => out.push_str("  refs not read on the second read"),
@@ -299,7 +305,7 @@ fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {
             } else if worktree.track.is_some() {
                 // This page's walk names no ref here and the picker's walk did: a track on
                 // this row comes off a ref git named at this path, whether or not it is one
-                // the row can draw.
+                // the row can draw. The two walks disagreeing is the fact worth printing.
                 out.push_str("  no ref at this checkout");
             }
         }

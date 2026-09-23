@@ -258,7 +258,7 @@ fn urgency(status: AgentStatus) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{Refs, RepoNode, WorktreeNode};
+    use crate::domain::model::{Branch, Refs, RepoNode, WorktreeNode};
     use crate::domain::rows::fixtures::*;
     use crate::domain::sweep::Mark;
     use std::collections::BTreeMap;
@@ -514,7 +514,7 @@ mod tests {
         use crate::domain::sweep::{Half, Reason};
         let mut tree = tree();
         tree.repos[1].worktrees.push(WorktreeNode {
-            branch: Some("chore/deps".into()),
+            branch: Branch::Out("chore/deps".into()),
             ..worktree("fix/crash", vec![])
         });
         let at = |repo: usize| {

@@ -401,7 +401,7 @@ impl PanesState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{Refs, RepoNode, Tree, WorkingTree, WorktreeNode};
+    use crate::domain::model::{Branch, Refs, RepoNode, Tree, WorkingTree, WorktreeNode};
     use crate::port::AgentStatus;
     use crate::ui::panes::fixtures::*;
 
@@ -728,7 +728,7 @@ mod tests {
                     refs: Refs::Read,
                     worktrees: vec![
                         WorktreeNode {
-                            branch: Some("main".into()),
+                            branch: Branch::Out("main".into()),
                             checkout_path: "/src/app".into(),
                             is_primary: true,
                             open_workspace_id: None,
@@ -736,7 +736,7 @@ mod tests {
                             panes: vec![],
                         },
                         WorktreeNode {
-                            branch: Some("feat/login".into()),
+                            branch: Branch::Out("feat/login".into()),
                             checkout_path: "/wt/app/feat-login".into(),
                             is_primary: false,
                             open_workspace_id: Some("w2".into()),

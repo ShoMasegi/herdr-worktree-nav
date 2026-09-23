@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::domain::model::{normalize_path, PaneNode, Refs, RepoNode, Tree, WorktreeNode};
+use crate::domain::model::{normalize_path, Branch, PaneNode, Refs, RepoNode, Tree, WorktreeNode};
 use crate::port::{GitRef, RefKind, Snapshot, Track, Worktree};
 
 /// A repository the caller has identified, together with the worktrees herdr reported for it.
@@ -97,20 +97,22 @@ pub fn build(
                 .filter(|worktree| !worktree.is_bare)
                 .map(|worktree| {
                     let checkout_path = normalize_path(&worktree.path);
+                    // herdr listed this checkout, so `NothingOut` is herdr's own answer
+                    // and not an absence: `branch` absent or empty, or `is_detached`.
                     let branch = worktree
                         .branch
                         .clone()
                         .filter(|b| !b.is_empty())
-                        .filter(|_| !worktree.is_detached);
-                    // herdr says nothing is checked out here — `branch` absent or empty, or
-                    // `is_detached` — so no ref of this repository's is about it. git can
-                    // still name the path from a registration that lost its directory,
+                        .filter(|_| !worktree.is_detached)
+                        .map_or(Branch::NothingOut, Branch::Out);
+                    // Nothing is out, so no ref of this repository's is about this row. git
+                    // can still name the path from a registration that lost its directory,
                     // carrying `[gone]`:
                     // `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out`
                     // in `tests/git_adapter.rs`. The row `build` makes below for a pane
-                    // herdr never listed keeps its track: nothing in `build`'s inputs tells
-                    // that checkout from one with nothing out (#49).
-                    let track = if branch.is_some() {
+                    // herdr never listed keeps its track: the marker there is issue #49,
+                    // and that row's `NotSaid` is what a fix would turn on.
+                    let track = if branch.name().is_some() {
                         tracks
                             .get(&(normalize_path(&repo.repo_key), checkout_path))
                             .copied()
@@ -176,7 +178,10 @@ pub fn build(
                 // with `git worktree add` outside herdr. Showing it is better than dropping
                 // the pane into "ungrouped", where the user would not think to look.
                 repo.worktrees.push(WorktreeNode {
-                    branch: None,
+                    // Nobody said what is out here: herdr never listed the checkout, and
+                    // what git has at the path is a registration rather than an answer
+                    // about now.
+                    branch: Branch::NotSaid,
                     checkout_path: checkout.to_string(),
                     is_primary: false,
                     open_workspace_id: Some(node.workspace_id.clone()),

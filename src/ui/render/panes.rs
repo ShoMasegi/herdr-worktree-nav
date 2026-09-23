@@ -666,7 +666,7 @@ mod tests {
     use super::*;
     use crate::adapter::plugin_config;
     use crate::domain::chrome::Chrome;
-    use crate::domain::model::{CheckoutPath, WorkingTree};
+    use crate::domain::model::{Branch, CheckoutPath, WorkingTree};
     use crate::ui::render::fixtures::*;
     use ratatui::backend::TestBackend;
     use ratatui::crossterm::event::KeyCode;
@@ -1553,7 +1553,7 @@ mod tests {
     #[test]
     fn the_column_stops_short_of_the_edge_so_something_always_fits_after_it() {
         let mut tree = tree();
-        tree.repos[0].worktrees[0].branch = Some("a".repeat(80));
+        tree.repos[0].worktrees[0].branch = Branch::Out("a".repeat(80));
         let state = PanesState::new(tree, None);
         assert_eq!(meta_column(state.rows(), 60), 60 - MIN_META_WIDTH);
     }

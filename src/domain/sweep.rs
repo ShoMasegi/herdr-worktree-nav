@@ -186,7 +186,7 @@ fn judge(
     // reach is `Unjudged` rather than `Available` — but only where its answer would have
     // changed the outcome. The same gate holds for git's own half: `gone` was never going to
     // offer a dirty or a detached checkout.
-    let could_have_decided = clean && worktree.branch.is_some();
+    let could_have_decided = clean && worktree.branch.name().is_some();
     let refs_unread = could_have_decided && !repo.refs.is_read();
     let settled = match settled {
         // Nobody has asked `gh` yet: an answer is still on its way, and a permanent word on
@@ -207,7 +207,7 @@ fn judge(
     // meanings land in one arm; this shape cannot.
     let found = worktree
         .branch
-        .as_ref()
+        .name()
         .and_then(|branch| finished_with(settled.pull_requests(), branch));
     match (found, settled) {
         // `gh` widens whatever git could or could not say: a finished pull request offers
@@ -306,7 +306,7 @@ impl Changes {
         self.0.insert(
             (RepoKey::of(repo), CheckoutPath::of(worktree)),
             Decision {
-                branch: worktree.branch.clone(),
+                branch: worktree.branch.name().map(str::to_string),
                 going,
             },
         );
@@ -327,7 +327,7 @@ impl Changes {
                 repo.worktrees.iter().map(move |worktree| {
                     (
                         (RepoKey::of(repo), CheckoutPath::of(worktree)),
-                        worktree.branch.as_deref(),
+                        worktree.branch.name(),
                     )
                 })
             })

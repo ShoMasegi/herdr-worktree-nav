@@ -513,7 +513,7 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::model::{CheckoutPath, RepoKey, WorkingTree};
+    use crate::domain::model::{Branch, CheckoutPath, RepoKey, WorkingTree};
 
     use super::*;
     use crate::ui::panes::PanesState;
@@ -733,7 +733,7 @@ mod tests {
         // directory, which `git branch -d` is never given.
         let mut tree = finished_tree(&["feat/login", "fix/crash"]);
         tree.repos[0].worktrees.push(WorktreeNode {
-            branch: None,
+            branch: Branch::NothingOut,
             checkout_path: "/wt/scratch".into(),
             is_primary: false,
             open_workspace_id: None,
@@ -785,7 +785,7 @@ mod tests {
     fn the_sweeps_question_counts_in_the_singular_and_says_when_no_branch_goes() {
         let mut tree = finished_tree(&["fix/crash", "feat/login"]);
         tree.repos[0].worktrees.push(WorktreeNode {
-            branch: None,
+            branch: Branch::NothingOut,
             checkout_path: "/wt/scratch".into(),
             is_primary: false,
             open_workspace_id: None,

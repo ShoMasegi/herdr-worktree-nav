@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::model::{Refs, RepoNode, WorkingTree, WorktreeNode};
+use crate::domain::model::{Branch, Refs, RepoNode, WorkingTree, WorktreeNode};
 use crate::domain::sweep::{Half, Reason, Refusal};
 use crate::port::{AgentStatus, PullRequestOutcome, SettledPullRequest, Track};
 use crate::ui::panes::fixtures::*;
@@ -295,7 +295,7 @@ fn a_mark_does_not_move_to_whatever_is_at_that_path_next() {
     assert!(state.chosen().contains(&at(&state, "/wt/app/feat-login")));
 
     let mut moved = state.tree.clone();
-    moved.repos[0].worktrees[1].branch = Some("release/v2".into());
+    moved.repos[0].worktrees[1].branch = Branch::Out("release/v2".into());
     state.replace_tree(moved);
 
     assert!(
@@ -719,7 +719,7 @@ fn only_a_swept_checkout_with_a_branch_deletes_one() {
     // hand, and its label is a directory name that must never reach `git branch -d`.
     let mut state = sweeping();
     state.tree.repos[0].worktrees.push(WorktreeNode {
-        branch: None,
+        branch: Branch::NothingOut,
         checkout_path: "/wt/app/scratch".into(),
         is_primary: false,
         open_workspace_id: None,
@@ -797,7 +797,7 @@ fn a_row_dropped_by_the_re_read_is_named_by_the_repository_its_key_names() {
         display_name: "me/old".into(),
         refs: Refs::Read,
         worktrees: vec![WorktreeNode {
-            branch: Some("chore/deps".into()),
+            branch: Branch::Out("chore/deps".into()),
             checkout_path: "/wt/app/fix-crash".into(),
             is_primary: false,
             open_workspace_id: None,

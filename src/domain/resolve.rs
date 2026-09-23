@@ -134,7 +134,7 @@ pub fn resolve(
     // Checkouts override whatever the refs said: an open worktree is the strongest fact
     // about a branch.
     for worktree in &repo.worktrees {
-        let Some(branch) = worktree.branch.as_deref() else {
+        let Some(branch) = worktree.branch.name() else {
             continue;
         };
         let entry = entries.entry(branch).or_insert_with(|| BranchEntry {
@@ -268,7 +268,7 @@ pub fn plan(chosen: &Chosen, head_ref: &str, remote: &str) -> BranchPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{PaneNode, Refs, WorktreeNode};
+    use crate::domain::model::{Branch, PaneNode, Refs, WorktreeNode};
     use crate::port::AgentStatus;
     use std::num::NonZeroU32;
 
@@ -285,7 +285,7 @@ mod tests {
 
     fn worktree(branch: &str, panes: Vec<PaneNode>) -> WorktreeNode {
         WorktreeNode {
-            branch: Some(branch.into()),
+            branch: Branch::Out(branch.into()),
             checkout_path: format!("/wt/{}", branch.replace('/', "-")),
             is_primary: branch == "main",
             open_workspace_id: panes.first().map(|p| p.workspace_id.clone()),
@@ -666,7 +666,7 @@ mod tests {
     #[test]
     fn a_detached_checkout_contributes_no_branch_row() {
         let detached = WorktreeNode {
-            branch: None,
+            branch: Branch::NothingOut,
             ..worktree("main", vec![])
         };
         assert!(resolve(&repo(vec![detached]), &[], &[], &[]).is_empty());
