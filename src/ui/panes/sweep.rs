@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::domain::model::{CheckoutPath, RepoKey};
+use crate::domain::notice::Condition;
 use crate::domain::rows::RowRef;
 use crate::domain::sweep::{self, Mark, RepoRoot};
 use crate::port::SettledPullRequests;
@@ -178,13 +179,30 @@ impl PanesState {
             // rows themselves show that. It can also go because the repository it was in is
             // not there to be read any more, and then the bare paths are the whole of what
             // is left — `nothing left to remove` reads as a sweep that found nothing rather
-            // than one that lost its ground. Only a listing that failed can take rows away,
-            // so no other condition is named here.
-            let unlisted = self.conditions().into_iter().find(|condition| {
-                matches!(condition, crate::domain::notice::Condition::Unlisted { .. })
-            });
-            self.message = Some(match (unlisted, after.is_empty()) {
-                (Some(condition), _) => format!("{named} — {}", words::condition(&condition)),
+            // than one that lost its ground.
+            //
+            // Only the repositories these rows were in. A listing that failed elsewhere is
+            // on the prompt line already and took none of these away, so naming it here
+            // would answer the reader's question with another repository's trouble.
+            let lost: BTreeSet<&str> = before
+                .iter()
+                .filter(|key| !still.contains(key))
+                .map(|key| key.0.as_str())
+                .collect();
+            let why = self
+                .tree
+                .trouble
+                .unlisted
+                .iter()
+                .find(|repo| lost.contains(repo.repo_key.as_str()))
+                .map(|repo| {
+                    words::condition(&Condition::Unlisted {
+                        repo: repo.name().to_string(),
+                        words: repo.words.clone(),
+                    })
+                });
+            self.message = Some(match (why, after.is_empty()) {
+                (Some(why), _) => format!("{named} — {why}"),
                 (None, true) => format!("{named} — nothing left to remove"),
                 (None, false) => named,
             });

@@ -802,7 +802,27 @@ fn a_repository_the_re_read_could_not_list_is_named_rather_than_nothing_left() {
         )
     );
 
-    // And only a listing that failed is blamed there. Refs that went unread are a condition
+    // And only a listing that failed *in the repository these rows were in*. Another
+    // repository herdr would not list is on the prompt line already and took none of these
+    // away, so naming it here would answer with someone else's trouble.
+    let mut state = sweeping();
+    state.handle_key(key(KeyCode::Enter));
+    let mut elsewhere = state.tree.clone();
+    elsewhere.repos[0].worktrees.clear();
+    elsewhere.trouble.unlisted.push(Unlisted {
+        repo_key: "/src/other/.git".into(),
+        words: "herdr rejected worktree.list: internal error".into(),
+    });
+    state.replace_tree(elsewhere);
+    state.set_waiting(false);
+    state.confirm_sweep_if_settled();
+    assert_eq!(
+        state.message(),
+        Some("no longer marked: /wt/app/fix-crash — nothing left to remove"),
+        "the row was in me/app, and me/app was listed"
+    );
+
+    // And refs that went unread are a condition
     // too, and they take no rows away, so naming them as the reason would name the wrong one.
     let mut state = sweeping();
     state.handle_key(key(KeyCode::Enter));

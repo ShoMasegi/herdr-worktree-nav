@@ -47,7 +47,8 @@ fn could_not_read(error: &anyhow::Error) -> String {
 /// would be the useful sentence and it is not a sound one: the tree is built from the panes
 /// herdr reports, so a repository whose last pane this removal just closed is not listed at
 /// all afterwards — every one of its rows goes, none of its checkouts did — and a repository
-/// `worktree.list` refused is dropped in silence. Issues #56 and #33.
+/// `worktree.list` refused loses its rows the same way, though the prompt line now says so.
+/// Issues #56 and #33.
 const READ_AGAIN: &str = "the list has been read again since";
 
 /// What the picker was left wanting when it closed. The caller decides whether that means

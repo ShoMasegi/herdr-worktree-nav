@@ -189,6 +189,13 @@ impl RepoKey {
     pub fn of(repo: &RepoNode) -> Self {
         RepoKey(repo.repo_key.clone())
     }
+
+    /// The key itself, for the one question a [`RepoNode`] cannot answer: which repository a
+    /// key names when there is no node for it. [`Trouble::unlisted`] is that case, and its
+    /// keys are the same spelling — both come from the placement `app::collect` normalized.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

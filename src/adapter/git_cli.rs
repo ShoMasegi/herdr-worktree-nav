@@ -147,9 +147,9 @@ fn dropped_refs(stderr: &str) -> Option<String> {
 /// OS's words where git's would be. This is the case the usage page names — a `git` that
 /// is not on the path herdr launched the plugin with.
 ///
-/// Ahead of the prompt line it reaches nobody: `app::collect::identify_one` reads a git it
-/// could not run as "this pane is not in a repository", so with no git at all the picker
-/// draws every pane ungrouped and says nothing about why.
+/// [`app::collect::identify_one`](crate::app::collect) keeps these words apart from git
+/// answering that a path is outside a repository, so with no git at all the picker says why
+/// every pane is ungrouped rather than leaving the heading to be read as herdr's failure.
 fn could_not_run(args: &[&str], error: &std::io::Error) -> String {
     refusal(args, &format!("git could not be run: {error}"))
 }
