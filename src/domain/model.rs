@@ -78,9 +78,11 @@ impl WorkingTree {
 /// repository, and the prompt line says it once rather than every row guessing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refs {
-    /// git answered. A checkout here with no track marker has nothing git reported for it —
-    /// or is one `domain::tree::tracks` answered with nothing, because two refs of its own
-    /// repository name its path.
+    /// git answered. A checkout here with no track marker has nothing git reported for it,
+    /// or is one `domain::tree::tracks` answered with nothing because two refs of its own
+    /// repository name its path, or is one whose `:track` field git printed and the adapter
+    /// could not read — [`Track::Unreadable`], which draws no marker for a reason of its
+    /// own.
     Read,
     /// git did not, in its own words — or, in a debug build only, the thread that asked
     /// did not finish.

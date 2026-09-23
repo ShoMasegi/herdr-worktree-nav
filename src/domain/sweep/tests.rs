@@ -117,6 +117,25 @@ fn a_clean_checkout_whose_upstream_is_gone_is_offered_with_its_reason() {
 }
 
 #[test]
+fn a_position_that_went_unread_is_never_offered() {
+    // `gone` is the one track a sweep deletes on — `docs/adr/0011-what-may-be-swept.md` —
+    // and a field the adapter could not read says nothing about where the branch stands.
+    // Read as "git said something", it would offer to delete a branch whose commits may
+    // exist nowhere else.
+    //
+    // `Available` rather than `Unjudged(Half::Refs)`, which is the shape this is otherwise:
+    // git's half of the question went unanswered for this row. `Unjudged` puts a sentence
+    // on the row, and the same argument that keeps this state out of `domain::notice`
+    // keeps it from having one here — see `Track::Unreadable`.
+    let mut wt = worktree("fix/crash", "/wt/fix-crash");
+    wt.track = Some(Track::Unreadable);
+    let trees = clean(&["/wt/fix-crash"]);
+    let none = BTreeMap::new();
+    let judged = judged(&tree_of(vec![wt]), &facts(&trees, &none));
+    assert_eq!(judged[&at("/wt/fix-crash")], Candidate::Available);
+}
+
+#[test]
 fn nothing_is_offered_on_a_working_tree_nobody_has_answered_for() {
     // The state the picker opens in. Offering here deletes a checkout because a walk has
     // not finished yet, which waiting a moment longer cannot undo.
