@@ -944,6 +944,44 @@ mod tests {
         assert!(unplaced.is_empty(), "git answered, and the answer was no");
     }
 
+    /// A git whose `identify` takes its thread down.
+    struct IdentifyPanics;
+
+    impl FakeGit for IdentifyPanics {
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            panic!("the probe's own panic, printed on stderr by the thread")
+        }
+    }
+    fake_git!(IdentifyPanics);
+
+    #[test]
+    fn a_pane_whose_thread_did_not_finish_is_not_a_pane_outside_a_repository() {
+        // Debug builds only, as `a_ref_walk_whose_thread_did_not_finish_is_not_an_empty_answer`
+        // says of the walk. `unwrap_or(Ok(None))` here is the silence #33 was about: an
+        // ordinary pane in an ordinary directory, with nothing said.
+        let snapshot: Snapshot = serde_json::from_value(serde_json::json!({
+            "version": "0.7.4",
+            "protocol": 16,
+            "workspaces": [],
+            "tabs": [],
+            "panes": [{
+                "pane_id": "w1:p1",
+                "tab_id": "w1:t1",
+                "workspace_id": "w1",
+                "terminal_id": "t1",
+                "cwd": "/home/me",
+            }],
+        }))
+        .expect("snapshot fixture should deserialize");
+
+        let (placements, unplaced) = resolve_placements(&snapshot, &IdentifyPanics);
+        assert!(placements.is_empty());
+        assert_eq!(
+            unplaced.get("w1:p1").map(String::as_str),
+            Some("the thread asking git did not finish")
+        );
+    }
+
     /// A git that answers, and says every path is outside a repository.
     struct IdentifiesNothing;
 

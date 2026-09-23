@@ -651,6 +651,38 @@ mod tests {
     }
 
     #[test]
+    fn what_the_reading_could_not_read_reaches_the_prompt_line() {
+        // `domain::notice` gathers these and `app::collect` puts them on the tree; this is
+        // the join between the two for the prompt line and `!`.
+        let mut state = state();
+        let mut tree = state.tree.clone();
+        tree.trouble.unlisted.push(crate::domain::model::Unlisted {
+            repo_key: "/src/old/.git".into(),
+            words: "herdr rejected worktree.list: internal error".into(),
+            panes: Default::default(),
+        });
+        state.replace_tree(tree);
+        assert_eq!(
+            state.trouble().as_deref(),
+            Some("old: not listed: herdr rejected worktree.list: internal error")
+        );
+
+        let mut tree = state.tree.clone();
+        tree.trouble.unplaced.insert(
+            "w9:p1".into(),
+            "git could not be run: no such file or directory (`git rev-parse`)".into(),
+        );
+        state.replace_tree(tree);
+        assert_eq!(
+            state.trouble().as_deref(),
+            Some(
+                "1 pane not placed: git could not be run: no such file or directory \
+                 (`git rev-parse`) (+1 more)"
+            )
+        );
+    }
+
+    #[test]
     fn a_removal_starting_elsewhere_leaves_the_cursor_where_it_was() {
         // `the_cursor_steps_off_a_checkout_once_its_removal_has_started` says where the
         // cursor is not; this says where it is. The top of the picker is also "off the row",
