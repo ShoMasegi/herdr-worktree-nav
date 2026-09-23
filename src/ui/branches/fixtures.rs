@@ -11,7 +11,7 @@ use crate::port::{GitRef, Snapshot};
 use crate::ui::branches::*;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::domain::model::{Branch, PaneNode, Refs, WorktreeNode};
+use crate::domain::model::{Branch, PaneNode, Position, Refs, WorktreeNode};
 use crate::port::{AgentStatus, RefKind, SplitDirection};
 
 pub(crate) fn key(code: KeyCode) -> KeyEvent {
@@ -58,7 +58,7 @@ pub(crate) fn repo() -> RepoNode {
             checkout_path: "/wt/feat-live".into(),
             is_primary: false,
             open_workspace_id: Some("w2".into()),
-            track: None,
+            position: Position::NotSaid,
             panes: vec![PaneNode {
                 pane_id: "w2:p1".into(),
                 workspace_id: "w2".into(),
@@ -82,7 +82,7 @@ pub(crate) fn other_repo() -> RepoNode {
             checkout_path: "/src/tools".into(),
             is_primary: true,
             open_workspace_id: Some("w5".into()),
-            track: None,
+            position: Position::NotSaid,
             panes: vec![],
         }],
     }

@@ -401,7 +401,7 @@ impl PanesState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{Branch, Refs, RepoNode, Tree, WorkingTree, WorktreeNode};
+    use crate::domain::model::{Branch, Position, Refs, RepoNode, Tree, WorkingTree, WorktreeNode};
     use crate::port::AgentStatus;
     use crate::ui::panes::fixtures::*;
 
@@ -732,7 +732,7 @@ mod tests {
                             checkout_path: "/src/app".into(),
                             is_primary: true,
                             open_workspace_id: None,
-                            track: None,
+                            position: Position::NotSaid,
                             panes: vec![],
                         },
                         WorktreeNode {
@@ -740,7 +740,7 @@ mod tests {
                             checkout_path: "/wt/app/feat-login".into(),
                             is_primary: false,
                             open_workspace_id: Some("w2".into()),
-                            track: None,
+                            position: Position::NotSaid,
                             panes: vec![pane("w2:p1", "codex", AgentStatus::Blocked)],
                         },
                     ],

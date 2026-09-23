@@ -7,7 +7,7 @@ use crate::app::fakes::{
     Refuses, RefusesFirst, Reports, Started, Unwaited,
 };
 use crate::app::settled::Settled;
-use crate::domain::model::{Branch, CheckoutPath, RepoKey};
+use crate::domain::model::{Branch, CheckoutPath, Position, RepoKey};
 use crate::port::{
     AgentStatus, GitRef, RefKind, RefWalk, RemovalOutcome, Slug, Snapshot, Track, Workspace,
     WorkspaceWorktree, Worktree, WorktreeList, WorktreeSource,
@@ -708,7 +708,7 @@ fn one_pane_tree() -> crate::domain::model::Tree {
                 checkout_path: "/wt/feat-login".into(),
                 is_primary: false,
                 open_workspace_id: Some("w2".into()),
-                track: None,
+                position: Position::NotSaid,
                 panes: vec![PaneNode {
                     pane_id: "w2:p1".into(),
                     workspace_id: "w2".into(),

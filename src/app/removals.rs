@@ -207,7 +207,7 @@ impl<'a> Removals<'a> {
 mod tests {
     use super::*;
     use crate::app::fakes::{until, Recorder, Refuses, Started};
-    use crate::domain::model::{Branch, PaneNode, WorktreeNode};
+    use crate::domain::model::{Branch, PaneNode, Position, WorktreeNode};
     use crate::port::{AgentStatus, RemovalOutcome, RunningRemoval};
     use std::sync::Mutex;
 
@@ -266,7 +266,7 @@ mod tests {
             checkout_path: checkout_path.to_string(),
             is_primary: false,
             open_workspace_id: None,
-            track: None,
+            position: Position::NotSaid,
             panes: panes
                 .iter()
                 .map(|pane_id| PaneNode {

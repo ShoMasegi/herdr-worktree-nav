@@ -513,7 +513,7 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::model::{Branch, CheckoutPath, RepoKey, WorkingTree};
+    use crate::domain::model::{Branch, CheckoutPath, Position, RepoKey, WorkingTree};
 
     use super::*;
     use crate::ui::panes::PanesState;
@@ -737,7 +737,7 @@ mod tests {
             checkout_path: "/wt/scratch".into(),
             is_primary: false,
             open_workspace_id: None,
-            track: None,
+            position: Position::NotSaid,
             panes: vec![],
         });
         let mut state = sweeping_over(tree);
@@ -789,7 +789,7 @@ mod tests {
             checkout_path: "/wt/scratch".into(),
             is_primary: false,
             open_workspace_id: None,
-            track: None,
+            position: Position::NotSaid,
             panes: vec![],
         });
         let sweep = |paths: &[&str]| {

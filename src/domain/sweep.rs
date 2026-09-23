@@ -6,7 +6,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::domain::model::{CheckoutPath, RepoKey, RepoNode, Tree, WorkingTree, WorktreeNode};
+use crate::domain::model::{
+    CheckoutPath, Position, RepoKey, RepoNode, Tree, WorkingTree, WorktreeNode,
+};
 use crate::port::{PullRequestOutcome, SettledPullRequest, SettledPullRequests, Track};
 
 /// Why a checkout is offered for deletion. The row shows it beside the mark.
@@ -52,6 +54,11 @@ pub enum Half {
     /// checkout of the repository at once. Named ahead of `gh` when both are missing: it is
     /// true outside a sweep too, and the ahead, behind and `gone` markers are missing with it.
     Refs,
+    /// git read them and more than one names this checkout, so `domain::tree::tracks` would
+    /// not choose between them and `gone` was never on offer here either —
+    /// [`Position::Contested`]. One checkout rather than the whole repository, and what
+    /// fixes it is a `git worktree prune` rather than anything about git's answer.
+    RefsDisagree,
     /// `gh` could not settle it: could not be asked, asked and the window it was given came
     /// back full, or asked and answered in a state this does not know.
     PullRequests,
@@ -69,10 +76,13 @@ pub enum Candidate {
     /// and one whose working tree has not been read are rows nothing was going to offer
     /// anyway, so nothing about them is unknown that matters.
     ///
-    /// git's half fails one way: the ref walk failed, and every checkout of the repository
-    /// then has `track: None` — which is also what a branch level with its upstream has, so
-    /// the row cannot tell and the repository carries the fact instead
-    /// ([`domain::model::Refs`](crate::domain::model::Refs)).
+    /// git's half fails two ways, and neither is visible on the row: the ref walk failed,
+    /// which the repository carries
+    /// ([`domain::model::Refs`](crate::domain::model::Refs)), or it succeeded and more than
+    /// one ref named this checkout, which the checkout carries
+    /// ([`domain::model::Position`](crate::domain::model::Position)). Both draw the blank a
+    /// branch level with its upstream draws, so in both the fact travels beside the marker
+    /// rather than in it.
     Unjudged(Half),
     /// Nothing says it should go, and `Space` still marks it.
     Available,
@@ -178,7 +188,7 @@ fn judge(
         .get(path)
         .is_some_and(|answer| answer.is_clean());
 
-    if clean && worktree.track == Some(Track::Gone) {
+    if clean && worktree.position == Position::Said(Some(Track::Gone)) {
         return Candidate::Offered(Reason::Gone);
     }
 
@@ -187,18 +197,35 @@ fn judge(
     // changed the outcome. The same gate holds for git's own half: `gone` was never going to
     // offer a dirty or a detached checkout.
     let could_have_decided = clean && worktree.branch.name().is_some();
-    let refs_unread = could_have_decided && !repo.refs.is_read();
+    // Which of git's two silences this row is under, where either would have decided it: a
+    // walk that did not happen, or one whose answer here was more than one ref. The
+    // repository's failure is named first, being the one that costs every checkout its
+    // markers at once.
+    let git_silent = match (repo.refs.is_read(), worktree.position) {
+        _ if !could_have_decided => None,
+        (false, _) => Some(Half::Refs),
+        (true, Position::Contested) => Some(Half::RefsDisagree),
+        (true, Position::Said(_) | Position::NotSaid) => None,
+    };
     let settled = match settled {
         // Nobody has asked `gh` yet: an answer is still on its way, and a permanent word on
         // a temporary state is what the working-tree walk already avoids. git's half is not
         // on its way — the refs are read before the first frame — so that half is said now.
-        None if refs_unread => return Candidate::Unjudged(Half::Refs),
-        None => return Candidate::Available,
+        None => {
+            return match git_silent {
+                Some(half) => Candidate::Unjudged(half),
+                None => Candidate::Available,
+            }
+        }
         // Asked, and `gh` could not answer — unless git could not either, in which case the
         // half named is git's, since fixing that is what makes `gh`'s half worth reading.
-        Some(None) if refs_unread => return Candidate::Unjudged(Half::Refs),
-        Some(None) if could_have_decided => return Candidate::Unjudged(Half::PullRequests),
-        Some(None) => return Candidate::Available,
+        Some(None) => {
+            return match (git_silent, could_have_decided) {
+                (Some(half), _) => Candidate::Unjudged(half),
+                (None, true) => Candidate::Unjudged(Half::PullRequests),
+                (None, false) => Candidate::Available,
+            }
+        }
         Some(Some(settled)) => settled,
     };
 
@@ -209,26 +236,26 @@ fn judge(
         .branch
         .name()
         .and_then(|branch| finished_with(settled.pull_requests(), branch));
-    match (found, settled) {
+    match (found, git_silent, settled) {
         // `gh` widens whatever git could or could not say: a finished pull request offers
         // the row even in a repository whose refs were not read.
-        (Some(pull_request), _) if clean => Candidate::Offered(Reason::PullRequest {
+        (Some(pull_request), _, _) if clean => Candidate::Offered(Reason::PullRequest {
             number: pull_request.number,
             outcome: pull_request.outcome,
         }),
         // Found, and the working tree has something in it: git would refuse the removal.
-        (Some(_), _) => Candidate::Available,
+        (Some(_), _, _) => Candidate::Available,
         // Not found, and git never got to look for `gone`: nobody judged this row.
-        (None, _) if refs_unread => Candidate::Unjudged(Half::Refs),
+        (None, Some(half), _) => Candidate::Unjudged(half),
         // Missing from all of them: this branch has no finished pull request.
-        (None, SettledPullRequests::All(_)) => Candidate::Available,
+        (None, None, SettledPullRequests::All(_)) => Candidate::Available,
         // Missing from as many as `gh` was asked for: the window may not reach back far
         // enough, and "nothing to sweep" on the strength of a page size is a confident
         // wrong claim.
-        (None, SettledPullRequests::Window(_)) if could_have_decided => {
+        (None, None, SettledPullRequests::Window(_)) if could_have_decided => {
             Candidate::Unjudged(Half::PullRequests)
         }
-        (None, SettledPullRequests::Window(_)) => Candidate::Available,
+        (None, None, SettledPullRequests::Window(_)) => Candidate::Available,
     }
 }
 

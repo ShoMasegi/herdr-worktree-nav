@@ -179,7 +179,7 @@ pub fn parse_report(line: &str) -> Option<RemovalOutcome> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{Branch, WorktreeNode};
+    use crate::domain::model::{Branch, Position, WorktreeNode};
     use crate::port::RemovalOutcome;
 
     const REFUSAL: &str = "`git worktree remove /wt/fix-crash` failed: fatal: '/wt/fix-crash' \
@@ -195,7 +195,7 @@ mod tests {
             checkout_path: "/wt/fix-crash".to_string(),
             is_primary: false,
             open_workspace_id: None,
-            track: None,
+            position: Position::NotSaid,
             panes: Vec::new(),
         }
     }

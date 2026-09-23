@@ -44,8 +44,22 @@ fn worktree(branch: Option<&str>, path: &str, track: Option<Track>) -> WorktreeN
         checkout_path: path.to_string(),
         is_primary: branch == Some("main"),
         open_workspace_id: None,
-        track,
+        // A marker where the picker's walk found one, and otherwise nothing it found: the
+        // tests about a walk that found a ref with nothing to report say
+        // `Position::Said(None)` themselves, that being the case this page turns into
+        // `level` or `none`.
+        position: track.map_or(Position::NotSaid, |track| Position::Said(Some(track))),
         panes: Vec::new(),
+    }
+}
+
+/// A checkout the picker's walk found one ref for and git had nothing to report about,
+/// which this page turns into `track level` beside an upstream and `track none` without
+/// one. `worktree`'s own `None` is the other silence: the walk found no ref here at all.
+fn nothing_to_report(branch: &str, path: &str) -> WorktreeNode {
+    WorktreeNode {
+        position: Position::Said(None),
+        ..worktree(Some(branch), path, None)
     }
 }
 
@@ -74,7 +88,7 @@ fn local(name: &str, worktree_path: &str, upstream: Option<&str>) -> GitRef {
 fn every_answer_a_row_leaves_out_is_on_the_page() {
     // Level and no upstream are the same empty marker on a row; unreadable refs draw
     // nothing where `gone` would go, and an unreadable working tree draws only `?`.
-    let mut main = worktree(Some("main"), "/src/app", None);
+    let mut main = nothing_to_report("main", "/src/app");
     main.open_workspace_id = Some("w1".into());
     main.panes = vec![PaneNode {
         pane_id: "w1:p1".into(),
@@ -93,7 +107,7 @@ fn every_answer_a_row_leaves_out_is_on_the_page() {
                 refs: Refs::Read,
                 worktrees: vec![
                     main,
-                    worktree(Some("feat/login"), "/wt/feat-login", None),
+                    nothing_to_report("feat/login", "/wt/feat-login"),
                     worktree(Some("fix/crash"), "/wt/fix-crash", Some(Track::Gone)),
                     worktree(
                         Some("chore/deps"),
@@ -270,7 +284,7 @@ fn what_is_asked_again_is_asked_about_the_repository_the_answer_is_filed_under()
     // A key that is not `repo_root` is no error and nothing on screen: every checkout
     // would simply read `upstream not read`, which is what this page says when the
     // second walk failed.
-    let tree = one_repo(Refs::Read, vec![worktree(Some("main"), "/src/app", None)]);
+    let tree = one_repo(Refs::Read, vec![nothing_to_report("main", "/src/app")]);
     let git = asked(Walk::Whole);
     let refs = read_refs(&git, &tree);
     assert_eq!(git.walks.lock().unwrap().as_slice(), ["/src/app"]);
@@ -313,7 +327,7 @@ fn a_second_walk_that_dropped_a_ref_or_would_not_answer_is_quoted_on_one_line() 
     // A walk missing a ref is not this repository's refs, here as in the picker; and
     // git's words are folded, because a sentence that keeps its newlines indents its
     // tail under the repository like a checkout of its own.
-    let tree = one_repo(Refs::Read, vec![worktree(Some("main"), "/src/app", None)]);
+    let tree = one_repo(Refs::Read, vec![nothing_to_report("main", "/src/app")]);
     let git = asked(Walk::Dropped);
     assert_eq!(
         read_refs(&git, &tree).get("/src/app"),
@@ -427,7 +441,7 @@ fn a_ref_at_the_same_checkout_spelled_with_a_trailing_slash_still_matches() {
     // git and herdr spell a path differently at the edge, and the tree matched them
     // through `normalize_path`; without it the page prints `none` for a branch that has
     // an upstream.
-    let tree = one_repo(Refs::Read, vec![worktree(Some("main"), "/src/app", None)]);
+    let tree = one_repo(Refs::Read, vec![nothing_to_report("main", "/src/app")]);
     let refs = RefsByRepo::from([(
         "/src/app".to_string(),
         Ok(vec![local("main", "/src/app/", Some("origin/main"))]),
@@ -486,7 +500,7 @@ fn a_ref_git_lists_no_checkout_for_does_not_answer_for_one() {
     // Most refs in a repository are branches nobody has checked out, and a remote ref
     // never has a checkout at all: git prints an empty `%(worktreepath)` for both. A
     // lookup that accepted them would hand the first ref in the list to every checkout.
-    let tree = one_repo(Refs::Read, vec![worktree(Some("main"), "/src/app", None)]);
+    let tree = one_repo(Refs::Read, vec![nothing_to_report("main", "/src/app")]);
     let mut unchecked = local("feat/other", "/wt/feat-other", Some("origin/feat/other"));
     unchecked.worktree_path = None;
     let mut remote = local("main", "/src/app", Some("origin/nowhere"));
@@ -825,6 +839,81 @@ fn a_marker_on_a_row_with_no_branch_that_git_names_no_ref_at_says_so() {
         page(&tree, &refs).contains(
             "      herdr did not list this checkout  no ref at this checkout  track gone  working tree"
         ),
+        "got:\n{}",
+        page(&tree, &refs)
+    );
+}
+
+#[test]
+fn a_checkout_the_picker_would_not_choose_a_ref_for_says_so_rather_than_level() {
+    // The two walks disagree the other way round from the test below: this page's walk
+    // names one ref here and the picker's named two, so the picker drew no marker. Read
+    // off its own walk alone, this page would print `track level` — the claim
+    // `domain::tree::tracks` refused to make. It reads the row's answer instead (#47).
+    let mut shared = worktree(Some("feat/login"), "/wt/shared", None);
+    shared.position = Position::Contested;
+    let tree = one_repo(Refs::Read, vec![shared]);
+    let refs = RefsByRepo::from([(
+        "/src/app".to_string(),
+        Ok(vec![local("feat/login", "/wt/shared", Some("origin/main"))]),
+    )]);
+    assert!(
+        page(&tree, &refs).contains("      upstream origin/main  track contested  working tree"),
+        "got:\n{}",
+        page(&tree, &refs)
+    );
+}
+
+#[test]
+fn a_walk_that_found_a_ref_and_no_position_is_not_a_walk_that_found_no_ref() {
+    // Beside a list of refs there is no one upstream for `level` or `none` to be a claim
+    // about, so the two silences read as themselves: git reported nothing about the one
+    // ref the picker found, against the picker having found no ref here at all.
+    let refs = RefsByRepo::from([(
+        "/src/app".to_string(),
+        Ok(vec![
+            local("feat/login", "/wt/shared", Some("origin/feat/login")),
+            local("chore/deps", "/wt/shared", Some("origin/chore/deps")),
+        ]),
+    )]);
+    let both = "more than one ref at this checkout: \
+                feat/login \u{2192} origin/feat/login level, \
+                chore/deps \u{2192} origin/chore/deps level  ";
+    let reported_nothing = one_repo(
+        Refs::Read,
+        vec![nothing_to_report("feat/login", "/wt/shared")],
+    );
+    assert!(
+        page(&reported_nothing, &refs).contains(&format!("{both}track nothing reported  working")),
+        "got:\n{}",
+        page(&reported_nothing, &refs)
+    );
+    let no_ref = one_repo(
+        Refs::Read,
+        vec![worktree(Some("feat/login"), "/wt/shared", None)],
+    );
+    assert!(
+        page(&no_ref, &refs).contains(&format!("{both}track not known  working")),
+        "got:\n{}",
+        page(&no_ref, &refs)
+    );
+}
+
+#[test]
+fn a_row_the_picker_found_no_ref_for_is_not_a_row_it_would_not_choose_one_for() {
+    // Both leave the row blank and this page has a word for each, because the two send
+    // somebody to different places: a `git worktree prune` for the one, and git and herdr
+    // disagreeing about what is checked out where for the other.
+    let tree = one_repo(
+        Refs::Read,
+        vec![worktree(Some("feat/login"), "/wt/shared", None)],
+    );
+    let refs = RefsByRepo::from([(
+        "/src/app".to_string(),
+        Ok(vec![local("feat/login", "/wt/shared", Some("origin/main"))]),
+    )]);
+    assert!(
+        page(&tree, &refs).contains("      upstream origin/main  track not known  working tree"),
         "got:\n{}",
         page(&tree, &refs)
     );

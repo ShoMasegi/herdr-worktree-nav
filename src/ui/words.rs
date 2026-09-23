@@ -11,8 +11,8 @@
 //! it, and those three reading differently would be a bug nothing would catch.
 
 use crate::domain::dest::{Destination, Landing, SpaceName, TabName};
-use crate::domain::model::Tree;
 use crate::domain::model::WorkingTree;
+use crate::domain::model::{Position, Tree};
 use crate::domain::notice::Condition;
 use crate::domain::order::{Order, SortKey};
 use crate::domain::preview::Refusal;
@@ -200,7 +200,7 @@ pub fn marks(row: &Row) -> String {
         // nothing to report and the other has nothing to report *yet*.
         Some(WorkingTree::Clean) | None => {}
     }
-    out.push_str(&track_mark(row.track));
+    out.push_str(&track_mark(row.position));
     out
 }
 
@@ -218,29 +218,36 @@ pub fn marks_reserve(row: &Row) -> usize {
     if !row.reference.is_worktree() {
         return 0;
     }
-    DIRTY.chars().count() + track_mark(row.track).chars().count()
+    DIRTY.chars().count() + track_mark(row.position).chars().count()
 }
 
 /// Where the branch stands against its upstream, with the gap that precedes it.
-pub fn track_mark(track: Option<Track>) -> String {
-    match track {
-        Some(Track::Gone) => format!("  {GONE}"),
-        Some(Track::Ahead(ahead)) => format!("  \u{2191}{ahead}"),
-        Some(Track::Behind(behind)) => format!("  \u{2193}{behind}"),
-        Some(Track::Diverged { ahead, behind }) => format!("  \u{2191}{ahead}\u{2193}{behind}"),
-        // Nothing to draw; what an absent track leaves open is not this row's to say. A
-        // field git printed and the adapter could not read draws nothing either, and for
-        // the stronger reason: there is no position to draw, and a marker that is wrong is
-        // worse than none. That is what kind 4 of `docs/en/error-handling.md` asks for.
-        // Which of the two is which is `app::dump`'s to say; a line of the list has no
-        // room for it, and no git prints the second.
-        Some(Track::Unreadable) | None => String::new(),
+pub fn track_mark(position: Position) -> String {
+    match position {
+        Position::Said(Some(Track::Gone)) => format!("  {GONE}"),
+        Position::Said(Some(Track::Ahead(ahead))) => format!("  \u{2191}{ahead}"),
+        Position::Said(Some(Track::Behind(behind))) => format!("  \u{2193}{behind}"),
+        Position::Said(Some(Track::Diverged { ahead, behind })) => {
+            format!("  \u{2191}{ahead}\u{2193}{behind}")
+        }
+        // Nothing to draw, for three reasons the row has no room to tell apart. git
+        // reported nothing, which is not this row's to interpret; a field git printed could
+        // not be read, where there is no position to draw at all and a marker that is wrong
+        // is worse than none — kind 4 of `docs/en/error-handling.md`; and more than one ref
+        // names this checkout, where the domain declined to choose. `app::dump` is where
+        // the three are told apart, and in a sweep the third is on the row as `refs
+        // disagree`, because it is the half the sweep needed.
+        Position::Said(Some(Track::Unreadable) | None)
+        | Position::Contested
+        | Position::NotSaid => String::new(),
     }
 }
 
 /// The same marks with no gap in front, for a page that is not a row of the list.
 pub fn track_alone(track: Track) -> String {
-    track_mark(Some(track)).trim_start().to_string()
+    track_mark(Position::Said(Some(track)))
+        .trim_start()
+        .to_string()
 }
 
 /// Narrowing the list to one agent state, as the chip beside the search box reads.
@@ -395,6 +402,7 @@ pub fn sweep_note(mark: &Mark) -> Option<String> {
 fn unjudged(half: Half) -> &'static str {
     match half {
         Half::Refs => "refs unreadable",
+        Half::RefsDisagree => "refs disagree",
         Half::PullRequests => "PR unknown",
     }
 }
@@ -630,9 +638,9 @@ mod tests {
     /// `None` is a checkout nobody has answered for, which is a third thing and not a
     /// synonym for clean. A bool here would collapse the two into one `false`, naming
     /// neither state.
-    fn marks_for(working_tree: Option<WorkingTree>, track: Option<Track>) -> String {
+    fn marks_for(working_tree: Option<WorkingTree>, position: Position) -> String {
         let mut tree = tree();
-        tree.repos[0].worktrees[2].track = track;
+        tree.repos[0].worktrees[2].position = position;
         let options = ViewOptions {
             working_trees: working_tree.map(answered).unwrap_or_default(),
             ..Default::default()
@@ -642,9 +650,13 @@ mod tests {
 
     #[test]
     fn a_checkout_with_nothing_to_report_says_nothing() {
-        assert_eq!(marks_for(None, None), "", "nobody has answered for it");
         assert_eq!(
-            marks_for(Some(WorkingTree::Clean), None),
+            marks_for(None, Position::Said(None)),
+            "",
+            "nobody has answered for it"
+        );
+        assert_eq!(
+            marks_for(Some(WorkingTree::Clean), Position::Said(None)),
             "",
             "and git answered and had nothing to report — the same absence of a marker for \
              two different reasons, which is the whole of why the list is not rebuilt when \
@@ -654,8 +666,14 @@ mod tests {
 
     #[test]
     fn every_answer_a_working_tree_can_give_reads_on_its_own() {
-        assert_eq!(marks_for(Some(WorkingTree::Dirty), None), "  ✱");
-        assert_eq!(marks_for(Some(WorkingTree::Unreadable), None), "  ?");
+        assert_eq!(
+            marks_for(Some(WorkingTree::Dirty), Position::Said(None)),
+            "  ✱"
+        );
+        assert_eq!(
+            marks_for(Some(WorkingTree::Unreadable), Position::Said(None)),
+            "  ?"
+        );
     }
 
     #[test]
@@ -663,7 +681,7 @@ mod tests {
         // Which is what stops every path in the list moving sideways when a `git status`
         // finally answers.
         let mut tree = tree();
-        tree.repos[0].worktrees[2].track = Some(Track::Gone);
+        tree.repos[0].worktrees[2].position = Position::Said(Some(Track::Gone));
         let clean = flatten(&tree, &ViewOptions::default());
         let dirty = flatten(
             &tree,
@@ -685,31 +703,43 @@ mod tests {
 
     #[test]
     fn each_thing_a_checkout_can_be_reads_on_its_own() {
-        assert_eq!(marks_for(Some(WorkingTree::Dirty), None), "  \u{2731}");
         assert_eq!(
-            marks_for(None, Some(Track::Ahead(NonZeroU32::new(2).unwrap()))),
+            marks_for(Some(WorkingTree::Dirty), Position::Said(None)),
+            "  \u{2731}"
+        );
+        assert_eq!(
+            marks_for(
+                None,
+                Position::Said(Some(Track::Ahead(NonZeroU32::new(2).unwrap())))
+            ),
             "  \u{2191}2"
         );
         assert_eq!(
-            marks_for(None, Some(Track::Behind(NonZeroU32::new(1).unwrap()))),
+            marks_for(
+                None,
+                Position::Said(Some(Track::Behind(NonZeroU32::new(1).unwrap())))
+            ),
             "  \u{2193}1"
         );
         assert_eq!(
             marks_for(
                 None,
-                Some(Track::Diverged {
+                Position::Said(Some(Track::Diverged {
                     ahead: NonZeroU32::new(2).unwrap(),
                     behind: NonZeroU32::new(1).unwrap()
-                })
+                }))
             ),
             "  \u{2191}2\u{2193}1",
             "one gap, not two: they are one answer"
         );
-        assert_eq!(marks_for(None, Some(Track::Gone)), "  gone");
-        // A position that went unread draws what a row with nothing to report draws. The
-        // two are told apart on `app::dump`'s page, not here.
-        assert_eq!(marks_for(None, Some(Track::Unreadable)), "");
-        assert_eq!(marks_for(None, None), "");
+        assert_eq!(marks_for(None, Position::Said(Some(Track::Gone))), "  gone");
+        // Three that draw what a row with nothing to report draws: a position that went
+        // unread, more than one ref naming this checkout, and no ref naming it. They are
+        // told apart on `app::dump`'s page, not here.
+        assert_eq!(marks_for(None, Position::Said(Some(Track::Unreadable))), "");
+        assert_eq!(marks_for(None, Position::Contested), "");
+        assert_eq!(marks_for(None, Position::NotSaid), "");
+        assert_eq!(marks_for(None, Position::Said(None)), "");
     }
 
     #[test]
@@ -717,7 +747,7 @@ mod tests {
         // Which is the pair that decides whether a checkout can be swept: gone says it is
         // finished with, and dirty says it cannot go anyway.
         assert_eq!(
-            marks_for(Some(WorkingTree::Dirty), Some(Track::Gone)),
+            marks_for(Some(WorkingTree::Dirty), Position::Said(Some(Track::Gone))),
             "  \u{2731}  gone"
         );
     }
@@ -752,13 +782,16 @@ mod tests {
     #[test]
     fn a_checkout_carries_what_git_said_about_its_branch() {
         let mut tree = tree();
-        tree.repos[0].worktrees[2].track = Some(Track::Gone);
+        tree.repos[0].worktrees[2].position = Position::Said(Some(Track::Gone));
         let rows = flatten(&tree, &ViewOptions::default());
-        assert_eq!(find(&rows, "fix/crash").track, Some(Track::Gone));
-        assert_eq!(find(&rows, "feat/login").track, None);
         assert_eq!(
-            find(&rows, "me/app").track,
-            None,
+            find(&rows, "fix/crash").position,
+            Position::Said(Some(Track::Gone))
+        );
+        assert_eq!(find(&rows, "feat/login").position, Position::NotSaid);
+        assert_eq!(
+            find(&rows, "me/app").position,
+            Position::NotSaid,
             "a repository heading has no branch of its own"
         );
     }
@@ -856,6 +889,11 @@ mod tests {
             sweep_note(&Mark::GoingUnjudged(Half::Refs)).as_deref(),
             Some("refs unreadable"),
             "marked by hand, it still says nobody judged it — and which half"
+        );
+        assert_eq!(
+            sweep_note(&Mark::Unjudged(Half::RefsDisagree)).as_deref(),
+            Some("refs disagree"),
+            "a walk that worked and named two branches at one path is not a walk that              failed, and the fix for it is not the same one"
         );
     }
 

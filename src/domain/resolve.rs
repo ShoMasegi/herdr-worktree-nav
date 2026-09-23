@@ -268,7 +268,7 @@ pub fn plan(chosen: &Chosen, head_ref: &str, remote: &str) -> BranchPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{Branch, PaneNode, Refs, WorktreeNode};
+    use crate::domain::model::{Branch, PaneNode, Position, Refs, WorktreeNode};
     use crate::port::AgentStatus;
     use std::num::NonZeroU32;
 
@@ -289,7 +289,7 @@ mod tests {
             checkout_path: format!("/wt/{}", branch.replace('/', "-")),
             is_primary: branch == "main",
             open_workspace_id: panes.first().map(|p| p.workspace_id.clone()),
-            track: None,
+            position: Position::NotSaid,
             panes,
         }
     }

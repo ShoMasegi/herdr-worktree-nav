@@ -8,7 +8,7 @@ fn worktree(branch: &str, path: &str) -> WorktreeNode {
         checkout_path: path.to_string(),
         is_primary: false,
         open_workspace_id: None,
-        track: None,
+        position: Position::NotSaid,
         panes: Vec::new(),
     }
 }
@@ -106,7 +106,7 @@ fn facts<'a>(
 #[test]
 fn a_clean_checkout_whose_upstream_is_gone_is_offered_with_its_reason() {
     let mut wt = worktree("fix/crash", "/wt/fix-crash");
-    wt.track = Some(Track::Gone);
+    wt.position = Position::Said(Some(Track::Gone));
     let trees = clean(&["/wt/fix-crash"]);
     let none = BTreeMap::new();
     let judged = judged(&tree_of(vec![wt]), &facts(&trees, &none));
@@ -128,7 +128,7 @@ fn a_position_that_went_unread_is_never_offered() {
     // on the row, and the same argument that keeps this state out of `domain::notice`
     // keeps it from having one here — see `Track::Unreadable`.
     let mut wt = worktree("fix/crash", "/wt/fix-crash");
-    wt.track = Some(Track::Unreadable);
+    wt.position = Position::Said(Some(Track::Unreadable));
     let trees = clean(&["/wt/fix-crash"]);
     let none = BTreeMap::new();
     let judged = judged(&tree_of(vec![wt]), &facts(&trees, &none));
@@ -136,11 +136,45 @@ fn a_position_that_went_unread_is_never_offered() {
 }
 
 #[test]
+fn a_checkout_more_than_one_ref_names_says_which_half_went_unanswered() {
+    // git answered, and its answer about this checkout was two branches
+    // (`Position::Contested`). `gone` was never on offer here, so the row is `Unjudged`
+    // for the same reason a repository whose refs would not read is: git's half of the
+    // question did not decide it. Which half is the one thing the row can say, and
+    // `refs unreadable` would send somebody to look at a walk that worked — issue #47.
+    let mut wt = worktree("fix/crash", "/wt/fix-crash");
+    wt.position = Position::Contested;
+    let trees = clean(&["/wt/fix-crash"]);
+    let none = BTreeMap::new();
+    let judged = judged(&tree_of(vec![wt]), &facts(&trees, &none));
+    assert_eq!(
+        judged[&at("/wt/fix-crash")],
+        Candidate::Unjudged(Half::RefsDisagree)
+    );
+}
+
+#[test]
+fn a_repository_whose_refs_went_unread_names_that_half_first() {
+    // Both of git's silences at once: the walk failed, so nothing here was ever counted.
+    // The repository's failure is the one to fix, and it is true of every checkout in it
+    // rather than of this one.
+    let mut wt = worktree("fix/crash", "/wt/fix-crash");
+    wt.position = Position::Contested;
+    let trees = clean(&["/wt/fix-crash"]);
+    let none = BTreeMap::new();
+    let judged = judged(&tree_unread(vec![wt]), &facts(&trees, &none));
+    assert_eq!(
+        judged[&at("/wt/fix-crash")],
+        Candidate::Unjudged(Half::Refs)
+    );
+}
+
+#[test]
 fn nothing_is_offered_on_a_working_tree_nobody_has_answered_for() {
     // The state the picker opens in. Offering here deletes a checkout because a walk has
     // not finished yet, which waiting a moment longer cannot undo.
     let mut wt = worktree("fix/crash", "/wt/fix-crash");
-    wt.track = Some(Track::Gone);
+    wt.position = Position::Said(Some(Track::Gone));
     let nothing = BTreeMap::new();
     let none = BTreeMap::new();
     let judged = judged(&tree_of(vec![wt]), &facts(&nothing, &none));
@@ -153,7 +187,7 @@ fn a_working_tree_git_would_not_read_is_never_offered() {
     // whose directory has gone: git said it could not look, and offering on that offers
     // to delete whatever is in there on the strength of a failed question.
     let mut wt = worktree("fix/crash", "/wt/fix-crash");
-    wt.track = Some(Track::Gone);
+    wt.position = Position::Said(Some(Track::Gone));
     let unreadable = BTreeMap::from([(
         CheckoutPath::for_test("/wt/fix-crash"),
         WorkingTree::Unreadable,
@@ -178,7 +212,7 @@ fn a_detached_checkout_is_not_called_unjudged_when_gh_could_not_be_asked() {
 fn a_working_tree_holding_work_is_not_offered_but_can_still_be_marked() {
     // git refuses the removal, and says what would have been lost.
     let mut wt = worktree("fix/crash", "/wt/fix-crash");
-    wt.track = Some(Track::Gone);
+    wt.position = Position::Said(Some(Track::Gone));
     let dirty = BTreeMap::from([(CheckoutPath::for_test("/wt/fix-crash"), WorkingTree::Dirty)]);
     let none = BTreeMap::new();
     let judged = judged(&tree_of(vec![wt]), &facts(&dirty, &none));
@@ -190,9 +224,9 @@ fn a_working_tree_holding_work_is_not_offered_but_can_still_be_marked() {
 fn the_three_checkouts_a_sweep_never_touches() {
     let mut primary = worktree("main", "/src/app");
     primary.is_primary = true;
-    primary.track = Some(Track::Gone);
+    primary.position = Position::Said(Some(Track::Gone));
     let mut running = worktree("feat/login", "/wt/feat-login");
-    running.track = Some(Track::Gone);
+    running.position = Position::Said(Some(Track::Gone));
     running.panes = vec![PaneNode {
         pane_id: "w2:p1".into(),
         workspace_id: "w2".into(),
@@ -202,7 +236,7 @@ fn the_three_checkouts_a_sweep_never_touches() {
         focused: false,
     }];
     let mut going = worktree("fix/crash", "/wt/fix-crash");
-    going.track = Some(Track::Gone);
+    going.position = Position::Said(Some(Track::Gone));
 
     let trees = clean(&["/src/app", "/wt/feat-login", "/wt/fix-crash"]);
     let none = BTreeMap::new();
@@ -253,7 +287,7 @@ fn gh_widens_and_never_overrides() {
     // A branch git already called `gone` keeps git's reason even where a pull request
     // would have given another.
     let mut wt = worktree("fix/crash", "/wt/fix-crash");
-    wt.track = Some(Track::Gone);
+    wt.position = Position::Said(Some(Track::Gone));
     let trees = clean(&["/wt/fix-crash"]);
     let settled = asked(vec![merged(7, "fix/crash")]);
     let judged = judged(&tree_of(vec![wt]), &facts(&trees, &settled));
@@ -270,7 +304,7 @@ fn a_repository_gh_could_not_be_asked_about_says_so_on_the_rows_it_would_have_ju
     // sweeps fewer rows and nothing says why.
     let judgeable = worktree("feat/login", "/wt/feat-login");
     let mut already = worktree("fix/crash", "/wt/fix-crash");
-    already.track = Some(Track::Gone);
+    already.position = Position::Said(Some(Track::Gone));
     let mut running = worktree("chore/tidy", "/wt/tidy");
     running.panes = vec![PaneNode {
         pane_id: "w3:p1".into(),
@@ -780,7 +814,7 @@ fn one_repositorys_judgement_never_lands_on_anothers_checkout_at_the_same_path()
     // `me/app` a live checkout whose refs git would not read. Keyed by the path alone,
     // the stale `Offered(Gone)` took the live row.
     let mut stale = worktree("chore/deps", "/wt/shared");
-    stale.track = Some(Track::Gone);
+    stale.position = Position::Said(Some(Track::Gone));
     let tree = Tree {
         repos: vec![
             RepoNode {
@@ -1080,7 +1114,7 @@ fn the_reason_a_gone_branch_is_going_is_the_marker_the_row_already_carries() {
     // exactly the rows the marks the picker draws draws `gone` on. If that comes apart, a row
     // goes with nothing on it saying why.
     let mut worktree = worktree("feat/login", "/wt/feat-login");
-    worktree.track = Some(Track::Gone);
+    worktree.position = Position::Said(Some(Track::Gone));
     let judged = judged(
         &tree_of(vec![worktree]),
         &facts(&clean(&["/wt/feat-login"]), &BTreeMap::new()),

@@ -11,9 +11,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::domain::model::{CheckoutPath, RepoKey, WorkingTree};
+use crate::domain::model::{CheckoutPath, Position, RepoKey, WorkingTree};
 use crate::domain::sweep::Mark;
-use crate::port::{AgentStatus, Track};
+use crate::port::AgentStatus;
 
 mod flatten;
 mod nav;
@@ -86,8 +86,11 @@ pub struct Row {
     /// Only `marks` reads this, and telling the two apart is [`ViewOptions::working_trees`]'
     /// job.
     pub working_tree: Option<WorkingTree>,
-    /// What git said about this checkout's branch against its upstream.
-    pub track: Option<Track>,
+    /// What the repository's refs said about this checkout's branch, and — where they said
+    /// nothing a marker could be drawn from — which silence it is. A row that is not a
+    /// checkout carries [`Position::NotSaid`], no ref of a repository being about a group or
+    /// a pane.
+    pub position: Position,
     /// The row the session is currently on, marked with a caret in the gutter.
     pub is_current: bool,
     /// Whether this row matched the active filter, as opposed to being kept as ancestor

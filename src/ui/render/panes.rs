@@ -666,7 +666,7 @@ mod tests {
     use super::*;
     use crate::adapter::plugin_config;
     use crate::domain::chrome::Chrome;
-    use crate::domain::model::{Branch, CheckoutPath, WorkingTree};
+    use crate::domain::model::{Branch, CheckoutPath, Position, WorkingTree};
     use crate::ui::render::fixtures::*;
     use ratatui::backend::TestBackend;
     use ratatui::crossterm::event::KeyCode;
@@ -1328,12 +1328,13 @@ mod tests {
         // The four answers, on four checkouts: ahead and behind its upstream, an upstream
         // that is gone, uncommitted work, and a checkout with nothing to report at all.
         let mut tree = tree();
-        tree.repos[0].worktrees[0].track = Some(Track::Diverged {
+        tree.repos[0].worktrees[0].position = Position::Said(Some(Track::Diverged {
             ahead: NonZeroU32::new(2).unwrap(),
             behind: NonZeroU32::new(1).unwrap(),
-        });
-        tree.repos[0].worktrees[1].track = Some(Track::Gone);
-        tree.repos[0].worktrees[2].track = Some(Track::Behind(NonZeroU32::new(3).unwrap()));
+        }));
+        tree.repos[0].worktrees[1].position = Position::Said(Some(Track::Gone));
+        tree.repos[0].worktrees[2].position =
+            Position::Said(Some(Track::Behind(NonZeroU32::new(3).unwrap())));
         let mut state = PanesState::new(tree, None);
         state.set_working_trees(answers(&[
             ("/wt/feat-login", WorkingTree::Dirty),

@@ -5,7 +5,7 @@
 //! — the last of those from [`ui::words`](crate::ui::words), which is where the wording
 //! went.
 
-use crate::domain::model::{Branch, PaneNode, Refs, RepoNode, Tree, WorktreeNode};
+use crate::domain::model::{Branch, PaneNode, Position, Refs, RepoNode, Tree, WorktreeNode};
 use crate::domain::rows::Row;
 use crate::port::AgentStatus;
 
@@ -27,7 +27,7 @@ pub(crate) fn worktree(branch: &str, panes: Vec<PaneNode>) -> WorktreeNode {
         checkout_path: format!("/wt/{}", branch.replace('/', "-")),
         is_primary: branch == "main",
         open_workspace_id: panes.first().map(|p| p.workspace_id.clone()),
-        track: None,
+        position: Position::NotSaid,
         panes,
     }
 }
