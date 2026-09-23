@@ -485,6 +485,60 @@ fn recognises_a_github_origin_and_ignores_anything_else() {
 }
 
 #[test]
+fn a_config_git_cannot_read_is_not_a_missing_remote() {
+    // Every way git failed to name the repository used to reach the sweep as "no GitHub
+    // remote to ask about" — a reader whose `.git/config` git cannot parse was told to look
+    // at their remotes. Issue #27.
+    let repo = repository();
+    let root = path_str(repo.path());
+    let config = repo.path().join(".git").join("config");
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str("[remote \"origin\"\n");
+    std::fs::write(&config, text).unwrap();
+
+    let error = GitCli
+        .github_slug(&root)
+        .expect_err("git could not read its own config");
+    let words = format!("{error:#}");
+    assert!(
+        words.starts_with("fatal: bad config line"),
+        "git's own words, first: {words}"
+    );
+    // And the call after them, whole. `refusal` is also what turns a non-zero exit with
+    // nothing on stderr into `git said nothing (…)`, so this is what keeps the sentence
+    // from ending at the colon.
+    assert!(
+        words.ends_with("(`git remote get-url origin`)"),
+        "the call after them: {words}"
+    );
+}
+
+#[test]
+fn a_repository_root_that_has_gone_is_not_a_missing_remote() {
+    // A mount dropped, or another session removed the checkout: git cannot change to it,
+    // and that is not "no remote" either.
+    let gone = tempfile::tempdir().unwrap();
+    let root = path_str(gone.path());
+    drop(gone);
+
+    let error = GitCli
+        .github_slug(&root)
+        .expect_err("there is no repository there to name");
+    let words = format!("{error:#}");
+    assert!(
+        words.starts_with("fatal: cannot change to"),
+        "git's own words, first: {words}"
+    );
+    // And the call after them, whole. `refusal` is also what turns a non-zero exit with
+    // nothing on stderr into `git said nothing (…)`, so this is what keeps the sentence
+    // from ending at the colon.
+    assert!(
+        words.ends_with("(`git remote get-url origin`)"),
+        "the call after them: {words}"
+    );
+}
+
+#[test]
 fn head_ref_names_the_branch_and_falls_back_to_a_commit_when_detached() {
     let repo = repository();
     let root = path_str(repo.path());
@@ -748,6 +802,95 @@ fn a_checkout_git_will_not_look_at_is_an_error_rather_than_a_clean_one() {
     // as clean and nothing above would notice.
     let empty = tempfile::tempdir().unwrap();
     assert!(GitCli.is_dirty(&path_str(empty.path())).is_err());
+}
+
+/// Puts a directory's permissions back when the test is over, so `TempDir` can remove it.
+struct ReadableAgain<'a>(&'a Path);
+
+impl Drop for ReadableAgain<'_> {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o755));
+    }
+}
+
+#[test]
+fn a_directory_git_could_not_read_is_not_a_clean_working_tree() {
+    // `status --porcelain` exits 0 with a directory it cannot open reported on stderr and
+    // everything under it absent from stdout. Read from stdout alone, a checkout holding a
+    // day of work under such a directory was clean: no marker on the row, and offered by a
+    // sweep for deletion on the strength of a silence. Issue #42.
+    use std::os::unix::fs::PermissionsExt;
+    let repo = repository();
+    let root = path_str(repo.path());
+    let notes = repo.path().join("notes");
+    std::fs::create_dir(&notes).unwrap();
+    std::fs::write(notes.join("work.txt"), "a day of work\n").unwrap();
+    assert!(
+        GitCli.is_dirty(&root).unwrap(),
+        "readable, the untracked file counts"
+    );
+
+    std::fs::set_permissions(&notes, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _put_back = ReadableAgain(&notes);
+    // Root reads a directory with no permissions, and so does a filesystem that ignores
+    // them; git then has nothing to warn about and answers `Ok(true)` for the untracked
+    // file. The `expect_err` below would fire, and read as an adapter that had stopped
+    // reporting. This says which it was instead.
+    assert!(
+        std::fs::read_dir(&notes).is_err(),
+        "this user can read a directory with mode 000 — a root container, or a filesystem \
+         that ignores them — so git will not be refused and there is nothing here to \
+         measure. Run this as a user permissions apply to."
+    );
+
+    let error = GitCli
+        .is_dirty(&root)
+        .expect_err("git could not look, and said so");
+    let words = format!("{error:#}");
+    assert!(
+        words.starts_with("warning: could not open directory 'notes/'"),
+        "git's own words, first: {words}"
+    );
+    // And nothing after them. This call is always the same one, so `refusal`'s argv would
+    // tell the reader nothing — `unread_paths`' doc says why, and this is what holds it.
+    assert!(
+        !words.contains("(`git "),
+        "the call is not named after them: {words}"
+    );
+}
+
+#[test]
+fn a_directory_git_was_told_to_ignore_is_not_one_it_could_not_read() {
+    // The other side of the line above, and the one that decides whether this is usable at
+    // all: git does not walk a directory `.gitignore` already excludes, so it has nothing to
+    // warn about and the answer is the same as it would have been. A `node_modules` whose
+    // permissions got mangled is the common case, and it must not turn every row into `?`.
+    use std::os::unix::fs::PermissionsExt;
+    let repo = repository();
+    let root = path_str(repo.path());
+    std::fs::write(repo.path().join(".gitignore"), "node_modules/\n").unwrap();
+    git(repo.path(), &["add", ".gitignore"]);
+    git(repo.path(), &["commit", "-m", "ignore"]);
+    let ignored = repo.path().join("node_modules");
+    std::fs::create_dir(&ignored).unwrap();
+    std::fs::write(ignored.join("work.txt"), "cached\n").unwrap();
+
+    std::fs::set_permissions(&ignored, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _put_back = ReadableAgain(&ignored);
+    assert!(
+        std::fs::read_dir(&ignored).is_err(),
+        "this user can read a directory with mode 000 — a root container, or a filesystem \
+         that ignores them — so there is nothing here to measure. Run this as a user \
+         permissions apply to."
+    );
+
+    assert!(
+        !GitCli
+            .is_dirty(&root)
+            .expect("git had nothing to say about it"),
+        "an ignored directory git never looked into is not one it could not read"
+    );
 }
 
 #[test]

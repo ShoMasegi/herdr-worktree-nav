@@ -325,7 +325,12 @@ pub trait GitPort: Send + Sync {
     /// is not inside a work tree — that is an ordinary answer, not an error.
     fn identify(&self, cwd: &str) -> Result<Option<RepoIdentity>>;
 
-    /// `owner/repo` when `origin` points at GitHub, otherwise `None`.
+    /// `owner/repo` when `origin` points at GitHub; `None` when there is no `origin`, or it
+    /// points elsewhere.
+    ///
+    /// `Err` is git failing to name the repository at all — a `.git/config` it could not
+    /// read, a root that has gone — which is not the same silence as no remote: the sweep
+    /// says which, since one is worth fixing and the other is not.
     ///
     /// The only source of a [`Slug`] in this crate, which is what makes the two `gh` calls
     /// unable to be asked about a directory.
@@ -360,8 +365,13 @@ pub trait GitPort: Send + Sync {
     fn delete_branch(&self, repo_root: &str, branch: &str) -> Result<()>;
 
     /// Whether this checkout is holding work that is not committed: modified tracked files,
-    /// or untracked ones. The same question `git worktree remove` asks before it refuses,
-    /// which is why untracked files count.
+    /// or untracked ones. The question `git worktree remove` asks before it refuses, which
+    /// is why untracked files count — and no more than that question. `remove` goes on to
+    /// delete whatever it did not refuse over, and measured against git 2.55.0 it does that
+    /// silently for anything `status` did not name: files under a `.gitignore`d directory,
+    /// and untracked work in a checkout configured `status.showUntrackedFiles = no` or held
+    /// under `assume-unchanged`. `false` here means git reported nothing, not that there is
+    /// nothing there.
     ///
     /// **It is that question and no more.** git does not look at a path it has been told to
     /// ignore, or at a file under `assume-unchanged`, so `false` is "git, asked with
@@ -369,6 +379,11 @@ pub trait GitPort: Send + Sync {
     /// `git worktree remove` is blind to the same two, so a removal on the strength of this
     /// takes what deleting by hand would have taken — which is the whole of what it
     /// promises. `docs/en/usage.md` says it where a user will meet it.
+    ///
+    /// `Err` is git not answering — refusing the call, or exiting clean having said it could
+    /// not open a directory, under which everything is left out of the answer. Neither is
+    /// `false`: a working tree git could not look at is not one with nothing in it, and
+    /// `false` is the one answer a sweep acts on.
     ///
     /// One process per checkout, and the only thing here that cannot be folded into an
     /// existing call — so it is asked in the background rather than in front of the first

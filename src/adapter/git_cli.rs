@@ -19,14 +19,25 @@ const GIT_FATAL: i32 = 128;
 /// and the second, measured against 2.55.0, is not.
 const NOT_A_REPOSITORY: [&str; 2] = ["not a git repository", "cannot change to"];
 
+/// What `remote get-url` says when the remote is not configured: exit 2, with
+/// `error: No such remote 'origin'` on stderr, measured against git 2.55.0. The one answer
+/// `github_slug` gets that is ordinary rather than a failure — a repository with no `origin`
+/// is a repository with no `origin` — and both halves are matched, for the reason
+/// [`NOT_A_REPOSITORY`] is not matched by its exit code alone.
+///
+/// git's own English, translated (`Fehler: Remote-Repository 'origin' nicht gefunden`), which
+/// [`GIT_LOCALE`] keeps in place.
+const NO_SUCH_REMOTE: (i32, &str) = (2, "No such remote");
+
 pub struct GitCli;
 
 /// What git printed when it exited 0.
 ///
-/// Both streams, because a clean exit is not always a whole answer: `for-each-ref` drops a
-/// ref it cannot read, says so on stderr, and exits 0 — see `local_refs`. Every other call
-/// here reads a clean exit's `stdout` and ignores its `stderr`; a non-zero exit's `stderr`
-/// is what `run` turns into the error.
+/// Both streams, because a clean exit is not always a whole answer. `for-each-ref` drops a
+/// ref it cannot read, says so on stderr, and exits 0 — see `local_refs` — and `status`
+/// leaves out everything under a directory it cannot open the same way — see `is_dirty`.
+/// Those two read both streams; the rest read a clean exit's `stdout` alone, and a non-zero
+/// exit's `stderr` is what `run` turns into the error.
 struct Said {
     stdout: String,
     stderr: String,
@@ -34,10 +45,13 @@ struct Said {
 
 /// The locale every git this plugin starts runs under.
 ///
-/// Two things here are decided by reading git's own words — whether the path is a repository
-/// at all ([`NOT_A_REPOSITORY`]) and whether a ref was dropped from a walk ([`dropped_refs`])
-/// — and both are English literals, while git ships translations of both messages and picks
-/// one from the environment herdr launched the plugin in.
+/// Four things here are decided by reading git's own words — whether the path is a
+/// repository at all ([`NOT_A_REPOSITORY`]), whether a ref was dropped from a walk
+/// ([`dropped_refs`]), whether `status` could open every directory ([`unread_paths`]) and
+/// whether a repository simply has no `origin` ([`NO_SUCH_REMOTE`]) — and all are English
+/// literals, while git ships a translation of each of these — bar `cannot change to`, the
+/// exception [`NOT_A_REPOSITORY`] names — and picks one from the environment herdr launched
+/// the plugin in.
 ///
 /// Why this variable, why one git, and what it costs a reader who does not read English:
 /// `docs/adr/0015-reading-git-in-one-language.md`, which carries the transcript it was
@@ -56,14 +70,24 @@ impl GitCli {
         command
     }
 
+    /// Start git in `dir` and wait for it. `Err` is a git that could not be started at all.
+    ///
+    /// What every call reads its answer from, and the one place the locale is pinned for all
+    /// of them. `run` reads it for every call that wants "not a repository" recognised —
+    /// `identify` to answer `None`, the eight behind `run_in_repo` to turn it into an error
+    /// that says so. `github_slug` reads it itself, because the answer it has to pick out is
+    /// a different one and "not a repository" is a failure there rather than an answer.
+    fn output(dir: &str, args: &[&str]) -> Result<Output> {
+        Self::command(dir)
+            .args(args)
+            .output()
+            .map_err(|error| anyhow!("{}", could_not_run(args, &error)))
+    }
+
     /// Run git in `dir`. Returns `None` when git said the path is not a repository; any
     /// other non-zero exit is an error carrying git's words.
     fn run(dir: &str, args: &[&str]) -> Result<Option<Said>> {
-        let output: Output = Self::command(dir)
-            .args(args)
-            .output()
-            .map_err(|error| anyhow!("{}", could_not_run(args, &error)))?;
-
+        let output = Self::output(dir, args)?;
         let stderr = String::from_utf8_lossy(&output.stderr);
         if output.status.success() {
             return Ok(Some(Said {
@@ -141,6 +165,55 @@ fn dropped_refs(stderr: &str) -> Option<String> {
         true => None,
         false => Some(dropped.join(" ")),
     }
+}
+
+/// What git said while leaving part of a working tree out of `status`, or nothing.
+///
+/// The one thing `status --porcelain` prints every time it cannot look, measured against git
+/// 2.55.0: a directory it cannot open gives `warning: could not open directory 'notes/':
+/// Permission denied`, once per directory, exits 0, and lists nothing under it — tracked or
+/// untracked. Where a tracked file is under it git prints a second line beside the warning,
+/// `deep/inner/u: Permission denied`, with no prefix; the warning is what is matched, since
+/// it is the line that is there in every one of these.
+///
+/// Measured and not matched, because the answer is whole: a tracked file that is itself
+/// unreadable is still reported from the index (` M`), and a tracked path that has gone is
+/// ` D` — one line per tracked file, never one for the directory — with nothing on stderr
+/// either way.
+///
+/// Measured and not matched for the other reason: a directory `.gitignore` already excludes
+/// is not walked, so git has nothing to warn about and the answer is the same as it would
+/// have been. That is what keeps a `node_modules` whose permissions got mangled from turning
+/// every row into `?`.
+///
+/// In git's English, which git translates and [`GIT_LOCALE`] is what keeps it in. One prefix
+/// rather than "stderr said something", for the reason `dropped_refs` gives: a trace
+/// variable writes to stderr on every call. Every matching line is kept, and not passed
+/// through [`refusal`], for one of the reasons given there — it is always this call, so
+/// naming it tells a reader nothing they could act on. The other two are `for-each-ref`'s
+/// alone: these args are short, and these words reach `dump` rather than the prompt line.
+fn unread_paths(stderr: &str) -> Option<String> {
+    let unread: Vec<&str> = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("warning: could not open directory "))
+        .collect();
+    match unread.is_empty() {
+        true => None,
+        false => Some(unread.join(" ")),
+    }
+}
+
+/// Whether git's answer to `remote get-url` is the ordinary "there is no such remote" rather
+/// than a failure to name the repository at all.
+///
+/// Both halves, for the reason `run` gives for [`NOT_A_REPOSITORY`]: an exit code alone
+/// diagnoses by number, and git's numbers say almost nothing — `remote get-url` exits 2 for
+/// this and 128 for everything from an unparseable config to a root that has gone. The words
+/// alone would be no better the day another subcommand's error carries them.
+fn no_such_remote(code: Option<i32>, stderr: &str) -> bool {
+    let (exit, said) = NO_SUCH_REMOTE;
+    code == Some(exit) && stderr.contains(said)
 }
 
 /// What a git that could not be started reads as: the same shape as a refusal, with the
@@ -292,11 +365,24 @@ impl GitPort for GitCli {
     }
 
     fn github_slug(&self, repo_root: &str) -> Result<Option<Slug>> {
-        // A repository with no `origin` is normal, so a failure here is not an error.
-        let Ok(Some(url)) = GitCli::run(repo_root, &["remote", "get-url", "origin"]) else {
+        let args = ["remote", "get-url", "origin"];
+        let output = GitCli::output(repo_root, &args)?;
+        if output.status.success() {
+            let url = String::from_utf8_lossy(&output.stdout);
+            return Ok(github_slug_from_url(&url));
+        }
+        // A repository with no `origin` is ordinary, and it is the one non-zero exit here
+        // that is not a failure. Every other one is git failing to answer — a `.git/config`
+        // it cannot parse, a repository root that has gone — and reading them all as "no
+        // remote" sends the user whose repository is gone to look at their remotes, which
+        // is issue #27. What `repo_root` names is a repository herdr listed, so here "not a
+        // repository" is git failing to name it, not an ordinary answer, and it goes up
+        // with the rest.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if no_such_remote(output.status.code(), &stderr) {
             return Ok(None);
-        };
-        Ok(github_slug_from_url(&url.stdout))
+        }
+        bail!("{}", refusal(&args, &stderr));
     }
 
     fn local_refs(&self, repo_root: &str) -> Result<RefWalk> {
@@ -452,6 +538,22 @@ impl GitPort for GitCli {
                 "--porcelain",
             ],
         )?;
+        // A clean exit is not a whole answer here either. A directory git could not open is
+        // reported on stderr and everything under it is simply absent from stdout, so an
+        // empty stdout beside that warning is not `clean` — it is the answer git could not
+        // give, about the one working tree a sweep would then act on. `Err`, because a
+        // `bool` has nowhere to carry the words; `app::dirty` reads it as
+        // `WorkingTree::Unreadable`, and `dump` asks again and prints what git says then.
+        //
+        // Whatever stdout holds, not only when it is empty. A checkout can have visible work
+        // *and* a directory git could not open, and `true` would then be a whole answer to
+        // the question asked — but it is a whole answer arrived at by accident, from the
+        // half git could see. A partial reading is not reported as a complete one because
+        // the visible half happened to land on the safe side; the row says `?` rather than
+        // `✱`, and both refuse a sweep.
+        if let Some(words) = unread_paths(&status.stderr) {
+            bail!("{words}");
+        }
         Ok(!status.stdout.trim().is_empty())
     }
 
@@ -472,8 +574,8 @@ impl GitPort for GitCli {
 #[cfg(test)]
 mod tests {
     use super::{
-        could_not_run, dropped_refs, github_slug_from_url, parse_track, read_track, refusal,
-        GitCli, Slug, GIT_LOCALE,
+        could_not_run, dropped_refs, github_slug_from_url, no_such_remote, parse_track, read_track,
+        refusal, unread_paths, GitCli, Slug, GIT_LOCALE,
     };
     use crate::port::Track;
     use std::num::NonZeroU32;
@@ -693,6 +795,83 @@ mod tests {
             dropped_refs("warning: ignoring broken ref refs/heads/wip\r").as_deref(),
             Some("warning: ignoring broken ref refs/heads/wip")
         );
+    }
+
+    #[test]
+    fn only_the_words_git_leaves_a_directory_out_with_are_read_as_an_unread_one() {
+        // The same rule as for a dropped ref: stderr is where git puts everything that is
+        // not an answer, so one prefix and not "stderr said something".
+        assert_eq!(
+            unread_paths("warning: could not open directory 'notes/': Permission denied\n")
+                .as_deref(),
+            Some("warning: could not open directory 'notes/': Permission denied")
+        );
+        for said in [
+            "",
+            "11:35:24.293334 git.c:502  trace: built-in: git status\n",
+            "warning: ignoring broken ref refs/heads/wip\n",
+            // The second line git prints beside the warning for a tracked file under the
+            // directory. Alone it is not the answer — it never comes alone — and the
+            // warning it accompanies is the line that is matched.
+            "deep/inner/u: Permission denied\n",
+        ] {
+            assert_eq!(
+                unread_paths(said),
+                None,
+                "not an unread directory: {said:?}"
+            );
+        }
+
+        // Both lines git prints for a tracked file under such a directory: the warning is
+        // kept and the bare line is not, so what reaches the reader is one shape of sentence.
+        assert_eq!(
+            unread_paths(
+                "deep/inner/u: Permission denied\n\
+                 warning: could not open directory 'deep/inner/': Permission denied\n"
+            )
+            .as_deref(),
+            Some("warning: could not open directory 'deep/inner/': Permission denied")
+        );
+
+        // Two directories are two warnings, joined with a space for the one line.
+        assert_eq!(
+            unread_paths(
+                "warning: could not open directory 'notes/': Permission denied\n\
+                 warning: could not open directory 'deep/inner/': Permission denied\n"
+            )
+            .as_deref(),
+            Some(
+                "warning: could not open directory 'notes/': Permission denied \
+                 warning: could not open directory 'deep/inner/': Permission denied"
+            )
+        );
+    }
+
+    #[test]
+    fn a_repository_with_no_origin_is_told_from_one_git_could_not_name() {
+        // Measured against git 2.55.0: `remote get-url origin` exits 2 saying `No such
+        // remote` where there is none, and 128 for a config it cannot parse or a root that
+        // has gone. Both halves are read, the way `run` reads `NOT_A_REPOSITORY`.
+        assert!(no_such_remote(Some(2), "error: No such remote 'origin'\n"));
+
+        for (code, stderr) in [
+            // The two fatals this used to swallow, which are what issue #27 is about.
+            (Some(128), "fatal: bad config line 9 in file .git/config\n"),
+            (
+                Some(128),
+                "fatal: cannot change to '/wt/gone': No such file or directory\n",
+            ),
+            // The words on their own, and the number on its own. Neither is the answer.
+            (Some(128), "error: No such remote 'origin'\n"),
+            (Some(2), "error: something else entirely\n"),
+            // Killed by a signal: no code at all.
+            (None, "error: No such remote 'origin'\n"),
+        ] {
+            assert!(
+                !no_such_remote(code, stderr),
+                "not a missing remote: {code:?} {stderr:?}"
+            );
+        }
     }
 
     #[test]
