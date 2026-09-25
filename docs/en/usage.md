@@ -377,7 +377,9 @@ heading to hang one off — so the line names it there too, as `app: not listed:
 own words, ahead of any repository whose refs went unread. A sweep is where that matters
 most: the re-read `Enter` asks for can lose a whole repository between the marks going on and
 the question being asked, and the rows that go are then named by their bare paths with this
-sentence saying why. `dump` prints the same under a `not listed:` heading of its own.
+sentence after them — when every one of them went that way. A row that went for its own reason
+beside them leaves the failed listing to the conditions, since one reason after the list would
+read as the reason for all of it. `dump` prints the same under a `not listed:` heading of its own.
 The branches view says it as well when it is opened from a pane in that repository and falls
 back to that repository's branches: they are git's and still listed, and which checkouts they
 are out in is what herdr did not say, so the view opens on the same sentence until the first

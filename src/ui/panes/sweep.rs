@@ -181,26 +181,40 @@ impl PanesState {
             // is left — `nothing left to remove` reads as a sweep that found nothing rather
             // than one that lost its ground.
             //
-            // Only the repositories these rows were in. A listing that failed elsewhere is
-            // on the prompt line already and took none of these away, so naming it here
-            // would answer the reader's question with another repository's trouble.
+            // Only when every row that went was in a repository herdr would not list. One
+            // reason after the list reads as the reason for all of it, so a row that went
+            // for its own reason — a pane that opened in it, a file written — beside one the
+            // listing took leaves the reason off; the failed listing is a condition already.
+            // And a listing that failed elsewhere took none of these away.
             let lost: BTreeSet<&str> = before
                 .iter()
                 .filter(|key| !still.contains(key))
                 .map(|key| key.0.as_str())
                 .collect();
-            let why = self
+            let unlisted: Vec<_> = self
                 .tree
                 .trouble
                 .unlisted
                 .iter()
-                .find(|repo| lost.contains(repo.repo_key.as_str()))
-                .map(|repo| {
-                    words::condition(&Condition::Unlisted {
-                        repo: repo.name().to_string(),
-                        words: repo.words.clone(),
-                    })
-                });
+                .filter(|repo| lost.contains(repo.repo_key.as_str()))
+                .collect();
+            // By key, not by count: two entries for one repository must not stand in for a
+            // repository that was listed.
+            let every_one_lost = lost
+                .iter()
+                .all(|key| unlisted.iter().any(|repo| repo.repo_key == *key));
+            let why = match every_one_lost {
+                true => words::conditions_line(
+                    &unlisted
+                        .iter()
+                        .map(|repo| Condition::Unlisted {
+                            repo: repo.name().to_string(),
+                            words: repo.words.clone(),
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+                false => None,
+            };
             self.message = Some(match (why, after.is_empty()) {
                 (Some(why), _) => format!("{named} — {why}"),
                 (None, true) => format!("{named} — nothing left to remove"),
