@@ -4,7 +4,7 @@
 //! out which repository and checkout every pane is in, and asks herdr for each repository's
 //! worktrees. The decisions all live in `domain`; this module only fetches.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use anyhow::Result;
 
@@ -222,27 +222,53 @@ fn collect_repos(
     git: &dyn GitPort,
     placements: &HashMap<String, PanePlacement>,
 ) -> (Vec<RepoInput>, Vec<Unlisted>) {
-    // One checkout per repo is enough to ask about: herdr resolves the whole repository
-    // from any path inside it. BTreeMap keeps the result deterministic.
-    let mut probe_paths: BTreeMap<&str, &str> = BTreeMap::new();
+    // Every checkout a pane was found in, by repository, in path order. herdr resolves the
+    // whole repository from any path inside it, so the first checkout that answers is the
+    // answer and the rest are asked only when one refuses. Whatever makes herdr refuse one
+    // checkout and answer for another, which of a repository's checkouts happened to come
+    // first out of a `HashMap` must not decide whether the repository is on screen.
+    let mut checkouts: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for placement in placements.values() {
-        probe_paths
+        checkouts
             .entry(&placement.repo_key)
-            .or_insert(&placement.checkout_path);
+            .or_default()
+            .insert(&placement.checkout_path);
     }
 
     let mut repos = Vec::new();
     let mut unlisted = Vec::new();
-    for (repo_key, probe) in probe_paths {
-        let listed = match herdr.worktree_list(probe) {
-            Ok(listed) => listed,
-            Err(error) => {
-                unlisted.push(Unlisted {
-                    repo_key: repo_key.to_string(),
-                    words: one_line(&format!("{error:#}")),
-                });
-                continue;
-            }
+    for (repo_key, probes) in checkouts {
+        // What was said about the first checkout, which is what a reader would have been
+        // told had it been the only one.
+        let mut words = None;
+        let listed = probes
+            .iter()
+            .find_map(|probe| match herdr.worktree_list(probe) {
+                // An answer about another repository is not this one's listing: herdr
+                // resolved the path to a different `repo_key` from the one the pane was
+                // placed in. Filed under this key it would draw that repository in this
+                // one's place, and this one nowhere, so it counts as a refusal.
+                Ok(listed) if normalize_path(&listed.source.repo_key) != repo_key => {
+                    words.get_or_insert_with(|| {
+                        let other = normalize_path(&listed.source.repo_key);
+                        format!("herdr listed {probe} as {other}")
+                    });
+                    None
+                }
+                Ok(listed) => Some(listed),
+                Err(error) => {
+                    words.get_or_insert_with(|| one_line(&format!("{error:#}")));
+                    None
+                }
+            });
+        let Some(listed) = listed else {
+            unlisted.push(Unlisted {
+                repo_key: repo_key.to_string(),
+                // Never empty: a repository is here because a pane is in one of its
+                // checkouts, and every one of them refused.
+                words: words.unwrap_or_default(),
+            });
+            continue;
         };
         let repo_root = normalize_path(&listed.source.repo_root).to_string();
         let display_name = git
@@ -626,6 +652,154 @@ mod tests {
         assert_eq!(
             unlisted[0].words, "herdr rejected worktree.list: internal error",
             "herdr's own words, on one line"
+        );
+    }
+
+    #[test]
+    fn a_repository_one_of_whose_checkouts_herdr_refuses_is_listed_through_another() {
+        // Two panes in one repository, one of them in a checkout herdr will not answer for.
+        // Asking only one of them makes the answer turn on which one that is — and taken
+        // from the `HashMap` of placements, the same session draws the repository on one
+        // reading and `not listed` on the next.
+        let port = Repository { slug: Ok(None) };
+        let two_checkouts = HashMap::from([
+            (
+                "w1:p1".to_string(),
+                PanePlacement {
+                    repo_key: "/src/app/.git".to_string(),
+                    // First in path order, so it is the one asked first.
+                    checkout_path: "/src/refused".to_string(),
+                },
+            ),
+            (
+                "w1:p2".to_string(),
+                PanePlacement {
+                    repo_key: "/src/app/.git".to_string(),
+                    checkout_path: "/wt/feat-login".to_string(),
+                },
+            ),
+        ]);
+
+        let (repos, unlisted) = collect_repos(&port, &port, &two_checkouts);
+
+        assert_eq!(
+            repos.iter().map(|repo| &repo.repo_key).collect::<Vec<_>>(),
+            ["/src/app/.git"],
+            "the checkout that answered speaks for the repository"
+        );
+        assert!(unlisted.is_empty(), "{unlisted:?}");
+    }
+
+    /// A herdr that answers for no checkout at all, naming each one it was asked about.
+    struct RefusesEach;
+
+    impl FakeHerdr for RefusesEach {
+        fn worktree_list(&self, cwd: &str) -> Result<WorktreeList> {
+            anyhow::bail!("herdr rejected worktree.list: no checkout at {cwd}")
+        }
+    }
+
+    fake_herdr!(RefusesEach);
+
+    #[test]
+    fn a_repository_every_checkout_of_which_herdr_refuses_is_named_in_what_it_said_first() {
+        // One sentence for the repository, and the one a reader would have met had its first
+        // checkout been the only one asked about.
+        let git = Repository { slug: Ok(None) };
+        let two_checkouts = HashMap::from([
+            (
+                "w1:p1".to_string(),
+                PanePlacement {
+                    repo_key: "/src/app/.git".to_string(),
+                    checkout_path: "/wt/second".to_string(),
+                },
+            ),
+            (
+                "w1:p2".to_string(),
+                PanePlacement {
+                    repo_key: "/src/app/.git".to_string(),
+                    checkout_path: "/src/first".to_string(),
+                },
+            ),
+        ]);
+
+        let (repos, unlisted) = collect_repos(&RefusesEach, &git, &two_checkouts);
+
+        assert!(repos.is_empty());
+        assert_eq!(
+            unlisted
+                .iter()
+                .map(|repo| repo.words.as_str())
+                .collect::<Vec<_>>(),
+            ["herdr rejected worktree.list: no checkout at /src/first"]
+        );
+    }
+
+    /// A herdr that refuses one checkout and answers for another as a different repository.
+    struct AnswersForAnother;
+
+    impl FakeHerdr for AnswersForAnother {
+        fn worktree_list(&self, cwd: &str) -> Result<WorktreeList> {
+            if cwd.contains("refused") {
+                anyhow::bail!("herdr rejected worktree.list: internal error");
+            }
+            Ok(WorktreeList {
+                source: WorktreeSource {
+                    repo_key: "/src/other/.git/".into(),
+                    repo_name: "other".into(),
+                    repo_root: "/src/other".into(),
+                    source_checkout_path: cwd.into(),
+                    source_workspace_id: None,
+                },
+                worktrees: Vec::<Worktree>::new(),
+            })
+        }
+    }
+
+    fake_herdr!(AnswersForAnother);
+
+    #[test]
+    fn a_checkout_herdr_answers_for_as_another_repository_is_not_this_ones_listing() {
+        // Asking the next checkout after a refusal must not turn the refusal into another
+        // repository's listing filed under this key: that draws `other` in `app`'s place,
+        // and says nothing about `app`.
+        let git = Repository { slug: Ok(None) };
+        let placement = |checkout: &str| PanePlacement {
+            repo_key: "/src/app/.git".to_string(),
+            checkout_path: checkout.to_string(),
+        };
+        let words = |unlisted: &[crate::domain::model::Unlisted]| {
+            unlisted
+                .iter()
+                .map(|repo| repo.words.clone())
+                .collect::<Vec<_>>()
+        };
+
+        let (repos, unlisted) = collect_repos(
+            &AnswersForAnother,
+            &git,
+            &HashMap::from([
+                ("w1:p1".to_string(), placement("/src/refused")),
+                ("w1:p2".to_string(), placement("/wt/recloned")),
+            ]),
+        );
+        assert!(repos.is_empty(), "no listing of `app` came back");
+        assert_eq!(
+            words(&unlisted),
+            ["herdr rejected worktree.list: internal error"],
+            "and the first thing herdr said about it is what is said"
+        );
+
+        let (repos, unlisted) = collect_repos(
+            &AnswersForAnother,
+            &git,
+            &HashMap::from([("w1:p2".to_string(), placement("/wt/recloned"))]),
+        );
+        assert!(repos.is_empty());
+        assert_eq!(
+            words(&unlisted),
+            ["herdr listed /wt/recloned as /src/other/.git"],
+            "the only answer is the one about another repository, and that is the reason"
         );
     }
 
