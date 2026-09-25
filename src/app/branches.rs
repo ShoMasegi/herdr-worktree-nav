@@ -21,15 +21,17 @@ use crate::app::home_dir;
 use crate::app::Summoned;
 use crate::domain::dest;
 use crate::domain::listing;
-use crate::domain::model::{normalize_path, Refs, RepoNode};
+use crate::domain::model::{normalize_path, Refs, RepoNode, Tree};
+use crate::domain::notice::Condition;
 use crate::domain::progress::Stage;
 use crate::domain::resolve::{self, BranchPlan};
 use crate::port::{
-    GhPort, GitPort, GitRef, HerdrPort, Pane, PullRequest, WorktreeCreate, WorktreeOpen,
+    GhPort, GitPort, GitRef, HerdrPort, Pane, PullRequest, Snapshot, WorktreeCreate, WorktreeOpen,
 };
 use crate::ui::branches::{self, BranchAction, BranchData, BranchesState, Choice};
 use crate::ui::render;
 use crate::ui::theme::Theme;
+use crate::ui::words;
 
 /// The remote this plugin fetches from and bases never-fetched branches on.
 const REMOTE: &str = "origin";
@@ -93,32 +95,10 @@ pub fn run(
     listings: &mut listing::Cache,
 ) -> Result<Exit> {
     let (snapshot, tree) = collect::collect_tree(herdr, git)?;
-    let from_pane_id = summoned.pane.as_deref();
-    let repo_root = summoned.repo_root.as_deref();
-
-    // Where the picker was summoned from, as precisely as it can be known: the checkout the
-    // invoking pane is in beats the repository it belongs to, because it is the row the
-    // cursor should land on.
-    let from = from_pane_id
-        .and_then(|pane_id| tree.find_pane(pane_id))
-        .map(|(_, worktree, _)| worktree.checkout_path.clone())
-        .or_else(|| repo_root.map(str::to_string));
-
-    let mut repos = tree.repos;
-    if branches::locate(&repos, from.as_deref()).is_none() {
-        // A repository with no pane open is not in the tree, so fall back to a bare node:
-        // its branches are still worth listing.
-        if let Some(root) = repo_root {
-            repos.push(bare(root));
-        }
-    }
-    if repos.is_empty() {
+    let Some(mut state) = first_frame(tree, snapshot, summoned, home_dir()) else {
         // Nothing to list branches for. The panes view is where a repository can be found.
         return Ok(Exit::ShowPanes);
-    }
-
-    let destinations = dest::destinations(&snapshot, from_pane_id);
-    let mut state = BranchesState::new(repos, from.as_deref(), destinations, snapshot, home_dir());
+    };
 
     let (sender, receiver) = mpsc::channel();
     let (outcome, failure) =
@@ -387,6 +367,70 @@ fn listed(git: &dyn GitPort, repo_root: &str) -> Vec<GitRef> {
         .unwrap_or_default()
 }
 
+/// Everything `run` decides before the first frame: which repositories there are, where the
+/// cursor starts, and what the first frame says. `None` is nothing to list branches for.
+fn first_frame(
+    tree: Tree,
+    snapshot: Snapshot,
+    summoned: &Summoned,
+    home: Option<String>,
+) -> Option<BranchesState> {
+    let from_pane_id = summoned.pane.as_deref();
+    let unlisted = unlisted_words(&tree, from_pane_id);
+    let repo_root = summoned.repo_root.as_deref();
+
+    // Where the picker was summoned from, as precisely as it can be known: the checkout the
+    // invoking pane is in beats the repository it belongs to, because it is the row the
+    // cursor should land on.
+    let from = from_pane_id
+        .and_then(|pane_id| tree.find_pane(pane_id))
+        .map(|(_, worktree, _)| worktree.checkout_path.clone())
+        .or_else(|| repo_root.map(str::to_string));
+
+    let mut repos = tree.repos;
+    let mut said = None;
+    if branches::locate(&repos, from.as_deref()).is_none() {
+        // A repository with no pane open is not in the tree, and neither is one herdr would
+        // not list. Either way, fall back to a bare node: its branches are still worth
+        // listing. The sentence goes only with this fallback: after `Tab` the root is
+        // whatever the panes view handed over — the repository under its cursor, or none —
+        // and the pane that opened the picker says nothing about that.
+        if let Some(root) = repo_root {
+            repos.push(bare(root));
+            said = unlisted;
+        }
+    }
+    if repos.is_empty() {
+        return None;
+    }
+
+    let destinations = dest::destinations(&snapshot, from_pane_id);
+    let mut state = BranchesState::new(repos, from.as_deref(), destinations, snapshot, home);
+    if let Some(said) = said {
+        state.set_message(said);
+    }
+    Some(state)
+}
+
+/// What the first frame says when the pane the picker was opened from is in a repository
+/// herdr would not list, or nothing.
+///
+/// That pane has no row and its repository no node, so a bare repository is all the picker
+/// can show of it: its branches are git's and still listed, and which checkouts they are out
+/// in is what is missing. The sentence is the condition the panes view gathers for it.
+fn unlisted_words(tree: &Tree, pane_id: Option<&str>) -> Option<String> {
+    let pane_id = pane_id?;
+    let repo = tree
+        .trouble
+        .unlisted
+        .iter()
+        .find(|repo| repo.panes.contains_key(pane_id))?;
+    Some(words::condition(&Condition::Unlisted {
+        repo: repo.name().to_string(),
+        words: repo.words.clone(),
+    }))
+}
+
 /// A repository herdr has no worktree record for. Its branches are still listable.
 fn bare(repo_root: &str) -> RepoNode {
     let repo_root = normalize_path(repo_root);
@@ -616,6 +660,87 @@ mod tests {
             assert!(annotations(&Origin(slug), &gh, "/src/app").is_empty());
             assert!(gh.0.lock().unwrap().is_empty(), "gh was asked anyway");
         }
+    }
+
+    #[test]
+    fn a_pane_in_a_repository_herdr_would_not_list_is_given_the_condition_for_it() {
+        // The pane is under `not in any repository` and its repository has no node, so the
+        // picker lists a bare repository with no checkouts in it. Without this, the reason
+        // is nowhere on the page and the empty repository reads as one nobody has opened.
+        let mut tree = Tree::default();
+        tree.trouble.unlisted.push(crate::domain::model::Unlisted {
+            repo_key: "/src/app/.git".into(),
+            words: "herdr rejected worktree.list: internal error".into(),
+            panes: std::collections::BTreeMap::from([(
+                "w1:p1".to_string(),
+                "/src/app".to_string(),
+            )]),
+        });
+        assert_eq!(
+            unlisted_words(&tree, Some("w1:p1")).as_deref(),
+            Some("app: not listed: herdr rejected worktree.list: internal error")
+        );
+        assert_eq!(
+            unlisted_words(&tree, Some("w2:p1")),
+            None,
+            "a pane in another repository has nothing to be told about this one"
+        );
+        assert_eq!(unlisted_words(&tree, None), None);
+    }
+
+    #[test]
+    fn the_picker_opened_from_such_a_pane_falls_back_to_a_bare_repository_and_says_why() {
+        // The whole of what `run` decides before the first frame, for the pane above.
+        let mut tree = Tree::default();
+        tree.trouble.unlisted.push(crate::domain::model::Unlisted {
+            repo_key: "/src/app/.git".into(),
+            words: "herdr rejected worktree.list: internal error".into(),
+            panes: std::collections::BTreeMap::from([(
+                "w1:p1".to_string(),
+                "/src/app".to_string(),
+            )]),
+        });
+        let summoned = Summoned {
+            pane: Some("w1:p1".into()),
+            repo_root: Some("/src/app".into()),
+        };
+
+        let state = first_frame(tree, Snapshot::default(), &summoned, None)
+            .expect("the repository's branches are still git's to list");
+
+        assert_eq!(state.repo().display_name, "app");
+        assert!(state.repo().worktrees.is_empty(), "herdr did not say which");
+        assert_eq!(
+            state.message(),
+            Some("app: not listed: herdr rejected worktree.list: internal error")
+        );
+    }
+
+    #[test]
+    fn after_tab_the_sentence_does_not_follow_the_pane_to_another_repository() {
+        // `Tab` from the panes view hands over the repository under its cursor, if any, as
+        // the root, and keeps the pane that opened the picker. Here that repository is
+        // listed, so nothing falls back, and the pane's repository is not what is on screen.
+        let mut tree = Tree::default();
+        tree.repos.push(bare("/src/other"));
+        tree.trouble.unlisted.push(crate::domain::model::Unlisted {
+            repo_key: "/src/app/.git".into(),
+            words: "herdr rejected worktree.list: internal error".into(),
+            panes: std::collections::BTreeMap::from([(
+                "w1:p1".to_string(),
+                "/src/app".to_string(),
+            )]),
+        });
+        let summoned = Summoned {
+            pane: Some("w1:p1".into()),
+            repo_root: Some("/src/other".into()),
+        };
+
+        let state = first_frame(tree, Snapshot::default(), &summoned, None)
+            .expect("the repository under the cursor is listed");
+
+        assert_eq!(state.repo().display_name, "other");
+        assert_eq!(state.message(), None);
     }
 
     #[test]

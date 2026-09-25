@@ -378,6 +378,11 @@ own words, ahead of any repository whose refs went unread. A sweep is where that
 most: the re-read `Enter` asks for can lose a whole repository between the marks going on and
 the question being asked, and the rows that go are then named by their bare paths with this
 sentence saying why. `dump` prints the same under a `not listed:` heading of its own.
+The branches view says it as well when it is opened from a pane in that repository and falls
+back to that repository's branches: they are git's and still listed, and which checkouts they
+are out in is what herdr did not say, so the view opens on the same sentence until the first
+key. After `Tab` from the panes view it opens on whatever the panes view hands over instead,
+and says nothing about this one.
 
 `r` asks again. It is the only thing that does: the answers are otherwise kept for as long as
 the picker is open, `Tab` to the branches view and back included.
