@@ -560,14 +560,35 @@ fn a_repository_herdr_would_not_list_has_a_heading_of_its_own() {
         words: "herdr rejected worktree.list: internal error".into(),
         panes: Default::default(),
     });
-    let page = page(&tree, &RefsByRepo::new());
+    let heading = page(&tree, &RefsByRepo::new());
     assert!(
-        page.contains("\nnot listed:\n  old  [/src/old/.git]\n"),
-        "got:\n{page}"
+        heading.contains("\nnot listed:\n  old  [/src/old/.git]\n"),
+        "got:\n{heading}"
     );
     assert!(
-        page.contains("      herdr rejected worktree.list: internal error\n"),
-        "got:\n{page}"
+        heading.contains("      herdr rejected worktree.list: internal error\n"),
+        "got:\n{heading}"
+    );
+
+    // And its panes, which went under the heading below: nothing else on the page ties them
+    // to the section above, and that heading is also where a pane herdr cannot see into goes.
+    tree.trouble.unlisted[0]
+        .panes
+        .insert("w7:p1".into(), "/src/old".into());
+    tree.ungrouped = vec![PaneNode {
+        pane_id: "w7:p1".into(),
+        workspace_id: "w7".into(),
+        tab_id: "w7:t1".into(),
+        display_name: None,
+        agent_status: AgentStatus::Unknown,
+        focused: false,
+    }];
+    let with_panes = page(&tree, &RefsByRepo::new());
+    assert!(
+        with_panes.ends_with(
+            "\nnot in any repository:\n      w7:p1\n          in old, which is not listed\n"
+        ),
+        "got:\n{with_panes}"
     );
 }
 

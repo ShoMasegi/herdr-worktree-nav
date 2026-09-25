@@ -125,12 +125,19 @@ herdr pane get <pane_id>
 If `cwd` and `foreground_cwd` are both absent, herdr cannot see into that pane and it lands
 in "not in any repository", the section at the bottom of the list.
 
-A pane lands there for one other reason: git could not be asked where it is. That is the one
-to check first when the *whole* session is under that heading, because a `git` that is not on
-the path herdr launched the plugin with fails for every pane at once. The prompt line says so
-in git's own words, ahead of anything said about one repository, and `dump` prints the
-reason
-under the pane it belongs to.
+Besides a pane outside any repository and one herdr cannot see into, a pane lands there for
+two more reasons, and `dump` prints which under the pane.
+
+- git could not be run, or would not say where it is. That is the one to check first when
+  the panes you expected grouped are under that heading, because a `git` that is not on the
+  path herdr launched the plugin with fails for every pane it is asked about: every pane with
+  a working directory, except one still under the checkout of its own workspace when herdr
+  knows that workspace's worktree, which is placed without git. The prompt line says so, in
+  the words the failure came with, ahead of anything said about one repository, and `dump`
+  prints those words under the pane.
+- It was placed, and herdr would not list the repository it is in. The prompt line names the
+  repository as `<name>: not listed:` with the reason — or counts it, when something else
+  comes first — and `dump` prints `in <name>, which is not listed` under the pane.
 
 ## A branch I can see on GitHub is not listed
 
