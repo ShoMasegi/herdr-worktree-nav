@@ -1,6 +1,8 @@
 //! The model both pickers display: repositories, their worktrees, and the panes sitting in
 //! each one.
 
+use std::collections::BTreeMap;
+
 use crate::port::{AgentStatus, Track};
 
 /// A repository, identified the way herdr identifies it.
@@ -120,9 +122,11 @@ impl Refs {
 pub struct WorktreeNode {
     /// `None` for a checkout herdr listed with nothing out — and also for one herdr never
     /// listed, which [`domain::tree::build`](crate::domain::tree::build) synthesizes for a
-    /// pane and where a branch may well be out. Only the second can carry a `track`:
-    /// `what_a_branchless_row_draws_turns_on_whether_herdr_listed_it`. Carrying the difference
-    /// is issue #52, and issue #49 is what it costs on the marker.
+    /// pane and where a branch may well be out. Neither carries a `track`, because a marker
+    /// about a branch the row does not name is one nobody can act on:
+    /// `a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it`. Carrying the
+    /// difference between the two is issue #52; until then the second loses a marker it
+    /// might have deserved, which is the cheaper of the two mistakes.
     pub branch: Option<String>,
     pub checkout_path: String,
     pub is_primary: bool,
@@ -187,6 +191,13 @@ impl RepoKey {
     pub fn of(repo: &RepoNode) -> Self {
         RepoKey(repo.repo_key.clone())
     }
+
+    /// The key itself, for the one question a [`RepoNode`] cannot answer: which repository a
+    /// key names when there is no node for it. [`Trouble::unlisted`] is that case, and its
+    /// keys are the same spelling — both come from the placement `app::collect` normalized.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,12 +211,71 @@ pub struct PaneNode {
     pub focused: bool,
 }
 
+/// What the reading could not do, kept on the tree the way [`Refs`] is kept on a repository.
+///
+/// [`Refs::Unreadable`] hangs off a [`RepoNode`], and neither of these has one: a repository
+/// herdr would not list never becomes a node, and a pane git could not place belongs to
+/// none. Their panes are still on screen, under `not in any repository` — but so is a pane
+/// herdr cannot see into, and a row under that heading has no room to say which. Here the
+/// reason travels with the tree, and it is one condition however many panes it covers.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Trouble {
+    /// Repositories herdr refused to list the worktrees of.
+    pub unlisted: Vec<Unlisted>,
+    /// Panes git could not place: the pane id, and the words the failure came with — git's;
+    /// the OS's for a git that could not be started; the plugin's for a thread that did not
+    /// finish. A `git` that is not on the path herdr launched the plugin with fails for every
+    /// pane it is asked about at once — every pane with a working directory, except one still
+    /// under the checkout of its own workspace when herdr knows that workspace's worktree,
+    /// which is placed without git — and those draw under `not in any repository`, which is
+    /// what herdr not seeing into a pane also looks like, and the two are nothing alike to
+    /// fix.
+    pub unplaced: BTreeMap<String, String>,
+}
+
+/// A repository herdr would not list, and what herdr said instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unlisted {
+    /// The repository the panes were placed in. What the screen calls it is
+    /// [`Unlisted::name`], made from this key.
+    pub repo_key: String,
+    /// What herdr said — or, where herdr listed the path as another repository, a sentence
+    /// saying so.
+    pub words: String,
+    /// The panes placed in this repository, by pane id, with the checkout each stands in —
+    /// the paths herdr was asked about. Those panes are under `not in any repository` rather
+    /// than in a row, so a row another repository lists at one of these paths shows no pane
+    /// and the path is still somebody's working directory: `domain::sweep::candidates` reads
+    /// it here. And the pane the branches view was opened from may be one of them.
+    pub panes: BTreeMap<String, String>,
+}
+
+impl Unlisted {
+    /// What to call the repository on screen: the key's last path segment once a trailing
+    /// `/.git` is removed — `/src/app/.git` is `app` — and the whole key where that leaves
+    /// nothing.
+    pub fn name(&self) -> &str {
+        let key = normalize_path(&self.repo_key);
+        let root = key.strip_suffix("/.git").unwrap_or(key);
+        match root.rsplit_once('/') {
+            Some((_, name)) if !name.is_empty() => name,
+            _ => &self.repo_key,
+        }
+    }
+}
+
 /// Everything the panes view shows.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Tree {
     pub repos: Vec<RepoNode>,
-    /// Panes that are not inside any git work tree. Hidden by default.
+    /// Panes with no repository node to go under: outside any git work tree, or in one
+    /// nobody could say — herdr cannot see into the pane, git would not place it, or herdr
+    /// would not list the repository it is in. [`Tree::trouble`] says which of the last two.
     pub ungrouped: Vec<PaneNode>,
+    /// What this reading could not read at all: a repository that has no rows, and why some
+    /// of the panes under `not in any repository` are there. Kept beside the nodes rather than on
+    /// them, because the first has no node and the second's node has nowhere to say it.
+    pub trouble: Trouble,
 }
 
 impl Tree {
@@ -264,6 +334,25 @@ mod tests {
         assert_eq!(normalize_path("/a/b///"), "/a/b");
         assert_eq!(normalize_path("/"), "/");
         assert_eq!(normalize_path(""), "");
+    }
+
+    #[test]
+    fn a_repository_that_was_never_listed_is_named_by_the_last_segment_of_its_key() {
+        // No listing came back, so the name is made from the key. `/src/app/.git` is `app`
+        // to a reader; the key itself is not, and is only used where nothing is left.
+        let named = |key: &str| Unlisted {
+            repo_key: key.to_string(),
+            words: String::new(),
+            panes: Default::default(),
+        };
+        assert_eq!(named("/src/app/.git").name(), "app");
+        assert_eq!(named("/src/app/.git/").name(), "app");
+        // A key that does not end in `/.git`: its last segment.
+        assert_eq!(named("/src/app.git").name(), "app.git");
+        assert_eq!(named("/src/app").name(), "app");
+        // No `/` to split on: the key itself.
+        assert_eq!(named(".git").name(), ".git");
+        assert_eq!(named("").name(), "");
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use super::*;
-use crate::domain::model::{Refs, RepoNode, WorkingTree, WorktreeNode};
+use crate::domain::model::{Refs, RepoNode, Tree, Unlisted, WorkingTree, WorktreeNode};
+use crate::domain::notice::Condition;
 use crate::domain::sweep::{Half, Reason, Refusal};
 use crate::port::{AgentStatus, PullRequestOutcome, SettledPullRequest, Track};
 use crate::ui::panes::fixtures::*;
@@ -770,6 +771,83 @@ fn nothing_left_after_the_re_read_asks_nothing() {
 }
 
 #[test]
+fn a_repository_the_re_read_could_not_list_is_named_rather_than_nothing_left() {
+    // The rows did not go because the checkouts went: they went because herdr would not
+    // say what was in the repository, and every mark in it came off the box at once.
+    // Told `nothing left to remove`, the reader reads a sweep that found nothing — with
+    // herdr's words nowhere on screen. Issue #56.
+    let mut state = sweeping();
+    state.handle_key(key(KeyCode::Enter));
+    let mut unlisted = Tree {
+        repos: Vec::new(),
+        ..state.tree.clone()
+    };
+    unlisted.trouble.unlisted.push(Unlisted {
+        repo_key: "/src/app/.git".into(),
+        words: "herdr rejected worktree.list: internal error".into(),
+        panes: Default::default(),
+    });
+    state.replace_tree(unlisted);
+    state.set_waiting(false);
+    state.confirm_sweep_if_settled();
+
+    assert!(
+        state.pending_sweep().is_none(),
+        "nothing is left to ask about"
+    );
+    assert_eq!(
+        state.message(),
+        Some(
+            "no longer marked: /wt/app/fix-crash — app: not listed: herdr rejected \
+             worktree.list: internal error"
+        )
+    );
+
+    // And only a listing that failed *in the repository these rows were in*. Another
+    // repository herdr would not list is a condition already and took none of these away,
+    // so naming it here would answer with someone else's trouble.
+    let mut state = sweeping();
+    state.handle_key(key(KeyCode::Enter));
+    let mut elsewhere = state.tree.clone();
+    elsewhere.repos[0].worktrees.clear();
+    elsewhere.trouble.unlisted.push(Unlisted {
+        repo_key: "/src/other/.git".into(),
+        words: "herdr rejected worktree.list: internal error".into(),
+        panes: Default::default(),
+    });
+    state.replace_tree(elsewhere);
+    state.set_waiting(false);
+    state.confirm_sweep_if_settled();
+    assert_eq!(
+        state.message(),
+        Some("no longer marked: /wt/app/fix-crash — nothing left to remove"),
+        "the row was in me/app, and me/app was listed"
+    );
+
+    // And refs that went unread are a condition too, but not a reason rows go: here the
+    // row went for another reason, so this line does not name them.
+    let mut state = sweeping();
+    state.handle_key(key(KeyCode::Enter));
+    let mut unread = state.tree.clone();
+    unread.repos[0].refs = Refs::Unreadable("fatal: bad ref".into());
+    unread.repos[0].worktrees.clear();
+    state.replace_tree(unread);
+    state.set_waiting(false);
+    state.confirm_sweep_if_settled();
+    assert!(
+        state
+            .conditions()
+            .iter()
+            .any(|condition| matches!(condition, Condition::RefsUnreadable { .. })),
+        "there is another condition to be named by mistake"
+    );
+    assert_eq!(
+        state.message(),
+        Some("no longer marked: /wt/app/fix-crash — nothing left to remove")
+    );
+}
+
+#[test]
 fn a_question_a_key_took_back_does_not_come_back_on_the_next_frame() {
     // The loop asks `confirm_sweep_if_settled` on every frame, and a no is a no.
     for code in [KeyCode::Esc, KeyCode::Char('n'), KeyCode::Down] {
@@ -788,7 +866,8 @@ fn a_question_a_key_took_back_does_not_come_back_on_the_next_frame() {
 #[test]
 fn a_row_dropped_by_the_re_read_is_named_by_the_repository_its_key_names() {
     // Two repositories list one path, and the re-read finds a pane in the second's
-    // checkout.
+    // checkout. The directory is running, so both rows go — each named by the row its own
+    // key finds, which is `fix/crash` for one and `chore/deps` for the other.
     let mut state = sweeping();
     let mut tree = state.tree.clone();
     tree.repos.push(RepoNode {
@@ -817,8 +896,120 @@ fn a_row_dropped_by_the_re_read_is_named_by_the_repository_its_key_names() {
     state.set_waiting(false);
     state.confirm_sweep_if_settled();
 
-    assert_eq!(state.message(), Some("no longer marked: chore/deps"));
-    assert_eq!(box_labels(&state), ["fix/crash"]);
+    assert_eq!(
+        state.message(),
+        Some("no longer marked: fix/crash, chore/deps — nothing left to remove")
+    );
+    assert!(box_labels(&state).is_empty());
+}
+
+/// A sweep with a mark in each of two repositories — `me/app`'s `fix/crash` and `me/old`'s
+/// `chore/deps`, which a stale registration puts at the same path — after `Enter`.
+fn two_marks_asked() -> PanesState {
+    let mut state = sweeping();
+    let mut tree = state.tree.clone();
+    tree.repos.push(RepoNode {
+        repo_key: "/src/old/.git".into(),
+        repo_root: "/src/old".into(),
+        display_name: "me/old".into(),
+        refs: Refs::Read,
+        worktrees: vec![WorktreeNode {
+            branch: Some("chore/deps".into()),
+            checkout_path: "/wt/app/fix-crash".into(),
+            is_primary: false,
+            open_workspace_id: None,
+            track: Some(Track::Gone),
+            panes: vec![],
+        }],
+    });
+    state.replace_tree(tree);
+    assert_eq!(state.chosen().len(), 2);
+    state.handle_key(key(KeyCode::Enter));
+    state
+}
+
+/// `me/app` as herdr would not list it, on the re-read.
+fn app_unlisted(tree: &Tree) -> Tree {
+    let mut tree = tree.clone();
+    tree.repos.retain(|repo| repo.repo_key != "/src/app/.git");
+    tree.trouble.unlisted.push(Unlisted {
+        repo_key: "/src/app/.git".into(),
+        words: "herdr rejected worktree.list: internal error".into(),
+        panes: Default::default(),
+    });
+    tree
+}
+
+#[test]
+fn the_reason_goes_with_the_rows_it_took_and_no_others() {
+    // `me/app` is lost and `me/old`'s mark survives: the reason is about the row that went,
+    // and the question still stands for the one that did not.
+    let mut state = two_marks_asked();
+    state.replace_tree(app_unlisted(&state.tree));
+    state.set_waiting(false);
+    state.confirm_sweep_if_settled();
+    assert_eq!(
+        state.message(),
+        Some(
+            "no longer marked: /wt/app/fix-crash — app: not listed: herdr rejected \
+             worktree.list: internal error"
+        )
+    );
+    assert_eq!(box_labels(&state), ["chore/deps"]);
+
+    // `me/app` is lost, and `me/old`'s row went too — for its own reason, a pane that
+    // opened in it, which its row shows. One `— app: not listed` after both would read as
+    // the reason for both, so neither is given one here: the listing that failed is a
+    // condition already.
+    let mut state = two_marks_asked();
+    let mut re_read = app_unlisted(&state.tree);
+    re_read.repos[0].worktrees[0]
+        .panes
+        .push(pane("w5:p1", "codex", AgentStatus::Working));
+    state.replace_tree(re_read);
+    state.set_waiting(false);
+    state.confirm_sweep_if_settled();
+    assert_eq!(
+        state.message(),
+        Some("no longer marked: /wt/app/fix-crash, chore/deps — nothing left to remove")
+    );
+
+    // The same, with `me/app` entered twice. Two entries for one repository are not a second
+    // repository accounted for.
+    let mut state = two_marks_asked();
+    let mut re_read = app_unlisted(&state.tree);
+    re_read.repos[0].worktrees[0]
+        .panes
+        .push(pane("w5:p1", "codex", AgentStatus::Working));
+    let twice = re_read.trouble.unlisted[0].clone();
+    re_read.trouble.unlisted.push(twice);
+    state.replace_tree(re_read);
+    state.set_waiting(false);
+    state.confirm_sweep_if_settled();
+    assert_eq!(
+        state.message(),
+        Some("no longer marked: /wt/app/fix-crash, chore/deps — nothing left to remove")
+    );
+
+    // Both lost: both are the reason, the first said and the other counted.
+    let mut state = two_marks_asked();
+    let mut re_read = app_unlisted(&state.tree);
+    re_read.repos.clear();
+    re_read.trouble.unlisted.push(Unlisted {
+        repo_key: "/src/old/.git".into(),
+        words: "herdr rejected worktree.list: timeout".into(),
+        panes: Default::default(),
+    });
+    state.replace_tree(re_read);
+    state.set_waiting(false);
+    state.confirm_sweep_if_settled();
+    assert_eq!(
+        state.message(),
+        Some(
+            "no longer marked: /wt/app/fix-crash, /wt/app/fix-crash — app: not listed: herdr \
+             rejected worktree.list: internal error (+1 more)"
+        )
+    );
 }
 
 #[test]

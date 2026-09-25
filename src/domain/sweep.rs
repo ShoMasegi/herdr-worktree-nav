@@ -136,12 +136,30 @@ pub struct Facts<'a> {
 
 /// What the sweep may do with every checkout in the tree, by repository and checkout path.
 pub fn candidates(tree: &Tree, facts: &Facts) -> BTreeMap<(RepoKey, CheckoutPath), Candidate> {
+    // Every directory a pane is standing in, whichever row shows the pane. One path can be
+    // two rows — two repositories' registrations of it, one of them stale — and a pane shows
+    // in only one of them; the panes of a repository herdr would not list show in none,
+    // under `not in any repository`. Running is about the directory, not the row.
+    let occupied: BTreeSet<&str> = tree
+        .repos
+        .iter()
+        .flat_map(|repo| &repo.worktrees)
+        .filter(|worktree| !worktree.panes.is_empty())
+        .map(|worktree| worktree.checkout_path.as_str())
+        .chain(
+            tree.trouble
+                .unlisted
+                .iter()
+                .flat_map(|repo| repo.panes.values().map(String::as_str)),
+        )
+        .collect();
     let mut out = BTreeMap::new();
     for repo in &tree.repos {
         let settled = facts.settled.get(&RepoRoot::of(repo));
         for worktree in &repo.worktrees {
             let path = CheckoutPath::of(worktree);
-            let candidate = judge(repo, worktree, &path, settled, facts);
+            let running = occupied.contains(path.as_str());
+            let candidate = judge(repo, worktree, &path, running, settled, facts);
             out.insert((RepoKey::of(repo), path), candidate);
         }
     }
@@ -152,6 +170,7 @@ fn judge(
     repo: &RepoNode,
     worktree: &WorktreeNode,
     path: &CheckoutPath,
+    running: bool,
     settled: Option<&Option<SettledPullRequests>>,
     facts: &Facts,
 ) -> Candidate {
@@ -166,7 +185,7 @@ fn judge(
     if facts.removing.contains(path) {
         return Candidate::Refused(Refusal::Removing);
     }
-    if !worktree.panes.is_empty() {
+    if running {
         return Candidate::Refused(Refusal::Running);
     }
 

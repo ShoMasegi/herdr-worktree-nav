@@ -4,22 +4,26 @@
 //! out which repository and checkout every pane is in, and asks herdr for each repository's
 //! worktrees. The decisions all live in `domain`; this module only fetches.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use anyhow::Result;
 
 use crate::app::one_line;
-use crate::domain::model::{normalize_path, Tree};
+use crate::domain::model::{normalize_path, Tree, Unlisted};
 use crate::domain::tree::{self, PanePlacement, RepoInput};
 use crate::port::{GitPort, HerdrPort, Snapshot};
 
 /// Fetch everything and build the tree.
 pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapshot, Tree)> {
     let snapshot = herdr.snapshot()?;
-    let placements = resolve_placements(&snapshot, git);
-    let mut repos = collect_repos(herdr, git, &placements);
+    let (placements, unplaced) = resolve_placements(&snapshot, git);
+    let (mut repos, unlisted) = collect_repos(herdr, git, &placements);
     read_refs(git, &mut repos);
-    let tree = tree::build(&snapshot, &repos, &placements);
+    // After `build` rather than through it: assembling the tree from what was read and
+    // recording what could not be are different questions, and `build` is the pure half.
+    let mut tree = tree::build(&snapshot, &repos, &placements);
+    tree.trouble.unlisted = unlisted;
+    tree.trouble.unplaced = unplaced;
     Ok((snapshot, tree))
 }
 
@@ -71,13 +75,24 @@ fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
     });
 }
 
-/// Work out which repository and checkout each pane sits in.
+/// Work out which repository and checkout each pane sits in, and which panes git would not
+/// answer for.
 ///
 /// Two shortcuts keep this cheap. Panes are resolved per working directory rather than per
 /// pane, because several panes usually share one; and when herdr already knows a workspace
 /// is a worktree, its answer is reused instead of running git — but only for panes that are
 /// still somewhere under that checkout, since a pane is free to `cd` into another repository.
-fn resolve_placements(snapshot: &Snapshot, git: &dyn GitPort) -> HashMap<String, PanePlacement> {
+///
+/// A git that refused is kept apart from a path that is simply not in a repository. They are
+/// one value away from each other here and nothing alike to a reader: the second is an
+/// ordinary pane in an ordinary directory, and the first is every pane git is asked about at
+/// once when `git` is not on the path herdr launched the plugin with: every pane with a
+/// working directory, except one still under the checkout of its own workspace when herdr
+/// knows that workspace's worktree, which the shortcut above places without git. Issue #33.
+fn resolve_placements(
+    snapshot: &Snapshot,
+    git: &dyn GitPort,
+) -> (HashMap<String, PanePlacement>, BTreeMap<String, String>) {
     let workspace_worktrees: HashMap<&str, PanePlacement> = snapshot
         .workspaces
         .iter()
@@ -112,6 +127,7 @@ fn resolve_placements(snapshot: &Snapshot, git: &dyn GitPort) -> HashMap<String,
     }
 
     let resolved = identify_all(git, &unresolved);
+    let mut unplaced = BTreeMap::new();
 
     for pane in &snapshot.panes {
         if placements.contains_key(&pane.pane_id) {
@@ -120,22 +136,31 @@ fn resolve_placements(snapshot: &Snapshot, git: &dyn GitPort) -> HashMap<String,
         let Some(cwd) = pane.effective_cwd() else {
             continue;
         };
-        if let Some(Some(placement)) = resolved.get(cwd) {
-            placements.insert(pane.pane_id.clone(), placement.clone());
+        match resolved.get(cwd) {
+            Some(Ok(Some(placement))) => {
+                placements.insert(pane.pane_id.clone(), placement.clone());
+            }
+            // git answered, and the answer is that this path is not in a repository. An
+            // ordinary pane in an ordinary directory; the section at the bottom is for it.
+            // `None` does not happen — every unplaced pane's directory went to
+            // `identify_all` — and would mean the same: nothing to say about it.
+            Some(Ok(None)) | None => {}
+            Some(Err(words)) => {
+                unplaced.insert(pane.pane_id.clone(), words.clone());
+            }
         }
     }
 
-    placements
+    (placements, unplaced)
 }
+
+type Placed = Result<Option<PanePlacement>, String>;
 
 /// Resolve every distinct working directory, several at a time.
 ///
 /// A `git rev-parse` is a few milliseconds; a user with many panes open across many
 /// repositories would feel them added up, and the picker has to open instantly.
-fn identify_all<'a>(
-    git: &dyn GitPort,
-    cwds: &HashSet<&'a str>,
-) -> BTreeMap<&'a str, Option<PanePlacement>> {
+fn identify_all<'a>(git: &dyn GitPort, cwds: &HashSet<&'a str>) -> BTreeMap<&'a str, Placed> {
     /// Enough to hide the latency without flooding a laptop with git processes.
     const MAX_IN_FLIGHT: usize = 8;
 
@@ -143,16 +168,21 @@ fn identify_all<'a>(
     let mut resolved = BTreeMap::new();
 
     for chunk in cwds.chunks(MAX_IN_FLIGHT) {
-        let results: Vec<Option<PanePlacement>> = std::thread::scope(|scope| {
+        let results: Vec<Placed> = std::thread::scope(|scope| {
             let handles: Vec<_> = chunk
                 .iter()
                 .map(|cwd| scope.spawn(move || identify_one(git, cwd)))
                 .collect();
             handles
                 .into_iter()
-                // A panicking git resolution must not take the picker down with it; the
-                // pane just ends up ungrouped.
-                .map(|handle| handle.join().unwrap_or(None))
+                // Reached only in a debug build — the release profile aborts on a panic.
+                // The pane ends up ungrouped with a reason, the way `read_refs` does for a
+                // walk whose thread did not finish.
+                .map(|handle| {
+                    handle
+                        .join()
+                        .unwrap_or_else(|_| Err("the thread asking git did not finish".into()))
+                })
                 .collect()
         });
         for (cwd, placement) in chunk.iter().zip(results) {
@@ -162,14 +192,19 @@ fn identify_all<'a>(
     resolved
 }
 
-fn identify_one(git: &dyn GitPort, cwd: &str) -> Option<PanePlacement> {
-    // A path that is not in a repository, and a git that failed, are the same thing here:
-    // the pane is simply not grouped.
-    let identity = git.identify(cwd).ok().flatten()?;
-    Some(PanePlacement {
+/// `Ok(None)` is git saying the path is not in a repository. `Err` is git not saying —
+/// refused, or not started at all — which is a different thing to tell the user and the
+/// difference between one odd pane and a session that cannot be grouped.
+fn identify_one(git: &dyn GitPort, cwd: &str) -> Placed {
+    let identity = match git.identify(cwd) {
+        Ok(Some(identity)) => identity,
+        Ok(None) => return Ok(None),
+        Err(error) => return Err(one_line(&format!("{error:#}"))),
+    };
+    Ok(Some(PanePlacement {
         repo_key: normalize_path(&identity.repo_key).to_string(),
         checkout_path: normalize_path(&identity.checkout_path).to_string(),
-    })
+    }))
 }
 
 /// Whether `path` is `root` or sits underneath it.
@@ -180,41 +215,88 @@ fn is_inside(path: &str, root: &str) -> bool {
 }
 
 /// Ask herdr for the worktrees of every repository a pane was found in.
+///
+/// A repository herdr refuses to list comes back as the second half rather than as nothing.
+/// Dropped, it takes every checkout in it off the screen and sends its panes to `not in any
+/// repository` with nothing to say why — and with a sweep's `Enter` reading the tree again
+/// before it asks, that lands between the marks going on and the question being asked, where
+/// `no longer marked:` with bare paths is all the reader gets unless the reason travels with
+/// the tree. Issue #56.
 fn collect_repos(
     herdr: &dyn HerdrPort,
     git: &dyn GitPort,
     placements: &HashMap<String, PanePlacement>,
-) -> Vec<RepoInput> {
-    // One checkout per repo is enough to ask about: herdr resolves the whole repository
-    // from any path inside it. BTreeMap keeps the result deterministic.
-    let mut probe_paths: BTreeMap<&str, &str> = BTreeMap::new();
-    for placement in placements.values() {
-        probe_paths
+) -> (Vec<RepoInput>, Vec<Unlisted>) {
+    // Every checkout a pane was found in, by repository, in path order. herdr resolves the
+    // whole repository from any path inside it, so the first checkout that answers is the
+    // answer and the rest are asked only when one refuses. Whatever makes herdr refuse one
+    // checkout and answer for another, which of a repository's checkouts happened to come
+    // first out of a `HashMap` must not decide whether the repository is on screen.
+    let mut panes: BTreeMap<&str, BTreeMap<&str, &str>> = BTreeMap::new();
+    for (pane_id, placement) in placements {
+        panes
             .entry(&placement.repo_key)
-            .or_insert(&placement.checkout_path);
+            .or_default()
+            .insert(pane_id, &placement.checkout_path);
     }
 
-    probe_paths
-        .into_iter()
-        .filter_map(|(repo_key, probe)| {
-            let listed = herdr.worktree_list(probe).ok()?;
-            let repo_root = normalize_path(&listed.source.repo_root).to_string();
-            let display_name = git
-                .github_slug(&repo_root)
-                .ok()
-                .flatten()
-                .map(|slug| slug.as_str().to_string())
-                .unwrap_or_else(|| listed.source.repo_name.clone());
-            Some(RepoInput {
+    let mut repos = Vec::new();
+    let mut unlisted = Vec::new();
+    for (repo_key, panes) in panes {
+        let probes: BTreeSet<&str> = panes.values().copied().collect();
+        // What was said about the first checkout, which is what a reader would have been
+        // told had it been the only one.
+        let mut words = None;
+        let listed = probes
+            .iter()
+            .find_map(|probe| match herdr.worktree_list(probe) {
+                // An answer about another repository is not this one's listing: herdr
+                // resolved the path to a different `repo_key` from the one the pane was
+                // placed in. Filed under this key it would draw that repository in this
+                // one's place, and this one nowhere, so it counts as a refusal.
+                Ok(listed) if normalize_path(&listed.source.repo_key) != repo_key => {
+                    words.get_or_insert_with(|| {
+                        let other = normalize_path(&listed.source.repo_key);
+                        format!("herdr listed {probe} as {other}")
+                    });
+                    None
+                }
+                Ok(listed) => Some(listed),
+                Err(error) => {
+                    words.get_or_insert_with(|| one_line(&format!("{error:#}")));
+                    None
+                }
+            });
+        let Some(listed) = listed else {
+            unlisted.push(Unlisted {
                 repo_key: repo_key.to_string(),
-                repo_root,
-                display_name,
-                worktrees: listed.worktrees,
-                // Read next, all at once — `read_refs`.
-                refs: Ok(Vec::new()),
-            })
-        })
-        .collect()
+                // Never empty: a repository is here because a pane is in one of its
+                // checkouts, and every one of them refused.
+                words: words.unwrap_or_default(),
+                panes: panes
+                    .iter()
+                    .map(|(pane_id, checkout)| (pane_id.to_string(), checkout.to_string()))
+                    .collect(),
+            });
+            continue;
+        };
+        let repo_root = normalize_path(&listed.source.repo_root).to_string();
+        let display_name = git
+            .github_slug(&repo_root)
+            .ok()
+            .flatten()
+            .map(|slug| slug.as_str().to_string())
+            .unwrap_or_else(|| listed.source.repo_name.clone());
+        repos.push(RepoInput {
+            repo_key: repo_key.to_string(),
+            repo_root,
+            display_name,
+            worktrees: listed.worktrees,
+            // Read next, all at once — `read_refs`.
+            refs: Ok(Vec::new()),
+        });
+    }
+    (repos, unlisted)
 }
 
 #[cfg(test)]
@@ -224,12 +306,20 @@ mod tests {
 
     use anyhow::Result;
 
-    use super::{collect_repos, is_inside, read_refs, resolve_placements};
+    use super::{collect_repos, collect_tree, is_inside, read_refs, resolve_placements};
     use crate::domain::tree::{PanePlacement, RepoInput};
-    use crate::port::{Slug, Snapshot, Worktree, WorktreeList, WorktreeSource};
+    use crate::port::{
+        AgentStatus, Pane, Slug, Snapshot, Workspace, WorkspaceWorktree, Worktree, WorktreeList,
+        WorktreeSource,
+    };
 
     /// A herdr that knows one repository, and a git that may or may not know its name on
-    /// GitHub. Between them they are everything `collect_repos` reads.
+    /// GitHub. Between them they are everything `collect_repos` reads — and, with the
+    /// session and the ref walk below, everything `collect_tree` reads as well.
+    ///
+    /// `collect_repos` is handed its placements, so it cannot reach `snapshot` whatever this
+    /// answers; the other methods stay `unreachable!()`. The git half refuses `identify`,
+    /// which is what the session below has one pane needing.
     struct Repository {
         slug: Result<Option<Slug>, ()>,
     }
@@ -351,7 +441,12 @@ mod tests {
     }
 
     impl FakeHerdr for Repository {
-        fn worktree_list(&self, _cwd: &str) -> Result<WorktreeList> {
+        fn worktree_list(&self, cwd: &str) -> Result<WorktreeList> {
+            // One probe path herdr will not answer for, so the other half of this call is
+            // reachable without a second fake. Every other path is the one repository.
+            if cwd.contains("refused") {
+                anyhow::bail!("herdr rejected worktree.list: internal error");
+            }
             Ok(WorktreeList {
                 source: WorktreeSource {
                     repo_key: "/src/app/.git".into(),
@@ -365,6 +460,60 @@ mod tests {
                 worktrees: Vec::<Worktree>::new(),
             })
         }
+        fn snapshot(&self) -> Result<Snapshot> {
+            // The first pane is in a workspace herdr knows the worktree of, so no git is
+            // asked to place it — and in the one repository this herdr will not list.
+            Ok(Snapshot {
+                workspaces: vec![Workspace {
+                    workspace_id: "w1".into(),
+                    label: String::new(),
+                    number: 0,
+                    focused: false,
+                    active_tab_id: None,
+                    agent_status: AgentStatus::Unknown,
+                    worktree: Some(WorkspaceWorktree {
+                        repo_key: "/src/refused/.git".into(),
+                        repo_name: "refused".into(),
+                        repo_root: "/src/refused".into(),
+                        checkout_path: "/src/refused".into(),
+                        is_linked_worktree: false,
+                    }),
+                }],
+                panes: vec![
+                    Pane {
+                        pane_id: "w1:p1".into(),
+                        tab_id: "w1:t1".into(),
+                        workspace_id: "w1".into(),
+                        terminal_id: String::new(),
+                        cwd: Some("/src/refused".into()),
+                        foreground_cwd: None,
+                        focused: false,
+                        agent: None,
+                        agent_status: AgentStatus::Unknown,
+                        title: None,
+                        terminal_title_stripped: None,
+                        label: None,
+                    },
+                    // In no workspace herdr knows a worktree of, so git is asked about it —
+                    // and this git will not answer.
+                    Pane {
+                        pane_id: "w9:p9".into(),
+                        tab_id: "w9:t1".into(),
+                        workspace_id: "w9".into(),
+                        terminal_id: String::new(),
+                        cwd: Some("/home/me".into()),
+                        foreground_cwd: None,
+                        focused: false,
+                        agent: None,
+                        agent_status: AgentStatus::Unknown,
+                        title: None,
+                        terminal_title_stripped: None,
+                        label: None,
+                    },
+                ],
+                ..Snapshot::default()
+            })
+        }
     }
     fake_herdr!(Repository);
 
@@ -374,6 +523,16 @@ mod tests {
                 Ok(slug) => Ok(slug.clone()),
                 Err(()) => Err(anyhow::anyhow!("fatal: not a git repository")),
             }
+        }
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            Err(anyhow::anyhow!(
+                "git could not be run: no such file or directory (`git rev-parse`)"
+            ))
+        }
+        fn local_refs(&self, _repo_root: &str) -> Result<crate::port::RefWalk> {
+            // Reached only through `collect_tree`; a repository that was never listed is
+            // never walked, so this answers for the ones that were.
+            Ok(crate::port::RefWalk::of(Vec::new()))
         }
     }
     fake_git!(Repository);
@@ -390,7 +549,7 @@ mod tests {
 
     fn named(slug: Result<Option<Slug>, ()>) -> String {
         let port = Repository { slug };
-        let repos = collect_repos(&port, &port, &one_pane_in("/src/app"));
+        let (repos, _) = collect_repos(&port, &port, &one_pane_in("/src/app"));
         repos
             .into_iter()
             .next()
@@ -460,11 +619,239 @@ mod tests {
                 },
             ),
         ]);
-        let repos = collect_repos(&port, &port, &two_panes);
+        let (repos, _) = collect_repos(&port, &port, &two_panes);
         assert_eq!(
             repos.iter().map(|repo| &repo.repo_key).collect::<Vec<_>>(),
             ["/src/app/.git"],
             "one repository, asked about once"
+        );
+    }
+
+    #[test]
+    fn a_repository_herdr_would_not_list_is_kept_with_its_words_and_takes_nothing_with_it() {
+        // Dropped, it takes every checkout in it off the screen and its panes under `not in
+        // any repository`, and the prompt line has nothing to name — `Refs::Unreadable`
+        // hangs off the repository node, which is exactly what does not exist here. #56.
+        let port = Repository { slug: Ok(None) };
+        let two_repos = HashMap::from([
+            (
+                "w1:p1".to_string(),
+                PanePlacement {
+                    repo_key: "/src/app/.git".to_string(),
+                    checkout_path: "/src/app".to_string(),
+                },
+            ),
+            (
+                "w2:p1".to_string(),
+                PanePlacement {
+                    repo_key: "/src/old/.git".to_string(),
+                    checkout_path: "/src/refused".to_string(),
+                },
+            ),
+        ]);
+
+        let (repos, unlisted) = collect_repos(&port, &port, &two_repos);
+
+        assert_eq!(
+            repos.iter().map(|repo| &repo.repo_key).collect::<Vec<_>>(),
+            ["/src/app/.git"],
+            "the repository that answered is untouched"
+        );
+        assert_eq!(unlisted.len(), 1, "and the other is kept, not dropped");
+        assert_eq!(unlisted[0].repo_key, "/src/old/.git");
+        assert_eq!(
+            unlisted[0]
+                .panes
+                .iter()
+                .map(|(pane, checkout)| (pane.as_str(), checkout.as_str()))
+                .collect::<Vec<_>>(),
+            [("w2:p1", "/src/refused")],
+            "and where its pane is, which no row of it will say"
+        );
+        assert_eq!(
+            unlisted[0].words, "herdr rejected worktree.list: internal error",
+            "herdr's own words, on one line"
+        );
+    }
+
+    #[test]
+    fn a_repository_one_of_whose_checkouts_herdr_refuses_is_listed_through_another() {
+        // Two panes in one repository, one of them in a checkout herdr will not answer for.
+        // Asking only one of them makes the answer turn on which one that is — and taken
+        // from the `HashMap` of placements, the same session draws the repository on one
+        // reading and `not listed` on the next.
+        let port = Repository { slug: Ok(None) };
+        let two_checkouts = HashMap::from([
+            (
+                "w1:p1".to_string(),
+                PanePlacement {
+                    repo_key: "/src/app/.git".to_string(),
+                    // First in path order, so it is the one asked first.
+                    checkout_path: "/src/refused".to_string(),
+                },
+            ),
+            (
+                "w1:p2".to_string(),
+                PanePlacement {
+                    repo_key: "/src/app/.git".to_string(),
+                    checkout_path: "/wt/feat-login".to_string(),
+                },
+            ),
+        ]);
+
+        let (repos, unlisted) = collect_repos(&port, &port, &two_checkouts);
+
+        assert_eq!(
+            repos.iter().map(|repo| &repo.repo_key).collect::<Vec<_>>(),
+            ["/src/app/.git"],
+            "the checkout that answered speaks for the repository"
+        );
+        assert!(unlisted.is_empty(), "{unlisted:?}");
+    }
+
+    /// A herdr that answers for no checkout at all, naming each one it was asked about.
+    struct RefusesEach;
+
+    impl FakeHerdr for RefusesEach {
+        fn worktree_list(&self, cwd: &str) -> Result<WorktreeList> {
+            anyhow::bail!("herdr rejected worktree.list: no checkout at {cwd}")
+        }
+    }
+
+    fake_herdr!(RefusesEach);
+
+    #[test]
+    fn a_repository_every_checkout_of_which_herdr_refuses_is_named_in_what_it_said_first() {
+        // One sentence for the repository, and the one a reader would have met had its first
+        // checkout been the only one asked about.
+        let git = Repository { slug: Ok(None) };
+        let two_checkouts = HashMap::from([
+            (
+                "w1:p1".to_string(),
+                PanePlacement {
+                    repo_key: "/src/app/.git".to_string(),
+                    checkout_path: "/wt/second".to_string(),
+                },
+            ),
+            (
+                "w1:p2".to_string(),
+                PanePlacement {
+                    repo_key: "/src/app/.git".to_string(),
+                    checkout_path: "/src/first".to_string(),
+                },
+            ),
+        ]);
+
+        let (repos, unlisted) = collect_repos(&RefusesEach, &git, &two_checkouts);
+
+        assert!(repos.is_empty());
+        assert_eq!(
+            unlisted
+                .iter()
+                .map(|repo| repo.words.as_str())
+                .collect::<Vec<_>>(),
+            ["herdr rejected worktree.list: no checkout at /src/first"]
+        );
+    }
+
+    /// A herdr that refuses one checkout and answers for another as a different repository.
+    struct AnswersForAnother;
+
+    impl FakeHerdr for AnswersForAnother {
+        fn worktree_list(&self, cwd: &str) -> Result<WorktreeList> {
+            if cwd.contains("refused") {
+                anyhow::bail!("herdr rejected worktree.list: internal error");
+            }
+            Ok(WorktreeList {
+                source: WorktreeSource {
+                    repo_key: "/src/other/.git/".into(),
+                    repo_name: "other".into(),
+                    repo_root: "/src/other".into(),
+                    source_checkout_path: cwd.into(),
+                    source_workspace_id: None,
+                },
+                worktrees: Vec::<Worktree>::new(),
+            })
+        }
+    }
+
+    fake_herdr!(AnswersForAnother);
+
+    #[test]
+    fn a_checkout_herdr_answers_for_as_another_repository_is_not_this_ones_listing() {
+        // Asking the next checkout after a refusal must not turn the refusal into another
+        // repository's listing filed under this key: that draws `other` in `app`'s place,
+        // and says nothing about `app`.
+        let git = Repository { slug: Ok(None) };
+        let placement = |checkout: &str| PanePlacement {
+            repo_key: "/src/app/.git".to_string(),
+            checkout_path: checkout.to_string(),
+        };
+        let words = |unlisted: &[crate::domain::model::Unlisted]| {
+            unlisted
+                .iter()
+                .map(|repo| repo.words.clone())
+                .collect::<Vec<_>>()
+        };
+
+        let (repos, unlisted) = collect_repos(
+            &AnswersForAnother,
+            &git,
+            &HashMap::from([
+                ("w1:p1".to_string(), placement("/src/refused")),
+                ("w1:p2".to_string(), placement("/wt/recloned")),
+            ]),
+        );
+        assert!(repos.is_empty(), "no listing of `app` came back");
+        assert_eq!(
+            words(&unlisted),
+            ["herdr rejected worktree.list: internal error"],
+            "and the first thing herdr said about it is what is said"
+        );
+
+        let (repos, unlisted) = collect_repos(
+            &AnswersForAnother,
+            &git,
+            &HashMap::from([("w1:p2".to_string(), placement("/wt/recloned"))]),
+        );
+        assert!(repos.is_empty());
+        assert_eq!(
+            words(&unlisted),
+            ["herdr listed /wt/recloned as /src/other/.git"],
+            "the only answer is the one about another repository, and that is the reason"
+        );
+    }
+
+    #[test]
+    fn a_reading_hands_the_tree_what_it_could_not_list() {
+        // The other half of the same issue: `collect_repos` keeping the words is worth
+        // nothing until they are on the tree, which is the one thing above this that can
+        // say them. Deleted, every test below still passes and the picker says nothing.
+        let port = Repository { slug: Ok(None) };
+
+        let (_, tree) = collect_tree(&port, &port).expect("herdr described its session");
+
+        assert!(tree.repos.is_empty(), "the one repository was not listed");
+        assert_eq!(
+            tree.trouble
+                .unlisted
+                .iter()
+                .map(|repo| (repo.name(), repo.words.as_str()))
+                .collect::<Vec<_>>(),
+            [("refused", "herdr rejected worktree.list: internal error")],
+            "and the tree carries what herdr said about it"
+        );
+        assert_eq!(
+            tree.trouble
+                .unplaced
+                .iter()
+                .map(|(pane, words)| (pane.as_str(), words.as_str()))
+                .collect::<Vec<_>>(),
+            [(
+                "w9:p9",
+                "git could not be run: no such file or directory (`git rev-parse`)"
+            )],
+            "and the words the failure came with, for the pane that could not be placed"
         );
     }
 
@@ -505,7 +892,7 @@ mod tests {
         }))
         .expect("snapshot fixture should deserialize");
 
-        let placements = resolve_placements(&snapshot, &IdentifiesWithASlash);
+        let (placements, _) = resolve_placements(&snapshot, &IdentifiesWithASlash);
         for pane in ["w1:p1", "w1:p2"] {
             assert_eq!(
                 placements[pane].repo_key, "/src/app/.git",
@@ -513,6 +900,101 @@ mod tests {
             );
         }
     }
+
+    /// A git that will not start at all — what a `PATH` without git looks like from here.
+    /// It answers for nothing, and the same way every time.
+    struct NoGit;
+
+    impl FakeGit for NoGit {
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            Err(anyhow::anyhow!(
+                "git could not be run: no such file or directory (`git rev-parse`)"
+            ))
+        }
+    }
+    fake_git!(NoGit);
+
+    #[test]
+    fn a_pane_git_would_not_answer_about_is_kept_apart_from_one_that_is_simply_outside() {
+        // Read as one answer, a `git` that is not on the path draws every pane it is asked
+        // about under "not in any repository" with nothing to say why. Issue #33.
+        let snapshot: Snapshot = serde_json::from_value(serde_json::json!({
+            "version": "0.7.4",
+            "protocol": 16,
+            "workspaces": [],
+            "tabs": [],
+            "panes": [{
+                "pane_id": "w1:p1",
+                "tab_id": "w1:t1",
+                "workspace_id": "w1",
+                "terminal_id": "t1",
+                "cwd": "/home/me",
+            }],
+        }))
+        .expect("snapshot fixture should deserialize");
+
+        let (placements, unplaced) = resolve_placements(&snapshot, &NoGit);
+        assert!(placements.is_empty(), "git answered for nothing");
+        assert_eq!(
+            unplaced.get("w1:p1").map(String::as_str),
+            Some("git could not be run: no such file or directory (`git rev-parse`)"),
+            "and said why, in the words the failure came with"
+        );
+
+        // The other half of the same call: a path git says is not in a repository is an
+        // ordinary pane, and has nothing to say about it.
+        let (placements, unplaced) = resolve_placements(&snapshot, &IdentifiesNothing);
+        assert!(placements.is_empty());
+        assert!(unplaced.is_empty(), "git answered, and the answer was no");
+    }
+
+    /// A git whose `identify` takes its thread down.
+    struct IdentifyPanics;
+
+    impl FakeGit for IdentifyPanics {
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            panic!("the probe's own panic, printed on stderr by the thread")
+        }
+    }
+    fake_git!(IdentifyPanics);
+
+    #[test]
+    fn a_pane_whose_thread_did_not_finish_is_not_a_pane_outside_a_repository() {
+        // Debug builds only, as `a_ref_walk_whose_thread_did_not_finish_is_not_an_empty_answer`
+        // says of the walk. `unwrap_or(Ok(None))` here is the silence #33 was about: an
+        // ordinary pane in an ordinary directory, with nothing said.
+        let snapshot: Snapshot = serde_json::from_value(serde_json::json!({
+            "version": "0.7.4",
+            "protocol": 16,
+            "workspaces": [],
+            "tabs": [],
+            "panes": [{
+                "pane_id": "w1:p1",
+                "tab_id": "w1:t1",
+                "workspace_id": "w1",
+                "terminal_id": "t1",
+                "cwd": "/home/me",
+            }],
+        }))
+        .expect("snapshot fixture should deserialize");
+
+        let (placements, unplaced) = resolve_placements(&snapshot, &IdentifyPanics);
+        assert!(placements.is_empty());
+        assert_eq!(
+            unplaced.get("w1:p1").map(String::as_str),
+            Some("the thread asking git did not finish")
+        );
+    }
+
+    /// A git that answers, and says every path is outside a repository.
+    struct IdentifiesNothing;
+
+    impl FakeGit for IdentifiesNothing {
+        fn identify(&self, _cwd: &str) -> Result<Option<crate::port::RepoIdentity>> {
+            Ok(None)
+        }
+    }
+    fake_git!(IdentifiesNothing);
 
     #[test]
     fn recognises_a_pane_that_is_still_inside_its_workspace_checkout() {

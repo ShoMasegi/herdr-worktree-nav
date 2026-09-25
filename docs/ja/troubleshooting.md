@@ -32,7 +32,7 @@ me/app  [/Users/me/Workspace/app]
 
 プラグインファイルを読めない場合や TOML が不正な場合、dump は `plugin config problem:` と理由を出します。ピッカーは閉じません。既定値で開き、プロンプト行に `plugin config.toml: …` と出します。そのファイルを直し、ピッカーを閉じてから開き直してください。
 
-`track level` は upstream と揃っているブランチ、`upstream none` は揃う相手の upstream が無いブランチ、`track unreadable` は git が出した位置をプラグインが読めなかったブランチで、行の上ではどれも同じ「印なし」です。だからこのページにはそれぞれの語があります。`working tree unreadable:` には、行が `?` を出す場面の git の言葉がそのまま付きます。git が refs を読めなかったリポジトリは名前の下に `refs unreadable:` と git の言葉を出し、その checkout は `not read` と読めます。このページ自身の 2 回目の refs 読み取りだけが失敗した場合——ピッカーはマーカーのために一度読み、`dump` は upstream 名のためにもう一度読みます——リポジトリは `refs unreadable on the second read:` と言い、その checkout はピッカーが描いている track をそのまま持って `upstream not read` と読めます。git がその checkout に ref を挙げていない場合は `no ref at this checkout for <branch>` と言います。何がどこに checkout されているかについて git と herdr の言い分が食い違っているということで、そこを見に行くのが筋です。git がその checkout に 2 本以上の ref を挙げた場合は `more than one ref at this checkout:` に続けて 1 本ずつ `<branch> → <upstream> <位置>` と並べます。そのリポジトリの worktree 登録が 2 つ以上そのパスを名乗っているということで、どれが古いかはこのページには分かりません。その後ろの `track` は、ピッカー自身の読み取りが得たものです。印を描いていればその印、git が出したフィールドを読めなければ `unreadable`、何も得ていなければ `not known` です。行の上では後ろの 2 つが `track level` や `upstream none` と同じ「印なし」です。ブランチの載っていない行は `no branch reported` と読め、git がそのパスに ref を挙げていれば続けて `git names at this path:` と同じ並びが出ます（挙げていないのにピッカー自身の読み取りが ref を得ていれば `no ref at this checkout`）。その読み取りが何かを得ていれば `track <位置>` が後ろに付きます。git が refs を読めなかった場合は `refs not read`、このページ自身の 2 回目の読み取りだけが失敗した場合は `refs not read on the second read` と出ます。作業ツリーは checkout ごとに順番にその場で歩くので、checkout が多いと少し時間が掛かります。
+`track level` は upstream と揃っているブランチ、`upstream none` は揃う相手の upstream が無いブランチ、`track unreadable` は git が出した位置をプラグインが読めなかったブランチで、行の上ではどれも同じ「印なし」です。だからこのページにはそれぞれの語があります。`working tree unreadable:` には、行が `?` を出す場面の git の言葉がそのまま付きます。git が refs を読めなかったリポジトリは名前の下に `refs unreadable:` と git の言葉を出し、その checkout は `not read` と読めます。このページ自身の 2 回目の refs 読み取りだけが失敗した場合——ピッカーはマーカーのために一度読み、`dump` は upstream 名のためにもう一度読みます——リポジトリは `refs unreadable on the second read:` と言い、その checkout はピッカーが描いている track をそのまま持って `upstream not read` と読めます。git がその checkout に ref を挙げていない場合は `no ref at this checkout for <branch>` と言います。何がどこに checkout されているかについて git と herdr の言い分が食い違っているということで、そこを見に行くのが筋です。git がその checkout に 2 本以上の ref を挙げた場合は `more than one ref at this checkout:` に続けて 1 本ずつ `<branch> → <upstream> <位置>` と並べます。そのリポジトリの worktree 登録が 2 つ以上そのパスを名乗っているということで、どれが古いかはこのページには分かりません。その後ろの `track` は、ピッカー自身の読み取りが得たものです。印を描いていればその印、git が出したフィールドを読めなければ `unreadable`、何も得ていなければ `not known` です。行の上では後ろの 2 つが `track level` や `upstream none` と同じ「印なし」です。ブランチの載っていない行は `no branch reported` と読め、git がそのパスに ref を挙げていれば続けて `git names at this path:` と同じ並びが出ます。git が refs を読めなかった場合は `refs not read`、このページ自身の 2 回目の読み取りだけが失敗した場合は `refs not read on the second read` と出ます。作業ツリーは checkout ごとに順番にその場で歩くので、checkout が多いと少し時間が掛かります。
 
 git の言葉は、端末で使う git が何語を話していても、ここでもプロンプト行でも英語で出ます。プラグインが git を `LC_ALL=C` で走らせているためです。2 つのこと——そのパスがリポジトリかどうか、walk から ref が抜け落ちたかどうか——をその文面を読んで決めているので、翻訳された文は読めない文になります。
 
@@ -83,6 +83,11 @@ herdr pane get <pane_id>
 ```
 
 `cwd` と `foreground_cwd` の両方が無い場合、herdr はその pane の中を見られていないため、一覧の末尾にある「not in any repository」セクションに入ります。
+
+リポジトリの外にある pane と、herdr が中を見られない pane のほかに、そこに入る理由がさらに 2 つあります。どちらなのかは `dump` が pane の下に印字します。
+
+- git が起動できなかったか、pane がどこにあるかを答えなかった場合。まとまるはずの pane がその見出しの下にあるときは、まずこちらを疑ってください。herdr がプラグインを起動した `PATH` に `git` が無ければ、git に訊く pane はすべて同時に失敗します。git に訊くのは、作業ディレクトリのある pane のうち、自分の workspace の checkout の配下にまだいて、その workspace の worktree を herdr が把握しているもの（git に訊かずに配置されます）を除いたすべてです。プロンプト行は失敗に付いてきた言葉でそれを言い、リポジトリ単位の文より先に出します。`dump` はその言葉を pane の下に印字します。
+- 配置はできたが、そのリポジトリの一覧を herdr が返さなかった場合。プロンプト行は `<name>: not listed:` に理由を続けてリポジトリを名指しします（他の文が先に来るときは件数に数えられます）。`dump` は pane の下に `in <name>, which is not listed` と印字します。
 
 ## GitHub にあるはずのブランチが出てこない
 

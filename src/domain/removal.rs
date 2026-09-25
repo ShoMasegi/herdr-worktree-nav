@@ -217,6 +217,7 @@ mod tests {
                 ],
             }],
             ungrouped: Vec::new(),
+            ..Default::default()
         }
     }
 

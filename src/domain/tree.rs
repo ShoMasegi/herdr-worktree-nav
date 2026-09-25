@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::domain::model::{normalize_path, PaneNode, Refs, RepoNode, Tree, WorktreeNode};
+use crate::domain::model::{normalize_path, PaneNode, Refs, RepoNode, Tree, Trouble, WorktreeNode};
 use crate::port::{GitRef, RefKind, Snapshot, Track, Worktree};
 
 /// A repository the caller has identified, together with the worktrees herdr reported for it.
@@ -108,8 +108,8 @@ pub fn build(
                     // carrying `[gone]`:
                     // `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out`
                     // in `tests/git_adapter.rs`. The row `build` makes below for a pane
-                    // herdr never listed keeps its track: nothing in `build`'s inputs tells
-                    // that checkout from one with nothing out (#49).
+                    // herdr never listed draws no track either, for a reason of its own:
+                    // git may name a branch there, but the row cannot.
                     let track = if branch.is_some() {
                         tracks
                             .get(&(normalize_path(&repo.repo_key), checkout_path))
@@ -163,7 +163,6 @@ pub fn build(
         };
 
         let checkout = normalize_path(&placement.checkout_path);
-        let owner = normalize_path(&placement.repo_key);
         let repo = &mut nodes[index];
         match repo
             .worktrees
@@ -175,13 +174,18 @@ pub fn build(
                 // A checkout herdr's worktree list did not mention — for instance one added
                 // with `git worktree add` outside herdr. Showing it is better than dropping
                 // the pane into "ungrouped", where the user would not think to look.
+                //
+                // And no track: this row names no branch, so a marker on it is about a branch
+                // it cannot name, and the reader has nothing to check it against. A missing
+                // marker beats a wrong one, which is the judgement #45 makes one arm up.
+                // What git said is still on `dump`'s page, under `git names at this path:`,
+                // where naming it costs nothing. Issue #49.
                 repo.worktrees.push(WorktreeNode {
                     branch: None,
                     checkout_path: checkout.to_string(),
                     is_primary: false,
                     open_workspace_id: Some(node.workspace_id.clone()),
-                    // git knows about it even where herdr does not.
-                    track: tracks.get(&(owner, checkout)).copied(),
+                    track: None,
                     panes: vec![node],
                 });
             }
@@ -202,6 +206,9 @@ pub fn build(
     Tree {
         repos: nodes,
         ungrouped,
+        // What the reading could not do is not this function's to know: it is handed what
+        // was read. `app::collect` records the rest onto the tree afterwards.
+        trouble: Trouble::default(),
     }
 }
 

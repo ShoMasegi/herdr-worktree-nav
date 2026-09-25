@@ -110,6 +110,24 @@ fn a_path_outside_any_repository_is_an_answer_rather_than_an_error() {
 }
 
 #[test]
+fn a_checkout_that_has_gone_is_an_answer_rather_than_a_git_that_could_not_be_run() {
+    // A pane left sitting in a checkout another pane removed. `app::collect` reads `Err`
+    // here as "git could not be run, or would not say where it is", which is the item
+    // `docs/{en,ja}/troubleshooting` sends the reader to check `PATH` over, and this is not
+    // that — so it has to be the ordinary answer.
+    //
+    // It is `Ok(None)` because `command` passes the directory as `git -C`: git starts,
+    // cannot chdir, and says `fatal: cannot change to …`, which `NOT_A_REPOSITORY` matches.
+    // Run with `Command::current_dir` instead, the spawn itself would fail with
+    // `No such file or directory (os error 2)` — the same words a git that is not on the
+    // path gives — and the prompt line would name the wrong cause. That is what this pins.
+    let gone = tempfile::tempdir().unwrap();
+    let path = path_str(gone.path());
+    drop(gone);
+    assert_eq!(GitCli.identify(&path).unwrap(), None);
+}
+
+#[test]
 fn a_detached_checkout_reports_no_branch() {
     let repo = repository();
     let head = GitCli.head_ref(&path_str(repo.path())).unwrap();

@@ -83,6 +83,12 @@ running in it. The `gone` marker beside the branch name is the reason, which is 
 does not repeat it. Where `gh` answers, a branch whose pull request has been merged or closed
 is marked too, and that row says `PR #123 merged` — the number, so you can go and check it.
 
+"Nothing running" is about the directory a pane is known to stand in, not the row. Two
+repositories can both register one path — one of the registrations stale — and a pane shows in
+only one of their rows; a pane whose own repository herdr would not list shows in none, under
+`not in any repository`. Either way, every row naming that path is refused as running. A pane
+git could not place is not known to stand anywhere, so it keeps no row from being marked.
+
 `Space` adds a mark and takes it away again. The same key does both, because disagreeing with
 the sweep should cost exactly what agreeing with it extra does. `Shift-S` again, `q` or `Esc`
 leaves, and leaving forgets the marks: the next sweep opens on what it would suggest now, not
@@ -364,6 +370,21 @@ The key hint offers it for as long as there is something to read, and `!`, `Esc`
 closes it again. A pane too short for all of them shows what fits and counts the rest, the
 same answer the line gives for the same reason; `herdr-worktree-nav dump` is the copy with
 nothing left out. `r` reads the refs again.
+
+herdr can fail the same way, one step earlier. Asked for a repository's worktrees and
+refusing, it leaves that repository out of the panes view — no rows to carry a marker and no
+heading to hang one off — so a condition names it there too, as `app: not listed:` with the
+reason, ahead of any repository whose refs went unread. A sweep is where that matters
+most: the re-read `Enter` asks for can lose a whole repository between the marks going on and
+the question being asked, and the rows that go are then named by their bare paths with this
+sentence after them — when every one of them went that way. A row that went for its own reason
+beside them leaves the failed listing to the conditions, since one reason after the list would
+read as the reason for all of it. `dump` prints the same under a `not listed:` heading of its own.
+The branches view says it as well when it is opened from a pane in that repository and falls
+back to that repository's branches: they are git's and still listed, and which checkouts they
+are out in is what herdr did not say, so the view opens on the same sentence until the first
+key. After `Tab` from the panes view it opens on whatever the panes view hands over instead,
+and says nothing about this one.
 
 `r` asks again. It is the only thing that does: the answers are otherwise kept for as long as
 the picker is open, `Tab` to the branches view and back included.

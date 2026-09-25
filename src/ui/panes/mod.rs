@@ -492,12 +492,9 @@ impl PanesState {
             .unwrap_or(0);
     }
 
-    /// What the prompt line says went wrong, or nothing.
-    ///
-    /// git not reading a repository's refs comes first, and `gh` only after it: the first is
-    /// about the track markers on every row of the repository and is true sweep or no sweep,
-    /// while `gh` is asked only during a sweep and about the half git could not decide. One
-    /// sentence at a time, so the `gh` one waits behind the git one until that is fixed.
+    /// What the prompt line says went wrong, or nothing: the first of
+    /// [`conditions`](Self::conditions), and a count of the rest. Which comes first is
+    /// [`notice::conditions`]'s order, and that function says why it runs the way it does.
     pub fn trouble(&self) -> Option<String> {
         words::conditions_line(&self.conditions())
     }
@@ -647,6 +644,38 @@ mod tests {
             state.trouble().as_deref(),
             Some("me/app: gh could not be run"),
             "and is what shows once git's is fixed"
+        );
+    }
+
+    #[test]
+    fn what_the_reading_could_not_read_reaches_the_prompt_line() {
+        // `domain::notice` gathers these and `app::collect` puts them on the tree; this is
+        // the join between the two for the prompt line and `!`.
+        let mut state = state();
+        let mut tree = state.tree.clone();
+        tree.trouble.unlisted.push(crate::domain::model::Unlisted {
+            repo_key: "/src/old/.git".into(),
+            words: "herdr rejected worktree.list: internal error".into(),
+            panes: Default::default(),
+        });
+        state.replace_tree(tree);
+        assert_eq!(
+            state.trouble().as_deref(),
+            Some("old: not listed: herdr rejected worktree.list: internal error")
+        );
+
+        let mut tree = state.tree.clone();
+        tree.trouble.unplaced.insert(
+            "w9:p1".into(),
+            "git could not be run: no such file or directory (`git rev-parse`)".into(),
+        );
+        state.replace_tree(tree);
+        assert_eq!(
+            state.trouble().as_deref(),
+            Some(
+                "1 pane not placed: git could not be run: no such file or directory \
+                 (`git rev-parse`) (+1 more)"
+            )
         );
     }
 
