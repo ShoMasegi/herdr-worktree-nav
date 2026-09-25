@@ -77,14 +77,19 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
         .into_iter()
         .collect();
     // Counted by what git said rather than listed one per pane: a `git` that is not on the
-    // path fails for every pane in the session, and the same sentence once per pane is not
-    // more information than the sentence and a number.
+    // path fails for every pane git is asked about, and the same sentence once per pane is
+    // not more information than the sentence and a number. Most panes first, since the
+    // prompt line holds one of these and the one that cost the most of the session is the
+    // one worth its room; words in order among equals, so two readings of one session say
+    // the same thing.
     let mut by_words: BTreeMap<&str, usize> = BTreeMap::new();
     for words in tree.trouble.unplaced.values() {
         *by_words.entry(words.as_str()).or_default() += 1;
     }
+    let mut by_cost: Vec<(&str, usize)> = by_words.into_iter().collect();
+    by_cost.sort_by(|(_, a), (_, b)| b.cmp(a));
     conditions.extend(
-        by_words
+        by_cost
             .into_iter()
             .map(|(words, panes)| Condition::Unplaced {
                 panes,
@@ -217,21 +222,33 @@ mod tests {
         );
 
         // A pane that failed for another reason is its own condition: two shapes of
-        // failure are two things to fix.
+        // failure are two things to fix. The one that cost more of the session comes first,
+        // whatever its words sort as — `fatal` is ahead of `git` in the alphabet, and a
+        // missing git behind one odd pane is the sentence a reader most needs to see.
         let dubious = "fatal: detected dubious ownership (`git rev-parse`)";
+        let warned = "warning: unable to access '/etc/gitconfig' (`git rev-parse`)";
         tree.trouble
             .unplaced
             .insert("w3:p1".to_string(), dubious.to_string());
+        tree.trouble
+            .unplaced
+            .insert("w4:p1".to_string(), warned.to_string());
         assert_eq!(
             conditions(&tree, None, None),
             vec![
+                Condition::Unplaced {
+                    panes: 2,
+                    words: refused.into(),
+                },
+                // Two that cost the same are in the order of their words, so the line does
+                // not change between two readings of one session.
                 Condition::Unplaced {
                     panes: 1,
                     words: dubious.into(),
                 },
                 Condition::Unplaced {
-                    panes: 2,
-                    words: refused.into(),
+                    panes: 1,
+                    words: warned.into(),
                 },
             ]
         );
