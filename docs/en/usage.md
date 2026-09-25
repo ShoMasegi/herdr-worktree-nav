@@ -83,6 +83,12 @@ running in it. The `gone` marker beside the branch name is the reason, which is 
 does not repeat it. Where `gh` answers, a branch whose pull request has been merged or closed
 is marked too, and that row says `PR #123 merged` — the number, so you can go and check it.
 
+"Nothing running" is about the directory a pane is known to stand in, not the row. Two
+repositories can both register one path — one of the registrations stale — and a pane shows in
+only one of their rows; a pane whose own repository herdr would not list shows in none, under
+`not in any repository`. Either way, every row naming that path is refused as running. A pane
+git could not place is not known to stand anywhere, so it keeps no row from being marked.
+
 `Space` adds a mark and takes it away again. The same key does both, because disagreeing with
 the sweep should cost exactly what agreeing with it extra does. `Shift-S` again, `q` or `Esc`
 leaves, and leaving forgets the marks: the next sweep opens on what it would suggest now, not

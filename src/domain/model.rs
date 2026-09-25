@@ -232,11 +232,17 @@ pub struct Trouble {
 /// A repository herdr would not list, in herdr's own words.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unlisted {
-    /// What herdr was asked about. The only name this side has: `repo_root` and the display
-    /// name both come out of the listing that did not happen.
+    /// The repository the panes were placed in. What the screen calls it is
+    /// [`Unlisted::name`], made from this key.
     pub repo_key: String,
     /// herdr's own words.
     pub words: String,
+    /// The panes placed in this repository, by pane id, with the checkout each stands in —
+    /// the paths herdr was asked about. Those panes are under `not in any repository` rather
+    /// than in a row, so a row another repository lists at one of these paths shows no pane
+    /// and the path is still somebody's working directory: `domain::sweep::candidates` reads
+    /// it here. And the pane the branches view was opened from may be one of them.
+    pub panes: BTreeMap<String, String>,
 }
 
 impl Unlisted {
@@ -330,6 +336,7 @@ mod tests {
         let named = |key: &str| Unlisted {
             repo_key: key.to_string(),
             words: String::new(),
+            panes: Default::default(),
         };
         assert_eq!(named("/src/app/.git").name(), "app");
         assert_eq!(named("/src/app/.git/").name(), "app");

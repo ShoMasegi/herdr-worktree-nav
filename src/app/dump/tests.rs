@@ -558,6 +558,7 @@ fn a_repository_herdr_would_not_list_has_a_heading_of_its_own() {
     tree.trouble.unlisted.push(Unlisted {
         repo_key: "/src/old/.git".into(),
         words: "herdr rejected worktree.list: internal error".into(),
+        panes: Default::default(),
     });
     let page = page(&tree, &RefsByRepo::new());
     assert!(

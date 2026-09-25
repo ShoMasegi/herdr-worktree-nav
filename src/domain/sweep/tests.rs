@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::model::{PaneNode, Refs, RepoNode, WorktreeNode};
+use crate::domain::model::{PaneNode, Refs, RepoNode, Unlisted, WorktreeNode};
 use crate::port::{AgentStatus, SettledPullRequest};
 
 fn worktree(branch: &str, path: &str) -> WorktreeNode {
@@ -230,6 +230,80 @@ fn the_three_checkouts_a_sweep_never_touches() {
         Candidate::Refused(Refusal::Removing)
     );
     assert!(judged.values().all(|c| !c.is_markable()));
+}
+
+#[test]
+fn a_checkout_a_pane_of_an_unlisted_repository_stands_in_is_running() {
+    // The pane's own repository is the one herdr would not list, so the pane is under
+    // `not in any repository` and this row — another repository's registration of the same
+    // path — has no panes to show. It is still somebody's working directory.
+    let mut wt = worktree("chore/deps", "/wt/shared");
+    wt.track = Some(Track::Gone);
+    let mut tree = tree_of(vec![wt]);
+    let trees = clean(&["/wt/shared"]);
+    let none = BTreeMap::new();
+    assert_eq!(
+        judged(&tree, &facts(&trees, &none))[&at("/wt/shared")],
+        Candidate::Offered(Reason::Gone),
+        "the shape a sweep marks when it opens"
+    );
+
+    tree.trouble.unlisted.push(Unlisted {
+        repo_key: "/src/other/.git".into(),
+        words: "herdr rejected worktree.list: internal error".into(),
+        panes: BTreeMap::from([("w9:p1".to_string(), "/elsewhere".to_string())]),
+    });
+    assert_eq!(
+        judged(&tree, &facts(&trees, &none))[&at("/wt/shared")],
+        Candidate::Offered(Reason::Gone),
+        "a repository that was not listed keeps nothing it has no pane in"
+    );
+
+    tree.trouble.unlisted[0]
+        .panes
+        .insert("w9:p2".to_string(), "/wt/shared".to_string());
+    assert_eq!(
+        judged(&tree, &facts(&trees, &none))[&at("/wt/shared")],
+        Candidate::Refused(Refusal::Running)
+    );
+}
+
+#[test]
+fn a_pane_in_one_repositorys_row_keeps_another_repositorys_row_at_that_path() {
+    // Two repositories register `/wt/shared`: the pane shows in `me/app`'s row, and
+    // `me/old`'s stale registration of the same directory has no pane to show. The
+    // directory is somebody's working directory whichever row is asked.
+    let mut mine = worktree("feat/x", "/wt/shared");
+    mine.panes = vec![PaneNode {
+        pane_id: "w1:p1".into(),
+        workspace_id: "w1".into(),
+        tab_id: "w1:t1".into(),
+        display_name: None,
+        agent_status: AgentStatus::Working,
+        focused: false,
+    }];
+    let mut theirs = worktree("chore/deps", "/wt/shared");
+    theirs.track = Some(Track::Gone);
+    let mut tree = tree_of(vec![mine]);
+    tree.repos.push(RepoNode {
+        repo_key: "/src/old/.git".into(),
+        repo_root: "/src/old".into(),
+        display_name: "me/old".into(),
+        refs: Refs::Read,
+        worktrees: vec![theirs],
+    });
+    let trees = clean(&["/wt/shared"]);
+    let none = BTreeMap::new();
+    let judged = judged(&tree, &facts(&trees, &none));
+    assert_eq!(
+        judged[&at("/wt/shared")],
+        Candidate::Refused(Refusal::Running)
+    );
+    let old = (
+        RepoKey::of(&tree.repos[1]),
+        CheckoutPath::for_test("/wt/shared"),
+    );
+    assert_eq!(judged[&old], Candidate::Refused(Refusal::Running));
 }
 
 #[test]
