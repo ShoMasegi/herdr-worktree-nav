@@ -85,8 +85,10 @@ fn read_refs(git: &dyn GitPort, repos: &mut [RepoInput]) {
 ///
 /// A git that refused is kept apart from a path that is simply not in a repository. They are
 /// one value away from each other here and nothing alike to a reader: the second is an
-/// ordinary pane in an ordinary directory, and the first is every pane in the session at once
-/// when `git` is not on the path herdr launched the plugin with. Issue #33.
+/// ordinary pane in an ordinary directory, and the first is every pane git is asked about at
+/// once when `git` is not on the path herdr launched the plugin with: every pane with a
+/// working directory, except one still under the checkout of its own workspace when herdr
+/// knows that workspace's worktree, which the shortcut above places without git. Issue #33.
 fn resolve_placements(
     snapshot: &Snapshot,
     git: &dyn GitPort,
@@ -140,6 +142,8 @@ fn resolve_placements(
             }
             // git answered, and the answer is that this path is not in a repository. An
             // ordinary pane in an ordinary directory; the section at the bottom is for it.
+            // `None` does not happen — every unplaced pane's directory went to
+            // `identify_all` — and would mean the same: nothing to say about it.
             Some(Ok(None)) | None => {}
             Some(Err(words)) => {
                 unplaced.insert(pane.pane_id.clone(), words.clone());
@@ -150,12 +154,12 @@ fn resolve_placements(
     (placements, unplaced)
 }
 
+type Placed = Result<Option<PanePlacement>, String>;
+
 /// Resolve every distinct working directory, several at a time.
 ///
 /// A `git rev-parse` is a few milliseconds; a user with many panes open across many
 /// repositories would feel them added up, and the picker has to open instantly.
-type Placed = Result<Option<PanePlacement>, String>;
-
 fn identify_all<'a>(git: &dyn GitPort, cwds: &HashSet<&'a str>) -> BTreeMap<&'a str, Placed> {
     /// Enough to hide the latency without flooding a laptop with git processes.
     const MAX_IN_FLIGHT: usize = 8;
@@ -171,9 +175,9 @@ fn identify_all<'a>(git: &dyn GitPort, cwds: &HashSet<&'a str>) -> BTreeMap<&'a 
                 .collect();
             handles
                 .into_iter()
-                // A panicking git resolution must not take the picker down with it. The
-                // pane ends up ungrouped and says why, the way `read_refs` does for a walk
-                // whose thread did not finish.
+                // Reached only in a debug build — the release profile aborts on a panic.
+                // The pane ends up ungrouped with a reason, the way `read_refs` does for a
+                // walk whose thread did not finish.
                 .map(|handle| {
                     handle
                         .join()
@@ -213,10 +217,11 @@ fn is_inside(path: &str, root: &str) -> bool {
 /// Ask herdr for the worktrees of every repository a pane was found in.
 ///
 /// A repository herdr refuses to list comes back as the second half rather than as nothing.
-/// Dropped, it takes every checkout and every pane in it off the screen — and with a sweep's
-/// `Enter` reading the tree again before it asks, that lands between the marks going on and
-/// the question being asked, where `no longer marked:` with bare paths is all the reader
-/// gets unless the reason travels with the tree. Issue #56.
+/// Dropped, it takes every checkout in it off the screen and sends its panes to `not in any
+/// repository` with nothing to say why — and with a sweep's `Enter` reading the tree again
+/// before it asks, that lands between the marks going on and the question being asked, where
+/// `no longer marked:` with bare paths is all the reader gets unless the reason travels with
+/// the tree. Issue #56.
 fn collect_repos(
     herdr: &dyn HerdrPort,
     git: &dyn GitPort,
@@ -456,7 +461,7 @@ mod tests {
             })
         }
         fn snapshot(&self) -> Result<Snapshot> {
-            // One pane, in a workspace herdr already knows the worktree of, so no git is
+            // The first pane is in a workspace herdr knows the worktree of, so no git is
             // asked to place it — and in the one repository this herdr will not list.
             Ok(Snapshot {
                 workspaces: vec![Workspace {
@@ -624,9 +629,9 @@ mod tests {
 
     #[test]
     fn a_repository_herdr_would_not_list_is_kept_with_its_words_and_takes_nothing_with_it() {
-        // Dropped, it takes every checkout and every pane in it off the screen, and the
-        // prompt line has nothing to name — `Refs::Unreadable` hangs off the repository
-        // node, which is exactly what does not exist here. Issue #56.
+        // Dropped, it takes every checkout in it off the screen and its panes under `not in
+        // any repository`, and the prompt line has nothing to name — `Refs::Unreadable`
+        // hangs off the repository node, which is exactly what does not exist here. #56.
         let port = Repository { slug: Ok(None) };
         let two_repos = HashMap::from([
             (
@@ -846,7 +851,7 @@ mod tests {
                 "w9:p9",
                 "git could not be run: no such file or directory (`git rev-parse`)"
             )],
-            "and what git said about the pane it could not place"
+            "and the words the failure came with, for the pane that could not be placed"
         );
     }
 
@@ -911,9 +916,8 @@ mod tests {
 
     #[test]
     fn a_pane_git_would_not_answer_about_is_kept_apart_from_one_that_is_simply_outside() {
-        // Read as one answer, a `git` that is not on the path draws the whole session
-        // under "not in any repository" — the one thing the troubleshooting page says
-        // means herdr could not see into the pane. Issue #33.
+        // Read as one answer, a `git` that is not on the path draws every pane it is asked
+        // about under "not in any repository" with nothing to say why. Issue #33.
         let snapshot: Snapshot = serde_json::from_value(serde_json::json!({
             "version": "0.7.4",
             "protocol": 16,
@@ -934,7 +938,7 @@ mod tests {
         assert_eq!(
             unplaced.get("w1:p1").map(String::as_str),
             Some("git could not be run: no such file or directory (`git rev-parse`)"),
-            "and said why, in git's own words"
+            "and said why, in the words the failure came with"
         );
 
         // The other half of the same call: a path git says is not in a repository is an

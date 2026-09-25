@@ -108,7 +108,8 @@ pub fn build(
                     // carrying `[gone]`:
                     // `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out`
                     // in `tests/git_adapter.rs`. The row `build` makes below for a pane
-                    // herdr never listed reads the same way, for the same reason.
+                    // herdr never listed draws no track either, for a reason of its own:
+                    // git may name a branch there, but the row cannot.
                     let track = if branch.is_some() {
                         tracks
                             .get(&(normalize_path(&repo.repo_key), checkout_path))
@@ -174,13 +175,8 @@ pub fn build(
                 // with `git worktree add` outside herdr. Showing it is better than dropping
                 // the pane into "ungrouped", where the user would not think to look.
                 //
-                // And no track, for the reason the arm above has none: this row names no
-                // branch, so a marker on it is about a branch it cannot name. What git has
-                // at this path is a `worktreepath` off a registration, which says where a
-                // branch was checked out and not what is checked out there now — a
-                // `git worktree add --detach` at a path some stale registration still
-                // claims is both branchless and unlisted, and an unmissable `gone` beside a
-                // directory name is the wrong marker rather than a late one. A missing
+                // And no track: this row names no branch, so a marker on it is about a branch
+                // it cannot name, and the reader has nothing to check it against. A missing
                 // marker beats a wrong one, which is the judgement #45 makes one arm up.
                 // What git said is still on `dump`'s page, under `git names at this path:`,
                 // where naming it costs nothing. Issue #49.

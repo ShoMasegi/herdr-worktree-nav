@@ -213,29 +213,34 @@ pub struct PaneNode {
 
 /// What the reading could not do, kept on the tree the way [`Refs`] is kept on a repository.
 ///
-/// [`Refs::Unreadable`] hangs off a [`RepoNode`], and these are about nodes that do not
-/// exist: a repository herdr would not list, a pane git could not place. A repository that
-/// never reached the tree takes every checkout and every pane in it with it, so there is
-/// nothing on screen left to carry the reason. Here it travels with the tree, and the prompt
-/// line says it once.
+/// [`Refs::Unreadable`] hangs off a [`RepoNode`], and neither of these has one: a repository
+/// herdr would not list never becomes a node, and a pane git could not place belongs to
+/// none. Their panes are still on screen, under `not in any repository` — but so is a pane
+/// herdr cannot see into, and a row under that heading has no room to say which. Here the
+/// reason travels with the tree, and it is one condition however many panes it covers.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Trouble {
     /// Repositories herdr refused to list the worktrees of.
     pub unlisted: Vec<Unlisted>,
-    /// Panes git could not be asked about: the pane id, and git's own words. A `git` that is
-    /// not on the path herdr launched the plugin with fails for every one of them at once,
-    /// and the whole session then draws under `not in any repository` — which is what herdr
-    /// not seeing into a pane also looks like, and the two are nothing alike to fix.
+    /// Panes git could not place: the pane id, and the words the failure came with — git's;
+    /// the OS's for a git that could not be started; the plugin's for a thread that did not
+    /// finish. A `git` that is not on the path herdr launched the plugin with fails for every
+    /// pane it is asked about at once — every pane with a working directory, except one still
+    /// under the checkout of its own workspace when herdr knows that workspace's worktree,
+    /// which is placed without git — and those draw under `not in any repository`, which is
+    /// what herdr not seeing into a pane also looks like, and the two are nothing alike to
+    /// fix.
     pub unplaced: BTreeMap<String, String>,
 }
 
-/// A repository herdr would not list, in herdr's own words.
+/// A repository herdr would not list, and what herdr said instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unlisted {
     /// The repository the panes were placed in. What the screen calls it is
     /// [`Unlisted::name`], made from this key.
     pub repo_key: String,
-    /// herdr's own words.
+    /// What herdr said — or, where herdr listed the path as another repository, a sentence
+    /// saying so.
     pub words: String,
     /// The panes placed in this repository, by pane id, with the checkout each stands in —
     /// the paths herdr was asked about. Those panes are under `not in any repository` rather
@@ -246,9 +251,9 @@ pub struct Unlisted {
 }
 
 impl Unlisted {
-    /// What to call the repository on screen. The directory its key sits in —
-    /// `/src/app/.git` is `app` — since that is the name a reader would recognise, and the
-    /// whole key where there is no such directory.
+    /// What to call the repository on screen: the key's last path segment once a trailing
+    /// `/.git` is removed — `/src/app/.git` is `app` — and the whole key where that leaves
+    /// nothing.
     pub fn name(&self) -> &str {
         let key = normalize_path(&self.repo_key);
         let root = key.strip_suffix("/.git").unwrap_or(key);
@@ -263,10 +268,13 @@ impl Unlisted {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Tree {
     pub repos: Vec<RepoNode>,
-    /// Panes that are not inside any git work tree. Hidden by default.
+    /// Panes with no repository node to go under: outside any git work tree, or in one
+    /// nobody could say — herdr cannot see into the pane, git would not place it, or herdr
+    /// would not list the repository it is in. [`Tree::trouble`] says which of the last two.
     pub ungrouped: Vec<PaneNode>,
-    /// What this reading could not read at all. Not a property of anything on screen, which
-    /// is the point: it is about what is missing from it.
+    /// What this reading could not read at all: a repository that has no rows, and why some
+    /// of the panes under `not in any repository` are there. Kept beside the nodes rather than on
+    /// them, because the first has no node and the second's node has nowhere to say it.
     pub trouble: Trouble,
 }
 
@@ -329,10 +337,9 @@ mod tests {
     }
 
     #[test]
-    fn a_repository_that_was_never_listed_is_named_by_the_directory_its_key_sits_in() {
-        // The listing is where `me/app` and the repository root would both have come from,
-        // so the key is all there is. `/src/app/.git` is `app` to a reader; the key itself
-        // is not, and is only right where there is nothing better.
+    fn a_repository_that_was_never_listed_is_named_by_the_last_segment_of_its_key() {
+        // No listing came back, so the name is made from the key. `/src/app/.git` is `app`
+        // to a reader; the key itself is not, and is only used where nothing is left.
         let named = |key: &str| Unlisted {
             repo_key: key.to_string(),
             words: String::new(),
@@ -340,11 +347,10 @@ mod tests {
         };
         assert_eq!(named("/src/app/.git").name(), "app");
         assert_eq!(named("/src/app/.git/").name(), "app");
-        // A bare repository, and a worktree's own `.git` file resolved to a common dir that
-        // is not called `.git`: the last segment is still the name a reader recognises.
+        // A key that does not end in `/.git`: its last segment.
         assert_eq!(named("/src/app.git").name(), "app.git");
         assert_eq!(named("/src/app").name(), "app");
-        // Nothing better to say than what herdr was asked about.
+        // No `/` to split on: the key itself.
         assert_eq!(named(".git").name(), ".git");
         assert_eq!(named("").name(), "");
     }

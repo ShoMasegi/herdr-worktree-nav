@@ -136,10 +136,9 @@ fn a_repository_whose_refs_could_not_be_read_says_so_and_marks_nothing() {
 }
 
 #[test]
-fn a_checkout_herdr_did_not_list_is_built_under_the_repository_the_pane_is_in() {
-    // The path an index-based lookup gets wrong: reaching into `repos` by an index is
-    // only valid while `nodes` happens to be built from it in order, and nothing makes
-    // that so.
+fn a_checkout_herdr_did_not_list_is_built_rather_than_left_ungrouped() {
+    // A pane in a checkout herdr's listing did not mention gets a row of its own under its
+    // repository, rather than going under `not in any repository`.
     let mut input = repo(
         "me/app",
         "/src/app",

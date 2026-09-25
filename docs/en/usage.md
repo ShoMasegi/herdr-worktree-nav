@@ -372,9 +372,9 @@ same answer the line gives for the same reason; `herdr-worktree-nav dump` is the
 nothing left out. `r` reads the refs again.
 
 herdr can fail the same way, one step earlier. Asked for a repository's worktrees and
-refusing, it leaves the picker with no repository at all — no rows to carry a marker and no
-heading to hang one off — so the line names it there too, as `app: not listed:` with herdr's
-own words, ahead of any repository whose refs went unread. A sweep is where that matters
+refusing, it leaves that repository out of the panes view — no rows to carry a marker and no
+heading to hang one off — so a condition names it there too, as `app: not listed:` with the
+reason, ahead of any repository whose refs went unread. A sweep is where that matters
 most: the re-read `Enter` asks for can lose a whole repository between the marks going on and
 the question being asked, and the rows that go are then named by their bare paths with this
 sentence after them — when every one of them went that way. A row that went for its own reason

@@ -492,12 +492,9 @@ impl PanesState {
             .unwrap_or(0);
     }
 
-    /// What the prompt line says went wrong, or nothing.
-    ///
-    /// git not reading a repository's refs comes first, and `gh` only after it: the first is
-    /// about the track markers on every row of the repository and is true sweep or no sweep,
-    /// while `gh` is asked only during a sweep and about the half git could not decide. One
-    /// sentence at a time, so the `gh` one waits behind the git one until that is fixed.
+    /// What the prompt line says went wrong, or nothing: the first of
+    /// [`conditions`](Self::conditions), and a count of the rest. Which comes first is
+    /// [`notice::conditions`]'s order, and that function says why it runs the way it does.
     pub fn trouble(&self) -> Option<String> {
         words::conditions_line(&self.conditions())
     }
