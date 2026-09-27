@@ -3,7 +3,7 @@
 //! The caller resolves where each pane lives and which worktrees each repository has, via
 //! the ports, and hands the answers in.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::domain::model::{normalize_path, PaneNode, Refs, RepoNode, Tree, Trouble, WorktreeNode};
 use crate::port::{GitRef, RefKind, Snapshot, Track, Worktree};
@@ -139,6 +139,7 @@ pub fn build(
         .collect();
 
     let mut ungrouped = Vec::new();
+    let mut pane_cwds = BTreeMap::new();
 
     // Snapshot order is preserved within each worktree: herdr already lists panes in an
     // order that matches the layout, and re-sorting by id would put p10 before p9.
@@ -152,11 +153,14 @@ pub fn build(
             focused: pane.focused,
         };
 
-        let Some(placement) = placements.get(&pane.pane_id) else {
-            ungrouped.push(node);
-            continue;
-        };
-        let Some(&index) = by_key.get(normalize_path(&placement.repo_key)) else {
+        if let Some(cwd) = pane.effective_cwd() {
+            pane_cwds.insert(pane.pane_id.clone(), normalize_path(cwd).to_string());
+        }
+        let placed = placements.get(&pane.pane_id).and_then(|placement| {
+            let index = by_key.get(normalize_path(&placement.repo_key))?;
+            Some((placement, *index))
+        });
+        let Some((placement, index)) = placed else {
             ungrouped.push(node);
             continue;
         };
@@ -213,6 +217,7 @@ pub fn build(
         // What the reading could not do is not this function's to know: it is handed what
         // was read. `app::collect` records the rest onto the tree afterwards.
         trouble: Trouble::default(),
+        pane_cwds,
     }
 }
 

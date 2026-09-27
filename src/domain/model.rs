@@ -232,11 +232,17 @@ pub struct Trouble {
 /// A repository herdr would not list, in herdr's own words.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unlisted {
-    /// What herdr was asked about. The only name this side has: `repo_root` and the display
-    /// name both come out of the listing that did not happen.
+    /// The repository the panes were placed in. What the screen calls it is
+    /// [`Unlisted::name`], made from this key.
     pub repo_key: String,
     /// herdr's own words.
     pub words: String,
+    /// The panes placed in this repository, by pane id, with the checkout each stands in —
+    /// the paths herdr was asked about. Those panes are under `not in any repository` rather
+    /// than in a row, so a row another repository lists at one of these paths shows no pane
+    /// and the path is still somebody's working directory: `domain::sweep::candidates` reads
+    /// it here. And the pane the branches view was opened from may be one of them.
+    pub panes: BTreeMap<String, String>,
 }
 
 impl Unlisted {
@@ -262,6 +268,12 @@ pub struct Tree {
     /// What this reading could not read at all. Not a property of anything on screen, which
     /// is the point: it is about what is missing from it.
     pub trouble: Trouble,
+    /// Where each pane stands, by pane id, for the panes herdr gave a working directory. A
+    /// pane is drawn in one row at most, and a checkout can hold its directory without being
+    /// that row: one nested inside the checkout the pane was placed in, one another
+    /// repository registers at the same path, or any checkout at all for a pane under
+    /// `not in any repository`. `domain::sweep::candidates` reads it here.
+    pub pane_cwds: BTreeMap<String, String>,
 }
 
 impl Tree {
@@ -309,6 +321,18 @@ pub fn normalize_path(path: &str) -> &str {
     }
 }
 
+/// Whether `path` is `root` or sits underneath it, compared as text once trailing slashes
+/// are gone: a symlink is not followed, so a path spelled through one is not inside the
+/// resolved spelling. An empty root holds nothing.
+pub fn is_inside(path: &str, root: &str) -> bool {
+    let path = normalize_path(path);
+    match normalize_path(root) {
+        "" => false,
+        "/" => path.starts_with('/'),
+        root => path == root || path.strip_prefix(root).is_some_and(|r| r.starts_with('/')),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -323,6 +347,26 @@ mod tests {
     }
 
     #[test]
+    fn a_path_is_inside_a_root_as_text() {
+        assert!(is_inside("/src/app", "/src/app"));
+        assert!(is_inside("/src/app/lib", "/src/app/"));
+        assert!(is_inside("/src/app/lib/", "/src/app"));
+        assert!(
+            !is_inside("/src/application", "/src/app"),
+            "a prefix is not a parent"
+        );
+        assert!(
+            is_inside("/src/app", "/"),
+            "every absolute path is under `/`"
+        );
+        assert!(!is_inside("/src/app", ""), "an empty root holds nothing");
+        assert!(
+            !is_inside("/tmp/wt/app", "/private/tmp/wt"),
+            "a symlink is not followed"
+        );
+    }
+
+    #[test]
     fn a_repository_that_was_never_listed_is_named_by_the_directory_its_key_sits_in() {
         // The listing is where `me/app` and the repository root would both have come from,
         // so the key is all there is. `/src/app/.git` is `app` to a reader; the key itself
@@ -330,6 +374,7 @@ mod tests {
         let named = |key: &str| Unlisted {
             repo_key: key.to_string(),
             words: String::new(),
+            panes: Default::default(),
         };
         assert_eq!(named("/src/app/.git").name(), "app");
         assert_eq!(named("/src/app/.git/").name(), "app");
