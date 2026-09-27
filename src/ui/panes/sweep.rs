@@ -175,8 +175,8 @@ impl PanesState {
             .collect();
         if !dropped.is_empty() {
             let named = format!("no longer marked: {}", dropped.join(", "));
-            // A row usually goes because a pane opened in it or a file was written, and the
-            // rows themselves show that. It can also go because the repository it was in is
+            // A row can go because a pane opened in it or a file was written, and the
+            // rows usually show that. It can also go because the repository it was in is
             // not there to be read any more, and then the bare paths are the whole of what
             // is left — `nothing left to remove` reads as a sweep that found nothing rather
             // than one that lost its ground.

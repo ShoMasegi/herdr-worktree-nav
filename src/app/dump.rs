@@ -306,9 +306,9 @@ fn each_of(named: &[&GitRef]) -> String {
 /// Neither carries a track — [`WorktreeNode::branch`] names the test — so the refs git names
 /// at the path are named and not explained (issue #49). The `track` arms stay because
 /// [`WorktreeNode`] does not make the state unrepresentable, and a page that dropped a track
-/// it was handed would be the page lying rather than the tree. A track rather than a marker:
-/// [`Track::Unreadable`] is one of these rows having been measured and draws nothing. No
-/// `upstream …`: this row names no branch for one to be about.
+/// it was handed would be the page lying rather than the tree. They say `track`, not
+/// `marker`, because [`Track::Unreadable`] is a track that draws no marker. No `upstream …`:
+/// this row names no branch for one to be about.
 fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {
     let mut out = "no branch reported".to_string();
     match read {
