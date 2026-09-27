@@ -378,6 +378,7 @@ fn first_frame(
     let from_pane_id = summoned.pane.as_deref();
     let repo_root = summoned.repo_root.as_deref();
     let unlisted = repo_root.and_then(|root| unlisted_words(&tree, from_pane_id, root));
+    let unplaced = unplaced_words(&tree, from_pane_id);
 
     // Where the picker was summoned from, as precisely as it can be known: the checkout the
     // invoking pane is in beats the repository it belongs to, because it is the row the
@@ -407,7 +408,10 @@ fn first_frame(
 
     let destinations = dest::destinations(&snapshot, from_pane_id);
     let mut state = BranchesState::new(repos, from.as_deref(), destinations, snapshot, home);
-    if let Some(said) = said {
+    // A pane git could not place has no row, and may have no root; the view opens on
+    // whatever it was handed or fell back to, and the sentence says only why the pane is
+    // not there.
+    if let Some(said) = said.or(unplaced) {
         state.set_message(said);
     }
     Some(state)
@@ -432,6 +436,22 @@ fn unlisted_words(tree: &Tree, pane_id: Option<&str>, root: &str) -> Option<Stri
     Some(words::condition(&Condition::Unlisted {
         repo: repo.name().to_string(),
         words: repo.words.clone(),
+    }))
+}
+
+/// What the first frame says when the pane the picker was opened from is one git could not
+/// place, or nothing: the condition the panes view gathers for it, counted the same way.
+fn unplaced_words(tree: &Tree, pane_id: Option<&str>) -> Option<String> {
+    let words = tree.trouble.unplaced.get(pane_id?)?;
+    let panes = tree
+        .trouble
+        .unplaced
+        .values()
+        .filter(|other| *other == words)
+        .count();
+    Some(words::condition(&Condition::Unplaced {
+        panes,
+        words: words.clone(),
     }))
 }
 
@@ -844,6 +864,39 @@ mod tests {
             .expect("the root is still a repository to list");
         assert_eq!(state.repo().display_name, "other");
         assert_eq!(state.message(), None);
+    }
+
+    #[test]
+    fn a_pane_git_could_not_place_opens_the_view_on_why() {
+        // git is not on the path, so neither this pane nor the one beside it was placed, and
+        // the picker has no root for it. What it opens on is the repository it was handed;
+        // the sentence is the panes view's, counted the same way.
+        let mut tree = Tree::default();
+        tree.repos.push(bare("/src/other"));
+        let refused = "git could not be run: no such file or directory (`git rev-parse`)";
+        for pane in ["w1:p1", "w1:p2"] {
+            tree.trouble
+                .unplaced
+                .insert(pane.to_string(), refused.to_string());
+        }
+        // A pane that failed for another reason is its own condition, not counted in here.
+        tree.trouble.unplaced.insert(
+            "w2:p1".to_string(),
+            "fatal: detected dubious ownership (`git rev-parse`)".to_string(),
+        );
+        let summoned = Summoned {
+            pane: Some("w1:p1".into()),
+            repo_root: None,
+        };
+
+        let state = first_frame(tree, Snapshot::default(), &summoned, None)
+            .expect("the listed repository is there to open on");
+
+        assert_eq!(state.repo().display_name, "other");
+        assert_eq!(
+            state.message(),
+            Some(format!("2 panes not placed: {refused}").as_str())
+        );
     }
 
     #[test]

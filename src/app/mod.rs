@@ -118,6 +118,10 @@ pub fn run_picker(
             .cwd()
             .map(str::to_string)
             .or_else(|| std::env::current_dir().ok()?.to_str().map(str::to_string));
+        // swallows: a git that could not answer here. The view then opens without a root,
+        // as it does when nothing forwarded one; where the pane it was opened from is one
+        // git could not place, the branches view says so when it opens, and the panes view
+        // gathers the same condition when there is no repository to open on.
         repo_root = cwd
             .and_then(|cwd| git.identify(&cwd).ok().flatten())
             .map(|identity| identity.checkout_path);

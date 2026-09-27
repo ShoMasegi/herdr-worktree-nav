@@ -384,7 +384,9 @@ The branches view says it as well when it is opened from a pane in that reposito
 back to that repository's branches: they are git's and still listed, and which checkouts they
 are out in is what herdr did not say, so the view opens on the same sentence until the first
 key. After `Tab` from the panes view it opens on whatever the panes view hands over instead,
-and says nothing about this one.
+and says nothing about this one. Opened from a pane git could not place, it opens on that
+pane's `not placed` sentence when there is any repository to open on; with none it goes to the
+panes view, which gathers the same sentence.
 
 `r` asks again. It is the only thing that does: the answers are otherwise kept for as long as
 the picker is open, `Tab` to the branches view and back included.
