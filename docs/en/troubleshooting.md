@@ -128,7 +128,8 @@ in "not in any repository", the section at the bottom of the list.
 A pane lands there for one other reason: git could not be asked where it is. That is the one
 to check first when the *whole* session is under that heading, because a `git` that is not on
 the path herdr launched the plugin with fails for every pane at once. The prompt line says so
-in git's own words, ahead of anything else it has to report, and `dump` prints the reason
+in git's own words, ahead of anything said about one repository, and `dump` prints the
+reason
 under the pane it belongs to.
 
 ## A branch I can see on GitHub is not listed
