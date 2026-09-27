@@ -156,6 +156,7 @@ fn tree(roots: &[&str]) -> Tree {
     Tree {
         repos: roots.iter().map(|root| repo(root)).collect(),
         ungrouped: Vec::new(),
+        ..Default::default()
     }
 }
 

@@ -746,6 +746,7 @@ mod tests {
                     ],
                 }],
                 ungrouped: vec![],
+                ..Default::default()
             },
             None,
         );

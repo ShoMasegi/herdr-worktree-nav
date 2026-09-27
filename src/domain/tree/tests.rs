@@ -136,10 +136,9 @@ fn a_repository_whose_refs_could_not_be_read_says_so_and_marks_nothing() {
 }
 
 #[test]
-fn a_checkout_herdr_did_not_list_still_gets_what_git_said_about_it() {
-    // The path an index-based lookup gets wrong: reaching into `repos` by an index is
-    // only valid while `nodes` happens to be built from it in order, and nothing makes
-    // that so.
+fn a_checkout_herdr_did_not_list_is_built_rather_than_left_ungrouped() {
+    // A pane in a checkout herdr's listing did not mention gets a row of its own under its
+    // repository, rather than going under `not in any repository`.
     let mut input = repo(
         "me/app",
         "/src/app",
@@ -159,7 +158,11 @@ fn a_checkout_herdr_did_not_list_still_gets_what_git_said_about_it() {
         .iter()
         .find(|worktree| worktree.checkout_path == "/elsewhere/manual")
         .expect("herdr did not list it, so the pane's own cwd put it there");
-    assert_eq!(synthesized.track, Some(Track::Gone));
+    assert_eq!(
+        synthesized.panes.len(),
+        1,
+        "with the pane that put it there in it"
+    );
 }
 
 #[test]
@@ -292,6 +295,39 @@ fn puts_panes_outside_any_repository_into_ungrouped() {
 
     assert_eq!(tree.ungrouped.len(), 1);
     assert_eq!(tree.ungrouped[0].pane_id, "w9:p1");
+}
+
+#[test]
+fn every_pane_herdr_gave_a_directory_is_kept_where_it_stands() {
+    // A pane drawn in a row, one placed nowhere, and one placed in a repository that is not
+    // among the inputs: where herdr gave a working directory it is kept, normalized, whether
+    // or not a row draws the pane. One herdr gave none has nothing to keep.
+    let mut placed = pane("w1:p1", None);
+    placed["cwd"] = json!("/src/app/lib");
+    let mut stray = pane("w9:p1", None);
+    stray["cwd"] = json!("/wt/feat/src/");
+    let mut elsewhere = pane("w8:p1", None);
+    elsewhere["cwd"] = json!("/src/old");
+    let tree = build(
+        &snapshot(json!([placed, stray, elsewhere, pane("w7:p1", None)])),
+        &[repo(
+            "me/app",
+            "/src/app",
+            vec![worktree("main", "/src/app", false)],
+        )],
+        &placements(&[
+            ("w1:p1", "/src/app/.git", "/src/app"),
+            ("w8:p1", "/src/old/.git", "/src/old"),
+        ]),
+    );
+    assert_eq!(
+        tree.pane_cwds,
+        BTreeMap::from([
+            ("w1:p1".to_string(), "/src/app/lib".to_string()),
+            ("w8:p1".to_string(), "/src/old".to_string()),
+            ("w9:p1".to_string(), "/wt/feat/src".to_string()),
+        ])
+    );
 }
 
 #[test]
@@ -639,31 +675,29 @@ fn a_checkout_spelled_one_way_by_git_and_another_by_herdr_is_one_checkout() {
 }
 
 #[test]
-fn a_panes_repository_key_spelled_with_a_trailing_slash_still_reaches_its_refs() {
-    // The repository half of the key at the row `build` makes for a pane.
+fn a_panes_repository_key_spelled_with_a_trailing_slash_still_reaches_its_repository() {
+    // A placement's repository key spelled with a trailing slash still finds its
+    // repository in `by_key`.
     let shared = "/wt/shared";
-    let mut app = repo(
+    let app = repo(
         "me/app",
         "/src/app",
         vec![worktree("main", "/src/app", false)],
     );
-    app.refs = Ok(vec![local_ref(
-        "feat/login",
-        Some(shared),
-        Some(Track::Gone),
-    )]);
 
     let tree = build(
         &snapshot(json!([pane("w1:p1", None)])),
         &[app],
         &placements(&[("w1:p1", "/src/app/.git/", shared)]),
     );
-    let synthesized = tree.repos[0]
-        .worktrees
-        .iter()
-        .find(|worktree| worktree.checkout_path == shared)
-        .expect("the row build made for the pane");
-    assert_eq!(synthesized.track, Some(Track::Gone));
+    assert!(tree.ungrouped.is_empty(), "the pane must not be lost");
+    assert!(
+        tree.repos[0]
+            .worktrees
+            .iter()
+            .any(|worktree| worktree.checkout_path == shared),
+        "the row build made for the pane is under its own repository"
+    );
 }
 
 #[test]
@@ -677,11 +711,6 @@ fn a_repository_key_herdr_and_the_placement_spell_differently_is_one_repository(
         vec![worktree("main", "/src/app", false)],
     );
     app.repo_key = "/src/app/.git/".to_string();
-    app.refs = Ok(vec![local_ref(
-        "feat/login",
-        Some(shared),
-        Some(Track::Gone),
-    )]);
 
     let tree = build(
         &snapshot(json!([pane("w1:p1", None)])),
@@ -689,19 +718,22 @@ fn a_repository_key_herdr_and_the_placement_spell_differently_is_one_repository(
         &placements(&[("w1:p1", "/src/app/.git", shared)]),
     );
     assert!(tree.ungrouped.is_empty(), "the pane must not be lost");
-    let synthesized = tree.repos[0]
-        .worktrees
-        .iter()
-        .find(|worktree| worktree.checkout_path == shared)
-        .expect("the row build made for the pane");
-    assert_eq!(synthesized.track, Some(Track::Gone));
+    // Spelled two ways, the key still finds its repository: otherwise `by_key` misses and
+    // the pane goes to `ungrouped` above, with no row here to find.
+    assert!(
+        tree.repos[0]
+            .worktrees
+            .iter()
+            .any(|worktree| worktree.checkout_path == shared),
+        "the row build made for the pane is under its own repository"
+    );
 }
 
 #[test]
-fn a_panes_own_row_is_read_from_the_checkout_the_pane_is_in() {
-    // The checkout half of the key at the row `build` makes for a pane: a stale `[gone]`
-    // naming some other path of the same repository must not land here. That is issue
-    // #31's shape inside one repository.
+fn a_row_build_makes_for_a_pane_carries_no_stale_gone() {
+    // A stale `[gone]` naming some other path of the same repository must not land on the
+    // row `build` makes for a pane — issue #31's shape inside one repository. Since #49 that
+    // row carries no track at all, which is what holds this.
     let mut app = repo(
         "me/app",
         "/src/app",
@@ -725,7 +757,7 @@ fn a_panes_own_row_is_read_from_the_checkout_the_pane_is_in() {
         .expect("the row build made for the pane");
     assert_eq!(
         synthesized.track, None,
-        "git names no ref at the checkout this pane is in"
+        "the row build made for the pane carries no track"
     );
 }
 
@@ -750,12 +782,13 @@ fn two_refs_that_agree_about_where_they_stand_still_answer_nothing() {
 }
 
 #[test]
-fn what_a_branchless_row_draws_turns_on_whether_herdr_listed_it() {
+fn a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it() {
     // The two rows `build` makes, over one repository's identical git facts: a stale
-    // registration goes on naming a path for `chore/deps`, whose upstream was deleted,
-    // and nothing is checked out there. Both rows carry `branch: None`, and only the one
-    // `build` makes for a pane draws `gone` about a branch it never names — issue #49,
-    // pinned here so the difference stays deliberate.
+    // registration goes on naming `/wt/shared` for `chore/deps`, whose upstream was
+    // deleted, and nothing is checked out there. Neither row names a branch, so neither
+    // may carry a marker about one: `gone` beside a directory name is about a branch the
+    // row never names (issue #49). One rule over both arms, pinned here because the arms
+    // are far apart and each can be read as reasonable on its own.
     let shared = "/wt/shared";
     let stale = || local_ref("chore/deps", Some(shared), Some(Track::Gone));
 
@@ -797,8 +830,8 @@ fn what_a_branchless_row_draws_turns_on_whether_herdr_listed_it() {
     );
     assert_eq!(
         (listed.track, unlisted.track),
-        (None, Some(Track::Gone)),
-        "and only the one herdr spoke about is refused the marker"
+        (None, None),
+        "so neither carries the stale registration's `gone`"
     );
 }
 

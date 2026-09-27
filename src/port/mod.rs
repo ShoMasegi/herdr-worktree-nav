@@ -312,7 +312,7 @@ pub struct RepoIdentity {
     pub repo_key: String,
     /// Top level of the checkout the queried path is in.
     pub checkout_path: String,
-    /// Current branch of that checkout, `None` when detached.
+    /// Current branch of that checkout: `None` when detached, or when git could not name it.
     pub branch: Option<String>,
 }
 

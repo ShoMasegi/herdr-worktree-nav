@@ -143,8 +143,8 @@ rule is applied instead.
 tree, and a sweep deletes on the strength of it. `Ok(None)` from a `git remote get-url` that
 hit a bad `.git/config` is indistinguishable from a repository with no `origin`, and the user
 is told to look at their remotes. `None` from a `git` that could not start is
-indistinguishable from a pane outside any repository, and the whole session draws as
-ungrouped with nothing to say why.
+indistinguishable from a pane outside any repository, and every pane git was asked about
+draws as ungrouped with nothing to say why.
 
 The three are the same defect in three places: a kind 4 failure was flattened into the shape
 of an ordinary answer, and after that no amount of care downstream can get the distinction
@@ -164,14 +164,19 @@ This one is right, and says so:
 let dirty = git.is_dirty(checkout_path.as_str()).ok();
 ```
 
-This one asserts an equivalence that does not hold, and is
-[issue #33](https://github.com/ShoMasegi/herdr-worktree-nav/issues/33):
+This one asserted an equivalence that does not hold, and was
+[issue #33](https://github.com/ShoMasegi/herdr-worktree-nav/issues/33) — the shape a site
+takes when the comment argues the failure away instead of naming it:
 
 ```rust
 // A path that is not in a repository, and a git that failed, are the same thing here:
 // the pane is simply not grouped.
 let identity = git.identify(cwd).ok().flatten()?;
 ```
+
+`app::collect::identify_one` answers `Result<Option<PanePlacement>, String>` now, so the two
+are told apart: a git that did not answer is a condition, and a pane that is simply outside a
+repository is none.
 
 So: a site that turns a port's `Result` into a plain value carries a `// swallows:` line
 naming what can arrive there and why it need not be told apart. A site with no such line is

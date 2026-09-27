@@ -160,10 +160,31 @@ pub fn report(
             }
         }
     }
+    if !tree.trouble.unlisted.is_empty() {
+        // A repository with no section above, because herdr would not say what is in it.
+        let _ = writeln!(out, "\nnot listed:");
+        for repo in &tree.trouble.unlisted {
+            let _ = writeln!(out, "  {}  [{}]", repo.name(), repo.repo_key);
+            let _ = writeln!(out, "      {}", repo.words);
+        }
+    }
     if !tree.ungrouped.is_empty() {
         let _ = writeln!(out, "\nnot in any repository:");
         for pane in &tree.ungrouped {
             let _ = writeln!(out, "      {}", pane.pane_id);
+            // Why, where there is a why. herdr not seeing into the pane, git not answering
+            // about it, and herdr not listing the repository it was placed in all look the
+            // same on this page otherwise, and the page exists to tell those apart.
+            if let Some(words) = tree.trouble.unplaced.get(&pane.pane_id) {
+                let _ = writeln!(out, "          {words}");
+            } else if let Some(repo) = tree
+                .trouble
+                .unlisted
+                .iter()
+                .find(|repo| repo.panes.contains_key(&pane.pane_id))
+            {
+                let _ = writeln!(out, "          in {}, which is not listed", repo.name());
+            }
         }
     }
     out
@@ -281,12 +302,13 @@ fn each_of(named: &[&GitRef]) -> String {
 /// What the page says about a row with no branch on it.
 ///
 /// Two rows reach here: the checkout herdr listed with nothing out, and the one herdr never
-/// listed, which `build` makes for a pane and where a branch may well be out (issue #52). A
-/// track on such a row means the second — [`WorktreeNode::branch`] names the test — and its
-/// absence means nothing, so the refs git names at the path are named and not explained
-/// (issue #49). A track rather than a marker: [`Track::Unreadable`] is one of these rows
-/// having been measured and draws nothing. No `upstream …`: this row names no branch for one
-/// to be about.
+/// listed, which `build` makes for a pane and where a branch may well be out (issue #52).
+/// Neither carries a track — [`WorktreeNode::branch`] names the test — so the refs git names
+/// at the path are named and not explained (issue #49). The `track` arms stay because
+/// [`WorktreeNode`] does not make the state unrepresentable, and a page that dropped a track
+/// it was handed would be the page lying rather than the tree. They say `track`, not
+/// `marker`, because [`Track::Unreadable`] is a track that draws no marker. No `upstream …`:
+/// this row names no branch for one to be about.
 fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {
     let mut out = "no branch reported".to_string();
     match read {

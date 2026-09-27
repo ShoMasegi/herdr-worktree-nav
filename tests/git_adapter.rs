@@ -110,15 +110,49 @@ fn a_path_outside_any_repository_is_an_answer_rather_than_an_error() {
 }
 
 #[test]
+fn a_checkout_that_has_gone_is_an_answer_rather_than_a_git_that_could_not_be_run() {
+    // A pane left sitting in a checkout another pane removed. `app::collect` reads `Err`
+    // here as "git could not be run, or would not say where it is", which is the item
+    // `docs/{en,ja}/troubleshooting` sends the reader to check `PATH` over, and this is not
+    // that — so it has to be the ordinary answer.
+    //
+    // It is `Ok(None)` because `command` passes the directory as `git -C`: git starts,
+    // cannot chdir, and says `fatal: cannot change to …`, which `NOT_A_REPOSITORY` matches.
+    // Run with `Command::current_dir` instead, the spawn itself would fail with
+    // `No such file or directory (os error 2)` — the same words a git that is not on the
+    // path gives — and the prompt line would name the wrong cause. That is what this pins.
+    let gone = tempfile::tempdir().unwrap();
+    let path = path_str(gone.path());
+    drop(gone);
+    assert_eq!(GitCli.identify(&path).unwrap(), None);
+}
+
+#[test]
 fn a_detached_checkout_reports_no_branch() {
     let repo = repository();
     let head = GitCli.head_ref(&path_str(repo.path())).unwrap();
     git(repo.path(), &["checkout", "--detach", &head]);
     let identity = GitCli.identify(&path_str(repo.path())).unwrap().unwrap();
+    assert_eq!(identity.branch, None, "a detached HEAD names no branch");
+}
+
+#[test]
+fn a_repository_with_no_commit_yet_is_still_a_repository() {
+    // `rev-parse --abbrev-ref HEAD` exits 128 on a HEAD with nothing behind it, and taking
+    // that for a refusal put a new repository's panes that git was asked about under
+    // `not placed`.
+    let dir = tempfile::tempdir().expect("a temp dir");
+    git(dir.path(), &["init", "--initial-branch=main"]);
+    let root = path_str(dir.path());
+    let identity = GitCli
+        .identify(&root)
+        .expect("git named the repository")
+        .expect("and it is one");
     assert_eq!(
-        identity.branch, None,
-        "git prints \"HEAD\" when detached, which is not a branch name"
+        identity.checkout_path,
+        path_str(&dir.path().canonicalize().unwrap())
     );
+    assert_eq!(identity.branch.as_deref(), Some("main"));
 }
 
 #[test]

@@ -147,9 +147,10 @@ fn dropped_refs(stderr: &str) -> Option<String> {
 /// OS's words where git's would be. This is the case the usage page names — a `git` that
 /// is not on the path herdr launched the plugin with.
 ///
-/// Ahead of the prompt line it reaches nobody: `app::collect::identify_one` reads a git it
-/// could not run as "this pane is not in a repository", so with no git at all the picker
-/// draws every pane ungrouped and says nothing about why.
+/// [`app::collect::identify_one`](crate::app::collect) keeps these words apart from git
+/// answering that a path is outside a repository, so with no git at all the picker says why
+/// the panes it could not place are ungrouped rather than leaving the heading to be read as
+/// herdr's failure.
 fn could_not_run(args: &[&str], error: &std::io::Error) -> String {
     refusal(args, &format!("git could not be run: {error}"))
 }
@@ -279,10 +280,19 @@ impl GitPort for GitCli {
             return Ok(None);
         };
 
-        // "HEAD" is what git prints for a detached checkout, which is not a branch name.
-        let branch = GitCli::run(cwd, &["rev-parse", "--abbrev-ref", "HEAD"])?
-            .map(|said| said.stdout.trim().to_string())
-            .filter(|s| !s.is_empty() && s != "HEAD");
+        // `symbolic-ref` rather than `rev-parse --abbrev-ref`: it names the branch of a HEAD
+        // with no commit yet — a new repository, a `worktree add --orphan` — where rev-parse
+        // exits 128, and that exit would fail the whole identity above with it. A detached
+        // HEAD makes it exit 1 without a word, which is "no branch".
+        // swallows: any other failure to name the branch. The identity is what the caller
+        // needs; the branch rides along, and no caller reads it to place a pane.
+        let branch = GitCli::command(cwd)
+            .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .filter(|name| !name.is_empty());
 
         Ok(Some(RepoIdentity {
             repo_key: repo_key.trim().to_string(),
