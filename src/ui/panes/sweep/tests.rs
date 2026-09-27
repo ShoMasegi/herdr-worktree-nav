@@ -785,6 +785,7 @@ fn a_repository_the_re_read_could_not_list_is_named_rather_than_nothing_left() {
     unlisted.trouble.unlisted.push(Unlisted {
         repo_key: "/src/app/.git".into(),
         words: "herdr rejected worktree.list: internal error".into(),
+        panes: Default::default(),
     });
     state.replace_tree(unlisted);
     state.set_waiting(false);
@@ -812,6 +813,7 @@ fn a_repository_the_re_read_could_not_list_is_named_rather_than_nothing_left() {
     elsewhere.trouble.unlisted.push(Unlisted {
         repo_key: "/src/other/.git".into(),
         words: "herdr rejected worktree.list: internal error".into(),
+        panes: Default::default(),
     });
     state.replace_tree(elsewhere);
     state.set_waiting(false);
@@ -864,7 +866,8 @@ fn a_question_a_key_took_back_does_not_come_back_on_the_next_frame() {
 #[test]
 fn a_row_dropped_by_the_re_read_is_named_by_the_repository_its_key_names() {
     // Two repositories list one path, and the re-read finds a pane in the second's
-    // checkout.
+    // checkout. The directory is running, so both rows go — each named by the row its own
+    // key finds, which is `fix/crash` for one and `chore/deps` for the other.
     let mut state = sweeping();
     let mut tree = state.tree.clone();
     tree.repos.push(RepoNode {
@@ -893,8 +896,11 @@ fn a_row_dropped_by_the_re_read_is_named_by_the_repository_its_key_names() {
     state.set_waiting(false);
     state.confirm_sweep_if_settled();
 
-    assert_eq!(state.message(), Some("no longer marked: chore/deps"));
-    assert_eq!(box_labels(&state), ["fix/crash"]);
+    assert_eq!(
+        state.message(),
+        Some("no longer marked: fix/crash, chore/deps — nothing left to remove")
+    );
+    assert!(box_labels(&state).is_empty());
 }
 
 #[test]

@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use anyhow::Result;
 
 use crate::app::one_line;
-use crate::domain::model::{normalize_path, Tree, Unlisted};
+use crate::domain::model::{is_inside, normalize_path, Tree, Unlisted};
 use crate::domain::tree::{self, PanePlacement, RepoInput};
 use crate::port::{GitPort, HerdrPort, Snapshot};
 
@@ -203,13 +203,6 @@ fn identify_one(git: &dyn GitPort, cwd: &str) -> Placed {
     }))
 }
 
-/// Whether `path` is `root` or sits underneath it.
-fn is_inside(path: &str, root: &str) -> bool {
-    let path = normalize_path(path);
-    let root = normalize_path(root);
-    path == root || path.strip_prefix(root).is_some_and(|r| r.starts_with('/'))
-}
-
 /// Ask herdr for the worktrees of every repository a pane was found in.
 ///
 /// A repository herdr refuses to list comes back as the second half rather than as nothing.
@@ -227,17 +220,18 @@ fn collect_repos(
     // answer and the rest are asked only when one refuses. Whatever makes herdr refuse one
     // checkout and answer for another, which of a repository's checkouts happened to come
     // first out of a `HashMap` must not decide whether the repository is on screen.
-    let mut checkouts: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-    for placement in placements.values() {
-        checkouts
+    let mut panes: BTreeMap<&str, BTreeMap<&str, &str>> = BTreeMap::new();
+    for (pane_id, placement) in placements {
+        panes
             .entry(&placement.repo_key)
             .or_default()
-            .insert(&placement.checkout_path);
+            .insert(pane_id, &placement.checkout_path);
     }
 
     let mut repos = Vec::new();
     let mut unlisted = Vec::new();
-    for (repo_key, probes) in checkouts {
+    for (repo_key, panes) in panes {
+        let probes: BTreeSet<&str> = panes.values().copied().collect();
         // What was said about the first checkout, which is what a reader would have been
         // told had it been the only one.
         let mut words = None;
@@ -267,6 +261,10 @@ fn collect_repos(
                 // Never empty: a repository is here because a pane is in one of its
                 // checkouts, and every one of them refused.
                 words: words.unwrap_or_default(),
+                panes: panes
+                    .iter()
+                    .map(|(pane_id, checkout)| (pane_id.to_string(), checkout.to_string()))
+                    .collect(),
             });
             continue;
         };
@@ -649,6 +647,15 @@ mod tests {
         );
         assert_eq!(unlisted.len(), 1, "and the other is kept, not dropped");
         assert_eq!(unlisted[0].repo_key, "/src/old/.git");
+        assert_eq!(
+            unlisted[0]
+                .panes
+                .iter()
+                .map(|(pane, checkout)| (pane.as_str(), checkout.as_str()))
+                .collect::<Vec<_>>(),
+            [("w2:p1", "/src/refused")],
+            "and where its pane is, which no row of it will say"
+        );
         assert_eq!(
             unlisted[0].words, "herdr rejected worktree.list: internal error",
             "herdr's own words, on one line"

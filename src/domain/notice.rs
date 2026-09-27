@@ -248,6 +248,7 @@ mod tests {
         tree.trouble.unlisted.push(Unlisted {
             repo_key: "/src/old/.git".into(),
             words: "herdr rejected worktree.list: internal error".into(),
+            panes: Default::default(),
         });
         tree.trouble.unplaced.insert(
             "w1:p1".to_string(),
@@ -270,6 +271,7 @@ mod tests {
         tree.trouble.unlisted.push(Unlisted {
             repo_key: "/src/old/.git".into(),
             words: "herdr rejected worktree.list: internal error".into(),
+            panes: Default::default(),
         });
         assert_eq!(
             conditions(&tree, None, None),
@@ -291,6 +293,7 @@ mod tests {
         tree.trouble.unlisted.push(Unlisted {
             repo_key: "/src/old/.git".into(),
             words: "herdr rejected worktree.list: internal error".into(),
+            panes: Default::default(),
         });
         assert_eq!(
             conditions(&tree, None, None),

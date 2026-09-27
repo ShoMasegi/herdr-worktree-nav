@@ -299,6 +299,66 @@ fn puts_panes_outside_any_repository_into_ungrouped() {
 }
 
 #[test]
+fn every_pane_herdr_gave_a_directory_is_kept_where_it_stands() {
+    // A pane drawn in a row, one placed nowhere, and one placed in a repository that is not
+    // among the inputs: where herdr gave a working directory it is kept, normalized, whether
+    // or not a row draws the pane. One herdr gave none has nothing to keep.
+    //
+    // herdr can give a pane two: the shell's, and its foreground process's. The pane is
+    // placed by the second when there is one, but the shell is still standing in the first,
+    // so both are kept — once, when they are the same directory, and without an empty one.
+    let mut placed = pane("w1:p1", None);
+    placed["cwd"] = json!("/src/app/lib");
+    let mut stray = pane("w9:p1", None);
+    stray["cwd"] = json!("/wt/feat/src/");
+    let mut elsewhere = pane("w8:p1", None);
+    elsewhere["cwd"] = json!("/src/old");
+    let mut running = pane("w6:p1", None);
+    running["cwd"] = json!("/wt/feat");
+    running["foreground_cwd"] = json!("/tmp/x");
+    let mut same = pane("w5:p1", None);
+    same["cwd"] = json!("/wt/same/");
+    same["foreground_cwd"] = json!("/wt/same");
+    let mut blank = pane("w4:p1", None);
+    blank["cwd"] = json!("/wt/blank");
+    blank["foreground_cwd"] = json!("");
+    let tree = build(
+        &snapshot(json!([
+            placed,
+            stray,
+            elsewhere,
+            pane("w7:p1", None),
+            running,
+            same,
+            blank
+        ])),
+        &[repo(
+            "me/app",
+            "/src/app",
+            vec![worktree("main", "/src/app", false)],
+        )],
+        &placements(&[
+            ("w1:p1", "/src/app/.git", "/src/app"),
+            ("w8:p1", "/src/old/.git", "/src/old"),
+        ]),
+    );
+    assert_eq!(
+        tree.pane_cwds,
+        BTreeMap::from([
+            ("w1:p1".to_string(), vec!["/src/app/lib".to_string()]),
+            ("w4:p1".to_string(), vec!["/wt/blank".to_string()]),
+            ("w5:p1".to_string(), vec!["/wt/same".to_string()]),
+            (
+                "w6:p1".to_string(),
+                vec!["/wt/feat".to_string(), "/tmp/x".to_string()]
+            ),
+            ("w8:p1".to_string(), vec!["/src/old".to_string()]),
+            ("w9:p1".to_string(), vec!["/wt/feat/src".to_string()]),
+        ])
+    );
+}
+
+#[test]
 fn matches_a_pane_to_its_worktree_despite_herdrs_trailing_slashes() {
     let tree = build(
         &snapshot(json!([pane("w1:p1", None)])),
