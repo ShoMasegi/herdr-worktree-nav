@@ -804,8 +804,8 @@ fn a_repository_the_re_read_could_not_list_is_named_rather_than_nothing_left() {
     );
 
     // And only a listing that failed *in the repository these rows were in*. Another
-    // repository herdr would not list is on the prompt line already and took none of these
-    // away, so naming it here would answer with someone else's trouble.
+    // repository herdr would not list is a condition already and took none of these away,
+    // so naming it here would answer with someone else's trouble.
     let mut state = sweeping();
     state.handle_key(key(KeyCode::Enter));
     let mut elsewhere = state.tree.clone();
@@ -824,8 +824,8 @@ fn a_repository_the_re_read_could_not_list_is_named_rather_than_nothing_left() {
         "the row was in me/app, and me/app was listed"
     );
 
-    // And refs that went unread are a condition
-    // too, and they take no rows away, so naming them as the reason would name the wrong one.
+    // And refs that went unread are a condition too, but not a reason rows go: here the
+    // row went for another reason, so this line does not name them.
     let mut state = sweeping();
     state.handle_key(key(KeyCode::Enter));
     let mut unread = state.tree.clone();

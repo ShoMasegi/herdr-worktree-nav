@@ -56,10 +56,8 @@ where it is drawing one, `unreadable` where it could not read the field git prin
 `not known` where it found nothing — on the row itself the last two are the same empty
 marker as `track level` and `upstream none`. A row with no branch on it reads
 `no branch reported`, then `git names at this path:` with that same list where git names
-refs there — or `no ref at this checkout` where it names none but the picker's walk found
-one — then what that walk found as `track <where it stands>` where it found anything;
-where git would not read the refs it says `refs not read`, and `refs not read on the
-second read` where only this page's own read failed. Each checkout's working tree is
+refs there; where git would not read the refs it says `refs not read`, and `refs not read
+on the second read` where only this page's own read failed. Each checkout's working tree is
 walked in the open, one after another, so on many checkouts this takes a moment.
 
 git's words arrive in English here and on the prompt line whatever language your git speaks

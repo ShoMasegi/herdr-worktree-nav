@@ -24,22 +24,25 @@ use crate::domain::model::{Refs, Tree};
 /// A value rather than a sentence: which of these hold is derived every frame, and what
 /// each one reads as on a prompt line that may have no room for it is
 /// [`ui::words`](crate::ui::words)'s to decide. There is deliberately no severity here yet.
-/// Every condition produced today is about one repository or about the reading as a whole,
-/// so an ordering field would be a guess; the order is the order they are gathered in, and
+/// Every condition produced today is about one repository, a set of panes that failed alike,
+/// the reading as a whole, or what `gh` could not be asked, so an ordering field would be a
+/// guess; the order is the order they are gathered in, and
 /// [`conditions`] says what that order means.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Condition {
     /// The reading that built the list failed, so the rows may be behind. Carries the words
     /// of whatever refused, which the picker has no better account of.
     Stale(String),
-    /// git could not be asked which repository these panes are in, so they draw as though
-    /// they were in none. Counted by what git said rather than listed one per pane: a `git`
-    /// that is not on the path fails for every pane in the session with one sentence, and
-    /// what a reader needs is the words and how much of the session they cost.
+    /// git could not be run or would not say which repository these panes are in — or, in a
+    /// debug build, the thread asking it did not finish — so they draw as though they were
+    /// in none. Counted by the words the failure came with rather than listed one per pane:
+    /// a `git` that is not on the path fails for every pane it is asked about with one
+    /// sentence, and what a reader needs is the words and how much of the session they
+    /// cost.
     Unplaced { panes: usize, words: String },
     /// herdr would not list this repository's worktrees, so it has no rows at all. Carries
-    /// herdr's own words and the name [`Unlisted::name`](crate::domain::model::Unlisted::name)
-    /// makes out of the key, which is the only name this side has.
+    /// the words [`Unlisted`](crate::domain::model::Unlisted) holds and the name
+    /// [`Unlisted::name`](crate::domain::model::Unlisted::name) makes out of the key.
     Unlisted { repo: String, words: String },
     /// git would not read this repository's refs, so every track marker in it is missing.
     RefsUnreadable { repo: String, words: String },
@@ -76,7 +79,7 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
         .map(|words| Condition::Stale(words.to_string()))
         .into_iter()
         .collect();
-    // Counted by what git said rather than listed one per pane: a `git` that is not on the
+    // Counted by the words the failure came with, not one per pane: a `git` not on the
     // path fails for every pane git is asked about, and the same sentence once per pane is
     // not more information than the sentence and a number. Most panes first, since the
     // prompt line holds one of these and the one that cost the most of the session is the
@@ -201,9 +204,9 @@ mod tests {
 
     #[test]
     fn panes_git_would_not_answer_about_are_counted_by_what_it_said() {
-        // A `git` that is not on the path fails for every pane at once, and one condition
-        // is the whole of it. What a reader needs is the words and how much of the session
-        // they cost, not the same line once per pane.
+        // A `git` that is not on the path fails for every pane it is asked about, and one
+        // condition is the whole of it. What a reader needs is the words and how much of the
+        // session they cost, not the same line once per pane.
         let mut tree = tree(vec![repo("me/app", Refs::Read)]);
         assert_eq!(conditions(&tree, None, None), Vec::new());
 
@@ -255,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn a_session_that_could_not_be_grouped_is_gathered_ahead_of_everything_else() {
+    fn unplaced_panes_are_gathered_ahead_of_every_repository_condition() {
         // Each of these is a larger question than the one after it. A reader whose whole
         // session is ungrouped is not helped by being told about one repository's refs.
         let mut tree = tree(vec![repo(
@@ -282,8 +285,8 @@ mod tests {
 
     #[test]
     fn a_repository_herdr_would_not_list_is_named_with_herdrs_words() {
-        // It has no rows to say it with — that is what "not listed" means — so a condition
-        // is the only place it can be said at all.
+        // It has no rows to say it with — that is what "not listed" means — so in the panes
+        // view a condition is the only place it can be said.
         let mut tree = tree(vec![repo("me/app", Refs::Read)]);
         tree.trouble.unlisted.push(Unlisted {
             repo_key: "/src/old/.git".into(),

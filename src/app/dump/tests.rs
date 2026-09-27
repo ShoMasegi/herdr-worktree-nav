@@ -822,8 +822,10 @@ fn a_checkout_with_nothing_out_says_which_read_of_the_refs_failed() {
 
 #[test]
 fn a_row_with_a_branch_out_also_reads_as_no_branch_reported() {
-    // What `build` makes for a pane in a checkout herdr never listed: `branch: None`
-    // hard-coded, the track copied from git. Nothing says the checkout is branchless —
+    // The row `build` made for a pane in a checkout herdr never listed before #49:
+    // `branch: None` hard-coded, with a track from git. `build` no longer gives it one;
+    // the fixture keeps it to reach the `track <where it stands>` arm `detached_words`
+    // keeps. Nothing says the checkout is branchless —
     // `git worktree add` outside herdr leaves a branch out there. Issue #52 carries the
     // shortage, #49 the marker half.
     let tree = one_repo(

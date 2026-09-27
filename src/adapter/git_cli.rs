@@ -149,7 +149,8 @@ fn dropped_refs(stderr: &str) -> Option<String> {
 ///
 /// [`app::collect::identify_one`](crate::app::collect) keeps these words apart from git
 /// answering that a path is outside a repository, so with no git at all the picker says why
-/// every pane is ungrouped rather than leaving the heading to be read as herdr's failure.
+/// the panes it could not place are ungrouped rather than leaving the heading to be read as
+/// herdr's failure.
 fn could_not_run(args: &[&str], error: &std::io::Error) -> String {
     refusal(args, &format!("git could not be run: {error}"))
 }

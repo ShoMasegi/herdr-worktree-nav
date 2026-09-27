@@ -32,10 +32,9 @@ fn a_git_that_cannot_be_started_reaches_the_prompt_line_words_first() {
         "the call after them, and whole: {words}"
     );
 
-    // And the call the picker makes before it has any repository to ask about. This is the
-    // one that fails first with no git at all, and the only one whose failure can be told
-    // from "this pane is not in a repository" — `app::collect::identify_one` reads the
-    // difference, and the prompt line says which.
+    // And the call that places panes, the only one whose failure could be taken for "this
+    // pane is not in a repository" — `app::collect::identify_one` reads the difference, and
+    // this one is a condition.
     let error = GitCli
         .identify("/src/app")
         .expect_err("there is no git to answer");

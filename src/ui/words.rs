@@ -578,7 +578,7 @@ mod tests {
     }
 
     #[test]
-    fn a_condition_says_which_repository_could_not_be_read() {
+    fn a_condition_says_what_could_not_be_read() {
         assert_eq!(
             condition(&Condition::Unplaced {
                 panes: 2,

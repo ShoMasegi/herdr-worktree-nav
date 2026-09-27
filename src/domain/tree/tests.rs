@@ -136,10 +136,9 @@ fn a_repository_whose_refs_could_not_be_read_says_so_and_marks_nothing() {
 }
 
 #[test]
-fn a_checkout_herdr_did_not_list_is_built_under_the_repository_the_pane_is_in() {
-    // The path an index-based lookup gets wrong: reaching into `repos` by an index is
-    // only valid while `nodes` happens to be built from it in order, and nothing makes
-    // that so.
+fn a_checkout_herdr_did_not_list_is_built_rather_than_left_ungrouped() {
+    // A pane in a checkout herdr's listing did not mention gets a row of its own under its
+    // repository, rather than going under `not in any repository`.
     let mut input = repo(
         "me/app",
         "/src/app",
@@ -677,18 +676,14 @@ fn a_checkout_spelled_one_way_by_git_and_another_by_herdr_is_one_checkout() {
 
 #[test]
 fn a_panes_repository_key_spelled_with_a_trailing_slash_still_reaches_its_repository() {
-    // The repository half of the key at the row `build` makes for a pane.
+    // A placement's repository key spelled with a trailing slash still finds its
+    // repository in `by_key`.
     let shared = "/wt/shared";
-    let mut app = repo(
+    let app = repo(
         "me/app",
         "/src/app",
         vec![worktree("main", "/src/app", false)],
     );
-    app.refs = Ok(vec![local_ref(
-        "feat/login",
-        Some(shared),
-        Some(Track::Gone),
-    )]);
 
     let tree = build(
         &snapshot(json!([pane("w1:p1", None)])),
@@ -716,11 +711,6 @@ fn a_repository_key_herdr_and_the_placement_spell_differently_is_one_repository(
         vec![worktree("main", "/src/app", false)],
     );
     app.repo_key = "/src/app/.git/".to_string();
-    app.refs = Ok(vec![local_ref(
-        "feat/login",
-        Some(shared),
-        Some(Track::Gone),
-    )]);
 
     let tree = build(
         &snapshot(json!([pane("w1:p1", None)])),
@@ -740,10 +730,10 @@ fn a_repository_key_herdr_and_the_placement_spell_differently_is_one_repository(
 }
 
 #[test]
-fn a_panes_own_row_is_read_from_the_checkout_the_pane_is_in() {
-    // The checkout half of the key at the row `build` makes for a pane: a stale `[gone]`
-    // naming some other path of the same repository must not land here. That is issue
-    // #31's shape inside one repository.
+fn a_row_build_makes_for_a_pane_carries_no_stale_gone() {
+    // A stale `[gone]` naming some other path of the same repository must not land on the
+    // row `build` makes for a pane — issue #31's shape inside one repository. Since #49 that
+    // row carries no track at all, which is what holds this.
     let mut app = repo(
         "me/app",
         "/src/app",
@@ -767,7 +757,7 @@ fn a_panes_own_row_is_read_from_the_checkout_the_pane_is_in() {
         .expect("the row build made for the pane");
     assert_eq!(
         synthesized.track, None,
-        "git names no ref at the checkout this pane is in"
+        "the row build made for the pane carries no track"
     );
 }
 
