@@ -133,10 +133,26 @@ fn a_detached_checkout_reports_no_branch() {
     let head = GitCli.head_ref(&path_str(repo.path())).unwrap();
     git(repo.path(), &["checkout", "--detach", &head]);
     let identity = GitCli.identify(&path_str(repo.path())).unwrap().unwrap();
+    assert_eq!(identity.branch, None, "a detached HEAD names no branch");
+}
+
+#[test]
+fn a_repository_with_no_commit_yet_is_still_a_repository() {
+    // `rev-parse --abbrev-ref HEAD` exits 128 on a HEAD with nothing behind it, and taking
+    // that for a refusal put a new repository's panes that git was asked about under
+    // `not placed`.
+    let dir = tempfile::tempdir().expect("a temp dir");
+    git(dir.path(), &["init", "--initial-branch=main"]);
+    let root = path_str(dir.path());
+    let identity = GitCli
+        .identify(&root)
+        .expect("git named the repository")
+        .expect("and it is one");
     assert_eq!(
-        identity.branch, None,
-        "git prints \"HEAD\" when detached, which is not a branch name"
+        identity.checkout_path,
+        path_str(&dir.path().canonicalize().unwrap())
     );
+    assert_eq!(identity.branch.as_deref(), Some("main"));
 }
 
 #[test]
