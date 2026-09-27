@@ -172,11 +172,18 @@ pub fn report(
         let _ = writeln!(out, "\nnot in any repository:");
         for pane in &tree.ungrouped {
             let _ = writeln!(out, "      {}", pane.pane_id);
-            // Why, where there is a why. herdr not seeing into the pane and git not
-            // answering about it look the same on this page otherwise, and the page exists
-            // to tell those apart.
+            // Why, where there is a why. herdr not seeing into the pane, git not answering
+            // about it, and herdr not listing the repository it was placed in all look the
+            // same on this page otherwise, and the page exists to tell those apart.
             if let Some(words) = tree.trouble.unplaced.get(&pane.pane_id) {
                 let _ = writeln!(out, "          {words}");
+            } else if let Some(repo) = tree
+                .trouble
+                .unlisted
+                .iter()
+                .find(|repo| repo.panes.contains_key(&pane.pane_id))
+            {
+                let _ = writeln!(out, "          in {}, which is not listed", repo.name());
             }
         }
     }
