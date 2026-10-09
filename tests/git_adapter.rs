@@ -128,6 +128,46 @@ fn a_checkout_that_has_gone_is_an_answer_rather_than_a_git_that_could_not_be_run
 }
 
 #[test]
+fn a_pane_in_a_repository_but_in_no_work_tree_is_an_answer_rather_than_an_error() {
+    // A shell in a bare repository — the layout that keeps one beside its worktrees — or in
+    // a `.git` directory. git exits 128 with `this operation must be run in a work tree`:
+    // it has answered, and the answer is that the directory is in no work tree, so git
+    // places it in no checkout. Read as a refusal, the prompt line would say git could not
+    // place the pane.
+    let repo = repository();
+    let bare = tempfile::tempdir().unwrap();
+    git(bare.path(), &["init", "--bare", "-q"]);
+    for (cwd, what) in [
+        (bare.path().to_path_buf(), "a bare repository"),
+        (repo.path().join(".git"), "a .git directory"),
+        (
+            repo.path().join(".git").join("refs"),
+            "a directory under .git",
+        ),
+    ] {
+        assert_eq!(
+            GitCli.identify(&path_str(&cwd)).unwrap(),
+            None,
+            "{what} is no checkout"
+        );
+    }
+}
+
+#[test]
+fn a_call_that_needs_a_work_tree_gets_gits_words_in_a_bare_repository() {
+    // The other side of the test above: only `identify` reads `must be run in a work tree`
+    // as "no checkout here". `is_dirty` asked of a bare repository is asked of something
+    // with no working tree to be dirty, and git's own words are the error.
+    let bare = tempfile::tempdir().unwrap();
+    git(bare.path(), &["init", "--bare", "-q"]);
+    let error = format!("{:#}", GitCli.is_dirty(&path_str(bare.path())).unwrap_err());
+    assert!(
+        error.contains("this operation must be run in a work tree"),
+        "git's words: {error}"
+    );
+}
+
+#[test]
 fn a_detached_checkout_reports_no_branch() {
     let repo = repository();
     let head = GitCli.head_ref(&path_str(repo.path())).unwrap();

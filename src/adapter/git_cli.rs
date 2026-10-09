@@ -19,6 +19,16 @@ const GIT_FATAL: i32 = 128;
 /// and the second, measured against 2.55.0, is not.
 const NOT_A_REPOSITORY: [&str; 2] = ["not a git repository", "cannot change to"];
 
+/// What git says when the path is in a repository but in no work tree: a bare repository, or
+/// a checkout's `.git` directory and the directories git keeps in it, `refs` and `objects`
+/// among them. Not a submodule's directory under `.git/modules`, which names its work tree,
+/// so git answers there with the submodule's checkout. To `identify` that is the same answer
+/// as [`NOT_A_REPOSITORY`] — there is no work tree there for git to place a pane in — and
+/// only `identify` reads it so; to a call that needs a work tree, it is the error.
+///
+/// Translated, like the first of those, and measured against 2.55.0.
+const NOT_A_WORK_TREE: &str = "this operation must be run in a work tree";
+
 pub struct GitCli;
 
 /// What git printed when it exited 0.
@@ -35,9 +45,10 @@ struct Said {
 /// The locale every git this plugin starts runs under.
 ///
 /// Two things here are decided by reading git's own words — whether the path is a repository
-/// at all ([`NOT_A_REPOSITORY`]) and whether a ref was dropped from a walk ([`dropped_refs`])
-/// — and both are English literals, while git ships translations of both messages and picks
-/// one from the environment herdr launched the plugin in.
+/// at all ([`NOT_A_REPOSITORY`], and [`NOT_A_WORK_TREE`] for `identify`) and whether a ref
+/// was dropped from a walk ([`dropped_refs`]) — and both read English literals, while git
+/// ships translations of most of those messages and picks one from the environment herdr
+/// launched the plugin in.
 ///
 /// Why this variable, why one git, and what it costs a reader who does not read English:
 /// `docs/adr/0015-reading-git-in-one-language.md`, which carries the transcript it was
@@ -59,6 +70,11 @@ impl GitCli {
     /// Run git in `dir`. Returns `None` when git said the path is not a repository; any
     /// other non-zero exit is an error carrying git's words.
     fn run(dir: &str, args: &[&str]) -> Result<Option<Said>> {
+        Self::run_answering(dir, args, &NOT_A_REPOSITORY)
+    }
+
+    /// `run`, with the words that mean "not here" chosen by the caller.
+    fn run_answering(dir: &str, args: &[&str], not_here: &[&str]) -> Result<Option<Said>> {
         let output: Output = Self::command(dir)
             .args(args)
             .output()
@@ -74,7 +90,7 @@ impl GitCli {
         // Matching the exit code alone would turn every fatal error into "not a git
         // repository", a diagnosis that sends the reader looking in entirely the wrong place.
         if output.status.code() == Some(GIT_FATAL)
-            && NOT_A_REPOSITORY.iter().any(|said| stderr.contains(said))
+            && not_here.iter().any(|said| stderr.contains(said))
         {
             return Ok(None);
         }
@@ -263,7 +279,7 @@ impl GitPort for GitCli {
     fn identify(&self, cwd: &str) -> Result<Option<RepoIdentity>> {
         // --path-format=absolute matters: --git-common-dir prints a bare ".git" when the
         // query runs from the repository root, which would not be a usable identity.
-        let Some(paths) = GitCli::run(
+        let Some(paths) = GitCli::run_answering(
             cwd,
             &[
                 "rev-parse",
@@ -271,6 +287,7 @@ impl GitPort for GitCli {
                 "--git-common-dir",
                 "--show-toplevel",
             ],
+            &[NOT_A_REPOSITORY.as_slice(), &[NOT_A_WORK_TREE]].concat(),
         )?
         else {
             return Ok(None);
