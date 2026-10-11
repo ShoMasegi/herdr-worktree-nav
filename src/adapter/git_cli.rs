@@ -84,11 +84,13 @@ impl GitCli {
 
     /// Start git in `dir` and wait for it. `Err` is a git that could not be started at all.
     ///
-    /// What every call reads its answer from, and the one place the locale is pinned for all
-    /// of them. `run` reads it for every call that wants "not a repository" recognised —
-    /// `identify` to answer `None`, the eight behind `run_in_repo` to turn it into an error
-    /// that says so. `github_slug` reads it itself, because the answer it has to pick out is
-    /// a different one and "not a repository" is a failure there rather than an answer.
+    /// What every call but one reads its answer from. `run_answering` reads it for every
+    /// call that wants "not here" recognised — `identify` to answer `None`, and through
+    /// `run` the eight behind `run_in_repo`, to turn "not a repository" into an error that
+    /// says so. `github_slug` reads it itself, because the answer it has to pick out is a
+    /// different one and "not a repository" is a failure there rather than an answer. The
+    /// one call that does not come through here is `identify`'s read of the branch, which
+    /// starts from `command` and so runs in the same locale.
     fn output(dir: &str, args: &[&str]) -> Result<Output> {
         Self::command(dir)
             .args(args)

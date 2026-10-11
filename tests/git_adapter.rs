@@ -154,6 +154,26 @@ fn a_pane_in_a_repository_but_in_no_work_tree_is_an_answer_rather_than_an_error(
 }
 
 #[test]
+fn a_repository_git_would_not_read_is_an_error_rather_than_no_checkout() {
+    // The tests above make `identify` answer `None` from the refusals that mean the pane is
+    // in no checkout. Any other is git failing to say where the pane is, and has to reach
+    // the prompt line in git's words: read as `None`, the pane would sit among the panes in
+    // no repository and nothing would say why — the silence issue #33 is about, from a git
+    // that started and refused rather than one that could not start.
+    let repo = repository();
+    let config = repo.path().join(".git").join("config");
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str("[core\n");
+    std::fs::write(&config, text).unwrap();
+
+    let error = GitCli
+        .identify(&path_str(repo.path()))
+        .expect_err("git could not parse its own config");
+    let words = format!("{error:#}");
+    assert!(words.contains("bad config"), "git's own words: {words}");
+}
+
+#[test]
 fn a_call_that_needs_a_work_tree_gets_gits_words_in_a_bare_repository() {
     // The other side of the test above: only `identify` reads `must be run in a work tree`
     // as "no checkout here". `is_dirty` asked of a bare repository is asked of something
