@@ -82,10 +82,10 @@ impl WorkingTree {
 /// repository, and the prompt line says it once rather than every row guessing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refs {
-    /// git answered. A checkout here with no track marker has nothing git reported for it,
-    /// or is one whose `:track` field git printed and the adapter could not read —
-    /// [`Track::Unreadable`]. The two draw no marker for two reasons, and each carries its
-    /// own.
+    /// git answered. A checkout here with no track marker is one of four: a branch git
+    /// reported nothing for, one whose `:track` field git printed and the adapter could not
+    /// read ([`Track::Unreadable`]), one whose path no ref names ([`Position::NotSaid`]), or
+    /// a row that names no branch ([`Branch`]). Each carries its own reason.
     Read,
     /// git did not, in its own words — or, in a debug build only, the thread that asked
     /// did not finish.
@@ -126,17 +126,22 @@ impl Refs {
 /// question never having been put. `refs/heads/x` can be out at a path herdr did not list;
 /// it cannot be out at one herdr listed as detached.
 ///
+/// The [`Position`] rides on the one answer that names a branch, because it is about that
+/// branch: a row naming none has nothing a marker could be about, and here it has nowhere
+/// to carry one either.
+///
 /// [`domain::tree::build`](crate::domain::tree::build) writes each of the three at a
 /// construction site of its own, and
 /// `a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it` is the two that name no
 /// branch, over one repository's identical git facts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Branch {
-    /// herdr named the branch this checkout has out.
-    Out(String),
+    /// herdr named the branch this checkout has out, and this is where the repository's refs
+    /// put it — off a ref walk that is happening anyway rather than a process of its own; see
+    /// [`port::Track`](crate::port::Track).
+    Out { name: String, position: Position },
     /// herdr listed the checkout and said nothing is out — an empty branch, or
-    /// `is_detached`. No ref of the repository is about this row, so a marker on it would
-    /// be about a branch the row does not name.
+    /// `is_detached`. No ref of the repository is about this row.
     NothingOut,
     /// Nobody said. `build` makes a row like this for a pane whose directory resolved to a
     /// checkout herdr's worktree list did not mention — a `git worktree add` outside herdr
@@ -150,8 +155,35 @@ impl Branch {
     /// question [`Branch`] exists to keep answerable past this point.
     pub fn name(&self) -> Option<&str> {
         match self {
-            Branch::Out(name) => Some(name),
+            Branch::Out { name, .. } => Some(name),
             Branch::NothingOut | Branch::NotSaid => None,
+        }
+    }
+
+    /// Where the named branch stands, and `None` on a row that names no branch.
+    pub fn position(&self) -> Option<Position> {
+        match self {
+            Branch::Out { position, .. } => Some(*position),
+            Branch::NothingOut | Branch::NotSaid => None,
+        }
+    }
+
+    /// A branch one ref named and git had nothing to report about: the row that draws no
+    /// marker and that nothing is unknown about.
+    #[cfg(test)]
+    pub fn out(name: impl Into<String>) -> Branch {
+        Branch::Out {
+            name: name.into(),
+            position: Position::Said(None),
+        }
+    }
+
+    /// Move the named branch to `to`. A row naming no branch has no position to move.
+    #[cfg(test)]
+    pub fn set_position(&mut self, to: Position) {
+        match self {
+            Branch::Out { position, .. } => *position = to,
+            Branch::NothingOut | Branch::NotSaid => panic!("{self:?} names no branch"),
         }
     }
 }
@@ -190,30 +222,24 @@ pub enum Position {
     /// prune` calls the result a `duplicate entry`:
     /// `one_repository_can_name_one_path_from_two_refs`.
     Contested,
-    /// No ref of the repository names this checkout's path — git would not read the refs at
-    /// all ([`Refs`] says so), git lists no ref there, or this is a row that names no
-    /// branch: a checkout with nothing out, or one herdr never listed, where git may name a
-    /// branch but the row cannot and a marker would be about a branch nobody can check it
-    /// against.
+    /// No ref of the repository names this checkout's path: git would not read the refs at
+    /// all ([`Refs`] says so), or it read them and lists no ref there although herdr names a
+    /// branch — the two disagree about what is checked out where.
     NotSaid,
 }
 
 /// One checkout of a repository: the primary one, or a linked worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeNode {
-    /// What is out here, and, where nothing is named, which of the two reasons that is.
-    /// Neither branchless row carries a position a marker would draw, because a marker about
-    /// a branch the row does not name is one nobody can act on:
+    /// What is out here and where it stands, or, where nothing is named, which of the two
+    /// reasons that is. Neither branchless row carries a position, because a marker about a
+    /// branch the row does not name is one nobody can act on:
     /// `a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it`.
     pub branch: Branch,
     pub checkout_path: String,
     pub is_primary: bool,
     /// The workspace herdr has this checkout open in, when it has one.
     pub open_workspace_id: Option<String>,
-    /// Where this checkout's branch stands against its upstream, as far as the
-    /// repository's refs could say. It rides on a ref walk that is happening anyway rather
-    /// than costing a process of its own; see [`port::Track`](crate::port::Track).
-    pub position: Position,
     /// Panes currently working in this checkout, in the order herdr reported them.
     pub panes: Vec<PaneNode>,
 }
@@ -481,13 +507,12 @@ mod tests {
             checkout_path: "/tmp/wt/detached-head".into(),
             is_primary: false,
             open_workspace_id: None,
-            position: Position::NotSaid,
             panes: vec![],
         };
         assert_eq!(detached.label(), "detached-head");
 
         let on_branch = WorktreeNode {
-            branch: Branch::Out("feat/login".into()),
+            branch: Branch::out("feat/login"),
             ..detached
         };
         assert_eq!(on_branch.label(), "feat/login");

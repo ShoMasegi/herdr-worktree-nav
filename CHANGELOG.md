@@ -25,7 +25,9 @@ All notable changes to this project are documented here. The format follows
   would not read is named there ahead of it, the rows it would have judged reading
   `refs unreadable`, and a checkout more than one of the repository's refs names reads
   `refs disagree` — one checkout rather than a whole repository, and a
-  `git worktree prune` rather than anything about git's answer.
+  `git worktree prune` rather than anything about git's answer — and one whose branch no ref
+  names at its path reads `no ref here`. A path herdr lists twice in one repository is never
+  swept, since the sweep could not say which of the two it would remove.
   `Space` marks and unmarks, and a mark keeps its reason at every width
   the picker supports. `Enter` removes what is marked: it reads the list and the working
   trees again first, asks once with the count, and then removes each checkout the way
@@ -76,6 +78,8 @@ All notable changes to this project are documented here. The format follows
   refs git names at its path are named without a claim about which of them is out. A
   checkout more than one of the repository's refs names reads `track contested`, which is
   the picker declining to pick one of them rather than a branch level with its upstream.
+  How many refs name a checkout is the picker's count; where `dump`'s own read counts
+  differently, the line says both.
 
 ### Changed
 

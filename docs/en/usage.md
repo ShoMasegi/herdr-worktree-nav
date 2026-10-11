@@ -92,6 +92,10 @@ foreground process has moved to — whether the pane is drawn under another row,
 checkout sits inside another, or under that heading; only a pane herdr cannot see into has no
 working directory to go by.
 
+A path herdr lists twice within one repository is refused on both of its rows. The sweep
+keeps its marks by repository and path, so it could not say which of the two `Enter` would
+remove; `Space` there says `herdr lists this path twice`.
+
 `Space` adds a mark and takes it away again. The same key does both, because disagreeing with
 the sweep should cost exactly what agreeing with it extra does. `Shift-S` again, `q` or `Esc`
 leaves, and leaving forgets the marks: the next sweep opens on what it would suggest now, not
@@ -142,7 +146,9 @@ own — read `refs unreadable` in a sweep, before and after you mark them by han
 line names the repository with git's words, as it does for `gh`. A checkout more than one
 of the repository's refs names is the other way git's half goes unanswered — the walk worked
 and its answer here was two branches, so there is no one branch to be `gone` — and that row
-reads `refs disagree` instead, one checkout at a time. `gh` still widens the sweep in both:
+reads `refs disagree` instead, one checkout at a time. A checkout whose branch no ref names
+at its path — git read the refs, and its list and herdr's disagree about what is checked out
+where — reads `no ref here`. `gh` still widens the sweep in all three:
 a merged pull request marks the row as it would anywhere. When git and `gh` have both
 failed, the prompt line names git's failure first — it is the one the track markers on the
 row went with — and counts `gh`'s behind it, so one being named does not read as the only

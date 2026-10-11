@@ -51,14 +51,17 @@ disagree about what is checked out where, which is the thing to look at. A check
 names more than one ref at reads `more than one ref at this checkout:` and then each of
 them as `<branch> → <upstream> <where it stands>`; more than one of the repository's
 worktree registrations names that path, and which of them is stale is not something this
-page can tell you. The `track` after them is what the picker's own walk found: its
-marker where it is drawing one, `unreadable` where it could not read the field git
-printed, `contested` where its own walk found more than one ref here too and it would
-not choose between them, and `not known` where it found no ref at all. On the row
-itself `unreadable` and `not known` are the same empty marker as `track level` and
-`upstream none`, and `contested` is drawn as `contested`.
-`track contested` beside a single ref of this page's own is the two walks disagreeing
-the other way round, and in a sweep that checkout reads `refs disagree`. A row with no
+page can tell you. How many refs name the checkout is the picker's count, and this
+page's read of the refs is a second one; where the two differ the line says both —
+`the picker's read named one ref at this checkout and this one names` and then this
+page's list, or `none`. The `track` that ends the line is what the picker's own walk
+found: its marker where it is drawing one, `unreadable` where it could not read the field
+git printed, `nothing reported` where it found one ref and git reported nothing about it,
+`contested` where it found more than one and would not choose between them, and
+`not known` where it found none. On the row itself `unreadable`, `nothing reported` and
+`not known` are the same empty marker as `track level` and `upstream none`, and
+`contested` is drawn as `contested`. In a sweep a contested checkout reads
+`refs disagree`, and one the picker found no ref for reads `no ref here`. A row with no
 branch on it says which kind of silence that is: `no branch reported` where herdr
 listed the checkout and said nothing is out, and `herdr did not list this checkout`
 where herdr never mentioned it — the picker shows that row for a pane whose directory

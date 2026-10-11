@@ -1328,13 +1328,20 @@ mod tests {
         // The four answers, on four checkouts: ahead and behind its upstream, an upstream
         // that is gone, uncommitted work, and a checkout with nothing to report at all.
         let mut tree = tree();
-        tree.repos[0].worktrees[0].position = Position::Said(Some(Track::Diverged {
-            ahead: NonZeroU32::new(2).unwrap(),
-            behind: NonZeroU32::new(1).unwrap(),
-        }));
-        tree.repos[0].worktrees[1].position = Position::Said(Some(Track::Gone));
-        tree.repos[0].worktrees[2].position =
-            Position::Said(Some(Track::Behind(NonZeroU32::new(3).unwrap())));
+        tree.repos[0].worktrees[0]
+            .branch
+            .set_position(Position::Said(Some(Track::Diverged {
+                ahead: NonZeroU32::new(2).unwrap(),
+                behind: NonZeroU32::new(1).unwrap(),
+            })));
+        tree.repos[0].worktrees[1]
+            .branch
+            .set_position(Position::Said(Some(Track::Gone)));
+        tree.repos[0].worktrees[2]
+            .branch
+            .set_position(Position::Said(Some(Track::Behind(
+                NonZeroU32::new(3).unwrap(),
+            ))));
         let mut state = PanesState::new(tree, None);
         state.set_working_trees(answers(&[
             ("/wt/feat-login", WorkingTree::Dirty),
@@ -1554,7 +1561,7 @@ mod tests {
     #[test]
     fn the_column_stops_short_of_the_edge_so_something_always_fits_after_it() {
         let mut tree = tree();
-        tree.repos[0].worktrees[0].branch = Branch::Out("a".repeat(80));
+        tree.repos[0].worktrees[0].branch = Branch::out("a".repeat(80));
         let state = PanesState::new(tree, None);
         assert_eq!(meta_column(state.rows(), 60), 60 - MIN_META_WIDTH);
     }

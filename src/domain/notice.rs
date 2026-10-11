@@ -25,9 +25,9 @@ use crate::domain::model::{Position, Refs, Tree};
 /// each one reads as on a prompt line that may have no room for it is
 /// [`ui::words`](crate::ui::words)'s to decide. There is deliberately no severity here yet.
 /// Every condition produced today is about one repository, one checkout, a set of panes that
-/// failed alike, the reading as a whole, or what `gh` could not be asked, so an ordering field would be a
-/// guess; the order is the order they are gathered in, and
-/// [`conditions`] says what that order means.
+/// failed alike, the reading as a whole, or what `gh` could not be asked, so an ordering
+/// field would be a guess; the order is the order they are gathered in, and [`conditions`]
+/// says what that order means.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Condition {
     /// The reading that built the list failed, so the rows may be behind. Carries the words
@@ -60,22 +60,24 @@ pub enum Condition {
 ///
 /// After a list that may be behind: panes that could not be placed at all, then a repository
 /// with no rows at all, then a repository whose rows are missing their markers, then a
-/// checkout the refs disagree about, then what `gh` said. Each is a larger question than the one after it — a reader whose whole session
-/// is ungrouped is not helped by being told about one repository's refs, and one who cannot
-/// see a repository at all is not helped by being told about another one's markers. The
-/// markers are about every row of the repository and are true sweep or no sweep; `gh` is
-/// asked only during a sweep, and only about the half git could not decide.
+/// checkout the refs disagree about, then what `gh` said. Each is a larger question than the
+/// one after it — a reader whose whole session is ungrouped is not helped by being told
+/// about one repository's refs, and one who cannot see a repository at all is not helped by
+/// being told about another one's markers. The markers are about every row of the
+/// repository and are true sweep or no sweep; `gh` is asked only during a sweep, and only
+/// about the half git could not decide.
 ///
 /// One state that draws no marker deliberately has no line here: a single ref whose
 /// `:track` field git printed and the adapter could not read. Why it does not is written
-/// where the state is, on [`Track::Unreadable`](crate::port::Track::Unreadable).
+/// where the state is, on [`Track::Unreadable`](crate::port::Track::Unreadable). A branch
+/// no ref names the checkout of ([`Position::NotSaid`] under refs git read) has none either;
+/// a sweep that would have judged it says `no ref here`, and `dump` says what each read found.
 ///
 /// `stale` and `sweep_trouble` are passed in rather than read off the tree. The first is
 /// about the reading that built it, which a tree cannot report about itself; the second is
 /// already one sentence for however many repositories `gh` could not be asked about, which
 /// [`app::settled`](crate::app::settled) builds because which repositories were asked is
-/// not something the tree
-/// knows.
+/// not something the tree knows.
 pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>) -> Vec<Condition> {
     // In front of the rest: the others are about what a row is missing, and this one is
     // about whether the rows are the right rows at all.
@@ -122,7 +124,7 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
     conditions.extend(tree.repos.iter().flat_map(|repo| {
         repo.worktrees
             .iter()
-            .filter(|worktree| worktree.position == Position::Contested)
+            .filter(|worktree| worktree.branch.position() == Some(Position::Contested))
             .map(|worktree| Condition::RefsDisagree {
                 repo: repo.display_name.clone(),
                 checkout: worktree.checkout_path.clone(),
@@ -188,11 +190,13 @@ mod tests {
     #[test]
     fn every_checkout_the_refs_disagree_about_is_its_own_condition() {
         let checkout = |path: &str, position| WorktreeNode {
-            branch: Branch::Out("b".into()),
+            branch: Branch::Out {
+                name: "b".into(),
+                position,
+            },
             checkout_path: path.into(),
             is_primary: false,
             open_workspace_id: None,
-            position,
             panes: Vec::new(),
         };
         let mut app = repo("me/app", Refs::Read);

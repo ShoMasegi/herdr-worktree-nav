@@ -87,10 +87,10 @@ pub struct Row {
     /// job.
     pub working_tree: Option<WorkingTree>,
     /// What the repository's refs said about this checkout's branch, and — where they said
-    /// nothing a marker could be drawn from — which silence it is. A row that is not a
-    /// checkout carries [`Position::NotSaid`], no ref of a repository being about a group or
-    /// a pane.
-    pub position: Position,
+    /// nothing a marker could be drawn from — which silence it is. `None` on a row that names
+    /// no branch: a group, a pane, or a checkout with no branch out, none of which a ref of
+    /// the repository is about.
+    pub position: Option<Position>,
     /// The row the session is currently on, marked with a caret in the gutter.
     pub is_current: bool,
     /// Whether this row matched the active filter, as opposed to being kept as ancestor

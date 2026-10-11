@@ -124,34 +124,32 @@ pub fn build(
                     let checkout_path = normalize_path(&worktree.path);
                     // herdr listed this checkout, so `NothingOut` is herdr's own answer
                     // and not an absence: `branch` absent or empty, or `is_detached`.
+                    //
+                    // Nothing out, and no ref of this repository's is about this row. git
+                    // can still name the path from a registration that lost its directory,
+                    // carrying `[gone]`:
+                    // `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out`
+                    // in `tests/git_adapter.rs`. The row `build` makes below for a pane
+                    // herdr never listed carries no position either, for a reason of its
+                    // own: git may name a branch there, but the row cannot.
                     let branch = worktree
                         .branch
                         .clone()
                         .filter(|b| !b.is_empty())
                         .filter(|_| !worktree.is_detached)
-                        .map_or(Branch::NothingOut, Branch::Out);
-                    // Nothing is out, so no ref of this repository's is about this row. git
-                    // can still name the path from a registration that lost its directory,
-                    // carrying `[gone]`:
-                    // `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out`
-                    // in `tests/git_adapter.rs`. The row `build` makes below for a pane
-                    // herdr never listed draws no track either, for a reason of its own:
-                    // git may name a branch there, but the row cannot.
-                    let position = if branch.name().is_some() {
-                        Named::position(
-                            tracks
-                                .get(&(normalize_path(&repo.repo_key), checkout_path))
-                                .copied(),
-                        )
-                    } else {
-                        Position::NotSaid
-                    };
+                        .map_or(Branch::NothingOut, |name| Branch::Out {
+                            name,
+                            position: Named::position(
+                                tracks
+                                    .get(&(normalize_path(&repo.repo_key), checkout_path))
+                                    .copied(),
+                            ),
+                        });
                     WorktreeNode {
                         branch,
                         checkout_path: checkout_path.to_string(),
                         is_primary: !worktree.is_linked_worktree,
                         open_workspace_id: worktree.open_workspace_id.clone(),
-                        position,
                         panes: Vec::new(),
                     }
                 })
@@ -217,7 +215,7 @@ pub fn build(
                 // with `git worktree add` outside herdr. Showing it is better than dropping
                 // the pane into "ungrouped", where the user would not think to look.
                 //
-                // And no track: this row names no branch, so a marker on it is about a branch
+                // And no position: this row names no branch, so a marker on it is about a branch
                 // it cannot name, and the reader has nothing to check it against. A missing
                 // marker beats a wrong one, which is the judgement #45 makes one arm up.
                 // What git said is still on `dump`'s page, under `git names at this path:`,
@@ -230,7 +228,6 @@ pub fn build(
                     checkout_path: checkout.to_string(),
                     is_primary: false,
                     open_workspace_id: Some(node.workspace_id.clone()),
-                    position: Position::NotSaid,
                     panes: vec![node],
                 });
             }

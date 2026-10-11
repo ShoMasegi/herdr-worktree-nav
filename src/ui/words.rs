@@ -209,7 +209,9 @@ pub fn marks(row: &Row) -> String {
         // nothing to report and the other has nothing to report *yet*.
         Some(WorkingTree::Clean) | None => {}
     }
-    out.push_str(&track_mark(row.position));
+    if let Some(position) = row.position {
+        out.push_str(&track_mark(position));
+    }
     out
 }
 
@@ -227,7 +229,10 @@ pub fn marks_reserve(row: &Row) -> usize {
     if !row.reference.is_worktree() {
         return 0;
     }
-    DIRTY.chars().count() + track_mark(row.position).chars().count()
+    DIRTY.chars().count()
+        + row
+            .position
+            .map_or(0, |position| track_mark(position).chars().count())
 }
 
 /// Where the branch stands against its upstream, with the gap that precedes it.
@@ -321,7 +326,7 @@ pub fn detail(tree: &Tree, reference: RowRef) -> String {
             if worktree.is_primary {
                 parts.push("main checkout".to_string());
             }
-            if worktree.position == Position::Contested {
+            if worktree.branch.position() == Some(Position::Contested) {
                 parts.push("more than one ref names this checkout".to_string());
             }
             parts.push(worktree.checkout_path.clone());
@@ -412,6 +417,7 @@ fn unjudged(half: Half) -> &'static str {
     match half {
         Half::Refs => "refs unreadable",
         Half::RefsDisagree => "refs disagree",
+        Half::NoRef => "no ref here",
         Half::PullRequests => "PR unknown",
     }
 }
@@ -423,6 +429,7 @@ fn unjudged(half: Half) -> &'static str {
 pub fn sweep_refusal(mark: &Mark) -> Option<&'static str> {
     Some(match mark.refused()? {
         SweepRefusal::Primary => "the repository itself",
+        SweepRefusal::ListedTwice => "herdr lists this path twice",
         SweepRefusal::Running => "panes are running in it",
         SweepRefusal::Removing => "already being removed",
     })
@@ -432,7 +439,7 @@ pub fn sweep_refusal(mark: &Mark) -> Option<&'static str> {
 mod tests {
     use super::*;
     use crate::domain::dest::fixtures::{space_name, tab_name};
-    use crate::domain::model::{CheckoutPath, WorkingTree};
+    use crate::domain::model::{Branch, CheckoutPath, WorkingTree};
     use crate::domain::rows::fixtures::*;
     use crate::domain::rows::{flatten, ViewOptions};
     use crate::port::SplitDirection;
@@ -677,7 +684,7 @@ mod tests {
     /// neither state.
     fn marks_for(working_tree: Option<WorkingTree>, position: Position) -> String {
         let mut tree = tree();
-        tree.repos[0].worktrees[2].position = position;
+        tree.repos[0].worktrees[2].branch.set_position(position);
         let options = ViewOptions {
             working_trees: working_tree.map(answered).unwrap_or_default(),
             ..Default::default()
@@ -718,7 +725,9 @@ mod tests {
         // Which is what stops every path in the list moving sideways when a `git status`
         // finally answers.
         let mut tree = tree();
-        tree.repos[0].worktrees[2].position = Position::Said(Some(Track::Gone));
+        tree.repos[0].worktrees[2]
+            .branch
+            .set_position(Position::Said(Some(Track::Gone)));
         let clean = flatten(&tree, &ViewOptions::default());
         let dirty = flatten(
             &tree,
@@ -735,6 +744,15 @@ mod tests {
             marks_reserve(find(&clean, "me/app")),
             0,
             "a repository heading has no checkout to say anything about"
+        );
+
+        // A checkout with no branch out keeps the room for `✱` and nothing for a track it
+        // cannot carry.
+        tree.repos[0].worktrees[2].branch = Branch::NothingOut;
+        let detached = flatten(&tree, &ViewOptions::default());
+        assert_eq!(
+            marks_reserve(find(&detached, "fix-crash")),
+            DIRTY.chars().count()
         );
     }
 
@@ -819,16 +837,21 @@ mod tests {
     #[test]
     fn a_checkout_carries_what_git_said_about_its_branch() {
         let mut tree = tree();
-        tree.repos[0].worktrees[2].position = Position::Said(Some(Track::Gone));
+        tree.repos[0].worktrees[2]
+            .branch
+            .set_position(Position::Said(Some(Track::Gone)));
         let rows = flatten(&tree, &ViewOptions::default());
         assert_eq!(
             find(&rows, "fix/crash").position,
-            Position::Said(Some(Track::Gone))
+            Some(Position::Said(Some(Track::Gone)))
         );
-        assert_eq!(find(&rows, "feat/login").position, Position::NotSaid);
+        assert_eq!(
+            find(&rows, "feat/login").position,
+            Some(Position::Said(None))
+        );
         assert_eq!(
             find(&rows, "me/app").position,
-            Position::NotSaid,
+            None,
             "a repository heading has no branch of its own"
         );
     }
@@ -889,7 +912,9 @@ mod tests {
     #[test]
     fn the_breadcrumb_says_more_than_one_ref_names_a_contested_checkout() {
         let mut tree = tree();
-        tree.repos[0].worktrees[1].position = Position::Contested;
+        tree.repos[0].worktrees[1]
+            .branch
+            .set_position(Position::Contested);
         assert_eq!(
             detail(&tree, RowRef::Worktree(0, 1)),
             "me/app · feat/login · more than one ref names this checkout · /wt/feat-login"
@@ -943,6 +968,11 @@ mod tests {
             "a walk that worked and named more than one branch at one path is not a walk that \
              failed, and the fix for it is not the same one"
         );
+        assert_eq!(
+            sweep_note(&Mark::Unjudged(Half::NoRef)).as_deref(),
+            Some("no ref here"),
+            "a walk that worked and named no branch at this path is a third place to look"
+        );
     }
 
     #[test]
@@ -981,6 +1011,10 @@ mod tests {
         assert_eq!(
             sweep_refusal(&Mark::Refused(SweepRefusal::Removing)),
             Some("already being removed")
+        );
+        assert_eq!(
+            sweep_refusal(&Mark::Refused(SweepRefusal::ListedTwice)),
+            Some("herdr lists this path twice")
         );
         assert_eq!(
             sweep_refusal(&Mark::Going(Reason::Gone)),

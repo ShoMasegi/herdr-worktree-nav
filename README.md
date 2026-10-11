@@ -46,7 +46,8 @@ the fuller context for the row you are on, including the checkout path.
 Each checkout also says what state it is in, beside its name: `↑2↓1` for how far it has
 drifted from its upstream, `gone` when git cannot find the ref it tracks, `✱` when its
 working tree is holding work nobody has committed — which is what `git worktree remove` would
-refuse — and `?` when git would not read the working tree at all.
+refuse — `?` when git would not read the working tree at all, and `contested` when more than
+one of the repository's refs names the checkout.
 
 `Enter` goes there — across spaces, across tabs, straight to the pane. Press `p` to show or
 hide worktrees with no pane. `Enter` opens one after it becomes visible. The plugin shows
