@@ -35,7 +35,8 @@ pub struct GitCli;
 ///
 /// Both streams, because a clean exit is not always a whole answer. `for-each-ref` drops a
 /// ref it cannot read, says so on stderr, and exits 0 — see `local_refs` — and `status`
-/// leaves out everything under a directory it cannot open the same way — see `is_dirty`.
+/// says the same way that it left part of the tree out, or read it by rules it could not
+/// see — see `is_dirty`.
 /// Those two read both streams; the rest read a clean exit's `stdout` alone, and a non-zero
 /// exit's `stderr` is what `run` turns into the error.
 struct Said {
@@ -47,11 +48,12 @@ struct Said {
 ///
 /// Four things here are decided by reading git's own words — whether the path is a
 /// repository at all ([`NOT_A_REPOSITORY`]), whether a ref was dropped from a walk
-/// ([`dropped_refs`]), whether `status` could open every directory ([`unread_paths`]) and
-/// whether a repository simply has no `origin` ([`NO_SUCH_REMOTE`]) — and all are English
-/// literals, while git ships a translation of each of these — bar `cannot change to`, the
-/// exception [`NOT_A_REPOSITORY`] names — and picks one from the environment herdr launched
-/// the plugin in.
+/// ([`dropped_refs`]), whether `status` could look at all of the working tree
+/// ([`unread_paths`]) and whether a repository simply has no `origin` ([`NO_SUCH_REMOTE`]) —
+/// and all are English literals, while git ships a translation of each of these — bar
+/// `cannot change to`, the exception [`NOT_A_REPOSITORY`] names, and the words after the
+/// last colon of [`unread_paths`]' lines, which are the C library's — and picks one from the
+/// environment herdr launched the plugin in.
 ///
 /// Why this variable, why one git, and what it costs a reader who does not read English:
 /// `docs/adr/0015-reading-git-in-one-language.md`, which carries the transcript it was
@@ -167,14 +169,82 @@ fn dropped_refs(stderr: &str) -> Option<String> {
     }
 }
 
+/// Whether `line` reads as `perror`'s report of a path git could not `lstat`: something, `: `,
+/// and then the C library's words for why — which start with a capital letter and have no
+/// `: ` of their own — on a line that does not open `warning: `, `fatal: ` or `error: cannot
+/// run `, the openings of git's own measured ending the same way. See `unread_paths` for
+/// what that takes in and what it leaves out.
+fn lstat_failed(line: &str) -> bool {
+    !["warning: ", "fatal: ", "error: cannot run "]
+        .iter()
+        .any(|word| line.starts_with(word))
+        && line.rsplit_once(": ").is_some_and(|(path, said)| {
+            !path.is_empty() && said.starts_with(|c: char| c.is_ascii_uppercase())
+        })
+}
+
 /// What git said while leaving part of a working tree out of `status`, or nothing.
 ///
-/// The one thing `status --porcelain` prints every time it cannot look, measured against git
-/// 2.55.0: a directory it cannot open gives `warning: could not open directory 'notes/':
-/// Permission denied`, once per directory, exits 0, and lists nothing under it — tracked or
-/// untracked. Where a tracked file is under it git prints a second line beside the warning,
-/// `deep/inner/u: Permission denied`, with no prefix; the warning is what is matched, since
-/// it is the line that is there in every one of these.
+/// Three shapes, measured against git 2.55.0, all on an exit of 0.
+///
+/// A directory git cannot open gives `warning: could not open directory 'notes/': Permission
+/// denied`, once per directory, and nothing under it is listed — tracked or untracked. Read
+/// by its opening, whatever the reason after it, bar one: `No such file or directory` is a
+/// directory git saw when it listed its parent and that was gone by the time it opened it —
+/// measured, with a tool creating and removing an untracked directory beside a clean
+/// checkout, git says so on a share of its calls. Nothing was there to leave out, and read
+/// as a partial answer the row would flicker to `?`.
+///
+/// A file of ignore rules git cannot read — a `.gitignore`, `.git/info/exclude`, the file
+/// `core.excludesFile` names — gives `warning: unable to access '<file>': Permission denied`,
+/// sometimes more than once, and git answers as though the file were empty. A
+/// `.gitattributes` or `.git/info/attributes` gives the same words, but only when `status`
+/// had to compare a tracked file's content to answer; otherwise git never opens it and says
+/// nothing. For ignore rules an empty file mostly lists more, not less; but a `!` rule
+/// re-includes what an earlier rule excluded, and with it unread the file it named is left
+/// out — measured, a checkout whose only work was such a file read as clean, and `git
+/// worktree remove` deleted it with an exit of 0. git read the tree by rules it could not
+/// see, so the answer is a partial one whichever way it fell, and it is read by its opening
+/// too. The cost is a `core.excludesFile` git cannot read: every repository that uses it
+/// reads it, so every row of those says `?`. Those rules come last and so, unread, can only
+/// list more — measured — but telling that file from the others would take another call to
+/// git per checkout, and `dump` names it.
+///
+/// Not when the reason is `Too many levels of symbolic links`. git does not follow a
+/// `.gitignore` or `.gitattributes` in the working tree that is a symlink, and says so in
+/// those words — measured, a tracked `.gitignore` linked to a readable file gets the warning
+/// on every `status`, and its rules are not applied. That is git's rule rather than a file it
+/// could not reach, and the answer is whole by it; read as one, every row of such a
+/// repository would say `?` for good. A symlink that really does loop gives the same words,
+/// and so does a chain of symlinks longer than the system follows — that one with a file at
+/// its end, whose rules go unseen: a `!` rule there would hide what it re-included.
+///
+/// A tracked file git cannot `lstat` gives its path, `: `, and the C library's words, with no
+/// prefix — `perror` in git's `diff-lib.c` — and is left out of the answer. In a directory
+/// git may list but not search (mode `r--`) that holds only tracked files it is the only
+/// line, and a modified file there was read as a clean working tree. Where a symlink that
+/// loops stands in for a directory of tracked files and is itself ignored, it is `t/f: Too
+/// many levels of symbolic links`, and the file's absence read as clean where a plain
+/// deletion is ` D`. It also appears beside the first warning, for a tracked file under a
+/// directory that could not be opened.
+///
+/// Read whatever the reason, so long as the line has that shape (see [`lstat_failed`]): an
+/// `lstat` can fail in ways nobody here has measured — a sandbox refusing a file gives `t/f:
+/// Operation not permitted`, measured — and a reason missed is a modified file read as
+/// clean, which a sweep would act on. Reading the reason after the last `: ` rather than the
+/// first is what keeps a tracked path with `: ` in its name. Lines of git's own that end the
+/// same way — `fatal: cannot exec '<hook>': Permission denied` from a `core.fsmonitor` hook
+/// that cannot run, `error: cannot run <command>: No such file or directory` from one named
+/// by a command that is not on the path, `warning: could not open '<file>' for tracing:
+/// Permission denied` — are not read; after each git looked at everything itself. The lines
+/// `GIT_TRACE`, `GIT_TRACE_SETUP` and `GIT_TRACE_PERFORMANCE` write have nothing starting
+/// with a capital letter after their last `: ` when git runs at a checkout's root, as it does
+/// here — measured — and are not read either. `GIT_TRACE2` is different: it repeats each of
+/// git's own errors without its opening, so with it on stderr the lines above are read — `?`
+/// where git's answer was whole, the safe side. The cost
+/// is a hook that runs and fails inside itself: its own `<hook>: line 2: <tool>: Permission
+/// denied` reads as one, and the row says `?` though git's answer was whole — the safe side,
+/// for a case that needs a broken hook to happen.
 ///
 /// Measured and not matched, because the answer is whole: a tracked file that is itself
 /// unreadable is still reported from the index (` M`), and a tracked path that has gone is
@@ -186,18 +256,27 @@ fn dropped_refs(stderr: &str) -> Option<String> {
 /// have been. That is what keeps a `node_modules` whose permissions got mangled from turning
 /// every row into `?`.
 ///
-/// In git's English, which git translates and [`GIT_LOCALE`] is what keeps it in. One prefix
-/// rather than "stderr said something", for the reason `dropped_refs` gives: a trace
-/// variable writes to stderr on every call. Every matching line is kept, and not passed
-/// through [`refusal`], for one of the reasons given there — it is always this call, so
-/// naming it tells a reader nothing they could act on. The other two are `for-each-ref`'s
-/// alone: these args are short, and these words reach `dump` rather than the prompt line.
+/// In git's English, which git translates and [`GIT_LOCALE`] is what keeps it in. The words
+/// after the last colon are the C library's, not git's: `LC_ALL=C` keeps them English where
+/// the library translates them at all (glibc ships translations; the macOS one measured does
+/// not translate them). Three shapes rather than "stderr said something", for the reason
+/// `dropped_refs` gives: a trace variable writes to stderr on every call. Every matching line
+/// is kept — a line repeated straight after itself only once — and not passed through
+/// [`refusal`], for the reason `dropped_refs` gives first: it is always this call, so naming
+/// it tells a reader nothing they could act on.
 fn unread_paths(stderr: &str) -> Option<String> {
-    let unread: Vec<&str> = stderr
+    let mut unread: Vec<&str> = stderr
         .lines()
         .map(str::trim)
-        .filter(|line| line.starts_with("warning: could not open directory "))
+        .filter(|line| {
+            (line.starts_with("warning: could not open directory ")
+                && !line.ends_with(": No such file or directory"))
+                || (line.starts_with("warning: unable to access ")
+                    && !line.ends_with(": Too many levels of symbolic links"))
+                || lstat_failed(line)
+        })
         .collect();
+    unread.dedup();
     match unread.is_empty() {
         true => None,
         false => Some(unread.join(" ")),
@@ -549,15 +628,16 @@ impl GitPort for GitCli {
                 "--porcelain",
             ],
         )?;
-        // A clean exit is not a whole answer here either. A directory git could not open is
-        // reported on stderr and everything under it is simply absent from stdout, so an
-        // empty stdout beside that warning is not `clean` — it is the answer git could not
-        // give, about the one working tree a sweep would then act on. `Err`, because a
+        // A clean exit is not a whole answer here either. A directory git could not open, or
+        // a tracked file it could not look at, is reported on stderr and simply absent from
+        // stdout — and an ignore file it could not read can leave out what it re-included —
+        // so an empty stdout beside those words is not `clean`: it is the answer git could
+        // not give, about the one working tree a sweep would then act on. `Err`, because a
         // `bool` has nowhere to carry the words; `app::dirty` reads it as
         // `WorkingTree::Unreadable`, and `dump` asks again and prints what git says then.
         //
         // Whatever stdout holds, not only when it is empty. A checkout can have visible work
-        // *and* a directory git could not open, and `true` would then be a whole answer to
+        // *and* a part git could not look at, and `true` would then be a whole answer to
         // the question asked — but it is a whole answer arrived at by accident, from the
         // half git could see. A partial reading is not reported as a complete one because
         // the visible half happened to land on the safe side; the row says `?` rather than
@@ -772,9 +852,9 @@ mod tests {
     }
 
     #[test]
-    fn only_the_words_git_leaves_a_directory_out_with_are_read_as_an_unread_one() {
+    fn only_the_words_of_a_partial_status_are_read_as_unread() {
         // The same rule as for a dropped ref: stderr is where git puts everything that is
-        // not an answer, so one prefix and not "stderr said something".
+        // not an answer, so three shapes and not "stderr said something".
         assert_eq!(
             unread_paths("warning: could not open directory 'notes/': Permission denied\n")
                 .as_deref(),
@@ -782,29 +862,89 @@ mod tests {
         );
         for said in [
             "",
+            // A trace variable's lines, which end in no capital after their last `: `.
             "11:35:24.293334 git.c:502  trace: built-in: git status\n",
+            "08:51:45.407752 trace.c:316             setup: git_dir: .git\n",
+            "08:51:45.408105 trace.c:320             setup: prefix: (null)\n",
+            "08:51:45.418919 read-cache.c:2364       performance: 0.000026000 s:  read cache .git/index\n",
             "warning: ignoring broken ref refs/heads/wip\n",
-            // The second line git prints beside the warning for a tracked file under the
-            // directory. Alone it is not the answer — it never comes alone — and the
-            // warning it accompanies is the line that is matched.
-            "deep/inner/u: Permission denied\n",
+            // A warning on a clean exit that leaves nothing out of the answer.
+            "warning: core.fsyncObjectFiles is deprecated; use core.fsync instead\n",
+            // A `core.fsmonitor` hook that cannot run, by path or by a command not on the
+            // path: git looks at everything itself.
+            "fatal: cannot exec '.git/hooks/fsmonitor-watchman': Permission denied\n",
+            "error: cannot run no-such-fsmonitor: No such file or directory\n",
+            // A trace target git cannot open, said on every call.
+            "warning: could not open '/ro/trace' for tracing: Permission denied\n",
+            // A `.gitignore` in the tree that is a symlink, which git does not follow.
+            "warning: unable to access '.gitignore': Too many levels of symbolic links\n",
+            // A directory gone between git listing its parent and opening it.
+            "warning: could not open directory 'tmp/': No such file or directory\n",
         ] {
-            assert_eq!(
-                unread_paths(said),
-                None,
-                "not an unread directory: {said:?}"
-            );
+            assert_eq!(unread_paths(said), None, "not a partial answer: {said:?}");
         }
 
-        // Both lines git prints for a tracked file under such a directory: the warning is
-        // kept and the bare line is not, so what reaches the reader is one shape of sentence.
+        // The two warnings are read by their opening, whatever the reason after it.
+        for said in [
+            "warning: could not open directory 'x/': Too many open files",
+            "warning: unable to access 'x/.gitignore': Input/output error",
+        ] {
+            assert_eq!(unread_paths(said).as_deref(), Some(said));
+        }
+
+        // `symbolic` or `No such file` elsewhere than the reason does not excuse a line.
+        for said in [
+            "warning: unable to access 'symbolic/.gitignore': Permission denied",
+            "warning: could not open directory 'No such file or directory/': Permission denied",
+        ] {
+            assert_eq!(unread_paths(said).as_deref(), Some(said));
+        }
+
+        // `perror`'s line, whatever the reason: each way `lstat` failed that was measured,
+        // one nobody measured, a path with `: ` in its name — and a hook's own failing line,
+        // which is the same shape and is read the same way.
+        for said in [
+            "t/f: Permission denied",
+            "t/f: Too many levels of symbolic links",
+            "t/f: File name too long",
+            "t/f: Operation not permitted",
+            "t/f: Input/output error",
+            "t/a: b: Permission denied",
+            ".git/hooks/fsm: line 2: /usr/bin/tool: Permission denied",
+        ] {
+            assert_eq!(unread_paths(said).as_deref(), Some(said));
+        }
+
+        // A tracked file git could not `lstat`, in a directory it may list but not search
+        // that holds nothing else: then this line is the whole of what git says.
+        assert_eq!(
+            unread_paths("t/f: Permission denied\n").as_deref(),
+            Some("t/f: Permission denied")
+        );
+
+        // A file of rules git could not read, which git says more than once for some of
+        // them, one line straight after another: said once.
+        assert_eq!(
+            unread_paths(
+                "warning: unable to access '.git/info/exclude': Permission denied\n\
+                 warning: unable to access '.git/info/exclude': Permission denied\n"
+            )
+            .as_deref(),
+            Some("warning: unable to access '.git/info/exclude': Permission denied")
+        );
+
+        // Both lines git prints for a tracked file under a directory it could not open. Both
+        // are kept, in git's order.
         assert_eq!(
             unread_paths(
                 "deep/inner/u: Permission denied\n\
                  warning: could not open directory 'deep/inner/': Permission denied\n"
             )
             .as_deref(),
-            Some("warning: could not open directory 'deep/inner/': Permission denied")
+            Some(
+                "deep/inner/u: Permission denied \
+                 warning: could not open directory 'deep/inner/': Permission denied"
+            )
         );
 
         // Two directories are two warnings, joined with a space for the one line.

@@ -98,7 +98,7 @@ find src tests -name '*.rs' -exec cat {} + | grep -vE '^[[:space:]]*//' > "$hays
 # git's and herdr's environment, herdr's socket API and the internals its pages name, the
 # crates the picker is built on, and a file a release ships. Adding to this list is a claim
 # that the name is somebody else's — a name of ours never belongs on it.
-external='ALL Cell EnterAlternateScreen GIT_TRACE GIT_TRACE2 GIT_TRACE_PERFORMANCE
+external='ALL Cell EnterAlternateScreen GIT_TRACE GIT_TRACE2 GIT_TRACE_PERFORMANCE GIT_TRACE_SETUP
 HERDR_PANE_ID HERDR_PLUGIN_ROOT LANG LC_MESSAGES LeaveAlternateScreen OpenOptions
 RUSTUP_TOOLCHAIN SHA256SUMS agent_not_found closed_tab_id closed_workspace_id from_name
 no_foreground_client render_panel_shell set_panic_hook'

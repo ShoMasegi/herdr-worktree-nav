@@ -485,7 +485,7 @@ fn recognises_a_github_origin_and_ignores_anything_else() {
 }
 
 #[test]
-fn a_config_git_cannot_read_is_not_a_missing_remote() {
+fn a_config_git_cannot_parse_is_not_a_missing_remote() {
     // Every way git failed to name the repository used to reach the sweep as "no GitHub
     // remote to ask about" — a reader whose `.git/config` git cannot parse was told to look
     // at their remotes. Issue #27.
@@ -498,7 +498,7 @@ fn a_config_git_cannot_read_is_not_a_missing_remote() {
 
     let error = GitCli
         .github_slug(&root)
-        .expect_err("git could not read its own config");
+        .expect_err("git could not parse its own config");
     let words = format!("{error:#}");
     assert!(
         words.starts_with("fatal: bad config line"),
@@ -762,7 +762,7 @@ fn a_checkout_git_will_not_look_at_is_an_error_rather_than_a_clean_one() {
     assert!(GitCli.is_dirty(&path_str(empty.path())).is_err());
 }
 
-/// Puts a directory's permissions back when the test is over, so `TempDir` can remove it.
+/// Makes a path readable again (mode 755) when the test is over, so `TempDir` can remove it.
 struct ReadableAgain<'a>(&'a Path);
 
 impl Drop for ReadableAgain<'_> {
@@ -815,6 +815,260 @@ fn a_directory_git_could_not_read_is_not_a_clean_working_tree() {
     assert!(
         !words.contains("(`git "),
         "the call is not named after them: {words}"
+    );
+}
+
+#[test]
+fn a_directory_git_could_not_read_is_not_answered_for_by_the_work_git_could_see() {
+    // Work git can see, beside a directory it could not open. `true` would happen to be the
+    // right answer, but it would be one arrived at from half a reading; `is_dirty` says the
+    // reading was partial instead, whatever stdout holds.
+    use std::os::unix::fs::PermissionsExt;
+    let repo = repository();
+    let root = path_str(repo.path());
+    std::fs::write(repo.path().join("visible.txt"), "seen\n").unwrap();
+    let notes = repo.path().join("notes");
+    std::fs::create_dir(&notes).unwrap();
+    std::fs::write(notes.join("work.txt"), "a day of work\n").unwrap();
+    std::fs::set_permissions(&notes, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _put_back = ReadableAgain(&notes);
+    assert!(
+        std::fs::read_dir(&notes).is_err(),
+        "this user can read a directory with mode 000 — a root container, or a filesystem \
+         that ignores them — so there is nothing here to measure. Run this as a user \
+         permissions apply to."
+    );
+
+    let words = format!(
+        "{:#}",
+        GitCli
+            .is_dirty(&root)
+            .expect_err("half a reading is not an answer")
+    );
+    assert!(
+        words.starts_with("warning: could not open directory 'notes/'"),
+        "git's own words: {words}"
+    );
+}
+
+#[test]
+fn a_tracked_file_in_a_directory_git_may_list_but_not_search_is_not_a_clean_one() {
+    // Mode `r--`: git can read the directory's names but not `lstat` what is in it. With
+    // only a tracked file in it, git says `t/f: Permission denied` with no prefix and no
+    // warning beside it, exits 0, and lists nothing — so a change to `t/f` read as a clean
+    // working tree.
+    use std::os::unix::fs::PermissionsExt;
+    let repo = repository();
+    let root = path_str(repo.path());
+    let dir = repo.path().join("t");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("f"), "committed\n").unwrap();
+    git(repo.path(), &["add", "t/f"]);
+    git(repo.path(), &["commit", "-m", "t"]);
+    std::fs::write(dir.join("f"), "a day of work\n").unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o444)).unwrap();
+    let _put_back = ReadableAgain(&dir);
+    assert!(
+        std::fs::metadata(dir.join("f")).is_err(),
+        "this user can look inside a directory with mode 444 — a root container, or a \
+         filesystem that ignores permissions — so there is nothing here to measure. Run this \
+         as a user permissions apply to."
+    );
+
+    let words = format!(
+        "{:#}",
+        GitCli
+            .is_dirty(&root)
+            .expect_err("git could not look, and said so")
+    );
+    assert_eq!(words, "t/f: Permission denied", "git's own words, alone");
+}
+
+#[test]
+fn a_gitignore_git_could_not_read_is_not_a_clean_working_tree() {
+    // git reads the tree as though an ignore file it cannot read were empty, and warns
+    // `unable to access`. Usually that lists more; but here the file's one rule re-includes
+    // what the root's excludes, so unread, the checkout's only work is left out, stdout is
+    // empty, and — measured — `git worktree remove` deletes it with an exit of 0.
+    use std::os::unix::fs::PermissionsExt;
+    let repo = repository();
+    let root = path_str(repo.path());
+    std::fs::write(repo.path().join(".gitignore"), "*.log\nt/.gitignore\n").unwrap();
+    git(repo.path(), &["add", ".gitignore"]);
+    git(repo.path(), &["commit", "-m", "ignore"]);
+    let dir = repo.path().join("t");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("keep.log"), "a day of work\n").unwrap();
+    let ignore = dir.join(".gitignore");
+    std::fs::write(&ignore, "!keep.log\n").unwrap();
+    assert!(
+        GitCli.is_dirty(&root).unwrap(),
+        "readable, the re-included file counts"
+    );
+
+    std::fs::set_permissions(&ignore, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _put_back = ReadableAgain(&ignore);
+    assert!(
+        std::fs::read(&ignore).is_err(),
+        "this user can read a file with mode 000 — a root container, or a filesystem that \
+         ignores permissions — so there is nothing here to measure. Run this as a user \
+         permissions apply to."
+    );
+
+    let words = format!(
+        "{:#}",
+        GitCli
+            .is_dirty(&root)
+            .expect_err("git read the tree by a rule it could not see")
+    );
+    assert_eq!(
+        words, "warning: unable to access 't/.gitignore': Permission denied",
+        "git's own words, alone"
+    );
+}
+
+#[test]
+fn a_tracked_file_with_a_colon_in_its_name_is_read_the_same_way() {
+    // The same `r--` directory, with `: ` in the tracked file's own name: git says
+    // `t/a: b: Permission denied`, and the reason is after the last `: `, not the first.
+    use std::os::unix::fs::PermissionsExt;
+    let repo = repository();
+    let root = path_str(repo.path());
+    let dir = repo.path().join("t");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a: b"), "committed\n").unwrap();
+    git(repo.path(), &["add", "t/a: b"]);
+    git(repo.path(), &["commit", "-m", "t"]);
+    std::fs::write(dir.join("a: b"), "a day of work\n").unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o444)).unwrap();
+    let _put_back = ReadableAgain(&dir);
+    assert!(
+        std::fs::metadata(dir.join("a: b")).is_err(),
+        "this user can look inside a directory with mode 444 — a root container, or a \
+         filesystem that ignores permissions — so there is nothing here to measure. Run this \
+         as a user permissions apply to."
+    );
+
+    let words = format!(
+        "{:#}",
+        GitCli
+            .is_dirty(&root)
+            .expect_err("git could not look, and said so")
+    );
+    assert_eq!(words, "t/a: b: Permission denied");
+}
+
+#[test]
+fn a_tracked_file_under_a_symlink_that_loops_is_not_a_clean_one() {
+    // `t` was a directory holding a tracked file, and is now a symlink to itself, which the
+    // root's `.gitignore` keeps out of the untracked list. git cannot `lstat` `t/f`, says
+    // `t/f: Too many levels of symbolic links` and nothing else, and exits 0 — read from
+    // stdout alone, a clean checkout, though its tracked file has gone from under it.
+    let repo = repository();
+    let root = path_str(repo.path());
+    let dir = repo.path().join("t");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("f"), "committed\n").unwrap();
+    git(repo.path(), &["add", "t/f"]);
+    git(repo.path(), &["commit", "-m", "t"]);
+    std::fs::write(repo.path().join(".gitignore"), "t\n").unwrap();
+    git(repo.path(), &["add", ".gitignore"]);
+    git(repo.path(), &["commit", "-m", "ignore"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::os::unix::fs::symlink("t", &dir).unwrap();
+
+    let words = format!(
+        "{:#}",
+        GitCli
+            .is_dirty(&root)
+            .expect_err("git could not look, and said so")
+    );
+    assert_eq!(words, "t/f: Too many levels of symbolic links");
+}
+
+#[test]
+fn a_fsmonitor_hook_that_cannot_run_leaves_the_answer_whole() {
+    // git says `fatal: cannot exec '<hook>': Permission denied` and then looks at the whole
+    // tree itself, exiting 0 with a complete answer. The words end the way an `lstat` git
+    // could not do does, and are not one: read as one, every row of such a repository would
+    // say `?`.
+    use std::os::unix::fs::PermissionsExt;
+    let repo = repository();
+    let hook = repo.path().join(".git").join("not-executable");
+    std::fs::write(&hook, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o644)).unwrap();
+    git(
+        repo.path(),
+        &["config", "core.fsmonitor", &hook.to_string_lossy()],
+    );
+    assert!(
+        !GitCli
+            .is_dirty(&path_str(repo.path()))
+            .expect("git could not run the hook and answered anyway"),
+        "a clean checkout is clean"
+    );
+}
+
+#[test]
+fn a_gitignore_that_is_a_symlink_is_gits_rule_rather_than_a_file_it_could_not_read() {
+    // git does not follow a `.gitignore` in the working tree that is a symlink, and says
+    // `warning: unable to access '.gitignore': Too many levels of symbolic links` on every
+    // `status` — here with the link's target perfectly readable. Read as a partial answer,
+    // every row of such a repository would say `?` for good.
+    let repo = repository();
+    let shared = repo.path().join("shared");
+    std::fs::create_dir(&shared).unwrap();
+    std::fs::write(shared.join("ignore"), "*.log\n").unwrap();
+    std::os::unix::fs::symlink("shared/ignore", repo.path().join(".gitignore")).unwrap();
+    git(repo.path(), &["add", ".gitignore", "shared/ignore"]);
+    git(repo.path(), &["commit", "-m", "ignore"]);
+    assert!(
+        !GitCli
+            .is_dirty(&path_str(repo.path()))
+            .expect("git answered by its own rules"),
+        "a clean checkout is clean"
+    );
+}
+
+#[test]
+fn a_fsmonitor_command_that_is_not_on_the_path_leaves_the_answer_whole() {
+    // `core.fsmonitor` naming a command rather than a path, with that command nowhere on
+    // the path: git says `error: cannot run <command>: No such file or directory` and looks
+    // at the whole tree itself. Read as a partial answer, every row of every repository
+    // under such a setting would say `?`.
+    let repo = repository();
+    let root = path_str(repo.path());
+    git(
+        repo.path(),
+        &["config", "core.fsmonitor", "no-such-fsmonitor-command"],
+    );
+    assert!(
+        !GitCli
+            .is_dirty(&root)
+            .expect("git could not run it and answered anyway"),
+        "a clean checkout is clean"
+    );
+    std::fs::write(repo.path().join("untracked.txt"), "work\n").unwrap();
+    assert!(
+        GitCli
+            .is_dirty(&root)
+            .expect("git could not run it and answered anyway"),
+        "and work is still work"
+    );
+}
+
+#[test]
+fn a_warning_that_leaves_nothing_out_is_not_a_tree_git_could_not_read() {
+    // A clean exit with something on stderr is not, on its own, a partial answer: git warns
+    // about a deprecated setting here, and still looks at everything.
+    // Reading any stderr as "could not look" would put `?` on every row of such a repository.
+    let repo = repository();
+    git(repo.path(), &["config", "core.fsyncObjectFiles", "true"]);
+    assert!(
+        !GitCli
+            .is_dirty(&path_str(repo.path()))
+            .expect("git warned and answered"),
+        "a clean checkout is clean"
     );
 }
 

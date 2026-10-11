@@ -39,9 +39,10 @@ pub enum WorkingTree {
     /// git did not answer. Not the same claim as clean — and the one answer of the three
     /// that is about the tooling rather than the work. Nothing here tells its shapes apart:
     /// a `safe.directory` refusal fails identically for every checkout at once, a worktree
-    /// whose directory has gone fails for exactly one, and a directory git could not open
-    /// does not fail at all — git exits 0 having answered for the rest of the tree, which
-    /// is why the adapter reads its stderr. All three arrive as this. Whether that is worth
+    /// whose directory has gone fails for exactly one, and a directory git could not open, a
+    /// tracked file it could not look at, or a file of rules it could not read does not fail
+    /// at all — git exits 0 having answered for the rest of the tree, which is why the
+    /// adapter reads its stderr. All of them arrive as this. Whether that is worth
     /// a fourth variant is a question for whoever first has to explain one to a user.
     Unreadable,
 }

@@ -9,8 +9,12 @@
 //! Each half probes for its own locale. git's messages are separate translation units, so a
 //! locale that translates one of these says another in English — measured: `zh_CN.UTF-8` and
 //! `pt_BR.UTF-8` translate none of them here, `el_GR` translates `not a git repository` and
-//! not the dropped-ref warning. One locale for all four would be a test that holds whichever
+//! not the dropped-ref warning. One locale for them all would be a test that holds whichever
 //! halves that locale happened to cover.
+//!
+//! The bare `t/f: Permission denied` `unread_paths` also reads is not one of them: those words
+//! are the C library's, not git's, and the macOS library this was measured on does not
+//! translate them, so no locale there would make them say anything else.
 
 use std::ffi::OsString;
 use std::path::Path;
@@ -22,8 +26,13 @@ use herdr_worktree_nav::port::GitPort;
 /// The literals the adapter matches, which are the whole point: a locale this test accepts
 /// for a half has to be one where git does not print *that* one.
 const DROPPED: &str = "warning: ignoring broken ref ";
+/// The first of `adapter::git_cli::NOT_A_REPOSITORY`'s two literals, the one a pane outside
+/// any repository turns on; the second, `cannot change to`, git does not translate.
+const NOT_A_REPOSITORY: &str = "not a git repository";
 /// `adapter::git_cli::unread_paths`, the one issue #42 turns on.
 const UNREAD: &str = "warning: could not open directory ";
+/// `adapter::git_cli::unread_paths` again, for a file of rules git could not read.
+const UNREAD_RULES: &str = "warning: unable to access ";
 /// `adapter::git_cli::NO_SUCH_REMOTE`, the one issue #27 turns on.
 const NO_REMOTE: &str = "No such remote";
 
@@ -84,7 +93,7 @@ fn language_of(locale: &str) -> &str {
 /// probe gets wrong. A locale existing is not the same as git having a translation for it —
 /// `pt_BR.UTF-8` is generated here and git answers in English under it — so picking by name
 /// would pass without ever leaving English. And git's messages are separate translation
-/// units: probing with `not a git repository`, which an earlier version of this did, accepts
+/// units: probing for the dropped-ref warning with `not a git repository` instead accepts
 /// `el_GR`, where that one is translated and the dropped-ref warning is not, so the test
 /// would then assert English against English and hold nothing.
 fn a_locale_git_hides(dir: &Path, args: &[&str], english: &str) -> Result<String, NoLocale> {
@@ -183,7 +192,22 @@ fn locale_for(dir: &Path, args: &[&str], english: &str) -> String {
     }
 }
 
-/// Puts a directory's permissions back, so `TempDir` can remove it.
+/// That the process is still in `locale`, checked after a half binds its guard rather than
+/// trusted. One character decides it: `let _ = Locale::set(…)` drops the guard on that line,
+/// the half runs in whatever locale the suite was started in, git answers in English, the
+/// half holds, and it has measured nothing.
+fn still_in(locale: &str) {
+    assert_eq!(
+        (std::env::var("LC_ALL").ok(), std::env::var("LANGUAGE").ok()),
+        (
+            Some(locale.to_string()),
+            Some(language_of(locale).to_string())
+        ),
+        "the process has to still be in {locale} for this half to mean anything"
+    );
+}
+
+/// Makes a path readable again (mode 755), so `TempDir` can remove it.
 struct ReadableAgain<'a>(&'a Path);
 
 impl Drop for ReadableAgain<'_> {
@@ -196,28 +220,20 @@ impl Drop for ReadableAgain<'_> {
 #[test]
 fn git_is_read_in_the_language_its_messages_are_matched_in() {
     // The adapter decides four things by reading git's English: whether a ref was left out
-    // of a walk, whether a path is a repository at all, whether `status` could open every
-    // directory, and whether a repository simply has no `origin`. git translates each. Read
-    // in the
-    // locale herdr launched the plugin in, a German git says `Warnung: Ignoriere fehlerhafte
-    // Referenz …`, the walk comes back claiming to be whole, and the checkout on that ref
-    // carries no marker with nothing anywhere to say why — the silence issue #21 is about.
+    // of a walk, whether a path is a repository at all, whether `status` could look at all of
+    // the working tree, and whether a repository simply has no `origin`. git translates the
+    // words each turns on, bar `cannot change to` and the C library's `Permission denied`.
+    // Read in the locale herdr launched the plugin in, a German git says `Warnung: Ignoriere
+    // fehlerhafte Referenz …`, the walk comes back claiming to be whole, and the checkout on
+    // that ref carries no marker with nothing anywhere to say why — the silence issue #21 is
+    // about.
     // `GIT_LOCALE` is what keeps git's messages in the language they are matched in.
     let broken = repository_with_a_broken_ref();
     let elsewhere = tempfile::tempdir().expect("a temp dir");
     let locale = locale_for(broken.path(), &["for-each-ref", "refs/heads"], DROPPED);
 
     let _locale = Locale::set(&locale);
-
-    // The guard has to be alive from here to the end of the test, and one character decides
-    // it: `let _ = Locale::set(…)` drops it on that line instead, the two halves below run in
-    // whatever locale the suite was started in, git answers in English, both hold, and the
-    // test measures nothing. So it is checked rather than trusted.
-    assert_eq!(
-        (std::env::var("LC_ALL").ok(), std::env::var("LANGUAGE").ok()),
-        (Some(locale.clone()), Some(language_of(&locale).to_string())),
-        "the process has to still be in {locale} for the rest of this test to mean anything"
-    );
+    still_in(&locale);
 
     // git's half: the ref really is dropped, and the adapter still reads the warning as one.
     let walk = GitCli
@@ -236,9 +252,18 @@ fn git_is_read_in_the_language_its_messages_are_matched_in() {
         walk.refs
     );
 
+    drop(_locale);
+
     // The second half, which is the same pin: `NOT_A_REPOSITORY` is English too, and a path
     // that is not a repository is an ordinary answer rather than git refusing. Without the
-    // pin the German words miss the match, `run` bails, and this is an `Err`.
+    // pin the translated words miss the match, `run` bails, and this is an `Err`.
+    let locale = locale_for(
+        elsewhere.path(),
+        &["rev-parse", "--git-common-dir"],
+        NOT_A_REPOSITORY,
+    );
+    let _locale = Locale::set(&locale);
+    still_in(&locale);
     assert!(
         matches!(
             GitCli.identify(&elsewhere.path().to_string_lossy()),
@@ -248,8 +273,8 @@ fn git_is_read_in_the_language_its_messages_are_matched_in() {
     );
     drop(_locale);
 
-    // The third: a directory `status` could not open. Missed, the warning goes unread, an
-    // empty stdout is `clean`, and a sweep offers a checkout holding work — issue #42.
+    // The third: a directory `status` could not open — issue #42. Missed, the warning goes
+    // unread, an empty stdout is `clean`, and a sweep offers a checkout holding work.
     let unread = repository_with_a_broken_ref();
     let notes = unread.path().join("notes");
     std::fs::create_dir(&notes).unwrap();
@@ -270,6 +295,7 @@ fn git_is_read_in_the_language_its_messages_are_matched_in() {
         let args = ["--no-optional-locks", "status", "--porcelain"];
         let locale = locale_for(unread.path(), &args, UNREAD);
         let _locale = Locale::set(&locale);
+        still_in(&locale);
         let refused = GitCli
             .is_dirty(&unread.path().to_string_lossy())
             .err()
@@ -283,12 +309,43 @@ fn git_is_read_in_the_language_its_messages_are_matched_in() {
         );
     }
 
-    // The fourth: a repository with no `origin`. Missed, the ordinary answer reads as git
+    // Another of `status`'s: rules git could not read. Missed, the same as the third: the
+    // warning goes unread and a clean stdout is `clean`.
+    let rules = repository_with_a_broken_ref();
+    let exclude = rules.path().join(".git/info/exclude");
+    std::fs::write(&exclude, "*.log\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&exclude, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let _put_back = ReadableAgain(&exclude);
+        assert!(
+            std::fs::read(&exclude).is_err(),
+            "this user can read a file with mode 000 — a root container, or a filesystem \
+             that ignores permissions — so there is nothing here to measure. Run this as a \
+             user permissions apply to."
+        );
+        let args = ["--no-optional-locks", "status", "--porcelain"];
+        let locale = locale_for(rules.path(), &args, UNREAD_RULES);
+        let _locale = Locale::set(&locale);
+        still_in(&locale);
+        let refused = GitCli
+            .is_dirty(&rules.path().to_string_lossy())
+            .err()
+            .unwrap_or_else(|| panic!("rules git could not read went unnoticed, under {locale}"));
+        let words = format!("{refused:#}");
+        assert!(
+            words.starts_with(UNREAD_RULES),
+            "git's English, under {locale}: {words}"
+        );
+    }
+
+    // The last: a repository with no `origin`. Missed, the ordinary answer reads as git
     // refusing, and every sweep entry says `git could not name the repository` about a
-    // repository that is simply not on GitHub — issue #27's fix, the other way round.
+    // repository that simply has no `origin` — issue #27's fix, the other way round.
     let args = ["remote", "get-url", "origin"];
     let locale = locale_for(unread.path(), &args, NO_REMOTE);
     let _locale = Locale::set(&locale);
+    still_in(&locale);
     assert!(
         matches!(
             GitCli.github_slug(&unread.path().to_string_lossy()),

@@ -343,14 +343,16 @@ pub trait GitPort: Send + Sync {
     /// nothing there.
     ///
     /// **It is that question and no more.** git does not look at a path it has been told to
-    /// ignore, or at a file under `assume-unchanged`, so `false` is "git, asked with
-    /// untracked files included, had nothing to report" rather than "there is nothing here".
-    /// `git worktree remove` is blind to the same two, so a removal on the strength of this
+    /// ignore, or at a file under `assume-unchanged` or `skip-worktree`, so `false` is "git,
+    /// asked with untracked files included, had nothing to report" rather than "there is
+    /// nothing here". `git worktree remove` is blind to the same three, so a removal on the strength of this
     /// takes what deleting by hand would have taken — which is the whole of what it
     /// promises. `docs/en/usage.md` says it where a user will meet it.
     ///
-    /// `Err` is git not answering — refusing the call, or exiting clean having said it could
-    /// not open a directory, under which everything is left out of the answer. Neither is
+    /// `Err` is git not answering — refusing the call, or exiting clean having said it left
+    /// part of the working tree out of the answer, or read it by rules it could not see: a
+    /// directory it could not open, a tracked file it could not look at, a file of ignore
+    /// rules it could not read, or of attribute rules it needed and could not read. Neither is
     /// `false`: a working tree git could not look at is not one with nothing in it, and
     /// `false` is the one answer a sweep acts on.
     ///

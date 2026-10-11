@@ -312,10 +312,14 @@ fn a_git_that_would_not_name_the_repository_says_so_rather_than_nothing() {
         said.contains("git could not name the repository"),
         "and it says which half went wrong: {said}"
     );
+    assert!(
+        said.contains("fatal: unable to access '.git/config': Permission denied"),
+        "and why, in git's words: {said}"
+    );
     // On one line. git says its piece over several and this one is drawn in a `Span`,
     // where a newline breaks the row it is in — every other sentence that reaches the
-    // prompt line is folded on the way, and this one had nothing to fold until git's
-    // refusals could reach here at all.
+    // prompt line is made one line on the way, `gh`'s by keeping its first, and this one
+    // had nothing to fold until git's refusals could reach here at all.
     assert!(
         !said.contains('\n'),
         "and on one line, whatever git used: {said:?}"
