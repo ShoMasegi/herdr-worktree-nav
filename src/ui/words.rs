@@ -140,6 +140,10 @@ pub fn order(order: Order) -> String {
 pub fn condition(condition: &Condition) -> String {
     match condition {
         Condition::Stale(words) => words.clone(),
+        Condition::Unplaced { panes, words } => {
+            format!("{panes} {} not placed: {words}", plural(*panes, "pane"))
+        }
+        Condition::Unlisted { repo, words } => format!("{repo}: not listed: {words}"),
         Condition::RefsUnreadable { repo, words } => format!("{repo}: refs unreadable: {words}"),
         Condition::SweepTrouble(words) => words.clone(),
     }
@@ -574,7 +578,28 @@ mod tests {
     }
 
     #[test]
-    fn a_condition_says_which_repository_could_not_be_read() {
+    fn a_condition_says_what_could_not_be_read() {
+        assert_eq!(
+            condition(&Condition::Unplaced {
+                panes: 2,
+                words: "git could not be run: no such file or directory".into(),
+            }),
+            "2 panes not placed: git could not be run: no such file or directory"
+        );
+        assert_eq!(
+            condition(&Condition::Unplaced {
+                panes: 1,
+                words: "git could not be run: no such file or directory".into(),
+            }),
+            "1 pane not placed: git could not be run: no such file or directory"
+        );
+        assert_eq!(
+            condition(&Condition::Unlisted {
+                repo: "old".into(),
+                words: "herdr rejected worktree.list: internal error".into(),
+            }),
+            "old: not listed: herdr rejected worktree.list: internal error"
+        );
         assert_eq!(
             condition(&Condition::RefsUnreadable {
                 repo: "me/app".into(),

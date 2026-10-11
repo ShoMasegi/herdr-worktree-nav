@@ -110,15 +110,168 @@ fn a_path_outside_any_repository_is_an_answer_rather_than_an_error() {
 }
 
 #[test]
+fn a_checkout_that_has_gone_is_an_answer_rather_than_a_git_that_could_not_be_run() {
+    // A pane left sitting in a checkout another pane removed. `app::collect` reads `Err`
+    // here as "git could not be run, or would not say where it is", which is the item
+    // `docs/{en,ja}/troubleshooting` sends the reader to check `PATH` over, and this is not
+    // that — so it has to be the ordinary answer.
+    //
+    // It is `Ok(None)` because `command` passes the directory as `git -C`: git starts,
+    // cannot chdir, and says `fatal: cannot change to …: No such file or directory`, which
+    // `CANNOT_CHANGE_TO` matches.
+    // Run with `Command::current_dir` instead, the spawn itself would fail with
+    // `No such file or directory (os error 2)` — the same words a git that is not on the
+    // path gives — and the prompt line would name the wrong cause. That is what this pins.
+    let gone = tempfile::tempdir().unwrap();
+    let path = path_str(gone.path());
+    drop(gone);
+    assert_eq!(GitCli.identify(&path).unwrap(), None);
+}
+
+#[test]
+fn a_directory_git_could_not_enter_is_an_error_rather_than_no_repository() {
+    // The other side of the test above. git says `cannot change to` of a directory that is
+    // there too, when it may not enter it; it never looked, so it has not said the pane is
+    // in no repository, and read so the pane would sit among those in none with nothing to
+    // say why.
+    use std::os::unix::fs::PermissionsExt;
+    let repo = repository();
+    let locked = repo.path().join("locked");
+    let inner = locked.join("inner");
+    std::fs::create_dir_all(&inner).unwrap();
+    // Spelled while it can still be resolved: `path_str` canonicalises.
+    let cwd = path_str(&inner);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _put_back = ReadableAgain(&locked);
+    // Root enters a directory with no permissions, and git then answers with the checkout.
+    // That is not what this test is about, so it says so rather than failing as though the
+    // adapter had changed.
+    assert!(
+        std::fs::read_dir(&inner).is_err(),
+        "this test needs a user the mode 000 keeps out, which root is not"
+    );
+
+    let error = GitCli
+        .identify(&cwd)
+        .expect_err("git could not enter the directory");
+    let words = format!("{error:#}");
+    assert!(
+        words.starts_with("fatal: cannot change to") && words.contains("Permission denied"),
+        "git's own words: {words}"
+    );
+}
+
+#[test]
+fn a_repository_git_may_not_enter_is_not_one_that_is_not_there() {
+    // The same refusal reaching a call that expects a repository. Read as "no repository",
+    // it would say `… is not a git repository, but was expected to be`, and the reader would
+    // look for a repository that is there rather than at its permissions.
+    use std::os::unix::fs::PermissionsExt;
+    let repo = repository();
+    let root = path_str(repo.path());
+    std::fs::set_permissions(repo.path(), std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _put_back = ReadableAgain(repo.path());
+    assert!(
+        std::fs::read_dir(repo.path()).is_err(),
+        "this test needs a user the mode 000 keeps out, which root is not"
+    );
+
+    let error = GitCli
+        .local_refs(&root)
+        .expect_err("git could not enter the repository");
+    let words = format!("{error:#}");
+    assert!(
+        words.starts_with("fatal: cannot change to") && words.contains("Permission denied"),
+        "git's own words: {words}"
+    );
+}
+
+#[test]
+fn a_pane_in_a_repository_but_in_no_work_tree_is_an_answer_rather_than_an_error() {
+    // A shell in a bare repository — the layout that keeps one beside its worktrees — or in
+    // a `.git` directory. git exits 128 with `this operation must be run in a work tree`:
+    // it has answered, and the answer is that the directory is in no work tree, so git
+    // places it in no checkout. Read as a refusal, the prompt line would say git could not
+    // place the pane.
+    let repo = repository();
+    let bare = tempfile::tempdir().unwrap();
+    git(bare.path(), &["init", "--bare", "-q"]);
+    for (cwd, what) in [
+        (bare.path().to_path_buf(), "a bare repository"),
+        (repo.path().join(".git"), "a .git directory"),
+        (
+            repo.path().join(".git").join("refs"),
+            "a directory under .git",
+        ),
+    ] {
+        assert_eq!(
+            GitCli.identify(&path_str(&cwd)).unwrap(),
+            None,
+            "{what} is no checkout"
+        );
+    }
+}
+
+#[test]
+fn a_repository_git_would_not_read_is_an_error_rather_than_no_checkout() {
+    // The tests above make `identify` answer `None` from the refusals that mean the pane is
+    // in no checkout. Any other is git failing to say where the pane is, and has to reach
+    // the prompt line in git's words: read as `None`, the pane would sit among the panes in
+    // no repository and nothing would say why — the silence issue #33 is about, from a git
+    // that started and refused rather than one that could not start.
+    let repo = repository();
+    let config = repo.path().join(".git").join("config");
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str("[core\n");
+    std::fs::write(&config, text).unwrap();
+
+    let error = GitCli
+        .identify(&path_str(repo.path()))
+        .expect_err("git could not parse its own config");
+    let words = format!("{error:#}");
+    assert!(words.contains("bad config"), "git's own words: {words}");
+}
+
+#[test]
+fn a_call_that_needs_a_work_tree_gets_gits_words_in_a_bare_repository() {
+    // The other side of the test above: only `identify` reads `must be run in a work tree`
+    // as "no checkout here". `is_dirty` asked of a bare repository is asked of something
+    // with no working tree to be dirty, and git's own words are the error.
+    let bare = tempfile::tempdir().unwrap();
+    git(bare.path(), &["init", "--bare", "-q"]);
+    let error = format!("{:#}", GitCli.is_dirty(&path_str(bare.path())).unwrap_err());
+    assert!(
+        error.contains("this operation must be run in a work tree"),
+        "git's words: {error}"
+    );
+}
+
+#[test]
 fn a_detached_checkout_reports_no_branch() {
     let repo = repository();
     let head = GitCli.head_ref(&path_str(repo.path())).unwrap();
     git(repo.path(), &["checkout", "--detach", &head]);
     let identity = GitCli.identify(&path_str(repo.path())).unwrap().unwrap();
+    assert_eq!(identity.branch, None, "a detached HEAD names no branch");
+}
+
+#[test]
+fn a_repository_with_no_commit_yet_is_still_a_repository() {
+    // `rev-parse --abbrev-ref HEAD` exits 128 on a HEAD with nothing behind it, and taking
+    // that for a refusal put a new repository's panes that git was asked about under
+    // `not placed`.
+    let dir = tempfile::tempdir().expect("a temp dir");
+    git(dir.path(), &["init", "--initial-branch=main"]);
+    let root = path_str(dir.path());
+    let identity = GitCli
+        .identify(&root)
+        .expect("git named the repository")
+        .expect("and it is one");
     assert_eq!(
-        identity.branch, None,
-        "git prints \"HEAD\" when detached, which is not a branch name"
+        identity.checkout_path,
+        path_str(&dir.path().canonicalize().unwrap())
     );
+    assert_eq!(identity.branch.as_deref(), Some("main"));
 }
 
 #[test]

@@ -15,6 +15,8 @@
 //! Getting the two the wrong way round is what issues #64 and #35 are about, and
 //! `docs/en/error-handling.md` is where the distinction is written down.
 
+use std::collections::BTreeMap;
+
 use crate::domain::model::{Refs, Tree};
 
 /// One thing the picker has to say about the list it is showing.
@@ -22,14 +24,26 @@ use crate::domain::model::{Refs, Tree};
 /// A value rather than a sentence: which of these hold is derived every frame, and what
 /// each one reads as on a prompt line that may have no room for it is
 /// [`ui::words`](crate::ui::words)'s to decide. There is deliberately no severity here yet.
-/// Both conditions produced today are about one repository, so an ordering field would be a
-/// guess; the order is the order they are gathered in, and [`conditions`] says what that
-/// order means.
+/// Every condition produced today is about one repository, a set of panes that failed alike,
+/// the reading as a whole, or what `gh` could not be asked, so an ordering field would be a
+/// guess; the order is the order they are gathered in, and
+/// [`conditions`] says what that order means.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Condition {
     /// The reading that built the list failed, so the rows may be behind. Carries the words
     /// of whatever refused, which the picker has no better account of.
     Stale(String),
+    /// git could not be run or would not say which repository these panes are in — or, in a
+    /// debug build, the thread asking it did not finish — so they draw as though they were
+    /// in none. Counted by the words the failure came with rather than listed one per pane:
+    /// a `git` that is not on the path fails for every pane it is asked about with one
+    /// sentence, and what a reader needs is the words and how much of the session they
+    /// cost.
+    Unplaced { panes: usize, words: String },
+    /// herdr would not list this repository's worktrees, so it has no rows at all. Carries
+    /// the words [`Unlisted`](crate::domain::model::Unlisted) holds and the name
+    /// [`Unlisted::name`](crate::domain::model::Unlisted::name) makes out of the key.
+    Unlisted { repo: String, words: String },
     /// git would not read this repository's refs, so every track marker in it is missing.
     RefsUnreadable { repo: String, words: String },
     /// What could not be asked of `gh` in this sweep, already counted by
@@ -40,12 +54,13 @@ pub enum Condition {
 
 /// Everything that is wrong right now, worst first.
 ///
-/// git not reading a repository's refs comes before what `gh` said, and that is the order
-/// they are gathered in. The first is about the track markers on every row of the
-/// repository and is true sweep or no sweep; `gh` is asked only during a sweep, and only
-/// about the half git could not decide. A condition that is about the whole session rather
-/// than one repository belongs in front of both — issues #33 and #56 are the two that will
-/// want that, and this is the function they add a line to.
+/// After a list that may be behind: panes that could not be placed at all, then a repository
+/// with no rows at all, then a repository whose rows are missing their markers, then what
+/// `gh` said. Each is a larger question than the one after it — a reader whose whole session
+/// is ungrouped is not helped by being told about one repository's refs, and one who cannot
+/// see a repository at all is not helped by being told about another one's markers. The
+/// markers are about every row of the repository and are true sweep or no sweep; `gh` is
+/// asked only during a sweep, and only about the half git could not decide.
 ///
 /// One state that draws no marker deliberately has no line here: a single ref whose
 /// `:track` field git printed and the adapter could not read. Why it does not is written
@@ -64,6 +79,35 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
         .map(|words| Condition::Stale(words.to_string()))
         .into_iter()
         .collect();
+    // Counted by the words the failure came with, not one per pane: a `git` not on the
+    // path fails for every pane git is asked about, and the same sentence once per pane is
+    // not more information than the sentence and a number. Most panes first, since the
+    // prompt line holds one of these and the one that cost the most of the session is the
+    // one worth its room; words in order among equals, so two readings of one session say
+    // the same thing.
+    let mut by_words: BTreeMap<&str, usize> = BTreeMap::new();
+    for words in tree.trouble.unplaced.values() {
+        *by_words.entry(words.as_str()).or_default() += 1;
+    }
+    let mut by_cost: Vec<(&str, usize)> = by_words.into_iter().collect();
+    by_cost.sort_by(|(_, a), (_, b)| b.cmp(a));
+    conditions.extend(
+        by_cost
+            .into_iter()
+            .map(|(words, panes)| Condition::Unplaced {
+                panes,
+                words: words.to_string(),
+            }),
+    );
+    conditions.extend(
+        tree.trouble
+            .unlisted
+            .iter()
+            .map(|repo| Condition::Unlisted {
+                repo: repo.name().to_string(),
+                words: repo.words.clone(),
+            }),
+    );
     conditions.extend(tree.repos.iter().filter_map(|repo| match &repo.refs {
         Refs::Read => None,
         Refs::Unreadable(words) => Some(Condition::RefsUnreadable {
@@ -78,7 +122,7 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{RepoNode, Tree};
+    use crate::domain::model::{RepoNode, Tree, Unlisted};
 
     fn repo(name: &str, refs: Refs) -> RepoNode {
         RepoNode {
@@ -155,6 +199,135 @@ mod tests {
             vec![Condition::SweepTrouble(
                 "me/app: gh could not be run".into()
             )]
+        );
+    }
+
+    #[test]
+    fn panes_git_would_not_answer_about_are_counted_by_what_it_said() {
+        // A `git` that is not on the path fails for every pane it is asked about, and one
+        // condition is the whole of it. What a reader needs is the words and how much of the
+        // session they cost, not the same line once per pane.
+        let mut tree = tree(vec![repo("me/app", Refs::Read)]);
+        assert_eq!(conditions(&tree, None, None), Vec::new());
+
+        let refused = "git could not be run: no such file or directory (`git rev-parse`)";
+        for pane in ["w1:p1", "w2:p1"] {
+            tree.trouble
+                .unplaced
+                .insert(pane.to_string(), refused.to_string());
+        }
+        assert_eq!(
+            conditions(&tree, None, None),
+            vec![Condition::Unplaced {
+                panes: 2,
+                words: refused.into(),
+            }]
+        );
+
+        // A pane that failed for another reason is its own condition: two shapes of
+        // failure are two things to fix. The one that cost more of the session comes first,
+        // whatever its words sort as — `fatal` is ahead of `git` in the alphabet, and a
+        // missing git behind one odd pane is the sentence a reader most needs to see.
+        let dubious = "fatal: detected dubious ownership (`git rev-parse`)";
+        let warned = "warning: unable to access '/etc/gitconfig' (`git rev-parse`)";
+        tree.trouble
+            .unplaced
+            .insert("w3:p1".to_string(), dubious.to_string());
+        tree.trouble
+            .unplaced
+            .insert("w4:p1".to_string(), warned.to_string());
+        assert_eq!(
+            conditions(&tree, None, None),
+            vec![
+                Condition::Unplaced {
+                    panes: 2,
+                    words: refused.into(),
+                },
+                // Two that cost the same are in the order of their words, so the line does
+                // not change between two readings of one session.
+                Condition::Unplaced {
+                    panes: 1,
+                    words: dubious.into(),
+                },
+                Condition::Unplaced {
+                    panes: 1,
+                    words: warned.into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn unplaced_panes_are_gathered_ahead_of_every_repository_condition() {
+        // Each of these is a larger question than the one after it. A reader whose whole
+        // session is ungrouped is not helped by being told about one repository's refs.
+        let mut tree = tree(vec![repo(
+            "me/app",
+            Refs::Unreadable("fatal: index file corrupt".into()),
+        )]);
+        tree.trouble.unlisted.push(Unlisted {
+            repo_key: "/src/old/.git".into(),
+            words: "herdr rejected worktree.list: internal error".into(),
+            panes: Default::default(),
+        });
+        tree.trouble.unplaced.insert(
+            "w1:p1".to_string(),
+            "git could not be run: no such file or directory (`git rev-parse`)".into(),
+        );
+        assert_eq!(
+            conditions(&tree, None, None)[0],
+            Condition::Unplaced {
+                panes: 1,
+                words: "git could not be run: no such file or directory (`git rev-parse`)".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_repository_herdr_would_not_list_is_named_with_herdrs_words() {
+        // It has no rows to say it with — that is what "not listed" means — so in the panes
+        // view a condition is the only place it can be said.
+        let mut tree = tree(vec![repo("me/app", Refs::Read)]);
+        tree.trouble.unlisted.push(Unlisted {
+            repo_key: "/src/old/.git".into(),
+            words: "herdr rejected worktree.list: internal error".into(),
+            panes: Default::default(),
+        });
+        assert_eq!(
+            conditions(&tree, None, None),
+            vec![Condition::Unlisted {
+                repo: "old".into(),
+                words: "herdr rejected worktree.list: internal error".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_repository_that_is_not_there_is_gathered_ahead_of_one_whose_refs_were_not_read() {
+        // "Which rows exist" before "what the rows say": a reader who cannot see a
+        // repository at all is not helped by being told about another one's markers.
+        let mut tree = tree(vec![repo(
+            "me/app",
+            Refs::Unreadable("fatal: index file corrupt".into()),
+        )]);
+        tree.trouble.unlisted.push(Unlisted {
+            repo_key: "/src/old/.git".into(),
+            words: "herdr rejected worktree.list: internal error".into(),
+            panes: Default::default(),
+        });
+        assert_eq!(
+            conditions(&tree, None, None),
+            vec![
+                Condition::Unlisted {
+                    repo: "old".into(),
+                    words: "herdr rejected worktree.list: internal error".into(),
+                },
+                Condition::RefsUnreadable {
+                    repo: "me/app".into(),
+                    words: "fatal: index file corrupt".into(),
+                },
+            ],
+            "neither hides the other, and the larger question is first"
         );
     }
 

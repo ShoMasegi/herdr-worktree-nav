@@ -26,9 +26,11 @@ use herdr_worktree_nav::port::GitPort;
 /// The literals the adapter matches, which are the whole point: a locale this test accepts
 /// for a half has to be one where git does not print *that* one.
 const DROPPED: &str = "warning: ignoring broken ref ";
-/// The first of `adapter::git_cli::NOT_A_REPOSITORY`'s two literals, the one a pane outside
-/// any repository turns on; the second, `cannot change to`, git does not translate.
+/// `adapter::git_cli::NOT_A_REPOSITORY`, the one a pane outside any repository turns on.
 const NOT_A_REPOSITORY: &str = "not a git repository";
+/// The first half of `adapter::git_cli::CANNOT_CHANGE_TO`, the one a pane in a checkout that
+/// has gone turns on. git leaves `cannot change to` in English and translates `fatal: `.
+const CANNOT_CHANGE_TO: &str = "fatal: cannot change to ";
 /// `adapter::git_cli::unread_paths`, the one issue #42 turns on.
 const UNREAD: &str = "warning: could not open directory ";
 /// `adapter::git_cli::unread_paths` again, for a file of rules git could not read.
@@ -222,7 +224,8 @@ fn git_is_read_in_the_language_its_messages_are_matched_in() {
     // The adapter decides four things by reading git's English: whether a ref was left out
     // of a walk, whether a path is a repository at all, whether `status` could look at all of
     // the working tree, and whether a repository simply has no `origin`. git translates the
-    // words each turns on, bar `cannot change to` and the C library's `Permission denied`.
+    // words each turns on — of `fatal: cannot change to `, the `fatal: ` — bar the C
+    // library's words after the last colon, `Permission denied` and the like.
     // Read in the locale herdr launched the plugin in, a German git says `Warnung: Ignoriere
     // fehlerhafte Referenz …`, the walk comes back claiming to be whole, and the checkout on
     // that ref carries no marker with nothing anywhere to say why — the silence issue #21 is
@@ -270,6 +273,25 @@ fn git_is_read_in_the_language_its_messages_are_matched_in() {
             Ok(None)
         ),
         "a path that is not a repository is not a refusal, under {locale}"
+    );
+    drop(_locale);
+
+    // The same answer from a checkout that has gone, whose match starts with `fatal: `, which
+    // git translates.
+    // Without the pin a pane left in a checkout another pane removed reads as git refusing.
+    let gone = tempfile::tempdir().expect("a temp dir");
+    let gone_path = gone.path().to_path_buf();
+    drop(gone);
+    let locale = locale_for(
+        &gone_path,
+        &["rev-parse", "--git-common-dir"],
+        CANNOT_CHANGE_TO,
+    );
+    let _locale = Locale::set(&locale);
+    still_in(&locale);
+    assert!(
+        matches!(GitCli.identify(&gone_path.to_string_lossy()), Ok(None)),
+        "a checkout that has gone is not a refusal, under {locale}"
     );
     drop(_locale);
 

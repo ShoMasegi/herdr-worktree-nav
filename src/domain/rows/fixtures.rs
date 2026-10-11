@@ -69,6 +69,7 @@ pub(crate) fn tree() -> Tree {
             },
         ],
         ungrouped: vec![pane("w9:p1", None, AgentStatus::Unknown)],
+        ..Default::default()
     }
 }
 

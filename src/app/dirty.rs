@@ -280,6 +280,7 @@ mod tests {
                     .collect(),
             }],
             ungrouped: Vec::new(),
+            ..Default::default()
         }
     }
 

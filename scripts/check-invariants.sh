@@ -136,8 +136,12 @@ for path in $(grep -oE '`[A-Za-z_][A-Za-z_0-9]*(::[A-Za-z_0-9]+)+`' "$needles" \
     [ "$holder" = "crate" ] && continue
     case " $external_holders " in *" $holder "*) continue ;; esac
     case " $(echo $external) " in *" $last "*) continue ;; esac
+    # A module is held by its own file, or by the braces of an inline `mod x { … }`. The
+    # file that says `mod x;` holds nothing of x's — and when that file is a `mod.rs`,
+    # counted as the holder, its siblings join it below: `rows::trouble` would pass on a
+    # field called `trouble` in `domain/model.rs`.
     files=$( { find src tests -path "*/$holder.rs" -o -path "*/$holder/mod.rs"
-               grep -rlE "(^|[^A-Za-z_0-9])(pub[[:space:]]+)?(struct|enum|trait|type|union|mod)[[:space:]]+$holder([^A-Za-z_0-9]|$)" \
+               grep -rlE "(^|[^A-Za-z_0-9])(pub[[:space:]]+)?((struct|enum|trait|type|union)[[:space:]]+$holder([^A-Za-z_0-9]|$)|mod[[:space:]]+$holder[[:space:]]*\{)" \
                    src tests --include='*.rs'
              } 2>/dev/null | sort -u )
     # A type declared in a directory module has its methods wherever that directory put

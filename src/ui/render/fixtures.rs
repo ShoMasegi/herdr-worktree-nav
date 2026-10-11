@@ -98,6 +98,7 @@ pub(crate) fn tree() -> Tree {
             },
         ],
         ungrouped: vec![pane("w9:p1", None, AgentStatus::Unknown, false)],
+        ..Default::default()
     }
 }
 
@@ -217,6 +218,7 @@ pub(crate) fn finished_tree(finished: &[&str]) -> Tree {
             worktrees,
         }],
         ungrouped: vec![],
+        ..Default::default()
     }
 }
 

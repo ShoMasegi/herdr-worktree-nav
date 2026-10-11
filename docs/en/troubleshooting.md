@@ -56,10 +56,8 @@ where it is drawing one, `unreadable` where it could not read the field git prin
 `not known` where it found nothing — on the row itself the last two are the same empty
 marker as `track level` and `upstream none`. A row with no branch on it reads
 `no branch reported`, then `git names at this path:` with that same list where git names
-refs there — or `no ref at this checkout` where it names none but the picker's walk found
-one — then what that walk found as `track <where it stands>` where it found anything;
-where git would not read the refs it says `refs not read`, and `refs not read on the
-second read` where only this page's own read failed. Each checkout's working tree is
+refs there; where git would not read the refs it says `refs not read`, and `refs not read
+on the second read` where only this page's own read failed. Each checkout's working tree is
 walked in the open, one after another, so on many checkouts this takes a moment.
 
 git's words arrive in English here and on the prompt line whatever language your git speaks
@@ -124,6 +122,20 @@ herdr pane get <pane_id>
 
 If `cwd` and `foreground_cwd` are both absent, herdr cannot see into that pane and it lands
 in "not in any repository", the section at the bottom of the list.
+
+Besides a pane outside any repository and one herdr cannot see into, a pane lands there for
+two more reasons, and `dump` prints which under the pane.
+
+- git could not be run, or would not say where it is. That is the one to check first when
+  the panes you expected grouped are under that heading, because a `git` that is not on the
+  path herdr launched the plugin with fails for every pane it is asked about: every pane with
+  a working directory, except one still under the checkout of its own workspace when herdr
+  knows that workspace's worktree, which is placed without git. The prompt line says so, in
+  the words the failure came with, ahead of anything said about one repository, and `dump`
+  prints those words under the pane.
+- It was placed, and herdr would not list the repository it is in. The prompt line names the
+  repository as `<name>: not listed:` with the reason — or counts it, when something else
+  comes first — and `dump` prints `in <name>, which is not listed` under the pane.
 
 ## A branch I can see on GitHub is not listed
 
