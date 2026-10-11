@@ -399,7 +399,13 @@ are out in is what herdr did not say, so the view opens on the same sentence unt
 key. After `Tab` from the panes view it opens on whatever the panes view hands over instead,
 and says nothing about this one. Opened from a pane git could not place, it opens on that
 pane's `not placed` sentence when there is any repository to open on; with none it goes to the
-panes view, which gathers the same sentence.
+panes view, which gathers the same sentence. A sweep can lose a repository to git as well: a
+repository is drawn for the panes placed in it, so one none of whose panes was placed is not
+drawn, and the rows that go with it are followed by the `not placed` sentence. Which
+repository the panes git could not place were in is what git did not say, so the sentence
+goes with a row whose repository the picker drew before and no longer draws at all, while git
+failed on some pane — and only when every row that went is accounted for that way or as one
+herdr would not list.
 
 `r` asks again. It is the only thing that does: the answers are otherwise kept for as long as
 the picker is open, `Tab` to the branches view and back included.

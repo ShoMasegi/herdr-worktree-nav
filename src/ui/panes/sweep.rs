@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::domain::model::{CheckoutPath, RepoKey};
-use crate::domain::notice::Condition;
+use crate::domain::notice::{self, Condition};
 use crate::domain::rows::RowRef;
 use crate::domain::sweep::{self, Mark, RepoRoot};
 use crate::port::SettledPullRequests;
@@ -181,11 +181,16 @@ impl PanesState {
             // is left — `nothing left to remove` reads as a sweep that found nothing rather
             // than one that lost its ground.
             //
-            // Only when every row that went was in a repository herdr would not list. One
-            // reason after the list reads as the reason for all of it, so a row that went
-            // for its own reason — a pane that opened in it, a file written — beside one the
-            // listing took leaves the reason off; the failed listing is a condition already.
-            // And a listing that failed elsewhere took none of these away.
+            // Only when every row that went was in a repository the reading did not draw:
+            // one herdr would not list, or — while git could not place some panes — one no
+            // pane was placed in, since a repository is drawn for the panes placed in it and
+            // the panes git could not place are placed in none. Which repository those panes
+            // were in is the one thing git did not say, so this is the closest the picker
+            // can come to naming it. One reason after the list reads as the reason for all
+            // of it, so a row that went for its own reason — a pane that opened in it, a
+            // file written — beside one the reading took leaves the reason off; the failed
+            // reading is a condition already. And a listing that failed elsewhere took none
+            // of these away.
             let lost: BTreeSet<&str> = before
                 .iter()
                 .filter(|key| !still.contains(key))
@@ -200,19 +205,28 @@ impl PanesState {
                 .collect();
             // By key, not by count: two entries for one repository must not stand in for a
             // repository that was listed.
-            let every_one_lost = lost
-                .iter()
-                .all(|key| unlisted.iter().any(|repo| repo.repo_key == *key));
+            let is_unlisted = |key: &str| unlisted.iter().any(|repo| repo.repo_key == key);
+            let undrawn = |key: &str| {
+                !self.tree.trouble.unplaced.is_empty()
+                    && !self.tree.repos.iter().any(|repo| repo.repo_key == key)
+            };
+            let every_one_lost = lost.iter().all(|key| is_unlisted(key) || undrawn(key));
             let why = match every_one_lost {
-                true => words::conditions_line(
-                    &unlisted
+                true => {
+                    // In the order the prompt line gives them: the panes first.
+                    let unplaced = lost
                         .iter()
-                        .map(|repo| Condition::Unlisted {
-                            repo: repo.name().to_string(),
-                            words: repo.words.clone(),
-                        })
-                        .collect::<Vec<_>>(),
-                ),
+                        .any(|key| !is_unlisted(key))
+                        .then(|| notice::conditions(&self.tree, None, None))
+                        .into_iter()
+                        .flatten()
+                        .filter(|condition| matches!(condition, Condition::Unplaced { .. }));
+                    let unlisted = unlisted.iter().map(|repo| Condition::Unlisted {
+                        repo: repo.name().to_string(),
+                        words: repo.words.clone(),
+                    });
+                    words::conditions_line(&unplaced.chain(unlisted).collect::<Vec<_>>())
+                }
                 false => None,
             };
             self.message = Some(match (why, after.is_empty()) {

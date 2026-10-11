@@ -984,6 +984,60 @@ mod tests {
         assert!(unplaced.is_empty(), "git answered, and the answer was no");
     }
 
+    #[test]
+    fn a_pane_its_workspace_placed_is_not_also_one_git_could_not_place() {
+        // Two panes at one path: one in the workspace herdr made for that checkout, which
+        // places it without asking git, and one in a plain workspace, which asks. git
+        // refusing the second is not about the first, which is drawn under its repository;
+        // counted among the panes git could not place as well, the prompt line would say
+        // two were not placed while one of them sat in its row.
+        let snapshot: Snapshot = serde_json::from_value(serde_json::json!({
+            "version": "0.7.4",
+            "protocol": 16,
+            "workspaces": [{
+                "workspace_id": "w1",
+                "worktree": {
+                    "repo_key": "/src/app/.git",
+                    "repo_name": "app",
+                    "repo_root": "/src/app",
+                    "checkout_path": "/src/app",
+                    "is_linked_worktree": false,
+                },
+            }, {
+                "workspace_id": "w2",
+            }],
+            "tabs": [],
+            "panes": [{
+                "pane_id": "w1:p1",
+                "tab_id": "w1:t1",
+                "workspace_id": "w1",
+                "terminal_id": "t1",
+                "cwd": "/src/app",
+            }, {
+                "pane_id": "w2:p1",
+                "tab_id": "w2:t1",
+                "workspace_id": "w2",
+                "terminal_id": "t2",
+                "cwd": "/src/app",
+            }],
+        }))
+        .expect("snapshot fixture should deserialize");
+
+        let (placements, unplaced) = resolve_placements(&snapshot, &NoGit);
+        assert_eq!(
+            placements
+                .get("w1:p1")
+                .map(|placed| placed.checkout_path.as_str()),
+            Some("/src/app"),
+            "its workspace placed it"
+        );
+        assert_eq!(
+            unplaced.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["w2:p1"],
+            "and only the pane git was asked about is one git could not place"
+        );
+    }
+
     /// A git whose `identify` takes its thread down.
     struct IdentifyPanics;
 

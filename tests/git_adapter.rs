@@ -117,7 +117,8 @@ fn a_checkout_that_has_gone_is_an_answer_rather_than_a_git_that_could_not_be_run
     // that — so it has to be the ordinary answer.
     //
     // It is `Ok(None)` because `command` passes the directory as `git -C`: git starts,
-    // cannot chdir, and says `fatal: cannot change to …`, which `NOT_A_REPOSITORY` matches.
+    // cannot chdir, and says `fatal: cannot change to …: No such file or directory`, which
+    // `CANNOT_CHANGE_TO` matches.
     // Run with `Command::current_dir` instead, the spawn itself would fail with
     // `No such file or directory (os error 2)` — the same words a git that is not on the
     // path gives — and the prompt line would name the wrong cause. That is what this pins.
@@ -125,6 +126,39 @@ fn a_checkout_that_has_gone_is_an_answer_rather_than_a_git_that_could_not_be_run
     let path = path_str(gone.path());
     drop(gone);
     assert_eq!(GitCli.identify(&path).unwrap(), None);
+}
+
+#[test]
+fn a_directory_git_could_not_enter_is_an_error_rather_than_no_repository() {
+    // The other side of the test above. git says `cannot change to` of a directory that is
+    // there too, when it may not enter it; it never looked, so it has not said the pane is
+    // in no repository, and read so the pane would sit among those in none with nothing to
+    // say why.
+    use std::os::unix::fs::PermissionsExt;
+    let repo = repository();
+    let locked = repo.path().join("locked");
+    let inner = locked.join("inner");
+    std::fs::create_dir_all(&inner).unwrap();
+    // Spelled while it can still be resolved: `path_str` canonicalises.
+    let cwd = path_str(&inner);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _put_back = ReadableAgain(&locked);
+    // Root enters a directory with no permissions, and git then answers with the checkout.
+    // That is not what this test is about, so it says so rather than failing as though the
+    // adapter had changed.
+    assert!(
+        std::fs::read_dir(&inner).is_err(),
+        "this test needs a user the mode 000 keeps out, which root is not"
+    );
+
+    let error = GitCli
+        .identify(&cwd)
+        .expect_err("git could not enter the directory");
+    let words = format!("{error:#}");
+    assert!(
+        words.starts_with("fatal: cannot change to") && words.contains("Permission denied"),
+        "git's own words: {words}"
+    );
 }
 
 #[test]

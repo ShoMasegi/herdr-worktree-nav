@@ -12,12 +12,23 @@ use crate::port::{GitPort, GitRef, RefKind, RefWalk, RepoIdentity, Slug, Track};
 /// the message has to be read to tell them apart.
 const GIT_FATAL: i32 = 128;
 
-/// What git says when the path itself is the problem. That is an ordinary answer here — a
+/// What git says when the path is in no repository. That is an ordinary answer here — a
 /// pane simply is not in a repository — rather than a failure worth reporting.
 ///
-/// git's own English, which is what [`GIT_LOCALE`] is for: the first of these is translated
-/// and the second, measured against 2.55.0, is not.
-const NOT_A_REPOSITORY: [&str; 2] = ["not a git repository", "cannot change to"];
+/// git's own English, translated, which is what [`GIT_LOCALE`] is for.
+const NOT_A_REPOSITORY: &str = "not a git repository";
+
+/// What git says when the path it was pointed at is not there: no directory, so no
+/// repository, which is the same ordinary answer as [`NOT_A_REPOSITORY`]. A pane left in a
+/// checkout another pane removed.
+///
+/// Both halves, because the first is what git says of every directory it could not enter
+/// and only the second says why: `Permission denied`, or a network mount that has gone
+/// stale, is a directory git never looked in, and reading it as "no repository" would put
+/// the pane among those in none with nothing to say why. Both are English only under
+/// [`GIT_LOCALE`]: git translates `fatal: ` and, measured against 2.55.0, leaves
+/// `cannot change to` in English here; the second half is the C library's.
+const CANNOT_CHANGE_TO: (&str, &str) = ("fatal: cannot change to ", ": No such file or directory");
 
 /// What git says when the path is in a repository but in no work tree: a bare repository, or
 /// a checkout's `.git` directory and the directories git keeps in it, `refs` and `objects`
@@ -26,7 +37,7 @@ const NOT_A_REPOSITORY: [&str; 2] = ["not a git repository", "cannot change to"]
 /// as [`NOT_A_REPOSITORY`] — there is no work tree there for git to place a pane in — and
 /// only `identify` reads it so; to a call that needs a work tree, it is the error.
 ///
-/// Translated, like the first of those, and measured against 2.55.0.
+/// Translated, like [`NOT_A_REPOSITORY`], and measured against 2.55.0.
 const NOT_A_WORK_TREE: &str = "this operation must be run in a work tree";
 
 /// What `remote get-url` says when the remote is not configured: exit 2, with
@@ -57,13 +68,14 @@ struct Said {
 /// The locale every git this plugin starts runs under.
 ///
 /// Four things here are decided by reading git's own words — whether the path is a
-/// repository at all ([`NOT_A_REPOSITORY`], and [`NOT_A_WORK_TREE`] for `identify`), whether
-/// a ref was dropped from a walk ([`dropped_refs`]), whether `status` could look at all of
-/// the working tree ([`unread_paths`]) and whether a repository simply has no `origin`
-/// ([`NO_SUCH_REMOTE`]) — and all are English literals, while git ships a translation of
-/// each of these — bar `cannot change to`, the exception [`NOT_A_REPOSITORY`] names, and the
-/// words after the last colon of [`unread_paths`]' lines, which are the C library's — and
-/// picks one from the environment herdr launched the plugin in.
+/// repository at all ([`NOT_A_REPOSITORY`] and [`CANNOT_CHANGE_TO`], and [`NOT_A_WORK_TREE`]
+/// for `identify`), whether a ref was dropped from a walk ([`dropped_refs`]), whether
+/// `status` could look at all of the working tree ([`unread_paths`]) and whether a
+/// repository simply has no `origin` ([`NO_SUCH_REMOTE`]) — and all are English literals,
+/// while git translates each of these — bar the words `cannot change to`, which it leaves in
+/// English where [`CANNOT_CHANGE_TO`] reads them, and the words after the last colon of
+/// [`CANNOT_CHANGE_TO`]'s and [`unread_paths`]' lines, which are the C library's — and picks
+/// one from the environment herdr launched the plugin in.
 ///
 /// Why this variable, why one git, and what it costs a reader who does not read English:
 /// `docs/adr/0015-reading-git-in-one-language.md`, which carries the transcript it was
@@ -101,11 +113,15 @@ impl GitCli {
     /// Run git in `dir`. Returns `None` when git said the path is not a repository; any
     /// other non-zero exit is an error carrying git's words.
     fn run(dir: &str, args: &[&str]) -> Result<Option<Said>> {
-        Self::run_answering(dir, args, &NOT_A_REPOSITORY)
+        Self::run_answering(dir, args, no_repository_here)
     }
 
-    /// `run`, with the words that mean "not here" chosen by the caller.
-    fn run_answering(dir: &str, args: &[&str], not_here: &[&str]) -> Result<Option<Said>> {
+    /// `run`, with what reads as "not here" chosen by the caller.
+    fn run_answering(
+        dir: &str,
+        args: &[&str],
+        not_here: impl Fn(&str) -> bool,
+    ) -> Result<Option<Said>> {
         let output = Self::output(dir, args)?;
         let stderr = String::from_utf8_lossy(&output.stderr);
         if output.status.success() {
@@ -116,9 +132,7 @@ impl GitCli {
         }
         // Matching the exit code alone would turn every fatal error into "not a git
         // repository", a diagnosis that sends the reader looking in entirely the wrong place.
-        if output.status.code() == Some(GIT_FATAL)
-            && not_here.iter().any(|said| stderr.contains(said))
-        {
+        if output.status.code() == Some(GIT_FATAL) && not_here(&stderr) {
             return Ok(None);
         }
         bail!("{}", refusal(args, &stderr));
@@ -129,6 +143,16 @@ impl GitCli {
         Self::run(dir, args)?
             .with_context(|| format!("{dir} is not a git repository, but was expected to be"))
     }
+}
+
+/// Whether git's refusal says the path is in no repository: [`NOT_A_REPOSITORY`], or
+/// [`CANNOT_CHANGE_TO`] whole.
+fn no_repository_here(stderr: &str) -> bool {
+    let (cannot_change_to, not_there) = CANNOT_CHANGE_TO;
+    stderr.contains(NOT_A_REPOSITORY)
+        || stderr
+            .lines()
+            .any(|line| line.starts_with(cannot_change_to) && line.ends_with(not_there))
 }
 
 /// What a refusal reads as: git's words first, the call after them.
@@ -440,7 +464,7 @@ impl GitPort for GitCli {
                 "--git-common-dir",
                 "--show-toplevel",
             ],
-            &[NOT_A_REPOSITORY.as_slice(), &[NOT_A_WORK_TREE]].concat(),
+            |stderr| no_repository_here(stderr) || stderr.contains(NOT_A_WORK_TREE),
         )?
         else {
             return Ok(None);
@@ -682,8 +706,8 @@ impl GitPort for GitCli {
 #[cfg(test)]
 mod tests {
     use super::{
-        could_not_run, dropped_refs, github_slug_from_url, no_such_remote, parse_track, read_track,
-        refusal, unread_paths, GitCli, Slug, GIT_LOCALE,
+        could_not_run, dropped_refs, github_slug_from_url, no_repository_here, no_such_remote,
+        parse_track, read_track, refusal, unread_paths, GitCli, Slug, GIT_LOCALE,
     };
     use crate::port::Track;
     use std::num::NonZeroU32;
@@ -1013,6 +1037,31 @@ mod tests {
                  warning: could not open directory 'deep/inner/': Permission denied"
             )
         );
+    }
+
+    #[test]
+    fn a_directory_git_could_not_enter_is_no_repository_only_when_it_is_not_there() {
+        // The first three are what git 2.55.0 says with `-C` pointed at a directory outside
+        // any repository, one that is not there, and one it may not enter; the rest are
+        // written for what must not match.
+        assert!(no_repository_here(
+            "fatal: not a git repository (or any of the parent directories): .git\n"
+        ));
+        assert!(no_repository_here(
+            "fatal: cannot change to '/wt/gone': No such file or directory\n"
+        ));
+        // A directory that is there and git could not enter. git never looked, so this is
+        // not an answer about a repository.
+        assert!(!no_repository_here(
+            "fatal: cannot change to '/wt/locked': Permission denied\n"
+        ));
+        assert!(!no_repository_here(
+            "fatal: cannot change to '/mnt/share': Stale NFS file handle\n"
+        ));
+        // The ending on a line about something else is not about the path git was pointed at.
+        assert!(!no_repository_here(
+            "fatal: could not open '/src/app/.git/HEAD': No such file or directory\n"
+        ));
     }
 
     #[test]

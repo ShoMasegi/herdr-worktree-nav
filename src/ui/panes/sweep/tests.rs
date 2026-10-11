@@ -1032,6 +1032,107 @@ fn the_reason_goes_with_the_rows_it_took_and_no_others() {
     );
 }
 
+/// `me/app` as the re-read drew it when git could not place the panes that were in it:
+/// not drawn at all, and the panes among those git placed in nothing.
+fn app_unplaced(tree: &Tree) -> Tree {
+    let mut tree = tree.clone();
+    tree.repos.retain(|repo| repo.repo_key != "/src/app/.git");
+    for pane in ["w1:p1", "w3:p1"] {
+        tree.trouble.unplaced.insert(
+            pane.into(),
+            "git could not be run: no such file or directory (`git rev-parse`)".into(),
+        );
+    }
+    tree
+}
+
+#[test]
+fn a_row_the_re_read_lost_because_git_could_not_place_its_panes_is_not_nothing_left() {
+    // The same lost ground as a repository herdr would not list, with git as the cause:
+    // the repository is drawn for the panes placed in it, and git placed none.
+    let mut state = two_marks_asked();
+    state.replace_tree(app_unplaced(&state.tree));
+    state.set_waiting(false);
+    state.confirm_sweep_if_settled();
+    assert_eq!(
+        state.message(),
+        Some(
+            "no longer marked: /wt/app/fix-crash — 2 panes not placed: git could not be \
+             run: no such file or directory (`git rev-parse`)"
+        )
+    );
+    assert_eq!(box_labels(&state), ["chore/deps"]);
+
+    // Both lost, one to each: both are the reason, in the order the prompt line gives them.
+    let mut state = two_marks_asked();
+    let mut re_read = app_unplaced(&state.tree);
+    re_read.repos.clear();
+    re_read.trouble.unlisted.push(Unlisted {
+        repo_key: "/src/old/.git".into(),
+        words: "herdr rejected worktree.list: timeout".into(),
+        panes: Default::default(),
+    });
+    state.replace_tree(re_read);
+    state.set_waiting(false);
+    state.confirm_sweep_if_settled();
+    assert_eq!(
+        state.message(),
+        Some(
+            "no longer marked: /wt/app/fix-crash, /wt/app/fix-crash — 2 panes not placed: git \
+             could not be run: no such file or directory (`git rev-parse`) (+1 more)"
+        )
+    );
+
+    // A repository that is gone with no pane git failed on: its last pane closed, and there
+    // is nothing for the reading to have lost.
+    let mut state = two_marks_asked();
+    let mut re_read = app_unplaced(&state.tree);
+    re_read.trouble.unplaced.clear();
+    re_read.repos.clear();
+    state.replace_tree(re_read);
+    state.set_waiting(false);
+    state.confirm_sweep_if_settled();
+    assert_eq!(
+        state.message(),
+        Some("no longer marked: /wt/app/fix-crash, /wt/app/fix-crash — nothing left to remove")
+    );
+
+    // The same beside a repository herdr would not list: the reason it gives is not the
+    // reason for the other row.
+    let mut state = two_marks_asked();
+    let mut re_read = app_unlisted(&state.tree);
+    re_read.repos.clear();
+    state.replace_tree(re_read);
+    state.set_waiting(false);
+    state.confirm_sweep_if_settled();
+    assert_eq!(
+        state.message(),
+        Some("no longer marked: /wt/app/fix-crash, /wt/app/fix-crash — nothing left to remove")
+    );
+
+    // git failed on some panes, and the rows that went are in repositories still drawn:
+    // they went for their own reason — a pane that opened at the path both are given — which
+    // the rows show.
+    let mut state = two_marks_asked();
+    let mut re_read = state.tree.clone();
+    let old = re_read
+        .repos
+        .iter_mut()
+        .find(|repo| repo.repo_key == "/src/old/.git")
+        .unwrap();
+    old.worktrees[0]
+        .panes
+        .push(pane("w5:p1", "codex", AgentStatus::Working));
+    re_read.trouble.unplaced = app_unplaced(&state.tree).trouble.unplaced;
+    state.replace_tree(re_read);
+    state.set_waiting(false);
+    state.confirm_sweep_if_settled();
+    assert_eq!(
+        state.message(),
+        Some("no longer marked: fix/crash, chore/deps — nothing left to remove")
+    );
+}
+
 #[test]
 fn a_checkout_that_left_the_tree_during_the_re_read_is_named_by_its_path() {
     // Another session removed it between `Shift-S` and `Enter`, so there is no row left

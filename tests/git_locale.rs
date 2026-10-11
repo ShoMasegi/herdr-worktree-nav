@@ -26,8 +26,7 @@ use herdr_worktree_nav::port::GitPort;
 /// The literals the adapter matches, which are the whole point: a locale this test accepts
 /// for a half has to be one where git does not print *that* one.
 const DROPPED: &str = "warning: ignoring broken ref ";
-/// The first of `adapter::git_cli::NOT_A_REPOSITORY`'s two literals, the one a pane outside
-/// any repository turns on; the second, `cannot change to`, git does not translate.
+/// `adapter::git_cli::NOT_A_REPOSITORY`, the one a pane outside any repository turns on.
 const NOT_A_REPOSITORY: &str = "not a git repository";
 /// `adapter::git_cli::unread_paths`, the one issue #42 turns on.
 const UNREAD: &str = "warning: could not open directory ";
