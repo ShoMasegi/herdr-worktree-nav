@@ -1083,6 +1083,25 @@ fn a_row_the_re_read_lost_because_git_could_not_place_its_panes_is_not_nothing_l
         )
     );
 
+    // Every row lost to a repository herdr would not list, while git failed on a pane
+    // elsewhere: herdr is the reason, and git is not named for a loss it did not cause.
+    let mut state = two_marks_asked();
+    let mut re_read = app_unlisted(&state.tree);
+    re_read.trouble.unplaced.insert(
+        "w9:p1".into(),
+        "git could not be run: no such file or directory (`git rev-parse`)".into(),
+    );
+    state.replace_tree(re_read);
+    state.set_waiting(false);
+    state.confirm_sweep_if_settled();
+    assert_eq!(
+        state.message(),
+        Some(
+            "no longer marked: /wt/app/fix-crash — app: not listed: herdr rejected \
+             worktree.list: internal error"
+        )
+    );
+
     // A repository that is gone with no pane git failed on: its last pane closed, and there
     // is nothing for the reading to have lost.
     let mut state = two_marks_asked();

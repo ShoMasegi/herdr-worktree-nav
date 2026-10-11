@@ -162,6 +162,31 @@ fn a_directory_git_could_not_enter_is_an_error_rather_than_no_repository() {
 }
 
 #[test]
+fn a_repository_git_may_not_enter_is_not_one_that_is_not_there() {
+    // The same refusal reaching a call that expects a repository. Read as "no repository",
+    // it would say `… is not a git repository, but was expected to be`, and the reader would
+    // look for a repository that is there rather than at its permissions.
+    use std::os::unix::fs::PermissionsExt;
+    let repo = repository();
+    let root = path_str(repo.path());
+    std::fs::set_permissions(repo.path(), std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _put_back = ReadableAgain(repo.path());
+    assert!(
+        std::fs::read_dir(repo.path()).is_err(),
+        "this test needs a user the mode 000 keeps out, which root is not"
+    );
+
+    let error = GitCli
+        .local_refs(&root)
+        .expect_err("git could not enter the repository");
+    let words = format!("{error:#}");
+    assert!(
+        words.starts_with("fatal: cannot change to") && words.contains("Permission denied"),
+        "git's own words: {words}"
+    );
+}
+
+#[test]
 fn a_pane_in_a_repository_but_in_no_work_tree_is_an_answer_rather_than_an_error() {
     // A shell in a bare repository — the layout that keeps one beside its worktrees — or in
     // a `.git` directory. git exits 128 with `this operation must be run in a work tree`:
