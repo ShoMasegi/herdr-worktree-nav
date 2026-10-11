@@ -76,13 +76,10 @@ pub enum Candidate {
     /// and one whose working tree has not been read are rows nothing was going to offer
     /// anyway, so nothing about them is unknown that matters.
     ///
-    /// git's half fails two ways, and neither is visible on the row: the ref walk failed,
-    /// which the repository carries
+    /// git's half fails two ways: the ref walk failed, which the repository carries
     /// ([`domain::model::Refs`](crate::domain::model::Refs)), or it succeeded and more than
     /// one ref named this checkout, which the checkout carries
-    /// ([`domain::model::Position`](crate::domain::model::Position)). Both draw the blank a
-    /// branch level with its upstream draws, so in both the fact travels beside the marker
-    /// rather than in it.
+    /// ([`domain::model::Position`](crate::domain::model::Position)).
     Unjudged(Half),
     /// Nothing says it should go, and `Space` still marks it.
     Available,

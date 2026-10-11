@@ -965,8 +965,7 @@ fn a_walk_that_found_a_ref_and_no_position_is_not_a_walk_that_found_no_ref() {
 
 #[test]
 fn a_row_the_picker_found_no_ref_for_is_not_a_row_it_would_not_choose_one_for() {
-    // Both leave the row blank and this page has a word for each, because the two send
-    // somebody to different places: a `git worktree prune` for the one, and git and herdr
+    // This page has a word for each, because the two send somebody to different places: a `git worktree prune` for the one, and git and herdr
     // disagreeing about what is checked out where for the other.
     let tree = one_repo(
         Refs::Read,

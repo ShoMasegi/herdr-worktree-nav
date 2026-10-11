@@ -54,8 +54,9 @@ worktree registrations names that path, and which of them is stale is not someth
 page can tell you. The `track` after them is what the picker's own walk found: its
 marker where it is drawing one, `unreadable` where it could not read the field git
 printed, `contested` where its own walk found more than one ref here too and it would
-not choose between them, and `not known` where it found no ref at all — on the row
-itself the last three are the same empty marker as `track level` and `upstream none`.
+not choose between them, and `not known` where it found no ref at all. On the row
+itself `unreadable` and `not known` are the same empty marker as `track level` and
+`upstream none`, and `contested` is drawn as `contested`.
 `track contested` beside a single ref of this page's own is the two walks disagreeing
 the other way round, and in a sweep that checkout reads `refs disagree`. A row with no
 branch on it says which kind of silence that is: `no branch reported` where herdr
@@ -251,8 +252,10 @@ through this against a real session.
 - [ ] A checkout two of the repository's refs name — `one_repository_can_name_one_path_from_two_refs`
       in `tests/git_adapter.rs` builds it: a second worktree registered onto an occupied path
       with `git worktree repair`, which `git worktree prune -v --dry-run` then calls a
-      `duplicate entry`. Its row draws no marker, `dump` says `track contested` for it, and
-      under `Shift-S` it reads `refs disagree`.
+      `duplicate entry`. Its row draws `contested`, the breadcrumb under the list says
+      `more than one ref names this checkout` with the cursor on it, `!` lists
+      `<repo>: refs disagree: <path>`, `dump` says `track contested` for it, and under
+      `Shift-S` it reads `refs disagree`.
 - [ ] With that ref still broken, `Shift-S` shows the checkouts it would otherwise have
       judged reading `refs unreadable`, and `Space` on one keeps that reason on the row.
       `Tab` to the branches view: every branch git could still read is listed there.

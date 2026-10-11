@@ -84,9 +84,8 @@ impl WorkingTree {
 pub enum Refs {
     /// git answered. A checkout here with no track marker has nothing git reported for it,
     /// or is one whose `:track` field git printed and the adapter could not read —
-    /// [`Track::Unreadable`] — or is one more than one of the repository's refs names, which
-    /// [`Position::Contested`] is. The three draw no marker for three reasons, and each
-    /// carries its own.
+    /// [`Track::Unreadable`]. The two draw no marker for two reasons, and each carries its
+    /// own.
     Read,
     /// git did not, in its own words — or, in a debug build only, the thread that asked
     /// did not finish.
@@ -177,15 +176,14 @@ pub enum Position {
     /// say, and no row has both.
     Said(Option<Track>),
     /// More than one of the repository's refs names this checkout's path, so nothing here
-    /// is about one branch. The domain will not choose, and nothing draws a marker for it:
-    /// on the row it is the same blank as `Said(None)`, which is what issue #47 is about.
+    /// is about one branch, and the domain will not choose.
     ///
-    /// The word for it lives where there is room for one.
+    /// Said in five places, each in its own words: the row draws `contested`
+    /// ([`ui::words::track_mark`](crate::ui::words::track_mark)), the line under the list
+    /// says it of the checkout under the cursor, a condition names the checkout
+    /// ([`Condition::RefsDisagree`](crate::domain::notice::Condition::RefsDisagree)),
     /// [`app::dump`](crate::app::dump) says `track contested`, and in a sweep the row says
-    /// `refs disagree` — [`domain::sweep::Half`](crate::domain::sweep::Half) — because
-    /// `gone` was never on offer for a checkout nobody would name a branch for. Outside a
-    /// sweep the list stays silent, which is what it does for every other thing it has no
-    /// marker for.
+    /// `refs disagree` ([`domain::sweep::Half`](crate::domain::sweep::Half)).
     ///
     /// `git worktree add` and `git worktree move` both refuse a path a worktree is already
     /// registered at, but `git worktree repair` will register a second and `git worktree

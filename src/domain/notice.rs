@@ -17,15 +17,15 @@
 
 use std::collections::BTreeMap;
 
-use crate::domain::model::{Refs, Tree};
+use crate::domain::model::{Position, Refs, Tree};
 
 /// One thing the picker has to say about the list it is showing.
 ///
 /// A value rather than a sentence: which of these hold is derived every frame, and what
 /// each one reads as on a prompt line that may have no room for it is
 /// [`ui::words`](crate::ui::words)'s to decide. There is deliberately no severity here yet.
-/// Every condition produced today is about one repository, a set of panes that failed alike,
-/// the reading as a whole, or what `gh` could not be asked, so an ordering field would be a
+/// Every condition produced today is about one repository, one checkout, a set of panes that
+/// failed alike, the reading as a whole, or what `gh` could not be asked, so an ordering field would be a
 /// guess; the order is the order they are gathered in, and
 /// [`conditions`] says what that order means.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +46,10 @@ pub enum Condition {
     Unlisted { repo: String, words: String },
     /// git would not read this repository's refs, so every track marker in it is missing.
     RefsUnreadable { repo: String, words: String },
+    /// git read this repository's refs and more than one of them names this checkout, so
+    /// it has no one branch to measure: [`Position::Contested`]. One per checkout, carrying
+    /// its path.
+    RefsDisagree { repo: String, checkout: String },
     /// What could not be asked of `gh` in this sweep, already counted by
     /// [`app::settled`](crate::app::settled) because which repositories were asked is not
     /// something the tree knows.
@@ -55,8 +59,8 @@ pub enum Condition {
 /// Everything that is wrong right now, worst first.
 ///
 /// After a list that may be behind: panes that could not be placed at all, then a repository
-/// with no rows at all, then a repository whose rows are missing their markers, then what
-/// `gh` said. Each is a larger question than the one after it — a reader whose whole session
+/// with no rows at all, then a repository whose rows are missing their markers, then a
+/// checkout the refs disagree about, then what `gh` said. Each is a larger question than the one after it — a reader whose whole session
 /// is ungrouped is not helped by being told about one repository's refs, and one who cannot
 /// see a repository at all is not helped by being told about another one's markers. The
 /// markers are about every row of the repository and are true sweep or no sweep; `gh` is
@@ -115,6 +119,15 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
             words: words.clone(),
         }),
     }));
+    conditions.extend(tree.repos.iter().flat_map(|repo| {
+        repo.worktrees
+            .iter()
+            .filter(|worktree| worktree.position == Position::Contested)
+            .map(|worktree| Condition::RefsDisagree {
+                repo: repo.display_name.clone(),
+                checkout: worktree.checkout_path.clone(),
+            })
+    }));
     conditions.extend(sweep_trouble.map(|words| Condition::SweepTrouble(words.to_string())));
     conditions
 }
@@ -122,7 +135,7 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{RepoNode, Tree, Unlisted};
+    use crate::domain::model::{Branch, RepoNode, Tree, Unlisted, WorktreeNode};
 
     fn repo(name: &str, refs: Refs) -> RepoNode {
         RepoNode {
@@ -168,6 +181,39 @@ mod tests {
                     repo: "me/docs".into(),
                     words: "fatal: index file corrupt".into(),
                 },
+            ]
+        );
+    }
+
+    #[test]
+    fn every_checkout_the_refs_disagree_about_is_its_own_condition() {
+        let checkout = |path: &str, position| WorktreeNode {
+            branch: Branch::Out("b".into()),
+            checkout_path: path.into(),
+            is_primary: false,
+            open_workspace_id: None,
+            position,
+            panes: Vec::new(),
+        };
+        let mut app = repo("me/app", Refs::Read);
+        app.worktrees = vec![
+            checkout("/wt/a", Position::Contested),
+            checkout("/wt/b", Position::Said(None)),
+            checkout("/wt/c", Position::Contested),
+        ];
+        let tree = tree(vec![app]);
+        assert_eq!(
+            conditions(&tree, None, Some("me/app: gh could not be run")),
+            vec![
+                Condition::RefsDisagree {
+                    repo: "me/app".into(),
+                    checkout: "/wt/a".into(),
+                },
+                Condition::RefsDisagree {
+                    repo: "me/app".into(),
+                    checkout: "/wt/c".into(),
+                },
+                Condition::SweepTrouble("me/app: gh could not be run".into()),
             ]
         );
     }

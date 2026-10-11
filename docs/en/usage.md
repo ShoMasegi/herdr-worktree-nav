@@ -313,6 +313,7 @@ a column that is blank on most rows is a permanent gap between the name and the 
 | `?` | git would not read this working tree, so nothing is claimed about it |
 | `↑2↓1` | two commits its upstream does not have, one it does not have |
 | `gone` | git cannot find the ref this branch tracks |
+| `contested` | more than one of the repository's refs names this checkout, so there is no one branch to measure |
 
 `✱` is the one that stops `Shift-D` finishing: git refuses to remove a checkout holding work
 nobody has committed, and this is that refusal in advance — the picker will still let you
@@ -375,6 +376,11 @@ git's own words, and a count when more than one thing is wrong. It stays for as 
 refs cannot be read, and it sits beside a state filter's chip and beside a search you have
 left in the field rather than giving the line up to either. It steps aside only while you
 are typing in the field, where the cursor is yours.
+
+A checkout more than one of the repository's refs names is another answer from the refs
+that is not a position. git did read them, so the row has a word for it, `contested`, and the
+prompt line names the checkout the way it names a repository whose refs it could not read:
+`me/app: refs disagree: /path/to/checkout`.
 
 On a line too narrow to hold it, it gives up its words rather than its place: the spinners
 lose their labels first, and then the sentence becomes a count of how many things are wrong,

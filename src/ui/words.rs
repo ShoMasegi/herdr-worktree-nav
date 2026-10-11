@@ -145,6 +145,7 @@ pub fn condition(condition: &Condition) -> String {
         }
         Condition::Unlisted { repo, words } => format!("{repo}: not listed: {words}"),
         Condition::RefsUnreadable { repo, words } => format!("{repo}: refs unreadable: {words}"),
+        Condition::RefsDisagree { repo, checkout } => format!("{repo}: refs disagree: {checkout}"),
         Condition::SweepTrouble(words) => words.clone(),
     }
 }
@@ -170,6 +171,10 @@ const UNREADABLE: &str = "  ?";
 /// git cannot find the ref this branch tracks. A word rather than a glyph: it is the one of
 /// these that says a branch is finished with, and it is worth being unmissable.
 const GONE: &str = "gone";
+/// More than one of the repository's refs names this checkout:
+/// [`Position::Contested`]. A word, as [`GONE`] is, and the one `app::dump` prints after
+/// `track`.
+const CONTESTED: &str = "contested";
 
 /// What a row is called, which for a group is its name and how much it holds.
 ///
@@ -234,16 +239,13 @@ pub fn track_mark(position: Position) -> String {
         Position::Said(Some(Track::Diverged { ahead, behind })) => {
             format!("  \u{2191}{ahead}\u{2193}{behind}")
         }
-        // Nothing to draw, for three reasons the row has no room to tell apart. git
-        // reported nothing, which is not this row's to interpret; a field git printed could
-        // not be read, where there is no position to draw at all and a marker that is wrong
-        // is worse than none — kind 4 of `docs/en/error-handling.md`; and more than one ref
-        // names this checkout, where the domain declined to choose. `app::dump` is where
-        // the three are told apart, and in a sweep the third is on the row as `refs
-        // disagree`, because it is the half the sweep needed.
-        Position::Said(Some(Track::Unreadable) | None)
-        | Position::Contested
-        | Position::NotSaid => String::new(),
+        Position::Contested => format!("  {CONTESTED}"),
+        // Nothing to draw, for reasons the row has no room to tell apart. git reported
+        // nothing, which is not this row's to interpret; a field git printed could not be
+        // read, where there is no position to draw at all and a marker that is wrong is
+        // worse than none — kind 4 of `docs/en/error-handling.md`; or no ref names this
+        // checkout. `app::dump` is where they are told apart.
+        Position::Said(Some(Track::Unreadable) | None) | Position::NotSaid => String::new(),
     }
 }
 
@@ -318,6 +320,9 @@ pub fn detail(tree: &Tree, reference: RowRef) -> String {
             let mut parts = vec![repo.display_name.clone(), worktree.label().to_string()];
             if worktree.is_primary {
                 parts.push("main checkout".to_string());
+            }
+            if worktree.position == Position::Contested {
+                parts.push("more than one ref names this checkout".to_string());
             }
             parts.push(worktree.checkout_path.clone());
             parts
@@ -616,6 +621,13 @@ mod tests {
             "me/app: refs unreadable: fatal: bad ref"
         );
         assert_eq!(
+            condition(&Condition::RefsDisagree {
+                repo: "me/app".into(),
+                checkout: "/wt/shared".into(),
+            }),
+            "me/app: refs disagree: /wt/shared"
+        );
+        assert_eq!(
             condition(&Condition::SweepTrouble(
                 "me/app: gh could not be run".into()
             )),
@@ -758,11 +770,11 @@ mod tests {
             "one gap, not two: they are one answer"
         );
         assert_eq!(marks_for(None, Position::Said(Some(Track::Gone))), "  gone");
-        // Three that draw what a row with nothing to report draws: a position that went
-        // unread, more than one ref naming this checkout, and no ref naming it. They are
-        // told apart on `app::dump`'s page, not here.
+        assert_eq!(marks_for(None, Position::Contested), "  contested");
+        // Two that draw what a row with nothing to report draws: a position that went
+        // unread, and no ref naming this checkout. They are told apart on `app::dump`'s
+        // page, not here.
         assert_eq!(marks_for(None, Position::Said(Some(Track::Unreadable))), "");
-        assert_eq!(marks_for(None, Position::Contested), "");
         assert_eq!(marks_for(None, Position::NotSaid), "");
         assert_eq!(marks_for(None, Position::Said(None)), "");
     }
@@ -875,6 +887,16 @@ mod tests {
     }
 
     #[test]
+    fn the_breadcrumb_says_more_than_one_ref_names_a_contested_checkout() {
+        let mut tree = tree();
+        tree.repos[0].worktrees[1].position = Position::Contested;
+        assert_eq!(
+            detail(&tree, RowRef::Worktree(0, 1)),
+            "me/app · feat/login · more than one ref names this checkout · /wt/feat-login"
+        );
+    }
+
+    #[test]
     fn the_breadcrumb_is_empty_rather_than_panicking_on_a_stale_reference() {
         let tree = tree();
         assert_eq!(detail(&tree, RowRef::Repo(99)), "");
@@ -918,7 +940,8 @@ mod tests {
         assert_eq!(
             sweep_note(&Mark::Unjudged(Half::RefsDisagree)).as_deref(),
             Some("refs disagree"),
-            "a walk that worked and named two branches at one path is not a walk that              failed, and the fix for it is not the same one"
+            "a walk that worked and named more than one branch at one path is not a walk that \
+             failed, and the fix for it is not the same one"
         );
     }
 
