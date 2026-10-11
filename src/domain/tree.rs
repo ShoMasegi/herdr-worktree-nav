@@ -3,10 +3,10 @@
 //! The caller resolves where each pane lives and which worktrees each repository has, via
 //! the ports, and hands the answers in.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::domain::model::{
-    normalize_path, Branch, PaneNode, Position, Refs, RepoNode, Tree, WorktreeNode,
+    normalize_path, Branch, PaneNode, Position, Refs, RepoNode, Tree, Trouble, WorktreeNode,
 };
 use crate::port::{GitRef, RefKind, Snapshot, Track, Worktree};
 
@@ -135,8 +135,8 @@ pub fn build(
                     // carrying `[gone]`:
                     // `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out`
                     // in `tests/git_adapter.rs`. The row `build` makes below for a pane
-                    // herdr never listed keeps what git said: the marker there is issue
-                    // #49, and that row's `NotSaid` is what a fix would turn on.
+                    // herdr never listed draws no track either, for a reason of its own:
+                    // git may name a branch there, but the row cannot.
                     let position = if branch.name().is_some() {
                         Named::position(
                             tracks
@@ -169,6 +169,7 @@ pub fn build(
         .collect();
 
     let mut ungrouped = Vec::new();
+    let mut pane_cwds = BTreeMap::new();
 
     // Snapshot order is preserved within each worktree: herdr already lists panes in an
     // order that matches the layout, and re-sorting by id would put p10 before p9.
@@ -182,17 +183,28 @@ pub fn build(
             focused: pane.focused,
         };
 
-        let Some(placement) = placements.get(&pane.pane_id) else {
-            ungrouped.push(node);
-            continue;
-        };
-        let Some(&index) = by_key.get(normalize_path(&placement.repo_key)) else {
+        // Both of the pane's directories, not only the one it is placed by: a shell in a
+        // checkout whose foreground process is working somewhere else still stands in it.
+        let mut cwds: Vec<String> = [pane.cwd.as_deref(), pane.foreground_cwd.as_deref()]
+            .into_iter()
+            .flatten()
+            .filter(|cwd| !cwd.is_empty())
+            .map(|cwd| normalize_path(cwd).to_string())
+            .collect();
+        cwds.dedup();
+        if !cwds.is_empty() {
+            pane_cwds.insert(pane.pane_id.clone(), cwds);
+        }
+        let placed = placements.get(&pane.pane_id).and_then(|placement| {
+            let index = by_key.get(normalize_path(&placement.repo_key))?;
+            Some((placement, *index))
+        });
+        let Some((placement, index)) = placed else {
             ungrouped.push(node);
             continue;
         };
 
         let checkout = normalize_path(&placement.checkout_path);
-        let owner = normalize_path(&placement.repo_key);
         let repo = &mut nodes[index];
         match repo
             .worktrees
@@ -204,6 +216,12 @@ pub fn build(
                 // A checkout herdr's worktree list did not mention — for instance one added
                 // with `git worktree add` outside herdr. Showing it is better than dropping
                 // the pane into "ungrouped", where the user would not think to look.
+                //
+                // And no track: this row names no branch, so a marker on it is about a branch
+                // it cannot name, and the reader has nothing to check it against. A missing
+                // marker beats a wrong one, which is the judgement #45 makes one arm up.
+                // What git said is still on `dump`'s page, under `git names at this path:`,
+                // where naming it costs nothing. Issue #49.
                 repo.worktrees.push(WorktreeNode {
                     // Nobody said what is out here: herdr never listed the checkout, and
                     // what git has at the path is a registration rather than an answer
@@ -212,8 +230,7 @@ pub fn build(
                     checkout_path: checkout.to_string(),
                     is_primary: false,
                     open_workspace_id: Some(node.workspace_id.clone()),
-                    // git knows about it even where herdr does not.
-                    position: Named::position(tracks.get(&(owner, checkout)).copied()),
+                    position: Position::NotSaid,
                     panes: vec![node],
                 });
             }
@@ -234,6 +251,10 @@ pub fn build(
     Tree {
         repos: nodes,
         ungrouped,
+        // What the reading could not do is not this function's to know: it is handed what
+        // was read. `app::collect` records the rest onto the tree afterwards.
+        trouble: Trouble::default(),
+        pane_cwds,
     }
 }
 

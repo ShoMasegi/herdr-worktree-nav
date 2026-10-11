@@ -62,12 +62,10 @@ branch on it says which kind of silence that is: `no branch reported` where herd
 listed the checkout and said nothing is out, and `herdr did not list this checkout`
 where herdr never mentioned it — the picker shows that row for a pane whose directory
 it recognized, and a branch may well be out there. Either way `git names at this path:`
-follows with that same list where git names refs there — or `no ref at this checkout`
-where it names none but the picker's walk found one — then what that walk found as
-`track <where it stands>` where it found anything; where git would not read the refs it
-says `refs not read`, and `refs not read on the second read` where only this page's own
-read failed. Each checkout's working tree is walked in the open, one after another, so
-on many checkouts this takes a moment.
+follows with that same list where git names refs there; where git would not read the
+refs it says `refs not read`, and `refs not read on the second read` where only this
+page's own read failed. Each checkout's working tree is walked in the open, one after
+another, so on many checkouts this takes a moment.
 
 git's words arrive in English here and on the prompt line whatever language your git speaks
 in a terminal: the plugin runs git under `LC_ALL=C`, because it decides two things by reading
@@ -131,6 +129,20 @@ herdr pane get <pane_id>
 
 If `cwd` and `foreground_cwd` are both absent, herdr cannot see into that pane and it lands
 in "not in any repository", the section at the bottom of the list.
+
+Besides a pane outside any repository and one herdr cannot see into, a pane lands there for
+two more reasons, and `dump` prints which under the pane.
+
+- git could not be run, or would not say where it is. That is the one to check first when
+  the panes you expected grouped are under that heading, because a `git` that is not on the
+  path herdr launched the plugin with fails for every pane it is asked about: every pane with
+  a working directory, except one still under the checkout of its own workspace when herdr
+  knows that workspace's worktree, which is placed without git. The prompt line says so, in
+  the words the failure came with, ahead of anything said about one repository, and `dump`
+  prints those words under the pane.
+- It was placed, and herdr would not list the repository it is in. The prompt line names the
+  repository as `<name>: not listed:` with the reason — or counts it, when something else
+  comes first — and `dump` prints `in <name>, which is not listed` under the pane.
 
 ## A branch I can see on GitHub is not listed
 

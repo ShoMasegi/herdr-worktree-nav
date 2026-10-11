@@ -98,7 +98,7 @@ find src tests -name '*.rs' -exec cat {} + | grep -vE '^[[:space:]]*//' > "$hays
 # git's and herdr's environment, herdr's socket API and the internals its pages name, the
 # crates the picker is built on, and a file a release ships. Adding to this list is a claim
 # that the name is somebody else's — a name of ours never belongs on it.
-external='ALL Cell EnterAlternateScreen GIT_TRACE GIT_TRACE2 GIT_TRACE_PERFORMANCE
+external='ALL Cell EnterAlternateScreen GIT_TRACE GIT_TRACE2 GIT_TRACE_PERFORMANCE GIT_TRACE_SETUP
 HERDR_PANE_ID HERDR_PLUGIN_ROOT LANG LC_MESSAGES LeaveAlternateScreen OpenOptions
 RUSTUP_TOOLCHAIN SHA256SUMS agent_not_found closed_tab_id closed_workspace_id from_name
 no_foreground_client render_panel_shell set_panic_hook'
@@ -136,8 +136,12 @@ for path in $(grep -oE '`[A-Za-z_][A-Za-z_0-9]*(::[A-Za-z_0-9]+)+`' "$needles" \
     [ "$holder" = "crate" ] && continue
     case " $external_holders " in *" $holder "*) continue ;; esac
     case " $(echo $external) " in *" $last "*) continue ;; esac
+    # A module is held by its own file, or by the braces of an inline `mod x { … }`. The
+    # file that says `mod x;` holds nothing of x's — and when that file is a `mod.rs`,
+    # counted as the holder, its siblings join it below: `rows::trouble` would pass on a
+    # field called `trouble` in `domain/model.rs`.
     files=$( { find src tests -path "*/$holder.rs" -o -path "*/$holder/mod.rs"
-               grep -rlE "(^|[^A-Za-z_0-9])(pub[[:space:]]+)?(struct|enum|trait|type|union|mod)[[:space:]]+$holder([^A-Za-z_0-9]|$)" \
+               grep -rlE "(^|[^A-Za-z_0-9])(pub[[:space:]]+)?((struct|enum|trait|type|union)[[:space:]]+$holder([^A-Za-z_0-9]|$)|mod[[:space:]]+$holder[[:space:]]*\{)" \
                    src tests --include='*.rs'
              } 2>/dev/null | sort -u )
     # A type declared in a directory module has its methods wherever that directory put

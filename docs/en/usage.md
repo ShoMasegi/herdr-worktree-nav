@@ -83,6 +83,15 @@ running in it. The `gone` marker beside the branch name is the reason, which is 
 does not repeat it. Where `gh` answers, a branch whose pull request has been merged or closed
 is marked too, and that row says `PR #123 merged` — the number, so you can go and check it.
 
+"Nothing running" is about the directory a pane is known to stand in, not the row. Two
+repositories can both register one path — one of the registrations stale — and a pane shows in
+only one of their rows; a pane whose own repository herdr would not list shows in none, under
+`not in any repository`. Either way, every row naming that path is refused as running. So is
+any row whose checkout holds a working directory of a pane — its shell's, or the one its
+foreground process has moved to — whether the pane is drawn under another row, as when one
+checkout sits inside another, or under that heading; only a pane herdr cannot see into has no
+working directory to go by.
+
 `Space` adds a mark and takes it away again. The same key does both, because disagreeing with
 the sweep should cost exactly what agreeing with it extra does. `Shift-S` again, `q` or `Esc`
 leaves, and leaving forgets the marks: the next sweep opens on what it would suggest now, not
@@ -107,14 +116,16 @@ reports.
 The sweep runs on git alone. It marks fewer rows, and it says so: a checkout it would have
 asked `gh` about reads `PR unknown` rather than looking like one with nothing to find, and
 goes on reading it if you mark it by hand. The prompt line names the repository and says why,
-once — no `gh` on the machine, no GitHub remote, `gh` not logged in, and `gh`'s own words when
-it refused. Fix the cause and enter the sweep again: a repository `gh` refused is asked about
-again on the way in; one it answered for is not, and neither is one with no GitHub remote, since
-there is nothing to ask. With more than one repository in trouble the prompt line names the
-first and counts the rest, and a refusal — the one you can do something about — is named ahead
-of a missing remote; `!` opens the rest in full, during a sweep as well as outside one. Entering again re-asks `gh` and nothing else: which working trees are
-clean and which checkouts have panes in them were read when the picker opened; `r`, outside a
-sweep, reads them again, and so does `Enter` inside one, before it asks.
+once — no `gh` on the machine, no GitHub remote, `gh` not logged in, `gh`'s own words when it
+refused, and git's own words when it could not name the repository at all. Fix the cause and
+enter the sweep again: a repository either of them refused is asked about again on the way in;
+one `gh` answered for is not, and neither is one with no GitHub remote, since there is nothing
+to ask. With more than one repository in trouble the prompt line names the first and counts
+the rest, and a refusal — the one you can do something about — is named ahead of a missing
+remote; `!` opens the rest in full, during a sweep as well as outside one. Entering again
+re-asks only that question: which working trees are clean and which checkouts have panes in
+them were read when the picker opened; `r`, outside a sweep, reads them again, and so does
+`Enter` inside one, before it asks.
 
 While `gh` is still out the prompt line spins on `asking gh…`. Until it answers, the rows are
 showing what git decided on its own, which is the smaller half.
@@ -311,9 +322,9 @@ GitHub deleted and an `f` fetch in the branches view then pruned, but an upstrea
 never fetched reads the same, because to git it is the same.
 
 What git reports is not everything the directory holds. A path the repository has been told
-to ignore is outside the question, and so is a file someone has marked `assume-unchanged`:
-git has nothing to say about either, so neither raises a `✱` and neither stops a sweep.
-`git worktree remove` is blind to the same two, so a checkout that goes on the strength of a
+to ignore is outside the question, and so is a file someone has marked `assume-unchanged` or
+`skip-worktree`: git has nothing to say about any of them, so none raises a `✱` and none stops a
+sweep. `git worktree remove` is blind to the same three, so a checkout that goes on the strength of a
 missing `✱` takes exactly what deleting the directory by hand would have taken — a build
 directory, an `.env` under an ignored path. What the picker does pin is the question itself:
 it asks git with untracked files included whatever `status.showUntrackedFiles` is set to, so
@@ -330,17 +341,25 @@ The room for a `✱` is kept from the first frame whether or not one turns up, s
 landing never moves the paths beside it. Three columns is the price of a list that does not
 shift while you are reading it.
 
-When git will not answer at all, the row says `?` rather than nothing:
+When git does not answer, the row says `?` rather than nothing:
 
 ```
    └── · fix/crash  ?  no pane        ~/.herdr/worktrees/app/fix-crash
 ```
 
 An unread working tree is the absence of an answer, not the answer `clean`, and without the
-marker such a row is indistinguishable from one that was answered for. Both shapes of failure
-need it: a `safe.directory` refusal, or a `git` that is not on the path herdr launched the
+marker such a row is indistinguishable from one that was answered for. Every shape of failure
+needs it: a `safe.directory` refusal, or a `git` that is not on the path herdr launched the
 plugin with, fails the same way for every checkout at once — while a worktree whose directory
-has gone out from under git fails for exactly one, on a list where every other row is fine.
+has gone out from under git, or one holding a directory git cannot open, a tracked file git
+cannot look at, or a `.gitignore` git cannot read, fails for exactly one, on a list where every
+other row is fine. The last of those are the quiet ones: git reports what it could not read and
+then answers for the rest of the working tree as though nothing were missing, so the marker is
+what stands between a day of work and a sweep that reads `clean`.
+A directory your `.gitignore` already excludes is not that — git never walks it, so a
+`node_modules` whose permissions got mangled leaves the row alone. A `core.excludesFile` git
+cannot read is read by every repository that uses it, so it puts `?` on all of their rows at
+once; `dump` names the file.
 It takes the room already kept for `✱`, so nothing moves.
 
 The other way git can fail is on the refs themselves: the one `for-each-ref` that ahead,
@@ -367,6 +386,29 @@ The key hint offers it for as long as there is something to read, and `!`, `Esc`
 closes it again. A pane too short for all of them shows what fits and counts the rest, the
 same answer the line gives for the same reason; `herdr-worktree-nav dump` is the copy with
 nothing left out. `r` reads the refs again.
+
+herdr can fail the same way, one step earlier. Asked for a repository's worktrees and
+refusing, it leaves that repository out of the panes view — no rows to carry a marker and no
+heading to hang one off — so a condition names it there too, as `app: not listed:` with the
+reason, ahead of any repository whose refs went unread. A sweep is where that matters
+most: the re-read `Enter` asks for can lose a whole repository between the marks going on and
+the question being asked, and the rows that go are then named by their bare paths with this
+sentence after them — when every one of them went that way. A row that went for its own reason
+beside them leaves the failed listing to the conditions, since one reason after the list would
+read as the reason for all of it. `dump` prints the same under a `not listed:` heading of its own.
+The branches view says it as well when it is opened from a pane in that repository and falls
+back to that repository's branches: they are git's and still listed, and which checkouts they
+are out in is what herdr did not say, so the view opens on the same sentence until the first
+key. After `Tab` from the panes view it opens on whatever the panes view hands over instead,
+and says nothing about this one. Opened from a pane git could not place, it opens on that
+pane's `not placed` sentence when there is any repository to open on; with none it goes to the
+panes view, which gathers the same sentence. A sweep can lose a repository to git as well: a
+repository is drawn for the panes placed in it, so one none of whose panes was placed is not
+drawn, and the rows that go with it are followed by the `not placed` sentence. Which
+repository the panes git could not place were in is what git did not say, so the sentence
+goes with a row whose repository the picker drew before, no longer draws at all, and herdr
+did not refuse to list, while git failed on some pane — and only when every row that went is
+accounted for that way or as one herdr would not list.
 
 `r` asks again. It is the only thing that does: the answers are otherwise kept for as long as
 the picker is open, `Tab` to the branches view and back included.

@@ -720,6 +720,7 @@ fn one_pane_tree() -> crate::domain::model::Tree {
             }],
         }],
         ungrouped: Vec::new(),
+        ..Default::default()
     }
 }
 

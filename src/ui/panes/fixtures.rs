@@ -88,6 +88,7 @@ pub(crate) fn state() -> PanesState {
                 ],
             }],
             ungrouped: vec![pane("w9:p1", "zsh", AgentStatus::Unknown)],
+            ..Default::default()
         },
         None,
     )

@@ -160,10 +160,31 @@ pub fn report(
             }
         }
     }
+    if !tree.trouble.unlisted.is_empty() {
+        // A repository with no section above, because herdr would not say what is in it.
+        let _ = writeln!(out, "\nnot listed:");
+        for repo in &tree.trouble.unlisted {
+            let _ = writeln!(out, "  {}  [{}]", repo.name(), repo.repo_key);
+            let _ = writeln!(out, "      {}", repo.words);
+        }
+    }
     if !tree.ungrouped.is_empty() {
         let _ = writeln!(out, "\nnot in any repository:");
         for pane in &tree.ungrouped {
             let _ = writeln!(out, "      {}", pane.pane_id);
+            // Why, where there is a why. herdr not seeing into the pane, git not answering
+            // about it, and herdr not listing the repository it was placed in all look the
+            // same on this page otherwise, and the page exists to tell those apart.
+            if let Some(words) = tree.trouble.unplaced.get(&pane.pane_id) {
+                let _ = writeln!(out, "          {words}");
+            } else if let Some(repo) = tree
+                .trouble
+                .unlisted
+                .iter()
+                .find(|repo| repo.panes.contains_key(&pane.pane_id))
+            {
+                let _ = writeln!(out, "          in {}, which is not listed", repo.name());
+            }
         }
     }
     out
@@ -280,10 +301,12 @@ fn each_of(named: &[&GitRef]) -> String {
 ///
 /// Two rows reach here and they are not the same news: the checkout herdr listed with
 /// nothing out, and the one herdr never listed, which `build` makes for a pane and where a
-/// branch may well be out. The row says which ([`Branch`]), so the page does too — on the
+/// branch may well be out. The row says which ([`Branch`]), so the page does too: on the
 /// second, `no branch reported` would be this side's inference dressed as herdr's answer.
-/// The refs git names at the path are still named and not explained, because which of them
-/// is out is what nobody said (issue #49).
+/// Neither carries a position ([`WorktreeNode::branch`] names the test), so the refs git
+/// names at the path are named and not explained (issue #49). The `track` arms stay because
+/// [`WorktreeNode`] does not make the state unrepresentable, and a page that dropped a
+/// position it was handed would be the page lying rather than the tree.
 ///
 /// No `upstream …` either way: this row names no branch for one to be about.
 fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {

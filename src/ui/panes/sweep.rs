@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::domain::model::{CheckoutPath, RepoKey};
+use crate::domain::notice::{self, Condition};
 use crate::domain::rows::RowRef;
 use crate::domain::sweep::{self, Mark, RepoRoot};
 use crate::port::SettledPullRequests;
@@ -174,9 +175,64 @@ impl PanesState {
             .collect();
         if !dropped.is_empty() {
             let named = format!("no longer marked: {}", dropped.join(", "));
-            self.message = Some(match after.is_empty() {
-                true => format!("{named} — nothing left to remove"),
-                false => named,
+            // A row can go because a pane opened in it or a file was written, and the
+            // rows usually show that. It can also go because the repository it was in is
+            // not there to be read any more, and then the bare paths are the whole of what
+            // is left — `nothing left to remove` reads as a sweep that found nothing rather
+            // than one that lost its ground.
+            //
+            // Only when every row that went was in a repository the reading did not draw:
+            // one herdr would not list, or — while git could not place some panes — one no
+            // pane was placed in, since a repository is drawn for the panes placed in it and
+            // the panes git could not place are placed in none. Which repository those panes
+            // were in is the one thing git did not say, so this is the closest the picker
+            // can come to naming it. One reason after the list reads as the reason for all
+            // of it, so a row that went for its own reason — a pane that opened in it, a
+            // file written — beside one the reading took leaves the reason off; the failed
+            // reading is a condition already. And a listing that failed elsewhere took none
+            // of these away.
+            let lost: BTreeSet<&str> = before
+                .iter()
+                .filter(|key| !still.contains(key))
+                .map(|key| key.0.as_str())
+                .collect();
+            let unlisted: Vec<_> = self
+                .tree
+                .trouble
+                .unlisted
+                .iter()
+                .filter(|repo| lost.contains(repo.repo_key.as_str()))
+                .collect();
+            // By key, not by count: two entries for one repository must not stand in for a
+            // repository that was listed.
+            let is_unlisted = |key: &str| unlisted.iter().any(|repo| repo.repo_key == key);
+            let undrawn = |key: &str| {
+                !self.tree.trouble.unplaced.is_empty()
+                    && !self.tree.repos.iter().any(|repo| repo.repo_key == key)
+            };
+            let every_one_lost = lost.iter().all(|key| is_unlisted(key) || undrawn(key));
+            let why = match every_one_lost {
+                true => {
+                    // In the order the prompt line gives them: the panes first.
+                    let unplaced = lost
+                        .iter()
+                        .any(|key| !is_unlisted(key))
+                        .then(|| notice::conditions(&self.tree, None, None))
+                        .into_iter()
+                        .flatten()
+                        .filter(|condition| matches!(condition, Condition::Unplaced { .. }));
+                    let unlisted = unlisted.iter().map(|repo| Condition::Unlisted {
+                        repo: repo.name().to_string(),
+                        words: repo.words.clone(),
+                    });
+                    words::conditions_line(&unplaced.chain(unlisted).collect::<Vec<_>>())
+                }
+                false => None,
+            };
+            self.message = Some(match (why, after.is_empty()) {
+                (Some(why), _) => format!("{named} — {why}"),
+                (None, true) => format!("{named} — nothing left to remove"),
+                (None, false) => named,
             });
         }
         if !after.is_empty() {

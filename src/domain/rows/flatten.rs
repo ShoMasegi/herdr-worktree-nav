@@ -496,6 +496,7 @@ mod tests {
                 },
             ],
             ungrouped: vec![],
+            ..Default::default()
         };
         let options = ViewOptions {
             query: "harken".into(),

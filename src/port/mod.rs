@@ -312,7 +312,7 @@ pub struct RepoIdentity {
     pub repo_key: String,
     /// Top level of the checkout the queried path is in.
     pub checkout_path: String,
-    /// Current branch of that checkout, `None` when detached.
+    /// Current branch of that checkout: `None` when detached, or when git could not name it.
     pub branch: Option<String>,
 }
 
@@ -325,7 +325,12 @@ pub trait GitPort: Send + Sync {
     /// is not inside a work tree — that is an ordinary answer, not an error.
     fn identify(&self, cwd: &str) -> Result<Option<RepoIdentity>>;
 
-    /// `owner/repo` when `origin` points at GitHub, otherwise `None`.
+    /// `owner/repo` when `origin` points at GitHub; `None` when there is no `origin`, or it
+    /// points elsewhere.
+    ///
+    /// `Err` is git failing to name the repository at all — a `.git/config` it could not
+    /// read, a root that has gone — which is not the same silence as no remote: the sweep
+    /// says which, since one is worth fixing and the other is not.
     ///
     /// The only source of a [`Slug`] in this crate, which is what makes the two `gh` calls
     /// unable to be asked about a directory.
@@ -360,15 +365,22 @@ pub trait GitPort: Send + Sync {
     fn delete_branch(&self, repo_root: &str, branch: &str) -> Result<()>;
 
     /// Whether this checkout is holding work that is not committed: modified tracked files,
-    /// or untracked ones. The same question `git worktree remove` asks before it refuses,
-    /// which is why untracked files count.
+    /// or untracked ones — what `git worktree remove` refuses over in a default
+    /// configuration, where git can see them, which is why untracked files count.
     ///
     /// **It is that question and no more.** git does not look at a path it has been told to
-    /// ignore, or at a file under `assume-unchanged`, so `false` is "git, asked with
-    /// untracked files included, had nothing to report" rather than "there is nothing here".
-    /// `git worktree remove` is blind to the same two, so a removal on the strength of this
+    /// ignore, or at a file under `assume-unchanged` or `skip-worktree`, so `false` is "git,
+    /// asked with untracked files included, had nothing to report" rather than "there is
+    /// nothing here". `git worktree remove` is blind to the same three, so a removal on the strength of this
     /// takes what deleting by hand would have taken — which is the whole of what it
     /// promises. `docs/en/usage.md` says it where a user will meet it.
+    ///
+    /// `Err` is git not answering — refusing the call, or exiting clean having said it left
+    /// part of the working tree out of the answer, or read it by rules it could not see: a
+    /// directory it could not open, a tracked file it could not look at, a file of ignore
+    /// rules it could not read, or of attribute rules it needed and could not read. Neither is
+    /// `false`: a working tree git could not look at is not one with nothing in it, and
+    /// `false` is the one answer a sweep acts on.
     ///
     /// One process per checkout, and the only thing here that cannot be folded into an
     /// existing call — so it is asked in the background rather than in front of the first

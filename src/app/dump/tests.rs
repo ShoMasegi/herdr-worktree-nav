@@ -1,6 +1,6 @@
 use super::*;
 use crate::app::fakes::{fake_git, FakeGit};
-use crate::domain::model::{Branch, PaneNode, WorktreeNode};
+use crate::domain::model::{Branch, PaneNode, Unlisted, WorktreeNode};
 use crate::domain::settings::{Panes, Settings};
 use crate::port::{AgentStatus, Track};
 use serde_json::json;
@@ -126,6 +126,7 @@ fn every_answer_a_row_leaves_out_is_on_the_page() {
             },
         ],
         ungrouped: Vec::new(),
+        ..Default::default()
     };
     let refs = RefsByRepo::from([(
         "/src/app".to_string(),
@@ -190,6 +191,7 @@ fn a_missing_plugin_file_is_reported_as_defaults() {
     let tree = Tree {
         repos: Vec::new(),
         ungrouped: Vec::new(),
+        ..Default::default()
     };
     let page = report(
         &snapshot(),
@@ -214,6 +216,7 @@ fn a_rejected_plugin_file_names_the_problem() {
     let tree = Tree {
         repos: Vec::new(),
         ungrouped: Vec::new(),
+        ..Default::default()
     };
     let page = report(
         &snapshot(),
@@ -402,6 +405,7 @@ fn one_repo(refs: Refs, worktrees: Vec<WorktreeNode>) -> Tree {
             worktrees,
         }],
         ungrouped: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -570,6 +574,48 @@ fn a_checkout_git_lists_no_ref_at_is_not_called_a_branch_nobody_pushed() {
 }
 
 #[test]
+fn a_repository_herdr_would_not_list_has_a_heading_of_its_own() {
+    // It has no section above — that is what "not listed" means — so the page would
+    // otherwise say nothing about a repository the reader can see panes for.
+    let mut tree = one_repo(Refs::Read, Vec::new());
+    tree.trouble.unlisted.push(Unlisted {
+        repo_key: "/src/old/.git".into(),
+        words: "herdr rejected worktree.list: internal error".into(),
+        panes: Default::default(),
+    });
+    let heading = page(&tree, &RefsByRepo::new());
+    assert!(
+        heading.contains("\nnot listed:\n  old  [/src/old/.git]\n"),
+        "got:\n{heading}"
+    );
+    assert!(
+        heading.contains("      herdr rejected worktree.list: internal error\n"),
+        "got:\n{heading}"
+    );
+
+    // And its panes, which went under the heading below: nothing else on the page ties them
+    // to the section above, and that heading is also where a pane herdr cannot see into goes.
+    tree.trouble.unlisted[0]
+        .panes
+        .insert("w7:p1".into(), "/src/old".into());
+    tree.ungrouped = vec![PaneNode {
+        pane_id: "w7:p1".into(),
+        workspace_id: "w7".into(),
+        tab_id: "w7:t1".into(),
+        display_name: None,
+        agent_status: AgentStatus::Unknown,
+        focused: false,
+    }];
+    let with_panes = page(&tree, &RefsByRepo::new());
+    assert!(
+        with_panes.ends_with(
+            "\nnot in any repository:\n      w7:p1\n          in old, which is not listed\n"
+        ),
+        "got:\n{with_panes}"
+    );
+}
+
+#[test]
 fn panes_in_no_repository_are_listed_last_under_their_own_heading() {
     let mut tree = one_repo(Refs::Read, Vec::new());
     tree.ungrouped = vec![PaneNode {
@@ -580,10 +626,26 @@ fn panes_in_no_repository_are_listed_last_under_their_own_heading() {
         agent_status: AgentStatus::Unknown,
         focused: false,
     }];
-    let page = page(&tree, &RefsByRepo::new());
+    let bare = page(&tree, &RefsByRepo::new());
     assert!(
-        page.ends_with("\nnot in any repository:\n      w9:p9\n"),
-        "got:\n{page}"
+        bare.ends_with("\nnot in any repository:\n      w9:p9\n"),
+        "got:\n{bare}"
+    );
+
+    // With a reason, where there is one. herdr not seeing into the pane and git not
+    // answering about it end up under the same heading, and this page exists to tell
+    // one from the other.
+    tree.trouble.unplaced.insert(
+        "w9:p9".to_string(),
+        "git could not be run: no such file or directory (`git rev-parse`)".to_string(),
+    );
+    let with_reason = page(&tree, &RefsByRepo::new());
+    assert!(
+        with_reason.ends_with(
+            "\nnot in any repository:\n      w9:p9\n          git could not be run: \
+             no such file or directory (`git rev-parse`)\n"
+        ),
+        "got:\n{with_reason}"
     );
 }
 
@@ -727,8 +789,9 @@ fn a_checkout_with_nothing_out_names_the_refs_git_still_has_at_its_path() {
 
 #[test]
 fn a_marker_on_a_checkout_herdr_did_not_list_is_on_the_page_too() {
-    // That row keeps its track, so the picker draws `gone` beside a directory name about
-    // a branch nothing names — issue #49.
+    // A marker `build` will not produce on a branchless row (issue #49), handed to the
+    // page directly: what the page does with one is its own answer, and dropping it
+    // silently would be the page lying about what it was given.
     let tree = one_repo(Refs::Read, vec![unlisted("/wt/shared", Some(Track::Gone))]);
     let refs = RefsByRepo::from([("/src/app".to_string(), Ok(Vec::new()))]);
     assert!(
@@ -779,10 +842,11 @@ fn a_checkout_with_nothing_out_says_which_read_of_the_refs_failed() {
 
 #[test]
 fn a_checkout_herdr_never_listed_says_so_rather_than_that_no_branch_is_out() {
-    // What `build` makes for a pane in a checkout herdr never listed. `no branch reported`
-    // would be this side's inference in herdr's voice: `git worktree add` outside herdr
-    // leaves a branch out at a path herdr's list never mentions, and the ref named below
-    // may well be it. Issue #49 is the marker half of the same shortage.
+    // The row `build` makes for a pane in a checkout herdr never listed. `no branch
+    // reported` would be this side's inference in herdr's voice: `git worktree add` outside
+    // herdr leaves a branch out at a path herdr's list never mentions, and the ref named
+    // below may well be it. `build` gives that row no position (issue #49); the fixture
+    // carries one to reach the `track <where it stands>` arm `detached_words` keeps.
     let tree = one_repo(
         Refs::Read,
         vec![unlisted(
