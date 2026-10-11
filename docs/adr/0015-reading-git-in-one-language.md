@@ -4,23 +4,41 @@ Status: accepted
 
 ## Context
 
-Two things this plugin decides are decided by reading git's own words rather than its exit
+Four things this plugin decides are decided by reading git's own words rather than its exit
 code.
 
-Whether a pane's directory is a repository at all: git answers `fatal: not a git repository
-(or any of the parent directories): .git`, and `NOT_A_REPOSITORY` is that sentence as a
-literal. Whether a ref was dropped from a walk: `for-each-ref` leaves the ref out, says
-`warning: ignoring broken ref refs/heads/x` on stderr, and exits 0 — `dropped_refs` matches
-that prefix and the neighbouring one for a ref with an illegal name.
+Whether a pane's directory is a repository at all: git answers `fatal: not a git repository (or
+any of the parent directories): .git`, and `NOT_A_REPOSITORY` is that sentence as a literal.
+Whether a ref was dropped from a walk: `for-each-ref` leaves the ref out, says `warning:
+ignoring broken ref refs/heads/x` on stderr, and exits 0 — `dropped_refs` matches that prefix
+and the neighbouring one for a ref with an illegal name. Whether `status` could look at all of
+the working tree: it leaves out what it could not reach, or reads the tree without rules it
+could not read, says `warning: could not open directory 'x/': Permission denied` for a
+directory it could not open, `x/f: Permission denied` for a tracked file it could not `lstat`
+(or whatever else the C library says of why), or `warning: unable to access 'x/.gitignore':
+Permission denied` for a file of ignore rules it could not read, or of attribute rules it
+needed, on stderr, and exits 0; `unread_paths` matches the two prefixes — the first not when it
+ends `No such file or directory`, a directory gone between git listing its parent and opening
+it; the second not when it ends `Too many levels of symbolic links`, which is what git says of
+a `.gitignore` or `.gitattributes` in the tree that is a symlink, since it does not follow one
+— and a line that is a path, `: `, and words starting with a capital letter, unless it opens
+`warning: ` or `fatal: `. The words after the last colon are the C library's, not git's:
+`LC_ALL` governs them where the library translates them at all (glibc ships translations; the
+macOS one measured does not translate them). Whether a repository simply has no `origin`:
+`remote get-url origin` says `error: No such remote 'origin'` on stderr and exits 2 —
+`no_such_remote` matches that exit and the words `No such remote` together, so every other way
+the call can fail goes up as a refusal instead of as "this repository has no remote".
 
-git ships translations of both messages and picks one from the environment. That environment
-is whatever herdr was started in, which nothing here chooses and nothing here can predict.
+git ships translations of these messages — bar `cannot change to`, and the C library's words
+after the last colon — and picks one from the environment. That environment is whatever
+herdr was started in, which nothing here chooses and nothing here can predict.
 
-Under a translation, neither literal matches, and neither failure is loud. A dropped ref goes
-unnoticed: the walk still exits 0, the refs it did list still build the markers, and the
-checkout on the dropped ref carries none — which reads exactly like a checkout with nothing
-to report, with nothing anywhere saying why. A pane that is simply not in a repository is
-read as git refusing. That silence is what issue #21 is about.
+Under a translation, none of git's own words matches. A missing `origin` reads as git refusing,
+which is loud and wrong; a directory git could not open, or rules it could not read, go silent;
+and a dropped ref goes unnoticed: the walk still exits 0, the refs it did list still build the
+markers, and the checkout on the dropped ref carries none — which reads exactly like a checkout
+with nothing to report, with nothing anywhere saying why. A pane that is simply not in a
+repository is read as git refusing. That silence is what issue #21 is about.
 
 ## Decision
 
@@ -65,6 +83,10 @@ LC_ALL=C            warning: ignoring broken ref refs/heads/broken
 LC_ALL=de_DE.UTF-8  Warnung: Ignoriere fehlerhafte Referenz refs/heads/broken
 LC_ALL=C            fatal: not a git repository (or any of the parent directories): .git
 LC_ALL=de_DE.UTF-8  Schwerwiegend: Kein Git-Repository (oder irgendeines der …): .git
+LC_ALL=C            warning: could not open directory 'notes/': Permission denied
+LC_ALL=de_DE.UTF-8  Warnung: konnte Verzeichnis 'notes/' nicht öffnen: Permission denied
+LC_ALL=C            error: No such remote 'origin'
+LC_ALL=de_DE.UTF-8  Fehler: Remote-Repository 'origin' nicht gefunden
 ```
 
 `GIT_TRACE`, `GIT_TRACE_PERFORMANCE` and `GIT_TRACE2` are read from that same environment and

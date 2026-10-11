@@ -47,4 +47,16 @@ fn a_git_that_cannot_be_started_reaches_the_prompt_line_words_first() {
         words.ends_with("--show-toplevel`)"),
         "the call after them, and whole: {words}"
     );
+
+    // And a git that cannot be started is not a repository with no `origin`: issue #27, in
+    // the shape the usage page names.
+    let error = GitCli
+        .github_slug("/src/app")
+        .expect_err("there is no git to name the repository");
+    let words = format!("{error:#}");
+    assert!(
+        words.starts_with("git could not be run: ")
+            && words.ends_with("(`git remote get-url origin`)"),
+        "the words first, the call after them: {words}"
+    );
 }
