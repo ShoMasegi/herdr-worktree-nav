@@ -47,8 +47,8 @@ pub enum Condition {
     /// git would not read this repository's refs, so every track marker in it is missing.
     RefsUnreadable { repo: String, words: String },
     /// git read this repository's refs and more than one of them names this checkout, so
-    /// it has no one branch to measure: [`Position::Contested`]. One per checkout, carrying
-    /// its path.
+    /// it has no one branch to measure: [`Position::Contested`]. One per repository and
+    /// checkout path, carrying the path.
     RefsDisagree { repo: String, checkout: String },
     /// What could not be asked of `gh` in this sweep, already counted by
     /// [`app::settled`](crate::app::settled) because which repositories were asked is not
@@ -123,11 +123,13 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
             words: words.clone(),
         }),
     }));
-    // One per checkout rather than per row. Two refs naming one path takes two
+    // One per repository and path rather than per row. Two refs naming one path takes two
     // registrations of it, and `git worktree list` names the path once for each, so a
     // contested checkout is two rows at one path wherever herdr does the same; one sentence
-    // twice would count as two things wrong. Told apart by the repository's key, not by its
-    // name: two clones of one remote share a name and are two repositories.
+    // twice would count as two things wrong. Kept apart by the repository's key, not by its
+    // name: two clones of one remote share a name and are two repositories, each with its
+    // own registrations to repair, so two clones contested at one path read as the same
+    // sentence twice, and are two things wrong.
     let mut said = BTreeSet::new();
     for repo in &tree.repos {
         for worktree in &repo.worktrees {

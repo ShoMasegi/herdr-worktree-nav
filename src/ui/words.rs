@@ -401,8 +401,8 @@ fn plural(count: usize, noun: &str) -> String {
 }
 
 /// Why `Shift-D` will not ask about a checkout a pane it does not draw is standing in: that
-/// pane by id, and by name where a row or `not in any repository` draws it. One drawn
-/// nowhere — a repository herdr would not list — has only its id to give.
+/// pane by id, and by the name its row draws where herdr gave it one. A pane with none,
+/// drawn as `shell`, is given by its id alone.
 pub fn standing_in(tree: &Tree, pane_id: &str) -> String {
     let name = tree
         .find_pane(pane_id)

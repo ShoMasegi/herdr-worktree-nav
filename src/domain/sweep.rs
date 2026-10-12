@@ -355,10 +355,11 @@ struct Decision {
     /// different branch at a path the user has already said yes to, on the list `Enter` acts
     /// on.
     ///
-    /// `None` is a detached checkout. Two of those at one path are as different as two
-    /// branches are, and this cannot tell them apart: a `WorktreeNode` carries no commit, so
-    /// an answer about one carries over to the other. What would close that is a commit id on
-    /// the node, which nothing reads yet.
+    /// `None` is a detached checkout, or one herdr did not list —
+    /// [`Branch::name`](crate::domain::model::Branch::name) answers `None` for both. Two of
+    /// those at one path are as different as two branches are, and this cannot tell them
+    /// apart: a `WorktreeNode` carries no commit, so an answer about one carries over to the
+    /// other. What would close that is a commit id on the node, which nothing reads yet.
     branch: Option<String>,
     going: bool,
 }

@@ -100,8 +100,8 @@ impl PanesState {
         // question closes this row's panes only, so it would leave that one standing in a
         // directory that is about to go — what `docs/adr/0010-closing-the-panes-first.md`
         // exists to prevent. Empty checkout or not: the pane at stake is not this row's.
-        // Named, because it is drawn somewhere other than here — or nowhere — and the first
-        // is enough to go and find.
+        // Named, because it is drawn under some other row or under `not in any repository`,
+        // and the first is enough to go and find.
         if let Some(pane_id) = self
             .tree
             .panes_standing_in(path.as_str())
@@ -733,9 +733,10 @@ mod tests {
             tree.trouble.unlisted.push(crate::domain::model::Unlisted {
                 repo_key: "/src/old/.git".into(),
                 words: "herdr rejected worktree.list".into(),
-                // Placed in a checkout nested inside this one, which goes with it.
-                // A pane no row draws, so it has no name to give.
-                panes: [("w8:p1".to_string(), "/wt/app/fix-crash/sub".to_string())].into(),
+                // Placed in a checkout nested inside this one, which a removal of this one
+                // would take with it. Drawn under `not in any repository`, as `build` draws
+                // every pane an unlisted repository placed.
+                panes: [("w9:p1".to_string(), "/wt/app/fix-crash/sub".to_string())].into(),
             });
         };
         for (what, standing, said) in [
@@ -747,7 +748,15 @@ mod tests {
             (
                 "an unlisted repository's placement",
                 &unlisted,
-                "pane w8:p1 is standing in it",
+                "pane w9:p1 (zsh) is standing in it",
+            ),
+            (
+                "a pane with no name",
+                &|tree: &mut Tree| {
+                    elsewhere(tree);
+                    tree.ungrouped[0].display_name = None;
+                },
+                "pane w9:p1 is standing in it",
             ),
         ] {
             let mut state = state();
@@ -902,6 +911,30 @@ mod tests {
                 "fix/crash"
             ),
             codex
+        );
+
+        // A row that has panes of its own: the one standing in it from elsewhere is found
+        // wherever it falls among them — here between this row's pane drawn under it and the
+        // same pane found again by its directory.
+        assert_eq!(
+            refused(
+                &|tree| {
+                    tree.repos[0].worktrees.push(WorktreeNode {
+                        branch: Branch::out("feat/nested"),
+                        checkout_path: "/wt/app/feat-login/nested".into(),
+                        is_primary: false,
+                        open_workspace_id: Some("w5".into()),
+                        panes: vec![pane("w5:p1", "aider", AgentStatus::Working)],
+                    });
+                    tree.pane_cwds
+                        .insert("w5:p1".into(), vec!["/link/feat-login/nested".into()]);
+                    tree.pane_cwds
+                        .insert("w2:p1".into(), vec!["/wt/app/feat-login".into()]);
+                },
+                "codex"
+            )
+            .as_deref(),
+            Some("pane w5:p1 (aider) is standing in it")
         );
 
         // Another repository's registration of the same path, its row holding the pane —

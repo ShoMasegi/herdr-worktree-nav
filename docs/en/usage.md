@@ -234,7 +234,7 @@ again rather than guessing.
 
 Three more are about whose directory it is, and hold whether or not the checkout has panes
 of its own. A checkout any pane it does not draw is standing in names the first such pane, as in
-`pane w5:p1 (codex) is standing in it` — a pane under another repository's row for the
+`pane w5:p1 (codex) is standing in it`, or by id alone where it has no name — a pane under another repository's row for the
 same path, under a checkout nested inside this one, under `not in any repository`, or one
 whose foreground process has moved in here: the question closes this row's panes only, and
 would leave that one in a directory that is about to go. A path herdr lists twice within one
