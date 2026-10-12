@@ -295,7 +295,7 @@ fn judge(
             number: pull_request.number,
             outcome: pull_request.outcome,
         }),
-        // Found, and the working tree has something in it: git would refuse the removal.
+        // Found, and the working tree is not known to be clean — see `clean` above.
         (Some(_), _, _) => Candidate::Available,
         // Not found, and git never got to look for `gone`: nobody judged this row.
         (None, Some(half), _) => Candidate::Unjudged(half),

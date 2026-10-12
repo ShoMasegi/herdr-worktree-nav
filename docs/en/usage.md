@@ -86,11 +86,12 @@ is marked too, and that row says `PR #123 merged` — the number, so you can go 
 "Nothing running" is about the directory a pane is known to stand in, not the row. Two
 repositories can both register one path — one of the registrations stale — and a pane shows in
 only one of their rows; a pane whose own repository herdr would not list shows in none, under
-`not in any repository`. Either way, every row naming that path is refused as running. So is
-any row whose checkout holds a working directory of a pane — its shell's, or the one its
-foreground process has moved to — whether the pane is drawn under another row, as when one
-checkout sits inside another, or under that heading; only a pane herdr cannot see into has no
-working directory to go by.
+`not in any repository`. Either way, every row naming that path is refused. Any row whose
+checkout holds a working directory of a pane — its shell's, or the one its foreground process
+has moved to — is refused the same way, whether the pane is drawn under another row, as when
+one checkout sits inside another, or under that heading; only a pane herdr cannot see into
+has no working directory to go by. Where no refusal checked ahead of this one claims the row
+first, `Space` there says `panes are running in it`.
 
 A path herdr lists twice within one repository is refused on both of its rows. The sweep
 keeps its marks by repository and path, so a mark could not say which of the two
@@ -142,23 +143,23 @@ mode.
 git's own half is not like `gh`'s. A repository whose refs git would not read — the one
 `for-each-ref` that `gone` comes from — has no `gone` to offer, and cannot say either whether
 two of its refs name one checkout, where a removal would take whichever registration git
-picks. So a sweep refuses every checkout in it, merged pull request or not, and `Space` on
-any but the repository's own, or a path herdr lists twice, says
-`git would not read this repository's refs`, as `Shift-D` does. The prompt line names the
-repository with git's words, as it does for `gh`. A checkout more than one
-of the repository's refs names is refused rather than judged: two refs at one path take two
+picks. So a sweep refuses every checkout in it, merged pull request or not. `Space` says
+`git would not read this repository's refs` on each but the repository's own checkout and a
+path herdr lists twice, which keep their own reasons, and so does `Shift-D`. The prompt line
+names the repository with git's words, as it does for `gh`. A checkout more than one of the
+repository's refs names is refused rather than judged: two refs at one path take two
 registrations of it, so `git worktree remove` would take whichever of them git picks, and
 `git branch -d` the branch herdr names. `git worktree list` names the path once for each
 registration, so where herdr does the same both rows are refused as
 `herdr lists this path twice`; listed once, `Space` says
-`more than one ref names this checkout`, merged pull request or not. A
-checkout whose branch no ref names at its path — git read the refs and found none there —
-reads `no ref here`; a branch with no commit yet is one, since it has no ref at all. `gh`
-still widens the sweep wherever a row is judged rather than refused: a merged pull request
-marks it as it would anywhere. When git and `gh` have both
-failed, the prompt line names git's failure first — it is the one the track markers on the
-row went with — and counts `gh`'s behind it, so one being named does not read as the only
-thing wrong.
+`more than one ref names this checkout`, merged pull request or not. A checkout whose branch
+no ref names at its path — git read the refs and found none there, as for a branch with no
+commit yet, which has no ref at all — is not refused for that. Where nothing else refuses it,
+it reads `no ref here` when it is clean, unless `gh` names a finished pull request for it.
+`gh` still widens the sweep wherever a row is judged rather than refused: a merged pull
+request marks it as it would anywhere. When git and `gh` have both failed, the prompt line
+names git's failure first — it is the one the track markers on the row went with — and counts
+`gh`'s behind it, so one being named does not read as the only thing wrong.
 
 ### Deleting a checkout
 
@@ -248,8 +249,9 @@ directory is now>` points it back. Not `git worktree prune`: it keeps whichever 
 entries comes first, and that can be the stale one. A checkout more than one of the
 repository's refs names says `more than one ref names this checkout` where herdr lists it
 once: two refs at one path take two registrations, so git picks here too. Where git would
-not read the repository's refs, nothing can say whether that is so, and every other checkout
-of it says `git would not read this repository's refs`.
+not read the repository's refs, nothing can say whether that is so, and every checkout of it
+but the repository's own and a path herdr lists twice says
+`git would not read this repository's refs`.
 
 `y` comes straight back. The removal runs somewhere else — git has to walk a whole working
 tree before it can delete it, which is seconds on a repository of any size — and the row

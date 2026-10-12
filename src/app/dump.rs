@@ -4,8 +4,8 @@
 //! separates "herdr or git told us something odd" from "the UI drew it wrong". So it prints
 //! what the rows are drawn from, and the answers the rows deliberately leave out — that git
 //! would not read a repository's refs, that a branch has no upstream to be level with, and why
-//! git would not read a working tree. Outside a sweep a row draws nothing for the first two
-//! and only `?` for the third, because no marker beats a wrong one
+//! git would not read a working tree. A row draws nothing for the first two and only `?` for
+//! the third, because no marker beats a wrong one
 //! ([`domain::model::Refs`](crate::domain::model::Refs),
 //! [`domain::model::WorkingTree`](crate::domain::model::WorkingTree)). A sweep and `Shift-D`
 //! refuse every checkout of a repository whose refs git would not read, without git's words,
@@ -193,9 +193,9 @@ pub fn report(
 /// `upstream origin/x  track gone` — the two facts a marker is drawn from, each in a word
 /// of its own: `level` for a branch even with its upstream, `none` for one with no upstream
 /// to be even with, `unreadable` for one whose `:track` field git printed and the adapter
-/// could not read, `contested` for a branch at a checkout more than one of the repository's refs names,
-/// and `not read` when git would not read the refs at all — and, where this page has no
-/// upstream to say `level` or `none` beside, `nothing reported` and `not known` ([`found`]).
+/// could not read, `contested` for a branch at a checkout more than one of the repository's
+/// refs names, and `not read` when git would not read the refs at all — and, where this page
+/// has no upstream to say `level` or `none` beside, `nothing reported` and `not known` ([`found`]).
 ///
 /// A branch with no upstream is measured against where it would push — see
 /// [`adapter::git_cli`](crate::adapter::git_cli) — so `upstream none` can still be followed by

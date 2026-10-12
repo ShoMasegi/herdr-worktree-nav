@@ -63,8 +63,8 @@ git printed, `nothing reported` where it found one ref and git reported nothing 
 `not known` are the same empty marker as `track level` and `upstream none`, and
 `contested` is drawn as `contested`. In a sweep a contested checkout herdr lists once per
 registration is refused as `herdr lists this path twice`, one listed once is refused as
-`more than one ref names this checkout`, and one the picker found no ref for reads
-`no ref here`. A row with no
+`more than one ref names this checkout`, and one the picker found no ref for can read
+`no ref here` (see *Without git's refs* in [usage](usage.md)). A row with no
 branch on it says which kind of silence that is: `no branch reported` where herdr
 listed the checkout and said nothing is out, and `herdr did not list this checkout`
 where herdr never mentioned it — the picker shows that row for a pane whose directory
@@ -267,9 +267,10 @@ through this against a real session.
       two rows: under `Shift-S` both are refused and `Space` says
       `herdr lists this path twice`, as `Shift-D` does on either row. Do not clear it with
       `git worktree prune`, which can keep the stale entry and drop the live one.
-- [ ] With that ref still broken, `Shift-S` draws no box on any checkout of that
-      repository, merged pull request or not, and `Space` on any but the repository's own
-      says `git would not read this repository's refs`, as `Shift-D` does.
+- [ ] With a ref still broken, `Shift-S` draws no box on any checkout of that repository,
+      merged pull request or not, and `Space` says `git would not read this repository's refs`
+      on each one that does not keep a reason of its own (see *Without git's refs* in
+      [usage](usage.md)), as `Shift-D` does.
       `Tab` to the branches view: every branch git could still read is listed there.
 - [ ] Typing `/login` and then pressing `Shift-S` opens the whole list again: what the sweep
       judges is what is on the screen.

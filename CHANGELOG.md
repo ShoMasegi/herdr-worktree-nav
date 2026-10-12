@@ -23,7 +23,7 @@ All notable changes to this project are documented here. The format follows
   a repository it could not answer for is named on the prompt line with its rows reading
   `PR unknown` rather than nothing — before and after you mark them — and one whose refs git
   would not read is named there ahead of it, with every checkout in it refused, since nothing
-  can say whether two refs name its path; one whose branch no ref names at its path reads
+  can say whether two refs name its path; one whose branch no ref names at its path can read
   `no ref here`. A
   path herdr lists twice in one repository is never swept, since a mark could not say which
   of the two registrations it would remove. Two refs at one path take two registrations, so
@@ -45,8 +45,8 @@ All notable changes to this project are documented here. The format follows
   flight. A checkout holding uncommitted work, or one git would not read, is refused before
   the question rather than after its panes have gone — as is one whose working tree git has
   not finished reading, since "nobody has asked yet" is not the answer "clean". On an empty
-  checkout git still answers for itself — except for four refusals that hold with or
-  without panes: a checkout a pane this row does not draw is standing in, which names that
+  checkout git still answers for itself, though some refusals hold with or without panes,
+  among them a checkout a pane this row does not draw is standing in, which names that
   pane, and a path herdr lists twice in one repository or one more than one of its refs
   name, where git rather than the row picks the registration that goes, and a checkout in a
   repository whose refs git would not read, where nothing can say whether that is so. See [ADR 0010](docs/adr/0010-closing-the-panes-first.md).

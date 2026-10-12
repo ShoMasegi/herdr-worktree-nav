@@ -216,13 +216,13 @@ pub enum Position {
     /// ([`Condition::RefsDisagree`](crate::domain::notice::Condition::RefsDisagree)),
     /// [`app::dump`](crate::app::dump) says `track contested`, and the line under the list, a
     /// sweep's `Space` and `Shift-D` all say `more than one ref names this checkout` — the last
-    /// two refusing it below the repository's own checkout
-    /// ([`Refusal::Contested`](crate::domain::sweep::Refusal::Contested)). A row naming no
-    /// branch has no position to carry it in, so it says none of the first four:
-    /// [`Tree::contested`] carries the fact for it, and only the two refusals read it. Two refs
-    /// at one path take two registrations of it, and a list that names the path once for
-    /// each, as `git worktree list` does, gives two rows that are refused before either is
-    /// judged ([`Refusal::ListedTwice`](crate::domain::sweep::Refusal::ListedTwice)).
+    /// two refusing it ([`Refusal::Contested`](crate::domain::sweep::Refusal::Contested))
+    /// wherever no refusal they ask first does. A row naming no branch has no position to
+    /// carry it in, so it says none of the first four: [`Tree::contested`] carries the fact for
+    /// it, and only the two refusals read it. Two refs at one path take two registrations of
+    /// it, and a list that names the path once for each, as `git worktree list` does, gives two
+    /// rows that are refused before either is judged
+    /// ([`Refusal::ListedTwice`](crate::domain::sweep::Refusal::ListedTwice)).
     ///
     /// `git worktree add` and `git worktree move` both refuse a path a worktree is already
     /// registered at, but `git worktree repair` will register a second and `git worktree
@@ -407,9 +407,9 @@ pub struct Tree {
 
 impl Tree {
     /// Whether more than one of `repo`'s refs names `worktree`'s path, so two registrations
-    /// share it and `git worktree remove` would take whichever git picks. Asked by the sweep
-    /// of every row whose path is listed once, and by `Shift-D` of a row past the repository's
-    /// own checkout, whether it names a branch or not.
+    /// share it and `git worktree remove` would take whichever git picks, whether the row
+    /// names a branch or not. Where it falls among the refusals is `sweep::candidates`'s and
+    /// `judge`'s, and `ask_to_remove`'s, to say.
     pub fn is_contested(&self, repo: &RepoNode, worktree: &WorktreeNode) -> bool {
         worktree.branch.position() == Some(Position::Contested)
             || self
