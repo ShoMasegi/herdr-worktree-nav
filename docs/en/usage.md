@@ -232,8 +232,8 @@ which is why pressing `Shift-D` in the first moments after the picker opens asks
 again rather than guessing.
 
 Two more are about whose directory it is, and hold whether or not the checkout has panes of
-its own. A checkout any pane it does not draw is standing in says
-`a pane listed elsewhere is standing in it` — a pane under another repository's row for the
+its own. A checkout any pane it does not draw is standing in names the first such pane, as in
+`pane w5:p1 (codex) is standing in it` — a pane under another repository's row for the
 same path, under a checkout nested inside this one, under `not in any repository`, or one
 whose foreground process has moved in here: the question closes this row's panes only, and
 would leave that one in a directory that is about to go. A path herdr lists twice within one

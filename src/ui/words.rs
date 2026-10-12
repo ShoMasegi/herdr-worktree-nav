@@ -400,6 +400,21 @@ fn plural(count: usize, noun: &str) -> String {
     }
 }
 
+/// Why `Shift-D` will not ask about a checkout a pane it does not draw is standing in: that
+/// pane by id, and by name where a row or `not in any repository` draws it. One drawn
+/// nowhere — a repository herdr would not list — has only its id to give.
+pub fn standing_in(tree: &Tree, pane_id: &str) -> String {
+    let name = tree
+        .find_pane(pane_id)
+        .map(|(_, _, pane)| pane)
+        .or_else(|| tree.ungrouped.iter().find(|pane| pane.pane_id == pane_id))
+        .and_then(|pane| pane.display_name.as_deref());
+    match name {
+        Some(name) => format!("pane {pane_id} ({name}) is standing in it"),
+        None => format!("pane {pane_id} is standing in it"),
+    }
+}
+
 /// What a sweep's row says beside its mark, or nothing.
 ///
 /// [`Reason::Gone`] is left out: [`marks`] draws it as the branch's upstream marker on every

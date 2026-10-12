@@ -93,12 +93,14 @@ impl PanesState {
         // question closes this row's panes only, so it would leave that one standing in a
         // directory that is about to go — what `docs/adr/0010-closing-the-panes-first.md`
         // exists to prevent. Empty checkout or not: the pane at stake is not this row's.
-        if self
+        // Named, because it is drawn somewhere other than here — or nowhere — and the first
+        // is enough to go and find.
+        if let Some(pane_id) = self
             .tree
             .panes_standing_in(path.as_str())
-            .any(|pane_id| !worktree.panes.iter().any(|pane| pane.pane_id == pane_id))
+            .find(|pane_id| !worktree.panes.iter().any(|pane| pane.pane_id == *pane_id))
         {
-            self.message = Some("a pane listed elsewhere is standing in it".into());
+            self.message = Some(words::standing_in(&self.tree, pane_id));
             return Action::Consumed;
         }
         // The refusals below are only reached by a checkout with panes in it, and that is
@@ -725,12 +727,21 @@ mod tests {
                 repo_key: "/src/old/.git".into(),
                 words: "herdr rejected worktree.list".into(),
                 // Placed in a checkout nested inside this one, which goes with it.
-                panes: [("w9:p1".to_string(), "/wt/app/fix-crash/sub".to_string())].into(),
+                // A pane no row draws, so it has no name to give.
+                panes: [("w8:p1".to_string(), "/wt/app/fix-crash/sub".to_string())].into(),
             });
         };
-        for (what, standing) in [
-            ("a working directory", &elsewhere as &dyn Fn(&mut Tree)),
-            ("an unlisted repository's placement", &unlisted),
+        for (what, standing, said) in [
+            (
+                "a working directory",
+                &elsewhere as &dyn Fn(&mut Tree),
+                "pane w9:p1 (zsh) is standing in it",
+            ),
+            (
+                "an unlisted repository's placement",
+                &unlisted,
+                "pane w8:p1 is standing in it",
+            ),
         ] {
             let mut state = state();
             let mut tree = state.tree().clone();
@@ -739,11 +750,7 @@ mod tests {
             select(&mut state, "fix/crash");
             state.handle_key(key(KeyCode::Char('D')));
             assert!(state.pending_removal().is_none(), "{what}");
-            assert_eq!(
-                state.message(),
-                Some("a pane listed elsewhere is standing in it"),
-                "{what}"
-            );
+            assert_eq!(state.message(), Some(said), "{what}");
         }
 
         // Its own panes are the ones the question closes, so they are not "elsewhere".
@@ -812,7 +819,7 @@ mod tests {
         state.set_removing(Vec::new());
         assert_eq!(
             said(&mut state).as_deref(),
-            Some("a pane listed elsewhere is standing in it")
+            Some("pane w9:p1 (zsh) is standing in it")
         );
         tree.pane_cwds.clear();
         state.replace_tree(tree);
@@ -832,37 +839,44 @@ mod tests {
             state.replace_tree(tree);
             select(&mut state, on);
             state.handle_key(key(KeyCode::Char('D')));
-            state.message() == Some("a pane listed elsewhere is standing in it")
+            state.message().map(str::to_string)
         };
+        let codex = Some("pane w5:p1 (codex) is standing in it".to_string());
 
         // Only its foreground process is in here; the shell is elsewhere.
-        assert!(refused(
-            &|tree| {
-                tree.pane_cwds.insert(
-                    "w9:p1".into(),
-                    vec!["/tmp".into(), "/wt/app/fix-crash".into()],
-                );
-            },
-            "fix/crash"
-        ));
+        assert_eq!(
+            refused(
+                &|tree| {
+                    tree.pane_cwds.insert(
+                        "w9:p1".into(),
+                        vec!["/tmp".into(), "/wt/app/fix-crash".into()],
+                    );
+                },
+                "fix/crash"
+            ),
+            Some("pane w9:p1 (zsh) is standing in it".to_string())
+        );
 
         // A checkout nested inside this one, with a pane drawn under it — and the pane's
         // directory reported through a symlink, so only the row it is drawn under says where
         // it is.
-        assert!(refused(
-            &|tree| {
-                tree.repos[0].worktrees.push(WorktreeNode {
-                    branch: Branch::out("feat/nested"),
-                    checkout_path: "/wt/app/fix-crash/nested".into(),
-                    is_primary: false,
-                    open_workspace_id: Some("w5".into()),
-                    panes: vec![pane("w5:p1", "codex", AgentStatus::Working)],
-                });
-                tree.pane_cwds
-                    .insert("w5:p1".into(), vec!["/link/fix-crash/nested".into()]);
-            },
-            "fix/crash"
-        ));
+        assert_eq!(
+            refused(
+                &|tree| {
+                    tree.repos[0].worktrees.push(WorktreeNode {
+                        branch: Branch::out("feat/nested"),
+                        checkout_path: "/wt/app/fix-crash/nested".into(),
+                        is_primary: false,
+                        open_workspace_id: Some("w5".into()),
+                        panes: vec![pane("w5:p1", "codex", AgentStatus::Working)],
+                    });
+                    tree.pane_cwds
+                        .insert("w5:p1".into(), vec!["/link/fix-crash/nested".into()]);
+                },
+                "fix/crash"
+            ),
+            codex
+        );
 
         // Another repository's registration of the same path, its row holding the pane —
         // again with the directory spelled through a symlink.
@@ -883,7 +897,7 @@ mod tests {
             tree.pane_cwds
                 .insert("w5:p1".into(), vec!["/link/fix-crash".into()]);
         };
-        assert!(refused(&theirs, "fix/crash"));
+        assert_eq!(refused(&theirs, "fix/crash"), codex);
 
         // Two repositories at one path are two keys, not a path listed twice: with no pane
         // there, the question is asked.
