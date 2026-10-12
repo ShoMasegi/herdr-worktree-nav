@@ -1046,22 +1046,28 @@ fn which_refusal_a_checkout_that_earns_two_of_them_shows() {
         Candidate::Refused(Refusal::Primary)
     );
 
-    // Being the repository outranks being listed twice, and being listed twice outranks a
-    // removal already going: one ends, the other lasts until somebody prunes it.
+    // Being listed twice is about the key, and is decided before any row is asked about:
+    // a primary at that path does not change it, whichever order the rows come in.
     let mut primary = worktree("main", "/src/app");
     primary.is_primary = true;
-    let judged = candidates(
-        &tree_of(vec![primary.clone(), primary]),
-        &Facts {
-            working_trees: &clean(&["/src/app"]),
-            settled: &none,
-            removing: &[CheckoutPath::for_test("/src/app")],
-        },
-    );
-    assert_eq!(
-        judged[&at("/src/app")],
-        Candidate::Refused(Refusal::Primary)
-    );
+    let linked = worktree("chore/deps", "/src/app");
+    for rows in [vec![primary.clone(), linked.clone()], vec![linked, primary]] {
+        let judged = candidates(
+            &tree_of(rows),
+            &Facts {
+                working_trees: &clean(&["/src/app"]),
+                settled: &none,
+                removing: &[],
+            },
+        );
+        assert_eq!(
+            judged[&at("/src/app")],
+            Candidate::Refused(Refusal::ListedTwice)
+        );
+    }
+
+    // And it outranks a removal already going: one ends, the other lasts until somebody
+    // prunes it.
     let judged = candidates(
         &tree_of(vec![
             worktree("feat/login", "/wt/feat-login"),

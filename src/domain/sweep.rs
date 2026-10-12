@@ -42,6 +42,9 @@ pub enum Refusal {
     /// of them the tree lists first — not necessarily the row the reason was found on. The
     /// rows themselves can still be told apart; this is about what a sweep can act on without
     /// choosing between them.
+    ///
+    /// Decided for the key ahead of every other refusal, so both rows carry it even where one
+    /// of them is the repository's own checkout and would otherwise read [`Refusal::Primary`].
     ListedTwice,
     /// Its removal is already going, in a process of its own. Never read out: the cursor does
     /// not stop on a row being removed, sweep or no sweep — see
@@ -186,8 +189,13 @@ pub fn candidates(tree: &Tree, facts: &Facts) -> BTreeMap<(RepoKey, CheckoutPath
             let running = occupied.contains(path.as_str())
                 || tree.panes_standing_in(path.as_str()).next().is_some();
             let key = (RepoKey::of(repo), path);
-            let twice = listed[&key] > 1;
-            let candidate = judge(repo, worktree, &key.1, twice, running, settled, facts);
+            // Decided for the key before any of its rows is asked about, so which refusal it
+            // carries does not turn on which row came last — a primary among them included.
+            let candidate = if listed[&key] > 1 {
+                Candidate::Refused(Refusal::ListedTwice)
+            } else {
+                judge(repo, worktree, &key.1, running, settled, facts)
+            };
             out.insert(key, candidate);
         }
     }
@@ -198,7 +206,6 @@ fn judge(
     repo: &RepoNode,
     worktree: &WorktreeNode,
     path: &CheckoutPath,
-    twice: bool,
     running: bool,
     settled: Option<&Option<SettledPullRequests>>,
     facts: &Facts,
@@ -206,14 +213,11 @@ fn judge(
     // The refusals come first because they are about the checkout rather than about whether
     // anyone is finished with it. Their order among themselves decides only which refusal a
     // checkout that earns two of them carries, and it runs most permanent first: being the
-    // repository itself is not a state that passes, a path listed twice stays so until
-    // somebody prunes a registration, a removal already going will end, and panes close
-    // whenever somebody closes them.
+    // repository itself is not a state that passes, a removal already going will end, and
+    // panes close whenever somebody closes them. A path listed twice is refused by
+    // `candidates` before any of this, being about the key rather than about a row.
     if worktree.is_primary {
         return Candidate::Refused(Refusal::Primary);
-    }
-    if twice {
-        return Candidate::Refused(Refusal::ListedTwice);
     }
     if facts.removing.contains(path) {
         return Candidate::Refused(Refusal::Removing);
