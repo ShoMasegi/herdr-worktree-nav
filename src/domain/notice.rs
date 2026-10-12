@@ -71,8 +71,9 @@ pub enum Condition {
 /// `:track` field git printed and the adapter could not read, for the reason written where
 /// the state is, on [`Track::Unreadable`](crate::port::Track::Unreadable). The other is a
 /// branch no ref names the checkout of ([`Position::NotSaid`] under refs git read), which a
-/// frame can produce and nothing here says yet outside a sweep: a sweep that would have
-/// judged it says `no ref here`, and `dump` says what each read found.
+/// branch with no commit yet produces in the ordinary course of things: the line under the
+/// list says it of the checkout under the cursor, a sweep that would have judged it says
+/// `no ref here`, and `dump` says what each read found.
 ///
 /// `stale` and `sweep_trouble` are passed in rather than read off the tree. The first is
 /// about the reading that built it, which a tree cannot report about itself; the second is

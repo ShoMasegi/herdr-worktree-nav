@@ -55,7 +55,8 @@ All notable changes to this project are documented here. The format follows
   it has drifted from its upstream, `gone` when git cannot find the ref it tracks, and `?`
   when git would not read the working tree at all. `contested` marks a checkout more than
   one of the repository's refs names, which the prompt line names as `refs disagree`, and the
-  breadcrumb says so for the checkout under the cursor. `gone` reads in the branches view too,
+  breadcrumb says so for the checkout under the cursor; it says `no ref names this checkout`
+  for a branch no ref names at its path. `gone` reads in the branches view too,
   beside what the branch is — `checked out gone`, `local gone`.
 - Ahead, behind and `gone` are fields on the `git for-each-ref` the picker already runs, so
   they are on screen in the first frame and cost no extra process. Whether a working tree is

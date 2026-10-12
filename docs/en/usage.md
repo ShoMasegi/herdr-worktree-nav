@@ -399,6 +399,10 @@ that is not a position. git did read them, so the row has a word for it, `contes
 prompt line names the checkout the way it names a repository whose refs it could not read:
 `me/app: refs disagree: /path/to/checkout`.
 
+A checkout whose branch no ref names at its path draws nothing and is not a condition, since
+a branch with no commit yet is the ordinary way to get there; with the cursor on it, the
+breadcrumb under the list says `no ref names this checkout`.
+
 On a line too narrow to hold it, it gives up its words rather than its place: the spinners
 lose their labels first, and then the sentence becomes a count of how many things are wrong,
 `!2`. No width leaves the line silent about it.

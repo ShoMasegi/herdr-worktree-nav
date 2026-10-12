@@ -326,8 +326,18 @@ pub fn detail(tree: &Tree, reference: RowRef) -> String {
             if worktree.is_primary {
                 parts.push("main checkout".to_string());
             }
-            if worktree.branch.position() == Some(Position::Contested) {
-                parts.push("more than one ref names this checkout".to_string());
+            match worktree.branch.position() {
+                Some(Position::Contested) => {
+                    parts.push("more than one ref names this checkout".to_string());
+                }
+                // Under refs git read: where it would not read them, every checkout of the
+                // repository is here at once and the prompt line already says why. A branch
+                // with no commit yet is the ordinary way to get here, so it is said where the
+                // cursor is rather than among the conditions.
+                Some(Position::NotSaid) if repo.refs.is_read() => {
+                    parts.push("no ref names this checkout".to_string());
+                }
+                Some(Position::Said(_) | Position::NotSaid) | None => {}
             }
             parts.push(worktree.checkout_path.clone());
             parts
@@ -439,7 +449,7 @@ pub fn sweep_refusal(mark: &Mark) -> Option<&'static str> {
 mod tests {
     use super::*;
     use crate::domain::dest::fixtures::{space_name, tab_name};
-    use crate::domain::model::{Branch, CheckoutPath, WorkingTree};
+    use crate::domain::model::{Branch, CheckoutPath, Refs, WorkingTree};
     use crate::domain::rows::fixtures::*;
     use crate::domain::rows::{flatten, ViewOptions};
     use crate::port::SplitDirection;
@@ -918,6 +928,26 @@ mod tests {
         assert_eq!(
             detail(&tree, RowRef::Worktree(0, 1)),
             "me/app · feat/login · more than one ref names this checkout · /wt/feat-login"
+        );
+    }
+
+    #[test]
+    fn the_breadcrumb_says_no_ref_names_a_checkout_only_where_the_refs_were_read() {
+        let mut tree = tree();
+        tree.repos[0].worktrees[1]
+            .branch
+            .set_position(Position::NotSaid);
+        assert_eq!(
+            detail(&tree, RowRef::Worktree(0, 1)),
+            "me/app · feat/login · no ref names this checkout · /wt/feat-login"
+        );
+
+        // Refs git would not read leave every checkout without a ref, and the prompt line
+        // says so once for the repository.
+        tree.repos[0].refs = Refs::Unreadable("fatal: bad ref".into());
+        assert_eq!(
+            detail(&tree, RowRef::Worktree(0, 1)),
+            "me/app · feat/login · /wt/feat-login"
         );
     }
 
