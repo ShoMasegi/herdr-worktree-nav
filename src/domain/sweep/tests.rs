@@ -277,6 +277,22 @@ fn no_ref_here_is_named_on_a_clean_checkout_unless_gh_names_a_finished_pull_requ
             outcome: PullRequestOutcome::Merged,
         })
     );
+    // But not where the working tree is not clean: the pull request offers nothing there,
+    // and git's silence is not named either.
+    for working_tree in [WorkingTree::Dirty, WorkingTree::Unreadable] {
+        let trees = BTreeMap::from([(CheckoutPath::for_test("/wt/fix-crash"), working_tree)]);
+        let found = judged(&tree, &facts(&trees, &asked(vec![merged(7, "fix/crash")])));
+        assert_eq!(
+            found[&at("/wt/fix-crash")],
+            Candidate::Available,
+            "{working_tree:?}"
+        );
+    }
+    let found = judged(
+        &tree,
+        &facts(&BTreeMap::new(), &asked(vec![merged(7, "fix/crash")])),
+    );
+    assert_eq!(found[&at("/wt/fix-crash")], Candidate::Available);
 }
 
 #[test]
