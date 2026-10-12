@@ -218,7 +218,8 @@ pub enum Position {
     /// sweep's `Space` and `Shift-D` all say `more than one ref names this checkout` — the last
     /// two refusing it below the repository's own checkout
     /// ([`Refusal::Contested`](crate::domain::sweep::Refusal::Contested)). A row naming no
-    /// branch has no position, and [`Tree::contested`] carries the same fact for it. Two refs
+    /// branch has no position to carry it in, so it says none of the first four:
+    /// [`Tree::contested`] carries the fact for it, and only the two refusals read it. Two refs
     /// at one path take two registrations of it, and a list that names the path once for
     /// each, as `git worktree list` does, gives two rows that are refused before either is
     /// judged ([`Refusal::ListedTwice`](crate::domain::sweep::Refusal::ListedTwice)).
@@ -396,8 +397,8 @@ pub struct Tree {
     /// repository registers at the same path, or any checkout at all for a pane under
     /// `not in any repository`. [`Tree::panes_standing_in`] reads it here.
     pub pane_cwds: BTreeMap<String, Vec<String>>,
-    /// Every repository and path more than one of the repository's refs names, whatever
-    /// the rows there name. A row naming a branch carries the same fact as
+    /// Every row's repository and path that more than one of the repository's refs names,
+    /// whatever the row names. A row naming a branch carries the same fact as
     /// [`Position::Contested`]; a row naming none — nothing out, or a checkout herdr did not
     /// list — has no position to carry it in, and the two registrations are there all the
     /// same. [`Tree::is_contested`] reads it here.
@@ -407,7 +408,8 @@ pub struct Tree {
 impl Tree {
     /// Whether more than one of `repo`'s refs names `worktree`'s path, so two registrations
     /// share it and `git worktree remove` would take whichever git picks. Asked by the sweep
-    /// and `Shift-D` alike, of every row, branch or none.
+    /// and `Shift-D` alike of any row that reaches that refusal, whether it names a branch or
+    /// not.
     pub fn is_contested(&self, repo: &RepoNode, worktree: &WorktreeNode) -> bool {
         worktree.branch.position() == Some(Position::Contested)
             || self

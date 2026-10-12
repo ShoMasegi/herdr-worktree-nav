@@ -69,7 +69,9 @@ branch on it says which kind of silence that is: `no branch reported` where herd
 listed the checkout and said nothing is out, and `herdr did not list this checkout`
 where herdr never mentioned it — the picker shows that row for a pane whose directory
 it recognized, and a branch may well be out there. Either way `git names at this path:`
-follows with that same list where git names refs there; where git would not read the
+follows with that same list where git names refs there, and where it names more than one a
+sweep and `Shift-D` refuse the row as `more than one ref names this checkout`, though it
+draws no `contested`; where git would not read the
 refs it says `refs not read`, and `refs not read on the second read` where only this
 page's own read failed. Each checkout's working tree is walked in the open, one after
 another, so on many checkouts this takes a moment.

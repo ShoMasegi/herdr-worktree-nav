@@ -967,6 +967,45 @@ fn a_path_two_refs_name_is_contested_whatever_the_row_there_names() {
 }
 
 #[test]
+fn another_repositorys_two_refs_at_a_path_do_not_contest_this_checkout_there() {
+    // Issue #31's shape: a stale registration in one repository at the path of another's
+    // live checkout. Refusing the live one would be refusing it on a fact about a stranger.
+    let shared = "/wt/shared";
+    let mut app = repo(
+        "me/app",
+        "/src/app",
+        vec![worktree("main", "/src/app", false)],
+    );
+    app.refs = Ok(vec![
+        local_ref("chore/deps", Some(shared), Some(Track::Gone)),
+        local_ref("feat/login", Some(shared), None),
+    ]);
+    for branch in ["", "fix/crash"] {
+        let mut site = repo(
+            "me/site",
+            "/src/site",
+            vec![
+                worktree("main", "/src/site", false),
+                worktree(branch, shared, true),
+            ],
+        );
+        site.refs = Ok(vec![]);
+        let tree = build(&snapshot(json!([])), &[app.clone(), site], &HashMap::new());
+        let site = tree
+            .repos
+            .iter()
+            .find(|repo| repo.display_name == "me/site")
+            .expect("me/site");
+        let row = site
+            .worktrees
+            .iter()
+            .find(|worktree| worktree.checkout_path == shared)
+            .expect("the row at the shared path");
+        assert!(!tree.is_contested(site, row), "{branch:?}");
+    }
+}
+
+#[test]
 fn a_checkout_herdr_flags_detached_draws_no_track_whatever_it_names() {
     // `branch` is not the only way herdr can say nothing is out: `is_detached` is beside
     // it, and a herdr that fills `branch` for a detached checkout — with `HEAD`, a

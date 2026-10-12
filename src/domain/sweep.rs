@@ -50,8 +50,8 @@ pub enum Refusal {
     /// or [`Tree::is_contested`] for a row naming no branch.
     /// Two refs at one path take two registrations of it, so this is
     /// [`Refusal::ListedTwice`]'s reason on a path herdr lists once: `git worktree remove`
-    /// would take whichever registration git picks, and `git branch -d` the branch herdr
-    /// names, which is not known to be the one at this path. A finished pull request does
+    /// would take whichever registration git picks, and, on a row naming a branch,
+    /// `git branch -d` the branch herdr names, which is not known to be the one at this path. A finished pull request does
     /// not lift it, for the same reason.
     Contested,
     /// Its removal is already going, in a process of its own. Never read out: the cursor does

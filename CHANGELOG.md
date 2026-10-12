@@ -52,8 +52,8 @@ All notable changes to this project are documented here. The format follows
 - **Every checkout says what state it is in**, beside its branch name in the panes view:
   `✱` for a working tree holding uncommitted changes or untracked files, `↑2↓1` for how far
   it has drifted from its upstream, `gone` when git cannot find the ref it tracks, and `?`
-  when git would not read the working tree at all. `contested` marks a checkout more than
-  one of the repository's refs names, which the prompt line names as `refs disagree`, and the
+  when git would not read the working tree at all. `contested` marks a branch at a checkout
+  more than one of the repository's refs names, which the prompt line names as `refs disagree`, and the
   breadcrumb says so for the checkout under the cursor; under refs git read it says
   `no ref names this checkout` for a branch no ref names at its path. `gone` reads in the branches view too,
   beside what the branch is — `checked out gone`, `local gone`.
@@ -80,7 +80,7 @@ All notable changes to this project are documented here. The format follows
   would not read one. A checkout herdr never listed, which the picker shows for a pane whose
   directory it recognized, says so rather than reading as a checkout with nothing out: the
   refs git names at its path are named without a claim about which of them is out. A
-  checkout more than one of the repository's refs names reads `track contested`, which is
+  branch at a checkout more than one of the repository's refs names reads `track contested`, which is
   the picker declining to pick one of them rather than a branch level with its upstream.
   How many refs name a checkout is the picker's count; where `dump`'s own read counts
   differently, the line says both.

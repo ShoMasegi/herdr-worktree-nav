@@ -402,10 +402,11 @@ refs cannot be read, and it sits beside a state filter's chip and beside a searc
 left in the field rather than giving the line up to either. It steps aside only while you
 are typing in the field, where the cursor is yours.
 
-A checkout more than one of the repository's refs names is another answer from the refs
-that is not a position. git did read them, so the row has a word for it, `contested`, and the
-prompt line names the checkout the way it names a repository whose refs it could not read:
-`me/app: refs disagree: /path/to/checkout`.
+A branch at a checkout more than one of the repository's refs names is another answer from
+the refs that is not a position. git did read them, so the row has a word for it, `contested`,
+and the prompt line names the checkout the way it names a repository whose refs it could not
+read: `me/app: refs disagree: /path/to/checkout`. A row naming no branch draws neither, and
+a sweep and `Shift-D` still refuse it as `more than one ref names this checkout`.
 
 A checkout whose branch no ref names at its path draws nothing and is not a condition, since
 a branch with no commit yet is the ordinary way to get there; with the cursor on it, the
