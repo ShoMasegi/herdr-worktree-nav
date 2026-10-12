@@ -137,59 +137,30 @@ fn a_position_that_went_unread_is_never_offered() {
 }
 
 #[test]
-fn a_checkout_more_than_one_ref_names_says_which_half_went_unanswered() {
+fn a_checkout_more_than_one_ref_names_is_never_swept() {
     // git answered, and its answer about this checkout was two branches
-    // (`Position::Contested`). `gone` was never on offer here, so the row is `Unjudged`
-    // for the same reason a repository whose refs would not read is: git's half of the
-    // question did not decide it. Which half is the one thing the row can say, and
-    // `refs unreadable` would send somebody to look at a walk that worked — issue #47.
-    let mut wt = worktree("fix/crash", "/wt/fix-crash");
-    wt.branch.set_position(Position::Contested);
-    let trees = clean(&["/wt/fix-crash"]);
-    let none = BTreeMap::new();
-    let judged = judged(&tree_of(vec![wt]), &facts(&trees, &none));
-    assert_eq!(
-        judged[&at("/wt/fix-crash")],
-        Candidate::Unjudged(Half::RefsDisagree)
-    );
-}
-
-#[test]
-fn a_contested_checkout_stays_unjudged_whatever_gh_said_short_of_a_finished_pull_request() {
-    // A contested checkout that is the only row at its path; listed once per registration it
-    // is refused instead — `a_path_herdr_lists_twice_in_one_repository_is_never_swept`.
-    //
-    // `gh` answering — with nothing for this branch, or not at all — leaves git's half where
-    // it was. `Available` after a complete list would be the level row #47 was about, and
-    // `PR unknown` would name the half that was asked rather than the one that was not.
+    // (`Position::Contested`), which takes two registrations of one path. Listed once here,
+    // `git worktree remove` would take whichever registration git picks and `git branch -d`
+    // the branch herdr names — neither known to be this row's. Refused whatever `gh` said, a
+    // finished pull request included: what it finished is a branch, not this path.
     let contested = || {
         let mut wt = worktree("fix/crash", "/wt/fix-crash");
         wt.branch.set_position(Position::Contested);
         tree_of(vec![wt])
     };
     let trees = clean(&["/wt/fix-crash"]);
+    let not_asked = BTreeMap::new();
     let nothing_found = asked(vec![merged(9, "feat/other")]);
     let could_not_ask = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
-    for settled in [&nothing_found, &could_not_ask] {
-        let unjudged = judged(&contested(), &facts(&trees, settled));
+    let landed = asked(vec![merged(7, "fix/crash")]);
+    for settled in [&not_asked, &nothing_found, &could_not_ask, &landed] {
+        let judged = judged(&contested(), &facts(&trees, settled));
         assert_eq!(
-            unjudged[&at("/wt/fix-crash")],
-            Candidate::Unjudged(Half::RefsDisagree),
+            judged[&at("/wt/fix-crash")],
+            Candidate::Refused(Refusal::Contested),
             "settled: {settled:?}"
         );
     }
-
-    // And `gh` still widens it: a merged pull request offers the row, as it does a row
-    // whose refs went unread.
-    let landed = asked(vec![merged(7, "fix/crash")]);
-    let offered = judged(&contested(), &facts(&trees, &landed));
-    assert_eq!(
-        offered[&at("/wt/fix-crash")],
-        Candidate::Offered(Reason::PullRequest {
-            number: 7,
-            outcome: PullRequestOutcome::Merged,
-        })
-    );
 }
 
 #[test]
@@ -253,22 +224,6 @@ fn a_path_herdr_lists_twice_in_one_repository_is_never_swept() {
     });
     let apart = judged(&theirs, &facts(&trees, &none));
     assert_eq!(apart[&at("/wt/shared")], Candidate::Available);
-}
-
-#[test]
-fn a_repository_whose_refs_went_unread_names_that_half_first() {
-    // Two of git's silences at once: the walk failed, so nothing here was ever counted.
-    // The repository's failure is the one to fix, and it is true of every checkout in it
-    // rather than of this one.
-    let mut wt = worktree("fix/crash", "/wt/fix-crash");
-    wt.branch.set_position(Position::Contested);
-    let trees = clean(&["/wt/fix-crash"]);
-    let none = BTreeMap::new();
-    let judged = judged(&tree_unread(vec![wt]), &facts(&trees, &none));
-    assert_eq!(
-        judged[&at("/wt/fix-crash")],
-        Candidate::Unjudged(Half::Refs)
-    );
 }
 
 #[test]
@@ -1078,7 +1033,7 @@ fn which_refusal_a_checkout_that_earns_two_of_them_shows() {
     }
 
     // And it outranks a removal already going: one ends, the other lasts until somebody
-    // prunes it.
+    // repairs it.
     let judged = candidates(
         &tree_of(vec![
             worktree("feat/login", "/wt/feat-login"),
@@ -1093,6 +1048,38 @@ fn which_refusal_a_checkout_that_earns_two_of_them_shows() {
     assert_eq!(
         judged[&at("/wt/feat-login")],
         Candidate::Refused(Refusal::ListedTwice)
+    );
+
+    // A contested checkout sits between the two: below the repository itself, which never
+    // passes, and above a removal already going, which will end.
+    let mut contested = worktree("main", "/src/app");
+    contested.is_primary = true;
+    contested.branch.set_position(Position::Contested);
+    let judged = candidates(
+        &tree_of(vec![contested]),
+        &Facts {
+            working_trees: &clean(&["/src/app"]),
+            settled: &none,
+            removing: &[CheckoutPath::for_test("/src/app")],
+        },
+    );
+    assert_eq!(
+        judged[&at("/src/app")],
+        Candidate::Refused(Refusal::Primary)
+    );
+    let mut contested = worktree("feat/login", "/wt/feat-login");
+    contested.branch.set_position(Position::Contested);
+    let judged = candidates(
+        &tree_of(vec![contested]),
+        &Facts {
+            working_trees: &clean(&["/wt/feat-login"]),
+            settled: &none,
+            removing: &[CheckoutPath::for_test("/wt/feat-login")],
+        },
+    );
+    assert_eq!(
+        judged[&at("/wt/feat-login")],
+        Candidate::Refused(Refusal::Contested)
     );
 
     // And the pair below it, which asserting only the top of the order leaves free. The
@@ -1591,7 +1578,13 @@ fn what_the_sweep_marks_and_what_the_user_may_mark_are_different_questions() {
         assert!(!own.is_offered(), "{own:?} is not marked for the user");
         assert!(own.is_markable(), "{own:?} is still the user's to mark");
     }
-    for refusal in [Refusal::Primary, Refusal::Running, Refusal::Removing] {
+    for refusal in [
+        Refusal::Primary,
+        Refusal::ListedTwice,
+        Refusal::Contested,
+        Refusal::Running,
+        Refusal::Removing,
+    ] {
         let refused = Candidate::Refused(refusal);
         assert!(!refused.is_offered());
         assert!(

@@ -11,6 +11,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
+use crate::domain::model::Position;
 use crate::domain::rows::{RowRef, StateFilter};
 use crate::ui::panes::*;
 
@@ -80,6 +81,12 @@ impl PanesState {
         if worktree.is_primary {
             // git cannot remove the main working tree, and it is not a worktree anyway.
             self.message = Some("that is the repository itself, not a worktree".into());
+            return Action::Consumed;
+        }
+        if worktree.branch.position() == Some(Position::Contested) {
+            // Two refs at one path take two registrations, listed once here: `git worktree
+            // remove` would take whichever of them git picks, as with a path listed twice.
+            self.message = Some("more than one ref names this checkout".into());
             return Action::Consumed;
         }
         if self.options.removing.contains(&path) {
@@ -783,6 +790,25 @@ mod tests {
             select(&mut twin, row);
             twin.handle_key(key(KeyCode::Char('D')));
             assert_eq!(twin.message(), Some("herdr lists this path twice"), "{row}");
+        }
+
+        // A contested checkout comes after the repository itself and before a removal
+        // already going, as in the sweep — and holds on an empty checkout too.
+        let mut contested = state();
+        let mut tree = contested.tree().clone();
+        for worktree in &mut tree.repos[0].worktrees {
+            worktree.branch.set_position(Position::Contested);
+        }
+        contested.replace_tree(tree);
+        contested.set_removing(vec![CheckoutPath::for_test("/wt/app/fix-crash")]);
+        for (row, said) in [
+            ("main", "that is the repository itself, not a worktree"),
+            ("fix/crash", "more than one ref names this checkout"),
+        ] {
+            select(&mut contested, row);
+            contested.handle_key(key(KeyCode::Char('D')));
+            assert!(contested.pending_removal().is_none(), "{row}");
+            assert_eq!(contested.message(), Some(said), "{row}");
         }
 
         // Then a removal already going, then a pane listed elsewhere, then the checkout's

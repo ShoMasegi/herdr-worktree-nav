@@ -214,12 +214,11 @@ pub enum Position {
     /// ([`ui::words::track_mark`](crate::ui::words::track_mark)), the line under the list
     /// says it of the checkout under the cursor, a condition names the checkout
     /// ([`Condition::RefsDisagree`](crate::domain::notice::Condition::RefsDisagree)),
-    /// [`app::dump`](crate::app::dump) says `track contested`, and in a sweep the row says
-    /// `refs disagree` ([`domain::sweep::Half`](crate::domain::sweep::Half)) — where it is
-    /// the only row at its path. Two refs at one path take two registrations of it, and a
-    /// list that names the path once for each, as `git worktree list` does, gives the sweep
-    /// two rows it refuses before judging either
-    /// ([`Refusal::ListedTwice`](crate::domain::sweep::Refusal::ListedTwice)).
+    /// [`app::dump`](crate::app::dump) says `track contested`, and a sweep and `Shift-D` both
+    /// refuse it ([`Refusal::Contested`](crate::domain::sweep::Refusal::Contested)). Two refs
+    /// at one path take two registrations of it, and a list that names the path once for
+    /// each, as `git worktree list` does, gives two rows that are refused before either is
+    /// judged ([`Refusal::ListedTwice`](crate::domain::sweep::Refusal::ListedTwice)).
     ///
     /// `git worktree add` and `git worktree move` both refuse a path a worktree is already
     /// registered at, but `git worktree repair` will register a second and `git worktree

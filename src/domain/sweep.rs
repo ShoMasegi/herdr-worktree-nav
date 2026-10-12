@@ -46,6 +46,13 @@ pub enum Refusal {
     /// Decided for the key ahead of every other refusal, so both rows carry it even where one
     /// of them is the repository's own checkout and would otherwise read [`Refusal::Primary`].
     ListedTwice,
+    /// More than one of the repository's refs names this checkout — [`Position::Contested`].
+    /// Two refs at one path take two registrations of it, so this is
+    /// [`Refusal::ListedTwice`]'s reason on a path herdr lists once: `git worktree remove`
+    /// would take whichever registration git picks, and `git branch -d` the branch herdr
+    /// names, which is not known to be the one at this path. A finished pull request does
+    /// not lift it, for the same reason.
+    Contested,
     /// Its removal is already going, in a process of its own. Never read out: the cursor does
     /// not stop on a row being removed, sweep or no sweep — see
     /// [`domain::rows::Row::is_selectable`](crate::domain::rows::Row::is_selectable). The
@@ -64,14 +71,6 @@ pub enum Half {
     /// checkout of the repository at once. Named ahead of `gh` when both are missing: it is
     /// true outside a sweep too, and the ahead, behind and `gone` markers are missing with it.
     Refs,
-    /// git read them and more than one names this checkout, so `domain::tree::tracks` would
-    /// not choose between them and `gone` was never on offer here either —
-    /// [`Position::Contested`]. One checkout rather than the whole repository, and what fixes
-    /// it is pointing the stale registration back at its directory rather than anything
-    /// about git's answer. A sweep reaches this only for a contested checkout listed once:
-    /// two refs at one path take two registrations, and listed once for each, the key is
-    /// [`Refusal::ListedTwice`] first.
-    RefsDisagree,
     /// git read them and none names this checkout, though herdr says a branch is out here —
     /// [`Position::NotSaid`] on a row that names one — so there is no ref here to be `gone`
     /// either.
@@ -93,10 +92,11 @@ pub enum Candidate {
     /// and one whose working tree has not been read are rows nothing was going to offer
     /// anyway, so nothing about them is unknown that matters.
     ///
-    /// git's half fails three ways: the ref walk failed, which the repository carries
-    /// ([`domain::model::Refs`](crate::domain::model::Refs)), or it succeeded and more than
-    /// one ref named this checkout, or none did, which the checkout carries
-    /// ([`domain::model::Position`](crate::domain::model::Position)).
+    /// git's half fails two ways: the ref walk failed, which the repository carries
+    /// ([`domain::model::Refs`](crate::domain::model::Refs)), or it succeeded and no ref
+    /// named this checkout, which the checkout carries
+    /// ([`domain::model::Position`](crate::domain::model::Position)). A third, more than one
+    /// ref, is [`Refusal::Contested`] instead.
     Unjudged(Half),
     /// Nothing says it should go, and `Space` still marks it.
     Available,
@@ -205,11 +205,15 @@ fn judge(
     // The refusals come first because they are about the checkout rather than about whether
     // anyone is finished with it. Their order among themselves decides only which refusal a
     // checkout that earns two of them carries, and it runs most permanent first: being the
-    // repository itself is not a state that passes, a removal already going will end, and
-    // panes close whenever somebody closes them. A path listed twice is refused by
+    // repository itself is not a state that passes, a stale registration stays until
+    // somebody repairs it, a removal already going will end, and panes close whenever
+    // somebody closes them. A path listed twice is refused by
     // `candidates` before any of this, being about the key rather than about a row.
     if worktree.is_primary {
         return Candidate::Refused(Refusal::Primary);
+    }
+    if worktree.branch.position() == Some(Position::Contested) {
+        return Candidate::Refused(Refusal::Contested);
     }
     if facts.removing.contains(path) {
         return Candidate::Refused(Refusal::Removing);
@@ -235,18 +239,17 @@ fn judge(
     // changed the outcome. The same gate holds for git's own half: `gone` was never going to
     // offer a dirty or a detached checkout.
     let could_have_decided = clean && worktree.branch.name().is_some();
-    // Which of git's three silences this row is under, where any would have decided it: a
-    // walk that did not happen, or one whose answer here was more than one ref, or none. The
-    // repository's failure is named first, being the one that costs every checkout its
-    // markers at once.
+    // Which of git's silences this row is under, where either would have decided it: a walk
+    // that did not happen, or one whose answer here was no ref. The repository's failure is
+    // named first, being the one that costs every checkout its markers at once.
     let git_silent = match (repo.refs.is_read(), worktree.branch.position()) {
         _ if !could_have_decided => None,
         // A row naming no branch is not one `could_have_decided` lets through.
         (_, None) => None,
         (false, Some(_)) => Some(Half::Refs),
-        (true, Some(Position::Contested)) => Some(Half::RefsDisagree),
         (true, Some(Position::NotSaid)) => Some(Half::NoRef),
-        (true, Some(Position::Said(_))) => None,
+        // `Contested` was refused above.
+        (true, Some(Position::Said(_) | Position::Contested)) => None,
     };
     let settled = match settled {
         // Nobody has asked `gh` yet: an answer is still on its way, and a permanent word on

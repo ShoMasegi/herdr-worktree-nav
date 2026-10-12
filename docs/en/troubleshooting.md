@@ -62,8 +62,9 @@ git printed, `nothing reported` where it found one ref and git reported nothing 
 `not known` where it found none. On the row itself `unreadable`, `nothing reported` and
 `not known` are the same empty marker as `track level` and `upstream none`, and
 `contested` is drawn as `contested`. In a sweep a contested checkout herdr lists once per
-registration is refused as `herdr lists this path twice`, one listed once reads
-`refs disagree`, and one the picker found no ref for reads `no ref here`. A row with no
+registration is refused as `herdr lists this path twice`, one listed once is refused as
+`more than one ref names this checkout`, and one the picker found no ref for reads
+`no ref here`. A row with no
 branch on it says which kind of silence that is: `no branch reported` where herdr
 listed the checkout and said nothing is out, and `herdr did not list this checkout`
 where herdr never mentioned it — the picker shows that row for a pane whose directory

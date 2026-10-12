@@ -144,11 +144,12 @@ The same rule holds for git's own half. A repository whose refs git would not re
 otherwise have judged — clean, on a branch, nothing running in them, and not the repository's
 own — read `refs unreadable` in a sweep, before and after you mark them by hand. The prompt
 line names the repository with git's words, as it does for `gh`. A checkout more than one
-of the repository's refs names is another way git's half goes unanswered — the walk worked
-and its answer here was two branches, so there is no one branch to be `gone`. Two refs at
-one path take two registrations of it, and `git worktree list` names the path once for
-each, so where herdr does the same both rows are refused as `herdr lists this path twice`
-before either is judged; a contested checkout listed once would read `refs disagree`. A
+of the repository's refs names is refused rather than judged: two refs at one path take two
+registrations of it, so `git worktree remove` would take whichever of them git picks, and
+`git branch -d` the branch herdr names. `git worktree list` names the path once for each
+registration, so where herdr does the same both rows are refused as
+`herdr lists this path twice`; listed once, `Space` says
+`more than one ref names this checkout`, merged pull request or not. A
 checkout whose branch no ref names at its path — git read the refs and found none there —
 reads `no ref here`; a branch with no commit yet is one, since it has no ref at all. `gh`
 still widens the sweep wherever a row is judged rather than refused: a merged pull request
@@ -231,8 +232,8 @@ closed by the time it did — and "nobody has asked yet" is not the same answer 
 which is why pressing `Shift-D` in the first moments after the picker opens asks you to try
 again rather than guessing.
 
-Two more are about whose directory it is, and hold whether or not the checkout has panes of
-its own. A checkout any pane it does not draw is standing in names the first such pane, as in
+Three more are about whose directory it is, and hold whether or not the checkout has panes
+of its own. A checkout any pane it does not draw is standing in names the first such pane, as in
 `pane w5:p1 (codex) is standing in it` — a pane under another repository's row for the
 same path, under a checkout nested inside this one, under `not in any repository`, or one
 whose foreground process has moved in here: the question closes this row's panes only, and
@@ -242,7 +243,9 @@ included: git, not the row, picks which registration `git worktree remove` takes
 panes are drawn under at most one of them. The registration the directory's own `.git` file names is the live one; the
 other was left behind when a directory was moved away, and `git worktree repair <where that
 directory is now>` points it back. Not `git worktree prune`: it keeps whichever of the two
-entries comes first, and that can be the stale one.
+entries comes first, and that can be the stale one. A checkout more than one of the
+repository's refs names says `more than one ref names this checkout` where herdr lists it
+once: two refs at one path take two registrations, so git picks here too.
 
 `y` comes straight back. The removal runs somewhere else — git has to walk a whole working
 tree before it can delete it, which is seconds on a repository of any size — and the row
