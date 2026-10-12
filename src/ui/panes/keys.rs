@@ -724,7 +724,8 @@ mod tests {
             tree.trouble.unlisted.push(crate::domain::model::Unlisted {
                 repo_key: "/src/old/.git".into(),
                 words: "herdr rejected worktree.list".into(),
-                panes: [("w9:p1".to_string(), "/wt/app/fix-crash".to_string())].into(),
+                // Placed in a checkout nested inside this one, which goes with it.
+                panes: [("w9:p1".to_string(), "/wt/app/fix-crash/sub".to_string())].into(),
             });
         };
         for (what, standing) in [

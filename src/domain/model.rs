@@ -419,7 +419,7 @@ impl Tree {
     ///   herdr reported through a symlink, which the next one compares as text and misses;
     /// - a working directory at or under `path` — its shell's or its foreground process's —
     ///   which catches a pane drawn under some other row, or under none;
-    /// - placed at `path` in a repository herdr would not list.
+    /// - placed at `path` or inside it in a repository herdr would not list.
     ///
     /// A pane can come in by more than one of them, so an id can repeat. A pane herdr cannot
     /// see into, drawn under no row, has nothing to be found by.
@@ -441,7 +441,7 @@ impl Tree {
             .unlisted
             .iter()
             .flat_map(|repo| &repo.panes)
-            .filter(move |(_, checkout)| normalize_path(checkout) == normalize_path(path))
+            .filter(move |(_, checkout)| is_inside(checkout, path))
             .map(|(pane_id, _)| pane_id.as_str());
         by_row.chain(by_directory).chain(unlisted)
     }
