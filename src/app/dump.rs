@@ -7,9 +7,9 @@
 //! git would not read a working tree. Outside a sweep a row draws nothing for the first two
 //! and only `?` for the third, because no marker beats a wrong one
 //! ([`domain::model::Refs`](crate::domain::model::Refs),
-//! [`domain::model::WorkingTree`](crate::domain::model::WorkingTree)); in a sweep a row it
-//! would have judged says `refs unreadable`, which is that something is missing rather than
-//! what.
+//! [`domain::model::WorkingTree`](crate::domain::model::WorkingTree)); a sweep refuses every
+//! row of a repository whose refs git would not read, and `Space` says so, which is that
+//! something is missing rather than what.
 
 use std::collections::BTreeMap;
 use std::fmt::Write;

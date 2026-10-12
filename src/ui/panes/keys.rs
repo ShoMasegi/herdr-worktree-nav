@@ -88,6 +88,12 @@ impl PanesState {
             self.message = Some("more than one ref names this checkout".into());
             return Action::Consumed;
         }
+        if !repo.refs.is_read() {
+            // Then nothing can say whether two refs name this path, and the question would
+            // be asked on the strength of that silence.
+            self.message = Some("git would not read this repository's refs".into());
+            return Action::Consumed;
+        }
         if self.options.removing.contains(&path) {
             // A second one would race the first, and would close panes that the first is
             // already having removed out from under them.
@@ -838,6 +844,25 @@ mod tests {
             branchless.message(),
             Some("more than one ref names this checkout")
         );
+
+        // Refs git would not read cannot say whether the path is contested, so they are
+        // refused where a contested one is, on the empty checkout and the one with panes.
+        let mut unread = state();
+        let mut tree = unread.tree().clone();
+        tree.repos[0].refs = Refs::Unreadable("fatal: bad ref".into());
+        unread.replace_tree(tree);
+        unread.set_removing(vec![CheckoutPath::for_test("/wt/app/fix-crash")]);
+        unread.set_working_trees(answers(&[("/wt/app/feat-login", WorkingTree::Clean)]));
+        for (row, said) in [
+            ("main", "that is the repository itself, not a worktree"),
+            ("fix/crash", "git would not read this repository's refs"),
+            ("codex", "git would not read this repository's refs"),
+        ] {
+            select(&mut unread, row);
+            unread.handle_key(key(KeyCode::Char('D')));
+            assert!(unread.pending_removal().is_none(), "{row}");
+            assert_eq!(unread.message(), Some(said), "{row}");
+        }
 
         // Then a removal already going, then a pane listed elsewhere, then the checkout's
         // own working tree — each one peeled off in turn on a checkout that earns all of

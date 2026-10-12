@@ -97,8 +97,8 @@ pub enum Refs {
     /// readable twin of this one to draw from either —
     /// `one_repository_is_asked_about_once_however_many_panes_are_in_it` and
     /// `a_placement_carries_one_spelling_of_a_repository_key_whichever_answered`. A fixture
-    /// can still pair the two directly, and `domain::sweep::judge` offers the row on `gone`
-    /// either way.
+    /// can still pair the two directly, and `domain::sweep::judge` refuses the row either
+    /// way.
     Unreadable(String),
 }
 
@@ -107,8 +107,8 @@ impl Refs {
     ///
     /// Spelled out rather than written as `matches!(_, Unreadable(_))`, for the reason
     /// [`WorkingTree::is_drawn`] is: a third variant — refs not read yet, say — would have
-    /// gone on compiling as "read" in `domain::sweep::judge`, which is the one predicate
-    /// that decides whether a row says `refs unreadable`, and that is the direction it must
+    /// gone on compiling as "read" in `domain::sweep::judge` and `Shift-D`, where this
+    /// decides whether a checkout may be removed at all, and that is the direction it must
     /// not fail in. The compiler asks now.
     pub fn is_read(&self) -> bool {
         match self {

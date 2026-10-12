@@ -267,8 +267,9 @@ through this against a real session.
       two rows: under `Shift-S` both are refused and `Space` says
       `herdr lists this path twice`, as `Shift-D` does on either row. Do not clear it with
       `git worktree prune`, which can keep the stale entry and drop the live one.
-- [ ] With that ref still broken, `Shift-S` shows the checkouts it would otherwise have
-      judged reading `refs unreadable`, and `Space` on one keeps that reason on the row.
+- [ ] With that ref still broken, `Shift-S` draws no box on any checkout of that
+      repository, merged pull request or not, and `Space` on one says
+      `git would not read this repository's refs`, as `Shift-D` does.
       `Tab` to the branches view: every branch git could still read is listed there.
 - [ ] Typing `/login` and then pressing `Shift-S` opens the whole list again: what the sweep
       judges is what is on the screen.

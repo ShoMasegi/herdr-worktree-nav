@@ -1258,11 +1258,9 @@ mod tests {
     }
 
     #[test]
-    fn a_row_in_a_repository_whose_refs_git_would_not_read_says_so_in_a_sweep() {
-        // The prompt line names the repository; the row says which half of the question
-        // went unanswered, and goes on saying it once marked — the same rule `PR unknown`
-        // is under. The row is found by its path's tail because here the note takes the
-        // label's place.
+    fn a_row_in_a_repository_whose_refs_git_would_not_read_is_refused_in_a_sweep() {
+        // The prompt line names the repository, and the row draws no box: nothing can say
+        // whether two refs name its path. `Space` says why, as on any refused row.
         let mut state = swept();
         let mut tree = state.tree().clone();
         tree.repos[1].refs = Refs::Unreadable("fatal: bad ref".into());
@@ -1278,7 +1276,7 @@ mod tests {
         let row_of = |drawn: &str| {
             drawn
                 .lines()
-                .find(|line| line.contains("chore-deps") && !line.starts_with(" me/site"))
+                .find(|line| line.contains("chore/deps") && !line.starts_with(" me/site"))
                 .expect("the row is drawn")
                 .to_string()
         };
@@ -1286,10 +1284,9 @@ mod tests {
             let drawn = screen(&state, width, 20);
             let row = row_of(&drawn);
             assert!(
-                row.contains("[ ]"),
-                "unjudged is not offered at {width}: {row}"
+                !row.contains("[ ]") && !row.contains("[x]"),
+                "refused at {width}: {row}"
             );
-            assert!(row.contains("refs unreadable"), "at {width}: {row}");
             assert!(
                 drawn.contains("me/site: refs unreadable: fatal"),
                 "named once, on the prompt line, at {width}:\n{drawn}"
@@ -1297,9 +1294,12 @@ mod tests {
         }
 
         press(&mut state, KeyCode::Char(' '));
-        let row = row_of(&screen(&state, 92, 20));
-        assert!(row.contains("[x]"), "marked: {row}");
-        assert!(row.contains("refs unreadable"), "and still unjudged: {row}");
+        let drawn = screen(&state, 92, 20);
+        assert!(!row_of(&drawn).contains("[x]"), "still refused:\n{drawn}");
+        assert!(
+            drawn.contains("git would not read this repository's refs"),
+            "{drawn}"
+        );
     }
 
     #[test]

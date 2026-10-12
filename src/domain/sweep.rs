@@ -51,9 +51,15 @@ pub enum Refusal {
     /// Two refs at one path take two registrations of it, so this is
     /// [`Refusal::ListedTwice`]'s reason on a path herdr lists once: `git worktree remove`
     /// would take whichever registration git picks, and, on a row naming a branch,
-    /// `git branch -d` the branch herdr names, which is not known to be the one at this path. A finished pull request does
-    /// not lift it, for the same reason.
+    /// `git branch -d` the branch herdr names, which is not known to be the one at this
+    /// path. A finished pull request does not lift it, for the same reason.
     Contested,
+    /// git would not read the repository's refs, so nothing can say whether two of them name
+    /// this checkout: [`Refusal::Contested`] is that answer, and this is its absence. A
+    /// removal here would take whichever registration git picks on the strength of a
+    /// silence, so every checkout of the repository is refused at once, a finished pull
+    /// request included.
+    RefsUnreadable,
     /// Its removal is already going, in a process of its own. Never read out: the cursor does
     /// not stop on a row being removed, sweep or no sweep — see
     /// [`domain::rows::Row::is_selectable`](crate::domain::rows::Row::is_selectable). The
@@ -68,13 +74,11 @@ pub enum Refusal {
 /// neither could settle says which one went unanswered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Half {
-    /// git would not read the repository's refs, so `gone` was never on offer — for every
-    /// checkout of the repository at once. Named ahead of `gh` when both are missing: it is
-    /// true outside a sweep too, and the ahead, behind and `gone` markers are missing with it.
-    Refs,
-    /// git read them and none names this checkout, though herdr says a branch is out here —
-    /// [`Position::NotSaid`] on a row that names one — so there is no ref here to be `gone`
-    /// either.
+    /// git read the repository's refs and none names this checkout, though herdr says a
+    /// branch is out here — [`Position::NotSaid`] on a row that names one — so there is no
+    /// ref here to be `gone`. Named ahead of `gh` when both are missing: the row's track
+    /// marker is missing with it. Refs git would not read at all are
+    /// [`Refusal::RefsUnreadable`] instead.
     NoRef,
     /// `gh` could not settle it: could not be asked, asked and the window it was given came
     /// back full, or asked and answered in a state this does not know.
@@ -93,11 +97,11 @@ pub enum Candidate {
     /// and one whose working tree has not been read are rows nothing was going to offer
     /// anyway, so nothing about them is unknown that matters.
     ///
-    /// git's half fails two ways: the ref walk failed, which the repository carries
-    /// ([`domain::model::Refs`](crate::domain::model::Refs)), or it succeeded and no ref
-    /// named this checkout, which the checkout carries
-    /// ([`domain::model::Position`](crate::domain::model::Position)). A third, more than one
-    /// ref, is [`Refusal::Contested`] instead.
+    /// git's half goes unanswered one way here: the ref walk succeeded and no ref named this
+    /// checkout, which the checkout carries
+    /// ([`domain::model::Position`](crate::domain::model::Position)). The walk failing is
+    /// [`Refusal::RefsUnreadable`] instead, and more than one ref [`Refusal::Contested`]:
+    /// neither leaves anything to say which registration a removal would take.
     Unjudged(Half),
     /// Nothing says it should go, and `Space` still marks it.
     Available,
@@ -209,14 +213,19 @@ fn judge(
     // anyone is finished with it. Their order among themselves decides only which refusal a
     // checkout that earns two of them carries, and it runs most permanent first: being the
     // repository itself is not a state that passes, a stale registration stays until
-    // somebody repairs it, a removal already going will end, and panes close whenever
-    // somebody closes them. A path listed twice is refused by
+    // somebody repairs it, and so does a ref git cannot read, a removal already going will
+    // end, and panes close whenever somebody closes them. A path listed twice is refused by
     // `candidates` before any of this, being about the key rather than about a row.
     if worktree.is_primary {
         return Candidate::Refused(Refusal::Primary);
     }
     if contested {
         return Candidate::Refused(Refusal::Contested);
+    }
+    // Never both with the one above: refs git would not read name nothing, two refs at one
+    // path included.
+    if !repo.refs.is_read() {
+        return Candidate::Refused(Refusal::RefsUnreadable);
     }
     if facts.removing.contains(path) {
         return Candidate::Refused(Refusal::Removing);
@@ -242,17 +251,13 @@ fn judge(
     // changed the outcome. The same gate holds for git's own half: `gone` was never going to
     // offer a dirty or a detached checkout.
     let could_have_decided = clean && worktree.branch.name().is_some();
-    // Which of git's silences this row is under, where either would have decided it: a walk
-    // that did not happen, or one whose answer here was no ref. The repository's failure is
-    // named first, being the one that costs every checkout its markers at once.
-    let git_silent = match (repo.refs.is_read(), worktree.branch.position()) {
+    // git's silence, where it would have decided the row: refs read, and no ref here.
+    let git_silent = match worktree.branch.position() {
         _ if !could_have_decided => None,
-        // A row naming no branch is not one `could_have_decided` lets through.
-        (_, None) => None,
-        (false, Some(_)) => Some(Half::Refs),
-        (true, Some(Position::NotSaid)) => Some(Half::NoRef),
-        // `Contested` was refused above.
-        (true, Some(Position::Said(_) | Position::Contested)) => None,
+        Some(Position::NotSaid) => Some(Half::NoRef),
+        // `Contested` was refused above, and a row naming no branch is not one
+        // `could_have_decided` lets through.
+        Some(Position::Said(_) | Position::Contested) | None => None,
     };
     let settled = match settled {
         // Nobody has asked `gh` yet: an answer is still on its way, and a permanent word on
@@ -265,7 +270,7 @@ fn judge(
             }
         }
         // Asked, and `gh` could not answer — unless git could not either, in which case the
-        // half named is git's, since fixing that is what makes `gh`'s half worth reading.
+        // half named is git's, the one the row's track marker is missing with.
         Some(None) => {
             return match (git_silent, could_have_decided) {
                 (Some(half), _) => Candidate::Unjudged(half),
@@ -285,7 +290,7 @@ fn judge(
         .and_then(|branch| finished_with(settled.pull_requests(), branch));
     match (found, git_silent, settled) {
         // `gh` widens whatever git could or could not say: a finished pull request offers
-        // the row even in a repository whose refs were not read.
+        // the row even where no ref names the branch here.
         (Some(pull_request), _, _) if clean => Candidate::Offered(Reason::PullRequest {
             number: pull_request.number,
             outcome: pull_request.outcome,

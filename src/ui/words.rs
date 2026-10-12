@@ -442,7 +442,6 @@ pub fn sweep_note(mark: &Mark) -> Option<String> {
 /// Which half of the sweep's question nobody could answer, as the row says it.
 fn unjudged(half: Half) -> &'static str {
     match half {
-        Half::Refs => "refs unreadable",
         Half::NoRef => "no ref here",
         Half::PullRequests => "PR unknown",
     }
@@ -457,6 +456,7 @@ pub fn sweep_refusal(mark: &Mark) -> Option<&'static str> {
         SweepRefusal::Primary => "the repository itself",
         SweepRefusal::ListedTwice => "herdr lists this path twice",
         SweepRefusal::Contested => "more than one ref names this checkout",
+        SweepRefusal::RefsUnreadable => "git would not read this repository's refs",
         SweepRefusal::Running => "panes are running in it",
         SweepRefusal::Removing => "already being removed",
     })
@@ -1005,14 +1005,9 @@ mod tests {
              to find"
         );
         assert_eq!(
-            sweep_note(&Mark::GoingUnjudged(Half::Refs)).as_deref(),
-            Some("refs unreadable"),
-            "marked by hand, it still says nobody judged it — and which half"
-        );
-        assert_eq!(
-            sweep_note(&Mark::Unjudged(Half::NoRef)).as_deref(),
+            sweep_note(&Mark::GoingUnjudged(Half::NoRef)).as_deref(),
             Some("no ref here"),
-            "a walk that worked and named no branch at this path is a third place to look"
+            "marked by hand, it still says nobody judged it — and which half"
         );
     }
 
@@ -1060,6 +1055,10 @@ mod tests {
         assert_eq!(
             sweep_refusal(&Mark::Refused(SweepRefusal::Contested)),
             Some("more than one ref names this checkout")
+        );
+        assert_eq!(
+            sweep_refusal(&Mark::Refused(SweepRefusal::RefsUnreadable)),
+            Some("git would not read this repository's refs")
         );
         assert_eq!(
             sweep_refusal(&Mark::Going(Reason::Gone)),

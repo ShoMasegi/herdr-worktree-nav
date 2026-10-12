@@ -526,7 +526,7 @@ mod tests {
         };
         let options = ViewOptions {
             sweep: Some(BTreeMap::from([
-                (at(0), Mark::Unjudged(Half::Refs)),
+                (at(0), Mark::Unjudged(Half::NoRef)),
                 (at(1), Mark::Going(Reason::Gone)),
             ])),
             ..Default::default()
@@ -534,7 +534,7 @@ mod tests {
         let rows = flatten(&tree, &options);
         assert_eq!(
             find(&rows, "fix/crash").sweep,
-            Some(Mark::Unjudged(Half::Refs))
+            Some(Mark::Unjudged(Half::NoRef))
         );
         assert_eq!(
             find(&rows, "chore/deps").sweep,

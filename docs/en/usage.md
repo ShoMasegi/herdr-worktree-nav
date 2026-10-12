@@ -139,11 +139,12 @@ mode.
 
 #### Without git's refs
 
-The same rule holds for git's own half. A repository whose refs git would not read — the one
-`for-each-ref` that `gone` comes from — has no `gone` to offer, and the checkouts it would
-otherwise have judged — clean, on a branch, nothing running in them, and not the repository's
-own — read `refs unreadable` in a sweep, before and after you mark them by hand. The prompt
-line names the repository with git's words, as it does for `gh`. A checkout more than one
+git's own half is not like `gh`'s. A repository whose refs git would not read — the one
+`for-each-ref` that `gone` comes from — has no `gone` to offer, and cannot say either whether
+two of its refs name one checkout, where a removal would take whichever registration git
+picks. So a sweep refuses every checkout in it, merged pull request or not, and `Space` says
+`git would not read this repository's refs`, as `Shift-D` does. The prompt line names the
+repository with git's words, as it does for `gh`. A checkout more than one
 of the repository's refs names is refused rather than judged: two refs at one path take two
 registrations of it, so `git worktree remove` would take whichever of them git picks, and
 `git branch -d` the branch herdr names. `git worktree list` names the path once for each
@@ -245,7 +246,9 @@ other was left behind when a directory was moved away, and `git worktree repair 
 directory is now>` points it back. Not `git worktree prune`: it keeps whichever of the two
 entries comes first, and that can be the stale one. A checkout more than one of the
 repository's refs names says `more than one ref names this checkout` where herdr lists it
-once: two refs at one path take two registrations, so git picks here too.
+once: two refs at one path take two registrations, so git picks here too. Where git would
+not read the repository's refs, nothing can say whether that is so, and every checkout of it
+says `git would not read this repository's refs`.
 
 `y` comes straight back. The removal runs somewhere else — git has to walk a whole working
 tree before it can delete it, which is seconds on a repository of any size — and the row

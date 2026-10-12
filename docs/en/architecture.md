@@ -173,8 +173,8 @@ unmerged, so a sweep left and re-entered costs a map lookup. On the way back in 
 repositories `gh` could not answer for are asked about again; `r` throws the whole answer
 away. A repository `gh` could not answer for is named on the prompt line, and its rows say
 `PR unknown` rather than nothing at all; one whose refs git would not read is named there
-ahead of it, and the rows it would have judged say `refs unreadable` — the same price, on
-git's half — [ADR 0011](../adr/0011-what-may-be-swept.md).
+ahead of it, and every row of it is refused, since refs git would not read cannot say whether
+two of them name one path — [ADR 0011](../adr/0011-what-may-be-swept.md).
 
 ## Opening a branch
 

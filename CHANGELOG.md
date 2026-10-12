@@ -22,8 +22,9 @@ All notable changes to this project are documented here. The format follows
   the sweep is entered rather than when the picker opens, it only ever widens the sweep, and
   a repository it could not answer for is named on the prompt line with its rows reading
   `PR unknown` rather than nothing — before and after you mark them — and one whose refs git
-  would not read is named there ahead of it, the rows it would have judged reading
-  `refs unreadable`, and one whose branch no ref names at its path reads `no ref here`. A
+  would not read is named there ahead of it, with every checkout in it refused, since nothing
+  can say whether two refs name its path; one whose branch no ref names at its path reads
+  `no ref here`. A
   path herdr lists twice in one repository is never swept, since a mark could not say which
   of the two registrations it would remove. Two refs at one path take two registrations, so
   a contested checkout herdr lists once per registration is refused this way, and one listed
@@ -47,7 +48,8 @@ All notable changes to this project are documented here. The format follows
   checkout git still answers for itself — except for three refusals that hold with or
   without panes: a checkout a pane this row does not draw is standing in, which names that
   pane, and a path herdr lists twice in one repository or one more than one of its refs
-  name, where git rather than the row picks the registration that goes. See [ADR 0010](docs/adr/0010-closing-the-panes-first.md).
+  name, where git rather than the row picks the registration that goes; a checkout in a
+  repository whose refs git would not read is refused for the same reason. See [ADR 0010](docs/adr/0010-closing-the-panes-first.md).
 
 - **Every checkout says what state it is in**, beside its branch name in the panes view:
   `✱` for a working tree holding uncommitted changes or untracked files, `↑2↓1` for how far
