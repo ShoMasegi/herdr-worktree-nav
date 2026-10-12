@@ -15,9 +15,9 @@
 //! Getting the two the wrong way round is what issues #64 and #35 are about, and
 //! `docs/en/error-handling.md` is where the distinction is written down.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::domain::model::{Position, Refs, Tree};
+use crate::domain::model::{CheckoutPath, Position, Refs, RepoKey, Tree};
 
 /// One thing the picker has to say about the list it is showing.
 ///
@@ -126,19 +126,20 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
     // One per checkout rather than per row. Two refs naming one path takes two
     // registrations of it, and `git worktree list` names the path once for each, so a
     // contested checkout is two rows at one path wherever herdr does the same; one sentence
-    // twice would count as two things wrong.
+    // twice would count as two things wrong. Told apart by the repository's key, not by its
+    // name: two clones of one remote share a name and are two repositories.
+    let mut said = BTreeSet::new();
     for repo in &tree.repos {
         for worktree in &repo.worktrees {
-            if worktree.branch.position() != Some(Position::Contested) {
+            if worktree.branch.position() != Some(Position::Contested)
+                || !said.insert((RepoKey::of(repo), CheckoutPath::of(worktree)))
+            {
                 continue;
             }
-            let condition = Condition::RefsDisagree {
+            conditions.push(Condition::RefsDisagree {
                 repo: repo.display_name.clone(),
                 checkout: worktree.checkout_path.clone(),
-            };
-            if !conditions.contains(&condition) {
-                conditions.push(condition);
-            }
+            });
         }
     }
     conditions.extend(sweep_trouble.map(|words| Condition::SweepTrouble(words.to_string())));
@@ -218,18 +219,22 @@ mod tests {
             // A second registration of `/wt/a`, which is how a path comes to be contested.
             checkout("/wt/a", Position::Contested),
         ];
-        let tree = tree(vec![app]);
+        // A second clone of the same remote: the same name, another repository, and its own
+        // contested `/wt/a`.
+        let mut clone = repo("me/app", Refs::Read);
+        clone.repo_key = "/elsewhere/app/.git".into();
+        clone.worktrees = vec![checkout("/wt/a", Position::Contested)];
+        let tree = tree(vec![app, clone]);
+        let disagree = |checkout: &str| Condition::RefsDisagree {
+            repo: "me/app".into(),
+            checkout: checkout.into(),
+        };
         assert_eq!(
             conditions(&tree, None, Some("me/app: gh could not be run")),
             vec![
-                Condition::RefsDisagree {
-                    repo: "me/app".into(),
-                    checkout: "/wt/a".into(),
-                },
-                Condition::RefsDisagree {
-                    repo: "me/app".into(),
-                    checkout: "/wt/c".into(),
-                },
+                disagree("/wt/a"),
+                disagree("/wt/c"),
+                disagree("/wt/a"),
                 Condition::SweepTrouble("me/app: gh could not be run".into()),
             ]
         );
