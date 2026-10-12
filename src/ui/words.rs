@@ -249,7 +249,8 @@ pub fn track_mark(position: Position) -> String {
         // nothing, which is not this row's to interpret; a field git printed could not be
         // read, where there is no position to draw at all and a marker that is wrong is
         // worse than none — kind 4 of `docs/en/error-handling.md`; or no ref names this
-        // checkout. `app::dump` is where they are told apart.
+        // checkout. `app::dump` is where they are told apart, and the line under the list
+        // names the last for the checkout under the cursor.
         Position::Said(Some(Track::Unreadable) | None) | Position::NotSaid => String::new(),
     }
 }
@@ -331,7 +332,8 @@ pub fn detail(tree: &Tree, reference: RowRef) -> String {
                     parts.push("more than one ref names this checkout".to_string());
                 }
                 // Under refs git read: where it would not read them, every checkout of the
-                // repository is here at once and the prompt line already says why. A branch
+                // repository with a branch out is here at once and the prompt line already
+                // says why. A branch
                 // with no commit yet is the ordinary way to get here, so it is said where the
                 // cursor is rather than among the conditions.
                 Some(Position::NotSaid) if repo.refs.is_read() => {

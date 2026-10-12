@@ -145,14 +145,14 @@ otherwise have judged — clean, on a branch, nothing running in them, and not t
 own — read `refs unreadable` in a sweep, before and after you mark them by hand. The prompt
 line names the repository with git's words, as it does for `gh`. A checkout more than one
 of the repository's refs names is another way git's half goes unanswered — the walk worked
-and its answer here was two branches, so there is no one branch to be `gone` — and that row
-reads `refs disagree` instead, one checkout at a time. Two refs at one path take two
-registrations of it, though, and where herdr lists the path once for each, as
-`git worktree list` does, both rows are refused as `herdr lists this path twice` before
-either is judged. A checkout whose branch no ref names at its path — git read the refs and
-found none there — reads `no ref here`; a branch with no commit yet is one, since it has
-no ref at all. `gh` still widens the sweep in all three:
-a merged pull request marks the row as it would anywhere. When git and `gh` have both
+and its answer here was two branches, so there is no one branch to be `gone`. Two refs at
+one path take two registrations of it, and `git worktree list` names the path once for
+each, so where herdr does the same both rows are refused as `herdr lists this path twice`
+before either is judged; a contested checkout listed once would read `refs disagree`. A
+checkout whose branch no ref names at its path — git read the refs and found none there —
+reads `no ref here`; a branch with no commit yet is one, since it has no ref at all. `gh`
+still widens the sweep wherever a row is judged rather than refused: a merged pull request
+marks it as it would anywhere. When git and `gh` have both
 failed, the prompt line names git's failure first — it is the one the track markers on the
 row went with — and counts `gh`'s behind it, so one being named does not read as the only
 thing wrong.
@@ -231,13 +231,18 @@ closed by the time it did — and "nobody has asked yet" is not the same answer 
 which is why pressing `Shift-D` in the first moments after the picker opens asks you to try
 again rather than guessing.
 
-Two more are about whose directory it is. A checkout a pane drawn somewhere else is standing
-in — under another repository's row for the same path, under a checkout nested inside this
-one, or under `not in any repository` — says `a pane listed elsewhere is standing in it`: the
-question closes this row's panes only, and would leave that one in a directory that is about
-to go. A path herdr lists twice within one repository says `herdr lists this path twice` on
-both rows: git, not the row, picks which registration `git worktree remove` takes, and the
-panes are drawn under only one of them. `git worktree prune` clears the stale one.
+Two more are about whose directory it is, and hold whether or not the checkout has panes of
+its own. A checkout any pane it does not draw is standing in says
+`a pane listed elsewhere is standing in it` — a pane under another repository's row for the
+same path, under a checkout nested inside this one, under `not in any repository`, or one
+whose foreground process has moved in here: the question closes this row's panes only, and
+would leave that one in a directory that is about to go. A path herdr lists twice within one
+repository says `herdr lists this path twice` on both rows, the repository's own checkout
+included: git, not the row, picks which registration `git worktree remove` takes, and the
+panes are drawn under at most one of them. The registration the directory's own `.git` file names is the live one; the
+other was left behind when a directory was moved away, and `git worktree repair <where that
+directory is now>` points it back. Not `git worktree prune`: it keeps whichever of the two
+entries comes first, and that can be the stale one.
 
 `y` comes straight back. The removal runs somewhere else — git has to walk a whole working
 tree before it can delete it, which is seconds on a repository of any size — and the row
@@ -401,7 +406,8 @@ prompt line names the checkout the way it names a repository whose refs it could
 
 A checkout whose branch no ref names at its path draws nothing and is not a condition, since
 a branch with no commit yet is the ordinary way to get there; with the cursor on it, the
-breadcrumb under the list says `no ref names this checkout`.
+breadcrumb under the list says `no ref names this checkout` — under refs git read, and only
+on a checkout the cursor stops on, which outside a sweep is one with no panes.
 
 On a line too narrow to hold it, it gives up its words rather than its place: the spinners
 lose their labels first, and then the sentence becomes a count of how many things are wrong,

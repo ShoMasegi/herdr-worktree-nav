@@ -61,9 +61,9 @@ git printed, `nothing reported` where it found one ref and git reported nothing 
 `contested` where it found more than one and would not choose between them, and
 `not known` where it found none. On the row itself `unreadable`, `nothing reported` and
 `not known` are the same empty marker as `track level` and `upstream none`, and
-`contested` is drawn as `contested`. In a sweep a contested checkout reads
-`refs disagree` unless herdr lists its path twice, which refuses it, and one the picker
-found no ref for reads `no ref here`. A row with no
+`contested` is drawn as `contested`. In a sweep a contested checkout herdr lists once per
+registration is refused as `herdr lists this path twice`, one listed once reads
+`refs disagree`, and one the picker found no ref for reads `no ref here`. A row with no
 branch on it says which kind of silence that is: `no branch reported` where herdr
 listed the checkout and said nothing is out, and `herdr did not list this checkout`
 where herdr never mentioned it — the picker shows that row for a pane whose directory
@@ -259,10 +259,11 @@ through this against a real session.
       with `git worktree repair`, which `git worktree prune -v --dry-run` then calls a
       `duplicate entry`. Its row draws `contested`, the breadcrumb under the list says
       `more than one ref names this checkout` with the cursor on it, `!` lists
-      `<repo>: refs disagree: <path>` once, `dump` says `track contested` for it, and under
-      `Shift-S` it reads `refs disagree` — or, where herdr lists the path twice as
-      `git worktree list` does, both rows are refused and `Space` says
-      `herdr lists this path twice`, as `Shift-D` does on either row.
+      `<repo>: refs disagree: <path>` once, and `dump` says `track contested` for it.
+      herdr lists the path once per registration, as `git worktree list` does, so there are
+      two rows: under `Shift-S` both are refused and `Space` says
+      `herdr lists this path twice`, as `Shift-D` does on either row. Do not clear it with
+      `git worktree prune`, which can keep the stale entry and drop the live one.
 - [ ] With that ref still broken, `Shift-S` shows the checkouts it would otherwise have
       judged reading `refs unreadable`, and `Space` on one keeps that reason on the row.
       `Tab` to the branches view: every branch git could still read is listed there.

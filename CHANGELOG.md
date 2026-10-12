@@ -23,13 +23,11 @@ All notable changes to this project are documented here. The format follows
   a repository it could not answer for is named on the prompt line with its rows reading
   `PR unknown` rather than nothing — before and after you mark them — and one whose refs git
   would not read is named there ahead of it, the rows it would have judged reading
-  `refs unreadable`, and a checkout more than one of the repository's refs names reads
-  `refs disagree` — one checkout rather than a whole repository, and a
-  `git worktree prune` rather than anything about git's answer — and one whose branch no ref
-  names at its path reads `no ref here`. A path herdr lists twice in one repository is never
-  swept, since a mark could not say which of the two registrations it would remove — and
-  two refs at one path take two registrations, so a contested checkout herdr lists once per
-  registration is refused rather than read as `refs disagree`.
+  `refs unreadable`, and one whose branch no ref names at its path reads `no ref here`. A
+  path herdr lists twice in one repository is never swept, since a mark could not say which
+  of the two registrations it would remove. Two refs at one path take two registrations, so
+  a contested checkout herdr lists once per registration is refused this way; one listed
+  once would read `refs disagree`.
   `Space` marks and unmarks, and a mark keeps its reason at every width
   the picker supports. `Enter` removes what is marked: it reads the list and the working
   trees again first, asks once with the count, and then removes each checkout the way
@@ -45,18 +43,19 @@ All notable changes to this project are documented here. The format follows
   stops: git protects uncommitted work and does not protect what a working agent has in
   flight. A checkout holding uncommitted work, or one git would not read, is refused before
   the question rather than after its panes have gone — as is one whose working tree git has
-  not finished reading, since "nobody has asked yet" is not the answer "clean". So is one a
-  pane drawn under some other row is standing in, and a path herdr lists twice in one
-  repository, where git rather than the row picks the registration that goes. On an empty
-  checkout git still answers for itself. See [ADR 0010](docs/adr/0010-closing-the-panes-first.md).
+  not finished reading, since "nobody has asked yet" is not the answer "clean". On an empty
+  checkout git still answers for itself — except for two refusals that hold with or
+  without panes: a checkout a pane this row does not draw is standing in, and a path herdr
+  lists twice in one repository, where git rather than the row picks the registration that
+  goes. See [ADR 0010](docs/adr/0010-closing-the-panes-first.md).
 
 - **Every checkout says what state it is in**, beside its branch name in the panes view:
   `✱` for a working tree holding uncommitted changes or untracked files, `↑2↓1` for how far
   it has drifted from its upstream, `gone` when git cannot find the ref it tracks, and `?`
   when git would not read the working tree at all. `contested` marks a checkout more than
   one of the repository's refs names, which the prompt line names as `refs disagree`, and the
-  breadcrumb says so for the checkout under the cursor; it says `no ref names this checkout`
-  for a branch no ref names at its path. `gone` reads in the branches view too,
+  breadcrumb says so for the checkout under the cursor; under refs git read it says
+  `no ref names this checkout` for a branch no ref names at its path. `gone` reads in the branches view too,
   beside what the branch is — `checked out gone`, `local gone`.
 - Ahead, behind and `gone` are fields on the `git for-each-ref` the picker already runs, so
   they are on screen in the first frame and cost no extra process. Whether a working tree is

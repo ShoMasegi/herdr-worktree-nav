@@ -67,7 +67,7 @@ pub enum Condition {
 /// repository and are true sweep or no sweep; `gh` is asked only during a sweep, and only
 /// about the half git could not decide.
 ///
-/// Two states that draw no marker have no line here. One deliberately: a single ref whose
+/// Two states that draw no marker deliberately have no line here. One is a single ref whose
 /// `:track` field git printed and the adapter could not read, for the reason written where
 /// the state is, on [`Track::Unreadable`](crate::port::Track::Unreadable). The other is a
 /// branch no ref names the checkout of ([`Position::NotSaid`] under refs git read), which a
@@ -125,8 +125,8 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
     }));
     // One per checkout rather than per row. Two refs naming one path takes two
     // registrations of it, and `git worktree list` names the path once for each, so a
-    // contested checkout can be two rows at one path; one sentence twice would count as two
-    // things wrong.
+    // contested checkout is two rows at one path wherever herdr does the same; one sentence
+    // twice would count as two things wrong.
     for repo in &tree.repos {
         for worktree in &repo.worktrees {
             if worktree.branch.position() != Some(Position::Contested) {

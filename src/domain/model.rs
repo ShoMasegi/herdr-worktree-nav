@@ -356,8 +356,8 @@ pub struct Unlisted {
     /// The panes placed in this repository, by pane id, with the checkout each stands in —
     /// the paths herdr was asked about. Those panes are under `not in any repository` rather
     /// than in a row, so a row another repository lists at one of these paths shows no pane
-    /// and the path is still somebody's working directory: `domain::sweep::candidates` reads
-    /// it here. And the pane the branches view was opened from may be one of them.
+    /// and the path is still somebody's working directory: [`Tree::panes_standing_in`] reads it
+    /// here. And the pane the branches view was opened from may be one of them.
     pub panes: BTreeMap<String, String>,
 }
 
@@ -392,7 +392,7 @@ pub struct Tree {
     /// pane is drawn in one row at most, and a checkout can hold its directory without being
     /// that row: one nested inside the checkout the pane was placed in, one another
     /// repository registers at the same path, or any checkout at all for a pane under
-    /// `not in any repository`. `domain::sweep::candidates` reads it here.
+    /// `not in any repository`. [`Tree::panes_standing_in`] reads it here.
     pub pane_cwds: BTreeMap<String, Vec<String>>,
 }
 
@@ -410,11 +410,27 @@ impl Tree {
         })
     }
 
-    /// The panes standing in `path`, by pane id, whichever row draws them or none: every pane
-    /// with a working directory at or under it — its shell's or its foreground process's —
-    /// and every pane of a repository herdr would not list that was placed there. A pane
-    /// herdr cannot see into has no directory to be found by.
+    /// The panes standing in `path`, by pane id, whichever row draws them or none, and the one
+    /// rule the sweep's `Running` and `Shift-D` both ask. Three ways in, because no one of
+    /// them catches every pane:
+    ///
+    /// - drawn under a row whose checkout is `path` or is inside it, in any repository. A
+    ///   row's path is git's spelling, and this is what catches a pane whose own directory
+    ///   herdr reported through a symlink, which the next one compares as text and misses;
+    /// - a working directory at or under `path` — its shell's or its foreground process's —
+    ///   which catches a pane drawn under some other row, or under none;
+    /// - placed at `path` in a repository herdr would not list.
+    ///
+    /// A pane can come in by more than one of them, so an id can repeat. A pane herdr cannot
+    /// see into, drawn under no row, has nothing to be found by.
     pub fn panes_standing_in<'a>(&'a self, path: &'a str) -> impl Iterator<Item = &'a str> {
+        let by_row = self
+            .repos
+            .iter()
+            .flat_map(|repo| &repo.worktrees)
+            .filter(move |worktree| is_inside(&worktree.checkout_path, path))
+            .flat_map(|worktree| &worktree.panes)
+            .map(|pane| pane.pane_id.as_str());
         let by_directory = self
             .pane_cwds
             .iter()
@@ -427,7 +443,7 @@ impl Tree {
             .flat_map(|repo| &repo.panes)
             .filter(move |(_, checkout)| normalize_path(checkout) == normalize_path(path))
             .map(|(pane_id, _)| pane_id.as_str());
-        by_directory.chain(unlisted)
+        by_row.chain(by_directory).chain(unlisted)
     }
 
     /// Locate the repository and checkout a key names, and nothing when the tree no longer

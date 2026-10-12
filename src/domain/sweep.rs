@@ -66,8 +66,11 @@ pub enum Half {
     Refs,
     /// git read them and more than one names this checkout, so `domain::tree::tracks` would
     /// not choose between them and `gone` was never on offer here either —
-    /// [`Position::Contested`]. One checkout rather than the whole repository, and what
-    /// fixes it is a `git worktree prune` rather than anything about git's answer.
+    /// [`Position::Contested`]. One checkout rather than the whole repository, and what fixes
+    /// it is pointing the stale registration back at its directory rather than anything
+    /// about git's answer. A sweep reaches this only for a contested checkout listed once:
+    /// two refs at one path take two registrations, and listed once for each, the key is
+    /// [`Refusal::ListedTwice`] first.
     RefsDisagree,
     /// git read them and none names this checkout, though herdr says a branch is out here —
     /// [`Position::NotSaid`] on a row that names one — so there is no ref here to be `gone`
@@ -157,20 +160,6 @@ pub struct Facts<'a> {
 
 /// What the sweep may do with every checkout in the tree, by repository and checkout path.
 pub fn candidates(tree: &Tree, facts: &Facts) -> BTreeMap<(RepoKey, CheckoutPath), Candidate> {
-    // Every directory a pane is standing in, whichever row shows the pane. One path can be
-    // two rows — two repositories' registrations of it, one of them stale — and a pane shows
-    // in only one of them; the panes of a repository herdr would not list show in none,
-    // under `not in any repository`. Running is about the directory, not the row: a
-    // checkout that holds any pane's working directory is somebody's, whichever row, if any,
-    // draws that pane — a checkout nested inside another can hold the directory of a pane
-    // drawn under the outer one.
-    let occupied: BTreeSet<&str> = tree
-        .repos
-        .iter()
-        .flat_map(|repo| &repo.worktrees)
-        .filter(|worktree| !worktree.panes.is_empty())
-        .map(|worktree| worktree.checkout_path.as_str())
-        .collect();
     // How many rows each key has. A key that names two is one the rest of the sweep cannot
     // act on without picking one of them — see [`Refusal::ListedTwice`].
     let mut listed: BTreeMap<(RepoKey, CheckoutPath), usize> = BTreeMap::new();
@@ -186,8 +175,11 @@ pub fn candidates(tree: &Tree, facts: &Facts) -> BTreeMap<(RepoKey, CheckoutPath
         let settled = facts.settled.get(&RepoRoot::of(repo));
         for worktree in &repo.worktrees {
             let path = CheckoutPath::of(worktree);
-            let running = occupied.contains(path.as_str())
-                || tree.panes_standing_in(path.as_str()).next().is_some();
+            // Running is about the directory, not the row: one path can be two repositories'
+            // rows with the pane drawn in only one, and a checkout nested in another can hold
+            // the directory of a pane drawn under the outer one — see
+            // [`Tree::panes_standing_in`].
+            let running = tree.panes_standing_in(path.as_str()).next().is_some();
             let key = (RepoKey::of(repo), path);
             // Decided for the key before any of its rows is asked about, so which refusal it
             // carries does not turn on which row came last — a primary among them included.

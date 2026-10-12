@@ -457,6 +457,17 @@ fn a_shell_standing_in_a_checkout_keeps_it_while_its_foreground_process_is_elsew
         judged(&tree, &facts(&trees, &none))[&at("/wt/feat")],
         Candidate::Refused(Refusal::Running)
     );
+
+    // And the other way round: the shell elsewhere, the process it is running in here.
+    tree.pane_cwds.insert(
+        "w9:p1".to_string(),
+        vec!["/tmp/x".to_string(), "/wt/feat/src".to_string()],
+    );
+    assert_eq!(
+        judged(&tree, &facts(&trees, &none))[&at("/wt/feat")],
+        Candidate::Refused(Refusal::Running),
+        "a process standing in the checkout is as much in it as a shell"
+    );
 }
 
 #[test]
