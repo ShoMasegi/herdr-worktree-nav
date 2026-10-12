@@ -863,6 +863,21 @@ mod tests {
             assert!(unread.pending_removal().is_none(), "{row}");
             assert_eq!(unread.message(), Some(said), "{row}");
         }
+        // A real reading never gives contested and unread refs together, but a fixture can,
+        // and the contested one is named.
+        let mut tree = unread.tree().clone();
+        tree.repos[0].worktrees[2]
+            .branch
+            .set_position(Position::Contested);
+        unread.replace_tree(tree);
+        unread.set_removing(vec![]);
+        select(&mut unread, "fix/crash");
+        unread.handle_key(key(KeyCode::Char('D')));
+        assert!(unread.pending_removal().is_none());
+        assert_eq!(
+            unread.message(),
+            Some("more than one ref names this checkout")
+        );
 
         // Whose refs: another repository's going unread refuses its own rows, a row naming
         // no branch among them, and leaves this one's alone.

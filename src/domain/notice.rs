@@ -226,7 +226,15 @@ mod tests {
         let mut clone = repo("me/app", Refs::Read);
         clone.repo_key = "/elsewhere/app/.git".into();
         clone.worktrees = vec![checkout("/wt/a", Position::Contested)];
-        let tree = tree(vec![app, clone]);
+        // A row naming no branch at a contested path has no position to say `contested`
+        // in, and no `refs disagree` condition names it either.
+        app.worktrees.push(WorktreeNode {
+            branch: Branch::NothingOut,
+            ..checkout("/wt/d", Position::NotSaid)
+        });
+        let mut tree = tree(vec![app, clone]);
+        tree.contested
+            .insert((RepoKey::of(&tree.repos[0]), CheckoutPath::for_test("/wt/d")));
         let disagree = |checkout: &str| Condition::RefsDisagree {
             repo: "me/app".into(),
             checkout: checkout.into(),

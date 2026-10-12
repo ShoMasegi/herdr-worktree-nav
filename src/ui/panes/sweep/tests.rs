@@ -831,8 +831,9 @@ fn a_repository_the_re_read_could_not_list_is_named_rather_than_nothing_left() {
         "the row was in me/app, and me/app was listed"
     );
 
-    // And refs that went unread are a condition too, and can be why a row goes, but here the
-    // row went for another reason, so this line does not name them.
+    // And refs that went unread are a condition too, but the only conditions this line names
+    // are a repository herdr would not list and panes git could not place, so it does not
+    // name them.
     let mut state = sweeping();
     state.handle_key(key(KeyCode::Enter));
     let mut unread = state.tree.clone();

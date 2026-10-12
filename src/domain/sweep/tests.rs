@@ -218,9 +218,10 @@ fn a_branch_no_ref_names_the_checkout_of_says_which_half_went_unanswered() {
 }
 
 #[test]
-fn no_ref_here_is_named_whatever_gh_could_or_could_not_say() {
+fn no_ref_here_is_named_on_a_clean_checkout_unless_gh_names_a_finished_pull_request() {
     // git's silence is named ahead of `gh`'s, and only where it would have decided the row:
-    // a working tree with something in it, or none read yet, was never going to be offered.
+    // a working tree with something in it, one git would not read, or one not read yet was
+    // never going to be offered.
     let mut wt = worktree("fix/crash", "/wt/fix-crash");
     wt.branch.set_position(Position::NotSaid);
     let tree = tree_of(vec![wt]);
@@ -256,7 +257,7 @@ fn no_ref_here_is_named_whatever_gh_could_or_could_not_say() {
             assert_eq!(
                 found[&at("/wt/fix-crash")],
                 Candidate::Available,
-                "{what}, {working_tree:?}: git would refuse it anyway"
+                "{what}, {working_tree:?}: not clean, so nothing would have offered it"
             );
         }
     }
@@ -1023,8 +1024,8 @@ fn a_row_git_would_refuse_anyway_is_not_called_unjudged_by_a_full_window_either(
 
 #[test]
 fn which_refusal_a_checkout_that_earns_two_of_them_shows() {
-    // Every other test here gives a checkout exactly one refusal, so the order among them
-    // cancels out and only this pins it.
+    // Most tests here give a checkout one refusal, so the order among them cancels out
+    // there.
     let mut all_three = worktree("main", "/src/app");
     all_three.is_primary = true;
     all_three.panes = vec![PaneNode {
@@ -1142,6 +1143,22 @@ fn which_refusal_a_checkout_that_earns_two_of_them_shows() {
         );
         assert_eq!(judged[&at(path)], Candidate::Refused(refusal));
     }
+    // A real reading never gives both — refs git would not read name nothing — but a fixture
+    // can, and the contested one is named.
+    let mut contested = worktree("feat/login", "/wt/feat-login");
+    contested.branch.set_position(Position::Contested);
+    let judged = candidates(
+        &tree_unread(vec![contested]),
+        &Facts {
+            working_trees: &clean(&["/wt/feat-login"]),
+            settled: &none,
+            removing: &[],
+        },
+    );
+    assert_eq!(
+        judged[&at("/wt/feat-login")],
+        Candidate::Refused(Refusal::Contested)
+    );
 
     // And the pair below it, which asserting only the top of the order leaves free. The
     // other way round sends the user back to close panes that a removal already running
@@ -1353,8 +1370,12 @@ fn an_answer_is_about_the_checkout_it_was_given_about_and_not_about_the_path() {
     );
     assert!(chosen(&candidates, &changes.still_about(&tree)).contains(&at("/wt/feat-login")));
 
-    // Same path, different branch.
-    let moved = tree_of(vec![worktree("release/v2", "/wt/feat-login")]);
+    // Same path, different branch — and the branch now somewhere else, so an answer kept
+    // for the branch wherever it is would still land on this path.
+    let moved = tree_of(vec![
+        worktree("release/v2", "/wt/feat-login"),
+        worktree("feat/login", "/wt/feat-login-2"),
+    ]);
     assert!(
         !chosen(&candidates, &changes.still_about(&moved)).contains(&at("/wt/feat-login")),
         "the answer was about feat/login, and feat/login is not there any more"
