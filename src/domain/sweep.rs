@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::domain::model::{
-    is_inside, CheckoutPath, Position, RepoKey, RepoNode, Tree, WorkingTree, WorktreeNode,
+    CheckoutPath, Position, RepoKey, RepoNode, Tree, WorkingTree, WorktreeNode,
 };
 use crate::port::{PullRequestOutcome, SettledPullRequest, SettledPullRequests, Track};
 
@@ -36,11 +36,12 @@ pub enum Refusal {
     /// Panes are running in it. Closing somebody's panes is one deliberate act — see
     /// `docs/adr/0010-closing-the-panes-first.md` — and a batch is not where it belongs.
     Running,
-    /// herdr lists more than one checkout at this path in one repository. Every judgement and
-    /// every removal here is keyed by repository and path, so two rows sharing both are one
-    /// key, and what `Enter` would remove is whichever of them the tree lists first — not
-    /// necessarily the row the reason was found on. The rows themselves can still be told
-    /// apart; this is about what a sweep can act on without choosing between them.
+    /// herdr lists more than one checkout at this path in one repository. The sweep's
+    /// judgements, the user's changes and what `Enter` removes are keyed by repository and
+    /// path, so two rows sharing both are one key, and what `Enter` would remove is whichever
+    /// of them the tree lists first — not necessarily the row the reason was found on. The
+    /// rows themselves can still be told apart; this is about what a sweep can act on without
+    /// choosing between them.
     ListedTwice,
     /// Its removal is already going, in a process of its own. Never read out: the cursor does
     /// not stop on a row being removed, sweep or no sweep — see
@@ -66,8 +67,8 @@ pub enum Half {
     /// fixes it is a `git worktree prune` rather than anything about git's answer.
     RefsDisagree,
     /// git read them and none names this checkout, though herdr says a branch is out here —
-    /// [`Position::NotSaid`] on a row that names one. The two disagree about what is checked
-    /// out where, so there is no ref here to be `gone` either.
+    /// [`Position::NotSaid`] on a row that names one — so there is no ref here to be `gone`
+    /// either.
     NoRef,
     /// `gh` could not settle it: could not be asked, asked and the window it was given came
     /// back full, or asked and answered in a state this does not know.
@@ -166,12 +167,6 @@ pub fn candidates(tree: &Tree, facts: &Facts) -> BTreeMap<(RepoKey, CheckoutPath
         .flat_map(|repo| &repo.worktrees)
         .filter(|worktree| !worktree.panes.is_empty())
         .map(|worktree| worktree.checkout_path.as_str())
-        .chain(
-            tree.trouble
-                .unlisted
-                .iter()
-                .flat_map(|repo| repo.panes.values().map(String::as_str)),
-        )
         .collect();
     // How many rows each key has. A key that names two is one the rest of the sweep cannot
     // act on without picking one of them — see [`Refusal::ListedTwice`].
@@ -189,11 +184,7 @@ pub fn candidates(tree: &Tree, facts: &Facts) -> BTreeMap<(RepoKey, CheckoutPath
         for worktree in &repo.worktrees {
             let path = CheckoutPath::of(worktree);
             let running = occupied.contains(path.as_str())
-                || tree
-                    .pane_cwds
-                    .values()
-                    .flatten()
-                    .any(|cwd| is_inside(cwd, path.as_str()));
+                || tree.panes_standing_in(path.as_str()).next().is_some();
             let key = (RepoKey::of(repo), path);
             let twice = listed[&key] > 1;
             let candidate = judge(repo, worktree, &key.1, twice, running, settled, facts);

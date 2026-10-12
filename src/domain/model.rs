@@ -215,7 +215,11 @@ pub enum Position {
     /// says it of the checkout under the cursor, a condition names the checkout
     /// ([`Condition::RefsDisagree`](crate::domain::notice::Condition::RefsDisagree)),
     /// [`app::dump`](crate::app::dump) says `track contested`, and in a sweep the row says
-    /// `refs disagree` ([`domain::sweep::Half`](crate::domain::sweep::Half)).
+    /// `refs disagree` ([`domain::sweep::Half`](crate::domain::sweep::Half)) — where it is
+    /// the only row at its path. Two refs at one path take two registrations of it, and a
+    /// list that names the path once for each, as `git worktree list` does, gives the sweep
+    /// two rows it refuses before judging either
+    /// ([`Refusal::ListedTwice`](crate::domain::sweep::Refusal::ListedTwice)).
     ///
     /// `git worktree add` and `git worktree move` both refuse a path a worktree is already
     /// registered at, but `git worktree repair` will register a second and `git worktree
@@ -224,7 +228,8 @@ pub enum Position {
     Contested,
     /// No ref of the repository names this checkout's path: git would not read the refs at
     /// all ([`Refs`] says so), or it read them and lists no ref there although herdr names a
-    /// branch — the two disagree about what is checked out where.
+    /// branch. Nothing here says why; a branch with no commit yet is one way, having no ref
+    /// at all.
     NotSaid,
 }
 
@@ -403,6 +408,26 @@ impl Tree {
                     .map(|pane| (repo, worktree, pane))
             })
         })
+    }
+
+    /// The panes standing in `path`, by pane id, whichever row draws them or none: every pane
+    /// with a working directory at or under it — its shell's or its foreground process's —
+    /// and every pane of a repository herdr would not list that was placed there. A pane
+    /// herdr cannot see into has no directory to be found by.
+    pub fn panes_standing_in<'a>(&'a self, path: &'a str) -> impl Iterator<Item = &'a str> {
+        let by_directory = self
+            .pane_cwds
+            .iter()
+            .filter(move |(_, cwds)| cwds.iter().any(|cwd| is_inside(cwd, path)))
+            .map(|(pane_id, _)| pane_id.as_str());
+        let unlisted = self
+            .trouble
+            .unlisted
+            .iter()
+            .flat_map(|repo| &repo.panes)
+            .filter(move |(_, checkout)| normalize_path(checkout) == normalize_path(path))
+            .map(|(pane_id, _)| pane_id.as_str());
+        by_directory.chain(unlisted)
     }
 
     /// Locate the repository and checkout a key names, and nothing when the tree no longer

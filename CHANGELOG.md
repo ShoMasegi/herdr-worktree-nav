@@ -27,7 +27,9 @@ All notable changes to this project are documented here. The format follows
   `refs disagree` — one checkout rather than a whole repository, and a
   `git worktree prune` rather than anything about git's answer — and one whose branch no ref
   names at its path reads `no ref here`. A path herdr lists twice in one repository is never
-  swept, since the sweep could not say which of the two it would remove.
+  swept, since a mark could not say which of the two registrations it would remove — and
+  two refs at one path take two registrations, so a contested checkout herdr lists once per
+  registration is refused rather than read as `refs disagree`.
   `Space` marks and unmarks, and a mark keeps its reason at every width
   the picker supports. `Enter` removes what is marked: it reads the list and the working
   trees again first, asks once with the count, and then removes each checkout the way
@@ -43,7 +45,9 @@ All notable changes to this project are documented here. The format follows
   stops: git protects uncommitted work and does not protect what a working agent has in
   flight. A checkout holding uncommitted work, or one git would not read, is refused before
   the question rather than after its panes have gone — as is one whose working tree git has
-  not finished reading, since "nobody has asked yet" is not the answer "clean". On an empty
+  not finished reading, since "nobody has asked yet" is not the answer "clean". So is one a
+  pane drawn under some other row is standing in, and a path herdr lists twice in one
+  repository, where git rather than the row picks the registration that goes. On an empty
   checkout git still answers for itself. See [ADR 0010](docs/adr/0010-closing-the-panes-first.md).
 
 - **Every checkout says what state it is in**, beside its branch name in the panes view:

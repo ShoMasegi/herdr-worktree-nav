@@ -113,8 +113,8 @@ the state is.
 
 A row may still draw a mark that names the state itself, because that is not an answer:
 `?` for a working tree git would not read, and `contested` for a checkout more than one of
-the repository's refs names. There a blank would read as `level` — the one claim the
-refusal exists not to make (issue #47).
+the repository's refs names. For the latter a blank would read as `level` — the one claim
+the refusal exists not to make (issue #47).
 
 This is the kind that costs the most when it is got wrong, because nothing looks broken. It
 is the subject of the rule in the next section.

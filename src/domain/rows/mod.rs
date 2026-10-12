@@ -88,8 +88,8 @@ pub struct Row {
     pub working_tree: Option<WorkingTree>,
     /// What the repository's refs said about this checkout's branch, and — where they said
     /// nothing a marker could be drawn from — which silence it is. `None` on a row that names
-    /// no branch: a group, a pane, or a checkout with no branch out, none of which a ref of
-    /// the repository is about.
+    /// no branch: a group, a pane, a checkout herdr listed with nothing out, or one herdr
+    /// never listed, where git may name a branch but the row cannot.
     pub position: Option<Position>,
     /// The row the session is currently on, marked with a caret in the gutter.
     pub is_current: bool,

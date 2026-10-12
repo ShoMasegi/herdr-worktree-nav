@@ -194,7 +194,8 @@ pub fn report(
 /// of its own: `level` for a branch even with its upstream, `none` for one with no upstream
 /// to be even with, `unreadable` for one whose `:track` field git printed and the adapter
 /// could not read, `contested` for a checkout more than one of the repository's refs names,
-/// and `not read` when git would not read the refs at all.
+/// and `not read` when git would not read the refs at all — and, where this page has no
+/// upstream to say `level` or `none` beside, `nothing reported` and `not known` ([`found`]).
 ///
 /// A branch with no upstream is measured against where it would push — see
 /// [`adapter::git_cli`](crate::adapter::git_cli) — so `upstream none` can still be followed by
@@ -203,8 +204,9 @@ pub fn report(
 ///
 /// Where this page knows less than the picker it says which: `not read` for an upstream its
 /// own walk could not get, beside the marker the picker is drawing or `not known`. When git
-/// lists no ref at this checkout — its list and herdr's disagree about what is checked out
-/// where — it says so rather than `upstream none`, and when git names more than one it names
+/// lists no ref at this checkout — a branch with no commit yet, or git's list and herdr's
+/// disagreeing about what is out where — it says so rather than `upstream none`, and when
+/// git names more than one it names
 /// each, because `domain::tree::tracks` declines to choose between them. Issue #48 is the
 /// labels.
 ///

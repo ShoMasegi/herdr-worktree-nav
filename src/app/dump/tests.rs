@@ -475,6 +475,7 @@ fn a_second_read_that_failed_says_so_and_keeps_the_track_the_picker_draws() {
         vec![
             worktree(Some("fix/crash"), "/wt/fix-crash", Some(Track::Gone)),
             worktree(Some("main"), "/src/app", None),
+            contested("feat/login", "/wt/feat-login"),
         ],
     );
     let refs = RefsByRepo::from([(
@@ -496,6 +497,10 @@ fn a_second_read_that_failed_says_so_and_keeps_the_track_the_picker_draws() {
     assert!(
         page.contains("      upstream not read  track not known  working tree"),
         "and an empty marker stays unnarrowed without the upstream: {page}"
+    );
+    assert!(
+        page.contains("      upstream not read  track contested  working tree"),
+        "and a refusal stays the picker's refusal: {page}"
     );
 
     // Not asked at all is the same page: nothing to quote, the track still the tree's.
@@ -858,8 +863,9 @@ fn a_checkout_herdr_never_listed_says_so_rather_than_that_no_branch_is_out() {
 
 #[test]
 fn a_checkout_herdr_never_listed_says_which_read_of_the_refs_failed() {
-    // As a checkout with nothing out does, in the test above, with herdr's silence in
-    // place of its answer.
+    // As a checkout with nothing out does in
+    // `a_checkout_with_nothing_out_says_which_read_of_the_refs_failed`, with herdr's silence
+    // in place of its answer.
     let tree = one_repo(Refs::Read, vec![unlisted("/wt/shared")]);
     let second_read_failed = RefsByRepo::from([(
         "/src/app".to_string(),
@@ -985,8 +991,9 @@ fn two_refs_at_a_row_with_no_branch_are_both_named() {
 }
 
 #[test]
-fn a_row_with_no_branch_no_ref_and_no_marker_reads_no_branch_reported_alone() {
-    // `no ref at this checkout` is about a marker, not about an empty list.
+fn a_row_with_no_branch_and_no_ref_reads_no_branch_reported_alone() {
+    // Nothing after it: no ref for `git names at this path:` to list, and no position on a
+    // row that names no branch.
     let tree = one_repo(Refs::Read, vec![worktree(None, "/wt/shared", None)]);
     let refs = RefsByRepo::from([("/src/app".to_string(), Ok(Vec::new()))]);
     assert!(

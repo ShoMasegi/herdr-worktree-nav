@@ -66,10 +66,37 @@ impl PanesState {
             self.message = Some("that is the repository itself, not a worktree".into());
             return Action::Consumed;
         }
-        if self.options.removing.contains(&CheckoutPath::of(worktree)) {
+        let path = CheckoutPath::of(worktree);
+        if repo
+            .worktrees
+            .iter()
+            .filter(|other| CheckoutPath::of(other) == path)
+            .count()
+            > 1
+        {
+            // Two registrations of one path, and only one of them has the panes: `git
+            // worktree remove` picks the registration, not this row, so neither the question
+            // nor the panes it would close can be about the checkout that goes.
+            self.message = Some("herdr lists this path twice".into());
+            return Action::Consumed;
+        }
+        if self.options.removing.contains(&path) {
             // A second one would race the first, and would close panes that the first is
             // already having removed out from under them.
             self.message = Some("that checkout is already being removed".into());
+            return Action::Consumed;
+        }
+        // A pane drawn somewhere else whose directory is in here: another repository's
+        // registration of the same path, a checkout nested inside this one, or a repository
+        // herdr would not list. The question closes this row's panes only, so it would leave
+        // that one standing in a directory that is about to go — what
+        // `docs/adr/0010-closing-the-panes-first.md` exists to prevent.
+        if self
+            .tree
+            .panes_standing_in(path.as_str())
+            .any(|pane_id| !worktree.panes.iter().any(|pane| pane.pane_id == pane_id))
+        {
+            self.message = Some("a pane listed elsewhere is standing in it".into());
             return Action::Consumed;
         }
         // The refusals below are only reached by a checkout with panes in it, and that is
@@ -79,7 +106,7 @@ impl PanesState {
             // `None` is not `Clean`: only an answer is a licence to close somebody's panes.
             // The walk lands after the first frame, so `None` is the ordinary state of the
             // checkout the picker opens on — the one the cursor is already sitting in.
-            let refusal = match self.options.working_trees.get(&CheckoutPath::of(worktree)) {
+            let refusal = match self.options.working_trees.get(&path) {
                 Some(WorkingTree::Clean) => None,
                 Some(WorkingTree::Dirty) => {
                     Some("that checkout is holding work nobody has committed")
@@ -648,6 +675,81 @@ mod tests {
         // An empty checkout is offered either way: nothing is at stake before the question,
         // and git answers for itself.
         select(&mut state, "fix/crash");
+        state.handle_key(key(KeyCode::Char('D')));
+        assert!(state.pending_removal().is_some());
+    }
+
+    #[test]
+    fn a_path_herdr_lists_twice_is_not_offered_from_either_row() {
+        // Two registrations of one path, the panes on the first row only. From the second,
+        // the question would close nothing and `git worktree remove` would take the
+        // directory the first row's pane is standing in — and git, not the row, picks
+        // which registration goes.
+        let mut state = state();
+        let mut tree = state.tree().clone();
+        tree.repos[0].worktrees.push(WorktreeNode {
+            branch: Branch::out("chore/deps"),
+            checkout_path: "/wt/app/feat-login".into(),
+            is_primary: false,
+            open_workspace_id: None,
+            panes: vec![],
+        });
+        state.replace_tree(tree);
+        state.set_working_trees(answers(&[("/wt/app/feat-login", WorkingTree::Clean)]));
+        for row in ["chore/deps", "codex"] {
+            select(&mut state, row);
+            assert_eq!(state.handle_key(key(KeyCode::Char('D'))), Action::Consumed);
+            assert!(state.pending_removal().is_none(), "{row}");
+            assert_eq!(
+                state.message(),
+                Some("herdr lists this path twice"),
+                "{row}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_checkout_a_pane_drawn_elsewhere_stands_in_is_not_offered() {
+        // The question closes this row's panes, and only those: a pane drawn under another
+        // row — or under `not in any repository` — would be left standing in a directory
+        // that is about to go.
+        let elsewhere = |tree: &mut Tree| {
+            tree.pane_cwds
+                .insert("w9:p1".into(), vec!["/wt/app/fix-crash/src".into()]);
+        };
+        let unlisted = |tree: &mut Tree| {
+            tree.trouble.unlisted.push(crate::domain::model::Unlisted {
+                repo_key: "/src/old/.git".into(),
+                words: "herdr rejected worktree.list".into(),
+                panes: [("w9:p1".to_string(), "/wt/app/fix-crash".to_string())].into(),
+            });
+        };
+        for (what, standing) in [
+            ("a working directory", &elsewhere as &dyn Fn(&mut Tree)),
+            ("an unlisted repository's placement", &unlisted),
+        ] {
+            let mut state = state();
+            let mut tree = state.tree().clone();
+            standing(&mut tree);
+            state.replace_tree(tree);
+            select(&mut state, "fix/crash");
+            state.handle_key(key(KeyCode::Char('D')));
+            assert!(state.pending_removal().is_none(), "{what}");
+            assert_eq!(
+                state.message(),
+                Some("a pane listed elsewhere is standing in it"),
+                "{what}"
+            );
+        }
+
+        // Its own panes are the ones the question closes, so they are not "elsewhere".
+        let mut state = state();
+        let mut tree = state.tree().clone();
+        tree.pane_cwds
+            .insert("w2:p1".into(), vec!["/wt/app/feat-login".into()]);
+        state.replace_tree(tree);
+        state.set_working_trees(answers(&[("/wt/app/feat-login", WorkingTree::Clean)]));
+        select(&mut state, "codex");
         state.handle_key(key(KeyCode::Char('D')));
         assert!(state.pending_removal().is_some());
     }

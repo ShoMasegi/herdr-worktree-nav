@@ -67,11 +67,12 @@ pub enum Condition {
 /// repository and are true sweep or no sweep; `gh` is asked only during a sweep, and only
 /// about the half git could not decide.
 ///
-/// One state that draws no marker deliberately has no line here: a single ref whose
-/// `:track` field git printed and the adapter could not read. Why it does not is written
-/// where the state is, on [`Track::Unreadable`](crate::port::Track::Unreadable). A branch
-/// no ref names the checkout of ([`Position::NotSaid`] under refs git read) has none either;
-/// a sweep that would have judged it says `no ref here`, and `dump` says what each read found.
+/// Two states that draw no marker have no line here. One deliberately: a single ref whose
+/// `:track` field git printed and the adapter could not read, for the reason written where
+/// the state is, on [`Track::Unreadable`](crate::port::Track::Unreadable). The other is a
+/// branch no ref names the checkout of ([`Position::NotSaid`] under refs git read), which a
+/// frame can produce and nothing here says yet outside a sweep: a sweep that would have
+/// judged it says `no ref here`, and `dump` says what each read found.
 ///
 /// `stale` and `sweep_trouble` are passed in rather than read off the tree. The first is
 /// about the reading that built it, which a tree cannot report about itself; the second is
@@ -121,15 +122,24 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
             words: words.clone(),
         }),
     }));
-    conditions.extend(tree.repos.iter().flat_map(|repo| {
-        repo.worktrees
-            .iter()
-            .filter(|worktree| worktree.branch.position() == Some(Position::Contested))
-            .map(|worktree| Condition::RefsDisagree {
+    // One per checkout rather than per row. Two refs naming one path takes two
+    // registrations of it, and `git worktree list` names the path once for each, so a
+    // contested checkout can be two rows at one path; one sentence twice would count as two
+    // things wrong.
+    for repo in &tree.repos {
+        for worktree in &repo.worktrees {
+            if worktree.branch.position() != Some(Position::Contested) {
+                continue;
+            }
+            let condition = Condition::RefsDisagree {
                 repo: repo.display_name.clone(),
                 checkout: worktree.checkout_path.clone(),
-            })
-    }));
+            };
+            if !conditions.contains(&condition) {
+                conditions.push(condition);
+            }
+        }
+    }
     conditions.extend(sweep_trouble.map(|words| Condition::SweepTrouble(words.to_string())));
     conditions
 }
@@ -204,6 +214,8 @@ mod tests {
             checkout("/wt/a", Position::Contested),
             checkout("/wt/b", Position::Said(None)),
             checkout("/wt/c", Position::Contested),
+            // A second registration of `/wt/a`, which is how a path comes to be contested.
+            checkout("/wt/a", Position::Contested),
         ];
         let tree = tree(vec![app]);
         assert_eq!(

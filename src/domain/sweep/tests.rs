@@ -156,6 +156,9 @@ fn a_checkout_more_than_one_ref_names_says_which_half_went_unanswered() {
 
 #[test]
 fn a_contested_checkout_stays_unjudged_whatever_gh_said_short_of_a_finished_pull_request() {
+    // A contested checkout that is the only row at its path; listed once per registration it
+    // is refused instead — `a_path_herdr_lists_twice_in_one_repository_is_never_swept`.
+    //
     // `gh` answering — with nothing for this branch, or not at all — leaves git's half where
     // it was. `Available` after a complete list would be the level row #47 was about, and
     // `PR unknown` would name the half that was asked rather than the one that was not.
@@ -192,8 +195,8 @@ fn a_contested_checkout_stays_unjudged_whatever_gh_said_short_of_a_finished_pull
 #[test]
 fn a_branch_no_ref_names_the_checkout_of_says_which_half_went_unanswered() {
     // herdr says `fix/crash` is out here and git, reading its refs fine, names no ref at the
-    // path: the two disagree about what is checked out where, and there is no ref to be
-    // `gone`. `Available` would be the sweep calling a silence "nothing to find".
+    // path, so there is no ref to be `gone`. `Available` would be the sweep calling a
+    // silence "nothing to find".
     let mut wt = worktree("fix/crash", "/wt/fix-crash");
     wt.branch.set_position(Position::NotSaid);
     let trees = clean(&["/wt/fix-crash"]);
@@ -214,8 +217,8 @@ fn a_branch_no_ref_names_the_checkout_of_says_which_half_went_unanswered() {
 fn a_path_herdr_lists_twice_in_one_repository_is_never_swept() {
     // Two rows, one key: a judgement and a removal are both keyed by repository and path,
     // so whatever `Enter` removed would be whichever row the tree lists first, on the
-    // strength of a reason found on either. Both rows say so, and `Space` cannot overrule
-    // it.
+    // strength of a reason found on either. The key is refused, and a refusal is not the
+    // user's to overrule.
     let mut gone = worktree("fix/crash", "/wt/shared");
     gone.branch.set_position(Position::Said(Some(Track::Gone)));
     let other = worktree("chore/deps", "/wt/shared");
@@ -224,6 +227,19 @@ fn a_path_herdr_lists_twice_in_one_repository_is_never_swept() {
     let twice = judged(&tree_of(vec![other, gone]), &facts(&trees, &none));
     assert_eq!(
         twice[&at("/wt/shared")],
+        Candidate::Refused(Refusal::ListedTwice)
+    );
+
+    // The shape a contested checkout comes in when herdr lists each registration: two rows,
+    // both contested. Refused before either is judged, merged pull request or not.
+    let mut one = worktree("fix/crash", "/wt/shared");
+    one.branch.set_position(Position::Contested);
+    let mut other = worktree("chore/deps", "/wt/shared");
+    other.branch.set_position(Position::Contested);
+    let landed = asked(vec![merged(7, "fix/crash")]);
+    let contested = judged(&tree_of(vec![one, other]), &facts(&trees, &landed));
+    assert_eq!(
+        contested[&at("/wt/shared")],
         Candidate::Refused(Refusal::ListedTwice)
     );
 
@@ -241,7 +257,7 @@ fn a_path_herdr_lists_twice_in_one_repository_is_never_swept() {
 
 #[test]
 fn a_repository_whose_refs_went_unread_names_that_half_first() {
-    // Both of git's silences at once: the walk failed, so nothing here was ever counted.
+    // Two of git's silences at once: the walk failed, so nothing here was ever counted.
     // The repository's failure is the one to fix, and it is true of every checkout in it
     // rather than of this one.
     let mut wt = worktree("fix/crash", "/wt/fix-crash");
@@ -308,7 +324,7 @@ fn a_working_tree_holding_work_is_not_offered_but_can_still_be_marked() {
 }
 
 #[test]
-fn the_three_checkouts_a_sweep_never_touches() {
+fn three_kinds_of_checkout_a_sweep_never_touches() {
     let mut primary = worktree("main", "/src/app");
     primary.is_primary = true;
     primary

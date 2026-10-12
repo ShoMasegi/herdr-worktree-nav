@@ -46,8 +46,9 @@ with git's words, and its checkouts read `not read`. If only this page's own sec
 of the refs failed — the picker read them once for its markers, and `dump` reads them
 again for the upstream names — the repository says `refs unreadable on the second read:`
 and its checkouts keep the track the picker is drawing, with `upstream not read`. A
-checkout git lists no ref at says `no ref at this checkout for <branch>`: git and herdr
-disagree about what is checked out where, which is the thing to look at. A checkout git
+checkout git lists no ref at says `no ref at this checkout for <branch>`: either the branch
+has no commit yet, or git and herdr disagree about what is checked out where, which is the
+thing to look at. A checkout git
 names more than one ref at reads `more than one ref at this checkout:` and then each of
 them as `<branch> → <upstream> <where it stands>`; more than one of the repository's
 worktree registrations names that path, and which of them is stale is not something this
@@ -61,7 +62,8 @@ git printed, `nothing reported` where it found one ref and git reported nothing 
 `not known` where it found none. On the row itself `unreadable`, `nothing reported` and
 `not known` are the same empty marker as `track level` and `upstream none`, and
 `contested` is drawn as `contested`. In a sweep a contested checkout reads
-`refs disagree`, and one the picker found no ref for reads `no ref here`. A row with no
+`refs disagree` unless herdr lists its path twice, which refuses it, and one the picker
+found no ref for reads `no ref here`. A row with no
 branch on it says which kind of silence that is: `no branch reported` where herdr
 listed the checkout and said nothing is out, and `herdr did not list this checkout`
 where herdr never mentioned it — the picker shows that row for a pane whose directory
@@ -257,8 +259,10 @@ through this against a real session.
       with `git worktree repair`, which `git worktree prune -v --dry-run` then calls a
       `duplicate entry`. Its row draws `contested`, the breadcrumb under the list says
       `more than one ref names this checkout` with the cursor on it, `!` lists
-      `<repo>: refs disagree: <path>`, `dump` says `track contested` for it, and under
-      `Shift-S` it reads `refs disagree`.
+      `<repo>: refs disagree: <path>` once, `dump` says `track contested` for it, and under
+      `Shift-S` it reads `refs disagree` — or, where herdr lists the path twice as
+      `git worktree list` does, both rows are refused and `Space` says
+      `herdr lists this path twice`, as `Shift-D` does on either row.
 - [ ] With that ref still broken, `Shift-S` shows the checkouts it would otherwise have
       judged reading `refs unreadable`, and `Space` on one keeps that reason on the row.
       `Tab` to the branches view: every branch git could still read is listed there.

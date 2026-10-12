@@ -93,8 +93,8 @@ checkout sits inside another, or under that heading; only a pane herdr cannot se
 working directory to go by.
 
 A path herdr lists twice within one repository is refused on both of its rows. The sweep
-keeps its marks by repository and path, so it could not say which of the two `Enter` would
-remove; `Space` there says `herdr lists this path twice`.
+keeps its marks by repository and path, so a mark could not say which of the two
+registrations `Enter` would remove; `Space` there says `herdr lists this path twice`.
 
 `Space` adds a mark and takes it away again. The same key does both, because disagreeing with
 the sweep should cost exactly what agreeing with it extra does. `Shift-S` again, `q` or `Esc`
@@ -144,11 +144,14 @@ The same rule holds for git's own half. A repository whose refs git would not re
 otherwise have judged — clean, on a branch, nothing running in them, and not the repository's
 own — read `refs unreadable` in a sweep, before and after you mark them by hand. The prompt
 line names the repository with git's words, as it does for `gh`. A checkout more than one
-of the repository's refs names is the other way git's half goes unanswered — the walk worked
+of the repository's refs names is another way git's half goes unanswered — the walk worked
 and its answer here was two branches, so there is no one branch to be `gone` — and that row
-reads `refs disagree` instead, one checkout at a time. A checkout whose branch no ref names
-at its path — git read the refs, and its list and herdr's disagree about what is checked out
-where — reads `no ref here`. `gh` still widens the sweep in all three:
+reads `refs disagree` instead, one checkout at a time. Two refs at one path take two
+registrations of it, though, and where herdr lists the path once for each, as
+`git worktree list` does, both rows are refused as `herdr lists this path twice` before
+either is judged. A checkout whose branch no ref names at its path — git read the refs and
+found none there — reads `no ref here`; a branch with no commit yet is one, since it has
+no ref at all. `gh` still widens the sweep in all three:
 a merged pull request marks the row as it would anywhere. When git and `gh` have both
 failed, the prompt line names git's failure first — it is the one the track markers on the
 row went with — and counts `gh`'s behind it, so one being named does not read as the only
@@ -227,6 +230,14 @@ at stake: on an empty checkout git can answer for itself, but here the panes wou
 closed by the time it did — and "nobody has asked yet" is not the same answer as "clean",
 which is why pressing `Shift-D` in the first moments after the picker opens asks you to try
 again rather than guessing.
+
+Two more are about whose directory it is. A checkout a pane drawn somewhere else is standing
+in — under another repository's row for the same path, under a checkout nested inside this
+one, or under `not in any repository` — says `a pane listed elsewhere is standing in it`: the
+question closes this row's panes only, and would leave that one in a directory that is about
+to go. A path herdr lists twice within one repository says `herdr lists this path twice` on
+both rows: git, not the row, picks which registration `git worktree remove` takes, and the
+panes are drawn under only one of them. `git worktree prune` clears the stale one.
 
 `y` comes straight back. The removal runs somewhere else — git has to walk a whole working
 tree before it can delete it, which is seconds on a repository of any size — and the row
