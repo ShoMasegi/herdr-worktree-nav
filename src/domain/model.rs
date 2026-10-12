@@ -1,7 +1,7 @@
 //! The model both pickers display: repositories, their worktrees, and the panes sitting in
 //! each one.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::port::{AgentStatus, Track};
 
@@ -210,12 +210,15 @@ pub enum Position {
     /// More than one of the repository's refs names this checkout's path, so nothing here
     /// is about one branch, and the domain will not choose.
     ///
-    /// Said in five places, each in its own words: the row draws `contested`
-    /// ([`ui::words::track_mark`](crate::ui::words::track_mark)), the line under the list
-    /// says it of the checkout under the cursor, a condition names the checkout
+    /// Said in six places: the row draws `contested`
+    /// ([`ui::words::track_mark`](crate::ui::words::track_mark)), a condition names the
+    /// checkout as `refs disagree`
     /// ([`Condition::RefsDisagree`](crate::domain::notice::Condition::RefsDisagree)),
-    /// [`app::dump`](crate::app::dump) says `track contested`, and a sweep and `Shift-D` both
-    /// refuse it ([`Refusal::Contested`](crate::domain::sweep::Refusal::Contested)). Two refs
+    /// [`app::dump`](crate::app::dump) says `track contested`, and the line under the list, a
+    /// sweep's `Space` and `Shift-D` all say `more than one ref names this checkout` — the last
+    /// two refusing it below the repository's own checkout
+    /// ([`Refusal::Contested`](crate::domain::sweep::Refusal::Contested)). A row naming no
+    /// branch has no position, and [`Tree::contested`] carries the same fact for it. Two refs
     /// at one path take two registrations of it, and a list that names the path once for
     /// each, as `git worktree list` does, gives two rows that are refused before either is
     /// judged ([`Refusal::ListedTwice`](crate::domain::sweep::Refusal::ListedTwice)).
@@ -393,9 +396,25 @@ pub struct Tree {
     /// repository registers at the same path, or any checkout at all for a pane under
     /// `not in any repository`. [`Tree::panes_standing_in`] reads it here.
     pub pane_cwds: BTreeMap<String, Vec<String>>,
+    /// Every repository and path more than one of the repository's refs names, whatever
+    /// the rows there name. A row naming a branch carries the same fact as
+    /// [`Position::Contested`]; a row naming none — nothing out, or a checkout herdr did not
+    /// list — has no position to carry it in, and the two registrations are there all the
+    /// same. [`Tree::is_contested`] reads it here.
+    pub contested: BTreeSet<(RepoKey, CheckoutPath)>,
 }
 
 impl Tree {
+    /// Whether more than one of `repo`'s refs names `worktree`'s path, so two registrations
+    /// share it and `git worktree remove` would take whichever git picks. Asked by the sweep
+    /// and `Shift-D` alike, of every row, branch or none.
+    pub fn is_contested(&self, repo: &RepoNode, worktree: &WorktreeNode) -> bool {
+        worktree.branch.position() == Some(Position::Contested)
+            || self
+                .contested
+                .contains(&(RepoKey::of(repo), CheckoutPath::of(worktree)))
+    }
+
     /// Locate the repository and checkout a pane sits in.
     pub fn find_pane(&self, pane_id: &str) -> Option<(&RepoNode, &WorktreeNode, &PaneNode)> {
         self.repos.iter().find_map(|repo| {
@@ -409,19 +428,19 @@ impl Tree {
         })
     }
 
-    /// The panes standing in `path`, by pane id, whichever row draws them or none, and the one
-    /// rule the sweep's `Running` and `Shift-D` both ask. Three ways in, because no one of
+    /// The panes standing in `path`, by pane id, whichever row or heading draws them, and the
+    /// one rule the sweep's `Running` and `Shift-D` both ask. Three ways in, because no one of
     /// them catches every pane:
     ///
     /// - drawn under a row whose checkout is `path` or is inside it, in any repository. A
     ///   row's path is git's spelling, and this is what catches a pane whose own directory
     ///   herdr reported through a symlink, which the next one compares as text and misses;
     /// - a working directory at or under `path` — its shell's or its foreground process's —
-    ///   which catches a pane drawn under some other row, or under none;
+    ///   which catches a pane drawn under some other row, or under `not in any repository`;
     /// - placed at `path` or inside it in a repository herdr would not list.
     ///
     /// A pane can come in by more than one of them, so an id can repeat. A pane herdr cannot
-    /// see into, drawn under no row, has nothing to be found by.
+    /// see into, drawn under `not in any repository`, has nothing to be found by.
     pub fn panes_standing_in<'a>(&'a self, path: &'a str) -> impl Iterator<Item = &'a str> {
         let by_row = self
             .repos

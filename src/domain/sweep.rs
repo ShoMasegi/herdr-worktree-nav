@@ -46,7 +46,8 @@ pub enum Refusal {
     /// Decided for the key ahead of every other refusal, so both rows carry it even where one
     /// of them is the repository's own checkout and would otherwise read [`Refusal::Primary`].
     ListedTwice,
-    /// More than one of the repository's refs names this checkout — [`Position::Contested`].
+    /// More than one of the repository's refs names this checkout — [`Position::Contested`],
+    /// or [`Tree::is_contested`] for a row naming no branch.
     /// Two refs at one path take two registrations of it, so this is
     /// [`Refusal::ListedTwice`]'s reason on a path herdr lists once: `git worktree remove`
     /// would take whichever registration git picks, and `git branch -d` the branch herdr
@@ -186,7 +187,8 @@ pub fn candidates(tree: &Tree, facts: &Facts) -> BTreeMap<(RepoKey, CheckoutPath
             let candidate = if listed[&key] > 1 {
                 Candidate::Refused(Refusal::ListedTwice)
             } else {
-                judge(repo, worktree, &key.1, running, settled, facts)
+                let contested = tree.is_contested(repo, worktree);
+                judge(repo, worktree, &key.1, running, contested, settled, facts)
             };
             out.insert(key, candidate);
         }
@@ -199,6 +201,7 @@ fn judge(
     worktree: &WorktreeNode,
     path: &CheckoutPath,
     running: bool,
+    contested: bool,
     settled: Option<&Option<SettledPullRequests>>,
     facts: &Facts,
 ) -> Candidate {
@@ -212,7 +215,7 @@ fn judge(
     if worktree.is_primary {
         return Candidate::Refused(Refusal::Primary);
     }
-    if worktree.branch.position() == Some(Position::Contested) {
+    if contested {
         return Candidate::Refused(Refusal::Contested);
     }
     if facts.removing.contains(path) {

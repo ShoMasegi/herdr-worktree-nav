@@ -901,6 +901,72 @@ fn a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it() {
 }
 
 #[test]
+fn a_path_two_refs_name_is_contested_whatever_the_row_there_names() {
+    // The two registrations are a fact about the path, and the rows that name no branch are
+    // the ones with no position to carry it in: the tree carries it for every row, so
+    // removing one of them can be refused all the same.
+    let shared = "/wt/shared";
+    let two = || {
+        Ok(vec![
+            local_ref("chore/deps", Some(shared), Some(Track::Gone)),
+            local_ref("feat/login", Some(shared), None),
+        ])
+    };
+    let one = || {
+        Ok(vec![local_ref(
+            "chore/deps",
+            Some(shared),
+            Some(Track::Gone),
+        )])
+    };
+
+    let listed = |refs: Result<Vec<GitRef>, String>| {
+        let mut app = repo("me/app", "/src/app", vec![]);
+        app.worktrees = vec![serde_json::from_value(json!({
+            "branch": "",
+            "path": shared,
+            "label": "shared",
+            "is_bare": false,
+            "is_detached": true,
+            "is_linked_worktree": true,
+            "is_prunable": false,
+        }))
+        .expect("worktree fixture should deserialize")];
+        app.refs = refs;
+        build(&snapshot(json!([])), &[app], &HashMap::new())
+    };
+    let unlisted = |refs: Result<Vec<GitRef>, String>| {
+        let mut app = repo(
+            "me/app",
+            "/src/app",
+            vec![worktree("main", "/src/app", false)],
+        );
+        app.refs = refs;
+        build(
+            &snapshot(json!([pane("w1:p1", None)])),
+            &[app],
+            &placements(&[("w1:p1", "/src/app/.git", shared)]),
+        )
+    };
+    for (what, build) in [
+        ("nothing out", &listed as &dyn Fn(_) -> Tree),
+        ("not listed", &unlisted),
+    ] {
+        for (refs, contested) in [(two(), true), (one(), false)] {
+            let tree = build(refs);
+            let repo = &tree.repos[0];
+            let row = repo
+                .worktrees
+                .iter()
+                .find(|worktree| worktree.checkout_path == shared)
+                .expect("the row at the shared path");
+            assert_eq!(row.branch.position(), None, "{what}");
+            assert_eq!(tree.is_contested(repo, row), contested, "{what}");
+        }
+    }
+}
+
+#[test]
 fn a_checkout_herdr_flags_detached_draws_no_track_whatever_it_names() {
     // `branch` is not the only way herdr can say nothing is out: `is_detached` is beside
     // it, and a herdr that fills `branch` for a detached checkout — with `HEAD`, a

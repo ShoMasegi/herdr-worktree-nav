@@ -11,7 +11,6 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::domain::model::Position;
 use crate::domain::rows::{RowRef, StateFilter};
 use crate::ui::panes::*;
 
@@ -83,7 +82,7 @@ impl PanesState {
             self.message = Some("that is the repository itself, not a worktree".into());
             return Action::Consumed;
         }
-        if worktree.branch.position() == Some(Position::Contested) {
+        if self.tree.is_contested(repo, worktree) {
             // Two refs at one path take two registrations, listed once here: `git worktree
             // remove` would take whichever of them git picks, as with a path listed twice.
             self.message = Some("more than one ref names this checkout".into());
@@ -439,7 +438,7 @@ impl PanesState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{Branch, Refs, RepoNode, Tree, WorkingTree, WorktreeNode};
+    use crate::domain::model::{Branch, Position, Refs, RepoNode, Tree, WorkingTree, WorktreeNode};
     use crate::port::AgentStatus;
     use crate::ui::panes::fixtures::*;
 
@@ -723,7 +722,8 @@ mod tests {
     fn a_checkout_a_pane_drawn_elsewhere_stands_in_is_not_offered() {
         // The question closes this row's panes, and only those: a pane this row does not
         // draw would be left standing in a directory that is about to go. Here, a pane drawn
-        // under no row, found by its directory and by an unlisted repository's placement;
+        // under `not in any repository`, found by its directory and by an unlisted
+        // repository's placement;
         // `a_pane_standing_in_a_checkout_is_found_however_it_is_drawn` has the rest.
         let elsewhere = |tree: &mut Tree| {
             tree.pane_cwds
@@ -810,15 +810,34 @@ mod tests {
         }
         contested.replace_tree(tree);
         contested.set_removing(vec![CheckoutPath::for_test("/wt/app/fix-crash")]);
+        // `codex` is `feat/login`'s pane, its working tree answered clean: with panes in it
+        // too, the question is never reached.
+        contested.set_working_trees(answers(&[("/wt/app/feat-login", WorkingTree::Clean)]));
         for (row, said) in [
             ("main", "that is the repository itself, not a worktree"),
             ("fix/crash", "more than one ref names this checkout"),
+            ("codex", "more than one ref names this checkout"),
         ] {
             select(&mut contested, row);
             contested.handle_key(key(KeyCode::Char('D')));
             assert!(contested.pending_removal().is_none(), "{row}");
             assert_eq!(contested.message(), Some(said), "{row}");
         }
+
+        // A row naming no branch has no position to say it in, and the tree does.
+        let mut branchless = state();
+        let mut tree = branchless.tree().clone();
+        tree.repos[0].worktrees[2].branch = Branch::NothingOut;
+        let at_fix_crash = at(&branchless, "/wt/app/fix-crash");
+        tree.contested.insert(at_fix_crash);
+        branchless.replace_tree(tree);
+        select(&mut branchless, "fix-crash");
+        branchless.handle_key(key(KeyCode::Char('D')));
+        assert!(branchless.pending_removal().is_none());
+        assert_eq!(
+            branchless.message(),
+            Some("more than one ref names this checkout")
+        );
 
         // Then a removal already going, then a pane listed elsewhere, then the checkout's
         // own working tree — each one peeled off in turn on a checkout that earns all of

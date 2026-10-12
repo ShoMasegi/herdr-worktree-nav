@@ -6,7 +6,8 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::domain::model::{
-    normalize_path, Branch, PaneNode, Position, Refs, RepoNode, Tree, Trouble, WorktreeNode,
+    normalize_path, Branch, CheckoutPath, PaneNode, Position, Refs, RepoKey, RepoNode, Tree,
+    Trouble, WorktreeNode,
 };
 use crate::port::{GitRef, RefKind, Snapshot, Track, Worktree};
 
@@ -245,6 +246,20 @@ pub fn build(
     }
     nodes.sort_by(|a, b| a.display_name.cmp(&b.display_name));
 
+    // Over every row once they are all made, the ones `build` made for panes included: a
+    // row naming no branch has no position to say this in.
+    let contested = nodes
+        .iter()
+        .flat_map(|repo| repo.worktrees.iter().map(move |worktree| (repo, worktree)))
+        .filter(|(repo, worktree)| {
+            matches!(
+                tracks.get(&(repo.repo_key.as_str(), worktree.checkout_path.as_str())),
+                Some(Named::More)
+            )
+        })
+        .map(|(repo, worktree)| (RepoKey::of(repo), CheckoutPath::of(worktree)))
+        .collect();
+
     Tree {
         repos: nodes,
         ungrouped,
@@ -252,6 +267,7 @@ pub fn build(
         // was read. `app::collect` records the rest onto the tree afterwards.
         trouble: Trouble::default(),
         pane_cwds,
+        contested,
     }
 }
 

@@ -161,6 +161,39 @@ fn a_checkout_more_than_one_ref_names_is_never_swept() {
             "settled: {settled:?}"
         );
     }
+
+    // Whatever its working tree says: the registration git would pick is not about what is
+    // in the directory.
+    let dirty = BTreeMap::from([(CheckoutPath::for_test("/wt/fix-crash"), WorkingTree::Dirty)]);
+    let unreadable = BTreeMap::from([(
+        CheckoutPath::for_test("/wt/fix-crash"),
+        WorkingTree::Unreadable,
+    )]);
+    let unread = BTreeMap::new();
+    for trees in [&dirty, &unreadable, &unread] {
+        let judged = judged(&contested(), &facts(trees, &not_asked));
+        assert_eq!(
+            judged[&at("/wt/fix-crash")],
+            Candidate::Refused(Refusal::Contested),
+            "working trees: {trees:?}"
+        );
+    }
+
+    // And whatever the row names: two refs at a path take two registrations whether the row
+    // there names a branch, nothing out, or herdr never listed it. A row naming none has no
+    // position to carry it in, so the tree does.
+    for branch in [Branch::NothingOut, Branch::NotSaid] {
+        let mut wt = worktree("fix/crash", "/wt/fix-crash");
+        wt.branch = branch.clone();
+        let mut tree = tree_of(vec![wt]);
+        tree.contested.insert(at("/wt/fix-crash"));
+        let judged = judged(&tree, &facts(&trees, &not_asked));
+        assert_eq!(
+            judged[&at("/wt/fix-crash")],
+            Candidate::Refused(Refusal::Contested),
+            "{branch:?}"
+        );
+    }
 }
 
 #[test]
