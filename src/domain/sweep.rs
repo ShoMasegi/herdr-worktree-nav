@@ -213,7 +213,7 @@ fn judge(
     // anyone is finished with it. Their order among themselves decides only which refusal a
     // checkout that earns two of them carries, and it runs most permanent first: being the
     // repository itself is not a state that passes, a stale registration stays until
-    // somebody repairs it, and so does a ref git cannot read, a removal already going will
+    // somebody repairs it, and so do refs git would not read, a removal already going will
     // end, and panes close whenever somebody closes them. A path listed twice is refused by
     // `candidates` before any of this, being about the key rather than about a row.
     if worktree.is_primary {
@@ -222,8 +222,8 @@ fn judge(
     if contested {
         return Candidate::Refused(Refusal::Contested);
     }
-    // Never both with the one above: refs git would not read name nothing, two refs at one
-    // path included.
+    // Never both with the one above from a real reading: refs git would not read name
+    // nothing, two refs at one path included. A fixture can set both, and carries `Contested`.
     if !repo.refs.is_read() {
         return Candidate::Refused(Refusal::RefsUnreadable);
     }

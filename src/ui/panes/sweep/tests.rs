@@ -831,7 +831,7 @@ fn a_repository_the_re_read_could_not_list_is_named_rather_than_nothing_left() {
         "the row was in me/app, and me/app was listed"
     );
 
-    // And refs that went unread are a condition too, but not a reason rows go: here the
+    // And refs that went unread are a condition too, and can be why a row goes, but here the
     // row went for another reason, so this line does not name them.
     let mut state = sweeping();
     state.handle_key(key(KeyCode::Enter));

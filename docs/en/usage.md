@@ -142,7 +142,8 @@ mode.
 git's own half is not like `gh`'s. A repository whose refs git would not read — the one
 `for-each-ref` that `gone` comes from — has no `gone` to offer, and cannot say either whether
 two of its refs name one checkout, where a removal would take whichever registration git
-picks. So a sweep refuses every checkout in it, merged pull request or not, and `Space` says
+picks. So a sweep refuses every checkout in it, merged pull request or not, and `Space` on
+any but the repository's own, or a path herdr lists twice, says
 `git would not read this repository's refs`, as `Shift-D` does. The prompt line names the
 repository with git's words, as it does for `gh`. A checkout more than one
 of the repository's refs names is refused rather than judged: two refs at one path take two
@@ -233,7 +234,7 @@ closed by the time it did — and "nobody has asked yet" is not the same answer 
 which is why pressing `Shift-D` in the first moments after the picker opens asks you to try
 again rather than guessing.
 
-Three more are about whose directory it is, and hold whether or not the checkout has panes
+Four more are about whose directory it is, and hold whether or not the checkout has panes
 of its own. A checkout any pane it does not draw is standing in names the first such pane, as in
 `pane w5:p1 (codex) is standing in it`, or by id alone where it has no name — a pane under another repository's row for the
 same path, under a checkout nested inside this one, under `not in any repository`, or one
@@ -247,8 +248,8 @@ directory is now>` points it back. Not `git worktree prune`: it keeps whichever 
 entries comes first, and that can be the stale one. A checkout more than one of the
 repository's refs names says `more than one ref names this checkout` where herdr lists it
 once: two refs at one path take two registrations, so git picks here too. Where git would
-not read the repository's refs, nothing can say whether that is so, and every checkout of it
-says `git would not read this repository's refs`.
+not read the repository's refs, nothing can say whether that is so, and every other checkout
+of it says `git would not read this repository's refs`.
 
 `y` comes straight back. The removal runs somewhere else — git has to walk a whole working
 tree before it can delete it, which is seconds on a repository of any size — and the row
@@ -409,7 +410,8 @@ A branch at a checkout more than one of the repository's refs names is another a
 the refs that is not a position. git did read them, so the row has a word for it, `contested`,
 and the prompt line names the checkout the way it names a repository whose refs it could not
 read: `me/app: refs disagree: /path/to/checkout`. A row naming no branch draws neither, and
-a sweep and `Shift-D` still refuse it as `more than one ref names this checkout`.
+where herdr lists it once a sweep and `Shift-D` still refuse it as
+`more than one ref names this checkout`.
 
 A checkout whose branch no ref names at its path draws nothing and is not a condition, since
 a branch with no commit yet is the ordinary way to get there; with the cursor on it, the

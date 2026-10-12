@@ -974,7 +974,10 @@ fn another_repositorys_two_refs_at_a_path_do_not_contest_this_checkout_there() {
     let mut app = repo(
         "me/app",
         "/src/app",
-        vec![worktree("main", "/src/app", false)],
+        vec![
+            worktree("main", "/src/app", false),
+            worktree("", shared, true),
+        ],
     );
     app.refs = Ok(vec![
         local_ref("chore/deps", Some(shared), Some(Track::Gone)),
@@ -991,17 +994,21 @@ fn another_repositorys_two_refs_at_a_path_do_not_contest_this_checkout_there() {
         );
         site.refs = Ok(vec![]);
         let tree = build(&snapshot(json!([])), &[app.clone(), site], &HashMap::new());
-        let site = tree
-            .repos
-            .iter()
-            .find(|repo| repo.display_name == "me/site")
-            .expect("me/site");
-        let row = site
-            .worktrees
-            .iter()
-            .find(|worktree| worktree.checkout_path == shared)
-            .expect("the row at the shared path");
-        assert!(!tree.is_contested(site, row), "{branch:?}");
+        let contested = |name: &str| {
+            let repo = tree
+                .repos
+                .iter()
+                .find(|repo| repo.display_name == name)
+                .expect(name);
+            let row = repo
+                .worktrees
+                .iter()
+                .find(|worktree| worktree.checkout_path == shared)
+                .expect("the row at the shared path");
+            tree.is_contested(repo, row)
+        };
+        assert!(contested("me/app"), "{branch:?}: the stale one is");
+        assert!(!contested("me/site"), "{branch:?}: the live one is not");
     }
 }
 

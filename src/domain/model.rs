@@ -408,8 +408,8 @@ pub struct Tree {
 impl Tree {
     /// Whether more than one of `repo`'s refs names `worktree`'s path, so two registrations
     /// share it and `git worktree remove` would take whichever git picks. Asked by the sweep
-    /// and `Shift-D` alike of any row that reaches that refusal, whether it names a branch or
-    /// not.
+    /// of every row whose path is listed once, and by `Shift-D` of a row past the repository's
+    /// own checkout, whether it names a branch or not.
     pub fn is_contested(&self, repo: &RepoNode, worktree: &WorktreeNode) -> bool {
         worktree.branch.position() == Some(Position::Contested)
             || self

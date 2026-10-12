@@ -218,6 +218,67 @@ fn a_branch_no_ref_names_the_checkout_of_says_which_half_went_unanswered() {
 }
 
 #[test]
+fn no_ref_here_is_named_whatever_gh_could_or_could_not_say() {
+    // git's silence is named ahead of `gh`'s, and only where it would have decided the row:
+    // a working tree with something in it, or none read yet, was never going to be offered.
+    let mut wt = worktree("fix/crash", "/wt/fix-crash");
+    wt.branch.set_position(Position::NotSaid);
+    let tree = tree_of(vec![wt]);
+    let unavailable = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
+    let answers = [
+        ("gh not asked", BTreeMap::new()),
+        ("gh unavailable", unavailable),
+        ("the whole list, not in it", asked(vec![])),
+        (
+            "a window, not in it",
+            told(vec![merged(1, "some/other")], false),
+        ),
+    ];
+
+    for (what, settled) in &answers {
+        let found = judged(&tree, &facts(&clean(&["/wt/fix-crash"]), settled));
+        assert_eq!(
+            found[&at("/wt/fix-crash")],
+            Candidate::Unjudged(Half::NoRef),
+            "{what}"
+        );
+
+        for working_tree in [
+            Some(WorkingTree::Dirty),
+            Some(WorkingTree::Unreadable),
+            None,
+        ] {
+            let trees: BTreeMap<_, _> = working_tree
+                .map(|answer| (CheckoutPath::for_test("/wt/fix-crash"), answer))
+                .into_iter()
+                .collect();
+            let found = judged(&tree, &facts(&trees, settled));
+            assert_eq!(
+                found[&at("/wt/fix-crash")],
+                Candidate::Available,
+                "{what}, {working_tree:?}: git would refuse it anyway"
+            );
+        }
+    }
+
+    // And a finished pull request still widens it.
+    let found = judged(
+        &tree,
+        &facts(
+            &clean(&["/wt/fix-crash"]),
+            &asked(vec![merged(7, "fix/crash")]),
+        ),
+    );
+    assert_eq!(
+        found[&at("/wt/fix-crash")],
+        Candidate::Offered(Reason::PullRequest {
+            number: 7,
+            outcome: PullRequestOutcome::Merged,
+        })
+    );
+}
+
+#[test]
 fn a_path_herdr_lists_twice_in_one_repository_is_never_swept() {
     // Two rows, one key: a judgement and a removal are both keyed by repository and path,
     // so whatever `Enter` removed would be whichever row the tree lists first, on the
@@ -610,8 +671,8 @@ fn a_repository_gh_could_not_be_asked_about_says_so_on_the_rows_it_would_have_ju
 fn a_repository_whose_refs_git_would_not_read_has_nothing_swept() {
     // Refs git would not read cannot say whether two of them name a checkout's path, and
     // two do take two registrations, of which `git worktree remove` takes whichever git
-    // picks. So every row is refused, whatever else is true of it — the repository's own
-    // checkout aside, which says what it always says.
+    // picks. So every row is refused, whatever else is true of it; where this sits among the
+    // other refusals is `which_refusal_a_checkout_that_earns_two_of_them_shows`.
     let judgeable = worktree("feat/login", "/wt/feat-login");
     let holding_work = worktree("fix/crash", "/wt/fix-crash");
     let mut detached = worktree("", "/wt/detached");
@@ -1501,22 +1562,22 @@ fn a_row_marked_where_gh_could_not_look_goes_on_saying_so() {
 fn a_row_says_which_half_of_the_question_went_unanswered() {
     // The two halves are fixed in different places, so the row says which one to go to.
     let candidates = BTreeMap::from([
-        (at("/wt/refs"), Candidate::Unjudged(Half::NoRef)),
+        (at("/wt/no-ref"), Candidate::Unjudged(Half::NoRef)),
         (at("/wt/prs"), Candidate::Unjudged(Half::PullRequests)),
     ]);
     let mut changes = Changes::default();
     let shown = marks(&candidates, &changes);
-    assert_eq!(shown[&at("/wt/refs")], Mark::Unjudged(Half::NoRef));
+    assert_eq!(shown[&at("/wt/no-ref")], Mark::Unjudged(Half::NoRef));
     assert_eq!(
         shown[&at("/wt/prs")],
         Mark::Unjudged(Half::PullRequests),
         "each names its own half, so the row can send the reader to the right place"
     );
 
-    flip(&mut changes, &candidates, "/wt/refs");
+    flip(&mut changes, &candidates, "/wt/no-ref");
     let shown = marks(&candidates, &changes);
     assert_eq!(
-        shown[&at("/wt/refs")],
+        shown[&at("/wt/no-ref")],
         Mark::GoingUnjudged(Half::NoRef),
         "marked by hand, it still carries that nobody judged it — and which half"
     );

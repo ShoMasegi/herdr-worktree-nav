@@ -864,6 +864,35 @@ mod tests {
             assert_eq!(unread.message(), Some(said), "{row}");
         }
 
+        // Whose refs: another repository's going unread refuses its own rows, a row naming
+        // no branch among them, and leaves this one's alone.
+        let mut beside = state();
+        let mut tree = beside.tree().clone();
+        tree.repos.push(RepoNode {
+            repo_key: "/src/site/.git".into(),
+            repo_root: "/src/site".into(),
+            display_name: "me/site".into(),
+            refs: Refs::Unreadable("fatal: bad ref".into()),
+            worktrees: vec![WorktreeNode {
+                branch: Branch::NothingOut,
+                checkout_path: "/wt/site/detached".into(),
+                is_primary: false,
+                open_workspace_id: None,
+                panes: vec![],
+            }],
+        });
+        beside.replace_tree(tree);
+        select(&mut beside, "detached");
+        beside.handle_key(key(KeyCode::Char('D')));
+        assert!(beside.pending_removal().is_none());
+        assert_eq!(
+            beside.message(),
+            Some("git would not read this repository's refs")
+        );
+        select(&mut beside, "fix/crash");
+        beside.handle_key(key(KeyCode::Char('D')));
+        assert!(beside.pending_removal().is_some(), "{:?}", beside.message());
+
         // Then a removal already going, then a pane listed elsewhere, then the checkout's
         // own working tree — each one peeled off in turn on a checkout that earns all of
         // them.

@@ -7,9 +7,9 @@
 //! git would not read a working tree. Outside a sweep a row draws nothing for the first two
 //! and only `?` for the third, because no marker beats a wrong one
 //! ([`domain::model::Refs`](crate::domain::model::Refs),
-//! [`domain::model::WorkingTree`](crate::domain::model::WorkingTree)); a sweep refuses every
-//! row of a repository whose refs git would not read, and `Space` says so, which is that
-//! something is missing rather than what.
+//! [`domain::model::WorkingTree`](crate::domain::model::WorkingTree)). A sweep and `Shift-D`
+//! refuse every checkout of a repository whose refs git would not read, without git's words,
+//! which are here and on the prompt line.
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -193,7 +193,7 @@ pub fn report(
 /// `upstream origin/x  track gone` — the two facts a marker is drawn from, each in a word
 /// of its own: `level` for a branch even with its upstream, `none` for one with no upstream
 /// to be even with, `unreadable` for one whose `:track` field git printed and the adapter
-/// could not read, `contested` for a checkout more than one of the repository's refs names,
+/// could not read, `contested` for a branch at a checkout more than one of the repository's refs names,
 /// and `not read` when git would not read the refs at all — and, where this page has no
 /// upstream to say `level` or `none` beside, `nothing reported` and `not known` ([`found`]).
 ///

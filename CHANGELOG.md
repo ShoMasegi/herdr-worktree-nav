@@ -45,11 +45,11 @@ All notable changes to this project are documented here. The format follows
   flight. A checkout holding uncommitted work, or one git would not read, is refused before
   the question rather than after its panes have gone — as is one whose working tree git has
   not finished reading, since "nobody has asked yet" is not the answer "clean". On an empty
-  checkout git still answers for itself — except for three refusals that hold with or
+  checkout git still answers for itself — except for four refusals that hold with or
   without panes: a checkout a pane this row does not draw is standing in, which names that
   pane, and a path herdr lists twice in one repository or one more than one of its refs
-  name, where git rather than the row picks the registration that goes; a checkout in a
-  repository whose refs git would not read is refused for the same reason. See [ADR 0010](docs/adr/0010-closing-the-panes-first.md).
+  name, where git rather than the row picks the registration that goes, and a checkout in a
+  repository whose refs git would not read, where nothing can say whether that is so. See [ADR 0010](docs/adr/0010-closing-the-panes-first.md).
 
 - **Every checkout says what state it is in**, beside its branch name in the panes view:
   `✱` for a working tree holding uncommitted changes or untracked files, `↑2↓1` for how far

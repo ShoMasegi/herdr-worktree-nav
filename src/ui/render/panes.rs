@@ -1260,7 +1260,7 @@ mod tests {
     #[test]
     fn a_row_in_a_repository_whose_refs_git_would_not_read_is_refused_in_a_sweep() {
         // The prompt line names the repository, and the row draws no box: nothing can say
-        // whether two refs name its path. `Space` says why, as on any refused row.
+        // whether two refs name its path. `Space` says why, as on the other refused rows.
         let mut state = swept();
         let mut tree = state.tree().clone();
         tree.repos[1].refs = Refs::Unreadable("fatal: bad ref".into());
