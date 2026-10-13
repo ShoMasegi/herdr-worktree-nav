@@ -891,31 +891,54 @@ fn a_pull_request_offers_only_the_branch_it_was_actually_for() {
 }
 
 #[test]
-fn a_merged_pull_request_does_not_offer_a_checkout_holding_work() {
+fn a_finished_pull_request_does_not_offer_a_checkout_holding_work() {
     // The twin of the `gone` rule: a working tree not known to be clean is never offered,
     // whatever GitHub says about the branch.
-    for answer in [
-        Some(WorkingTree::Dirty),
-        Some(WorkingTree::Unreadable),
-        None,
-    ] {
-        let trees: BTreeMap<_, _> = answer
-            .map(|answer| (CheckoutPath::for_test("/wt/feat-login"), answer))
-            .into_iter()
-            .collect();
-        let judged = judged(
-            &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
-            &facts(&trees, &asked(vec![merged(4, "feat/login")])),
-        );
-        assert_eq!(
-            judged[&at("/wt/feat-login")],
-            Candidate::Available,
-            "{answer:?}"
-        );
-        assert!(
-            judged[&at("/wt/feat-login")].is_markable(),
-            "still the user's to mark"
-        );
+    let said = [
+        (
+            "merged, the whole list",
+            asked(vec![merged(4, "feat/login")]),
+        ),
+        (
+            "merged, a window",
+            told(vec![merged(4, "feat/login")], false),
+        ),
+        (
+            "closed, the whole list",
+            asked(vec![settled(4, "feat/login", PullRequestOutcome::Closed)]),
+        ),
+        (
+            "closed, a window",
+            told(
+                vec![settled(4, "feat/login", PullRequestOutcome::Closed)],
+                false,
+            ),
+        ),
+    ];
+    for (what, settled) in &said {
+        for answer in [
+            Some(WorkingTree::Dirty),
+            Some(WorkingTree::Unreadable),
+            None,
+        ] {
+            let trees: BTreeMap<_, _> = answer
+                .map(|answer| (CheckoutPath::for_test("/wt/feat-login"), answer))
+                .into_iter()
+                .collect();
+            let judged = judged(
+                &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
+                &facts(&trees, settled),
+            );
+            assert_eq!(
+                judged[&at("/wt/feat-login")],
+                Candidate::Available,
+                "{what}, {answer:?}"
+            );
+            assert!(
+                judged[&at("/wt/feat-login")].is_markable(),
+                "still the user's to mark"
+            );
+        }
     }
 }
 
