@@ -51,12 +51,13 @@ const NOT_A_WORK_TREE: &str = "this operation must be run in a work tree";
 const NO_SUCH_REMOTE: (i32, &str) = (2, "No such remote");
 
 /// What `log` says of a branch that has no commit yet: exit 128, with `fatal: your current
-/// branch 'main' does not have any commits yet` on stderr, measured against git 2.43.0. A
+/// branch 'main' does not have any commits yet` on stderr, measured against git 2.55.0. A
 /// branch whose ref git cannot read gets `fatal: your current branch appears to be broken`
-/// instead, under the same exit, so both halves are matched for the reason
-/// [`NOT_A_REPOSITORY`] is.
+/// under the same exit, and is the answer that has to stay a refusal — so the words are
+/// matched with the exit rather than the exit alone, as [`NO_SUCH_REMOTE`]'s are.
 ///
-/// git's own English, translated, which [`GIT_LOCALE`] keeps in place.
+/// git's own English, translated (`Schwerwiegend: Ihr aktueller Branch 'main' hat noch keine
+/// Commits.`), which [`GIT_LOCALE`] keeps in place.
 const NO_COMMITS_YET: (i32, &str) = (GIT_FATAL, "does not have any commits yet");
 
 pub struct GitCli;

@@ -1462,8 +1462,8 @@ fn a_ref_git_drops_without_a_word_reads_as_no_ref_at_its_checkout() {
         })
     );
 
-    // And git will not vouch for it as a branch with no commit yet, which is what keeps it
-    // on the prompt line.
+    // And git will not vouch for it as a branch with no commit yet, and says why in words of
+    // its own — the words the prompt line carries for it.
     let words = format!(
         "{:#}",
         GitCli
@@ -1477,7 +1477,7 @@ fn a_ref_git_drops_without_a_word_reads_as_no_ref_at_its_checkout() {
 }
 
 #[test]
-fn a_branch_with_no_commit_yet_is_told_apart_from_one_git_has_no_ref_for() {
+fn a_branch_with_no_commit_yet_is_told_apart_from_one_with_a_commit() {
     // The ordinary way to have a branch out that no ref names: a fresh `git init`, which
     // `git worktree list` names `main` in and `for-each-ref` lists nothing for. Quiet, where
     // the dropped ref above is not.

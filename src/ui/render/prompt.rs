@@ -553,9 +553,10 @@ mod tests {
     }
 
     #[test]
-    fn a_ref_git_left_out_without_a_word_reaches_the_line_the_way_a_refusal_does() {
-        // git said nothing, so a row with no marker is all there was — and that row is what
-        // a branch with nothing to report looks like too. Issue #32.
+    fn a_ref_missing_from_its_checkout_reaches_the_line_in_gits_words() {
+        // The walk said nothing, so a row with no marker is all there was — and that row is
+        // what a branch with nothing to report looks like too. What git said when asked about
+        // the checkout is the one account of it. Issue #32.
         let mut tree = tree();
         tree.repos[0].worktrees[1]
             .branch
@@ -564,10 +565,13 @@ mod tests {
             RepoKey::of(&tree.repos[0]),
             CheckoutPath::of(&tree.repos[0].worktrees[1]),
         );
-        tree.trouble.ref_missing.insert(key);
+        tree.trouble.ref_missing.insert(
+            key,
+            Some("fatal: your current branch appears to be broken".into()),
+        );
         let line = prompt_line(&PanesState::new(tree, None), 92);
         assert!(
-            line.contains("me/app: git listed no ref for feat/login"),
+            line.contains("me/app: feat/login: fatal: your current branch appears to be broken"),
             "{line}"
         );
     }

@@ -32,23 +32,30 @@ pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapsho
 
 /// The checkouts a ref is missing from: no ref of the repository names the path herdr says
 /// a branch is out at, under refs git read, and git does not say the branch has no commit
-/// yet.
+/// yet. Each with git's words where it refused to say.
 ///
-/// A process per such checkout, and in front of the first frame with the refs: there are
-/// none of these on an ordinary reading, and a fresh repository with its one unborn branch
-/// costs one. `Err` keeps the checkout, for the reason
-/// [`GitPort::has_no_commit_yet`] gives.
-fn refs_missing(git: &dyn GitPort, tree: &Tree) -> BTreeSet<(RepoKey, CheckoutPath)> {
+/// A process per such checkout, and in front of the first frame with the refs: a reading
+/// where every branch out has a ref at its checkout starts none, and a fresh repository with
+/// its one unborn branch starts one. A refusal keeps the checkout and git's words with it —
+/// a ref git could not read is one, and git's `your current branch appears to be broken`
+/// is the only word anywhere for it.
+fn refs_missing(
+    git: &dyn GitPort,
+    tree: &Tree,
+) -> BTreeMap<(RepoKey, CheckoutPath), Option<String>> {
     tree.repos
         .iter()
         .filter(|repo| repo.refs.is_read())
         .flat_map(|repo| repo.worktrees.iter().map(move |worktree| (repo, worktree)))
         .filter(|(_, worktree)| worktree.branch.position() == Some(Position::NotSaid))
-        .filter(|(_, worktree)| {
-            !git.has_no_commit_yet(&worktree.checkout_path)
-                .unwrap_or(false)
+        .filter_map(|(repo, worktree)| {
+            let words = match git.has_no_commit_yet(&worktree.checkout_path) {
+                Ok(true) => return None,
+                Ok(false) => None,
+                Err(error) => Some(one_line(&format!("{error:#}"))),
+            };
+            Some(((RepoKey::of(repo), CheckoutPath::of(worktree)), words))
         })
-        .map(|(repo, worktree)| (RepoKey::of(repo), CheckoutPath::of(worktree)))
         .collect()
 }
 
@@ -471,8 +478,10 @@ mod tests {
             self.asked.lock().unwrap().push(checkout_path.to_string());
             match checkout_path {
                 "/wt/unborn" => Ok(true),
-                "/wt/dropped" => Ok(false),
-                _ => anyhow::bail!("fatal: your current branch appears to be broken"),
+                "/wt/committed" => Ok(false),
+                _ => anyhow::bail!(
+                    "fatal: your current branch appears to be broken\n(`git log -1 --format=%H`)"
+                ),
             }
         }
     }
@@ -483,7 +492,7 @@ mod tests {
         use crate::domain::model::{
             Branch, CheckoutPath, Position, Refs, RepoKey, RepoNode, Tree, WorktreeNode,
         };
-        use std::collections::BTreeSet;
+        use std::collections::BTreeMap;
         let at = |path: &str, position| WorktreeNode {
             branch: Branch::Out {
                 name: path.trim_start_matches("/wt/").to_string(),
@@ -508,7 +517,7 @@ mod tests {
                     Refs::Read,
                     vec![
                         at("/wt/unborn", Position::NotSaid),
-                        at("/wt/dropped", Position::NotSaid),
+                        at("/wt/committed", Position::NotSaid),
                         at("/wt/broken", Position::NotSaid),
                         at("/wt/level", Position::Said(None)),
                         at("/wt/contested", Position::Contested),
@@ -530,15 +539,23 @@ mod tests {
         let app = RepoKey::of(&tree.repos[0]);
         assert_eq!(
             missing,
-            BTreeSet::from([
-                (app.clone(), CheckoutPath::for_test("/wt/dropped")),
-                (app, CheckoutPath::for_test("/wt/broken")),
+            BTreeMap::from([
+                ((app.clone(), CheckoutPath::for_test("/wt/committed")), None),
+                (
+                    (app, CheckoutPath::for_test("/wt/broken")),
+                    Some(
+                        "fatal: your current branch appears to be broken \
+                         (`git log -1 --format=%H`)"
+                            .to_string()
+                    ),
+                ),
             ]),
-            "git's refusal keeps the checkout: only its word for an unborn branch is quiet"
+            "git's refusal keeps the checkout and its words, on one line: only its word for \
+             an unborn branch is quiet"
         );
         assert_eq!(
             *git.asked.lock().unwrap(),
-            ["/wt/unborn", "/wt/dropped", "/wt/broken"],
+            ["/wt/unborn", "/wt/committed", "/wt/broken"],
             "a ref names the others, and under refs git would not read none could"
         );
     }

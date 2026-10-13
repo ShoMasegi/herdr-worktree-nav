@@ -37,6 +37,8 @@ const UNREAD: &str = "warning: could not open directory ";
 const UNREAD_RULES: &str = "warning: unable to access ";
 /// `adapter::git_cli::NO_SUCH_REMOTE`, the one issue #27 turns on.
 const NO_REMOTE: &str = "No such remote";
+/// `adapter::git_cli::NO_COMMITS_YET`, the one a fresh repository turns on since issue #32.
+const NO_COMMITS: &str = "does not have any commits yet";
 
 fn git(dir: &Path, args: &[&str]) {
     let output = Command::new("git")
@@ -221,9 +223,10 @@ impl Drop for ReadableAgain<'_> {
 
 #[test]
 fn git_is_read_in_the_language_its_messages_are_matched_in() {
-    // The adapter decides four things by reading git's English: whether a ref was left out
+    // The adapter decides five things by reading git's English: whether a ref was left out
     // of a walk, whether a path is a repository at all, whether `status` could look at all of
-    // the working tree, and whether a repository simply has no `origin`. git translates the
+    // the working tree, whether a repository simply has no `origin`, and whether a branch has
+    // no commit yet. git translates the
     // words each turns on — of `fatal: cannot change to `, the `fatal: ` — bar the C
     // library's words after the last colon, `Permission denied` and the like.
     // Read in the locale herdr launched the plugin in, a German git says `Warnung: Ignoriere
@@ -361,7 +364,7 @@ fn git_is_read_in_the_language_its_messages_are_matched_in() {
         );
     }
 
-    // The last: a repository with no `origin`. Missed, the ordinary answer reads as git
+    // A repository with no `origin`. Missed, the ordinary answer reads as git
     // refusing, and every sweep entry says `git could not name the repository` about a
     // repository that simply has no `origin` — issue #27's fix, the other way round.
     let args = ["remote", "get-url", "origin"];
@@ -374,5 +377,31 @@ fn git_is_read_in_the_language_its_messages_are_matched_in() {
             Ok(None)
         ),
         "a repository with no origin is not git failing to name it, under {locale}"
+    );
+    drop(_locale);
+
+    // The last: a branch with no commit yet. Missed, the ordinary answer reads as git
+    // refusing, and every fresh repository's branch is named on the prompt line as one a ref
+    // is missing from.
+    let fresh = tempfile::tempdir().expect("a temp dir");
+    git(
+        fresh.path(),
+        &[
+            "-c",
+            "init.defaultRefFormat=files",
+            "init",
+            "--initial-branch=main",
+        ],
+    );
+    let args = ["log", "-1", "--format=%H"];
+    let locale = locale_for(fresh.path(), &args, NO_COMMITS);
+    let _locale = Locale::set(&locale);
+    still_in(&locale);
+    assert!(
+        matches!(
+            GitCli.has_no_commit_yet(&fresh.path().to_string_lossy()),
+            Ok(true)
+        ),
+        "a branch with no commit yet is not git refusing to say, under {locale}"
     );
 }

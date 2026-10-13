@@ -32,7 +32,7 @@ Whether a branch no ref names has no commit yet: `log -1` in its checkout says `
 current branch 'main' does not have any commits yet` and exits 128, where a branch whose ref
 git could not read gets `fatal: your current branch appears to be broken` — `NO_COMMITS_YET`
 matches the exit and the first sentence's words together, and anything else keeps the branch
-named on the prompt line as one git listed no ref for.
+named on the prompt line, with git's words where it refused.
 
 git ships translations of these messages — bar `cannot change to`, and the C library's words
 after the last colon — and picks one from the environment. That environment is whatever
@@ -44,7 +44,7 @@ and a dropped ref goes unnoticed: the walk still exits 0, the refs it did list s
 markers, and the checkout on the dropped ref carries none — which reads exactly like a checkout
 with nothing to report, with nothing anywhere saying why. A pane that is simply not in a
 repository is read as git refusing. That silence is what issue #21 is about. A fresh
-repository's branch is named on the prompt line as one git listed no ref for, which is loud
+repository's branch is named on the prompt line with git's translated refusal, which is loud
 and wrong in the same way a missing `origin` is.
 
 ## Decision
@@ -77,9 +77,12 @@ answer in another language and checks that it does not. It needs a locale the ho
 a translation for, and where there is none it fails rather than skipping, because libtest
 keeps a passing test's output to itself and a skip would read as a pass.
 
-**A ref git drops in silence is still silent.** An unreadable directory under `refs/heads`,
-a dangling symref: the walk exits 0 with nothing said, in any language. That is issue #32,
-and it is what is left of #21 once the language is settled.
+**A ref git drops in silence is noticed from the other side.** An unreadable directory under
+`refs/heads`, a dangling symref: the walk exits 0 with nothing said, in any language, and
+nothing in this decision changes that. What issue #32 added is a question asked of the
+checkout instead: a branch herdr says is out where no ref is listed gets a `log -1`, whose
+refusal — `your current branch appears to be broken`, for the unreadable directory — is put on
+the prompt line in git's words. A ref dropped that no checkout has out is still silent.
 
 ## Measured
 
@@ -94,6 +97,8 @@ LC_ALL=C            warning: could not open directory 'notes/': Permission denie
 LC_ALL=de_DE.UTF-8  Warnung: konnte Verzeichnis 'notes/' nicht öffnen: Permission denied
 LC_ALL=C            error: No such remote 'origin'
 LC_ALL=de_DE.UTF-8  Fehler: Remote-Repository 'origin' nicht gefunden
+LC_ALL=C            fatal: your current branch 'main' does not have any commits yet
+LC_ALL=de_DE.UTF-8  Schwerwiegend: Ihr aktueller Branch 'main' hat noch keine Commits.
 ```
 
 `GIT_TRACE`, `GIT_TRACE_PERFORMANCE` and `GIT_TRACE2` are read from that same environment and

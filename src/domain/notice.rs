@@ -46,10 +46,20 @@ pub enum Condition {
     Unlisted { repo: String, words: String },
     /// git would not read this repository's refs, so every track marker in it is missing.
     RefsUnreadable { repo: String, words: String },
-    /// git read this repository's refs, listed none at these branches' checkouts, and did not
-    /// say they have no commit yet — [`Trouble::ref_missing`](crate::domain::model::Trouble).
-    /// Their rows are missing their track markers and git said nothing, so the branches are
-    /// the words.
+    /// git read this repository's refs and listed none at this branch's checkout, and asked
+    /// whether the branch has no commit yet, refused to say — in these words, which are the
+    /// only account of it there is: a ref under a directory in `refs/heads` git may not open
+    /// is left out of the walk without a word, and its checkout is `your current branch
+    /// appears to be broken` here. One per checkout, carrying
+    /// [`Trouble::ref_missing`](crate::domain::model::Trouble)'s words.
+    RefMissingRefused {
+        repo: String,
+        branch: String,
+        words: String,
+    },
+    /// git read this repository's refs and listed none at these branches' checkouts, and
+    /// found a commit at each, so none is a branch with no commit yet. git wrote nothing
+    /// about any of it, so the branches are the words.
     RefMissing { repo: String, branches: Vec<String> },
     /// git read this repository's refs and more than one of them names this checkout, so
     /// it has no one branch to measure: [`Position::Contested`]. One per repository and
@@ -65,9 +75,8 @@ pub enum Condition {
 ///
 /// After a list that may be behind: panes that could not be placed at all, then a repository
 /// with no rows at all, then a repository whose rows are missing their markers, then the
-/// branches git listed no ref for, then a checkout the refs disagree about, then what `gh`
-/// said. Each is a larger question than the
-/// one after it — a reader whose whole session is ungrouped is not helped by being told
+/// branches git listed no ref at the checkout of, then a checkout the refs disagree about,
+/// then what `gh` said. Each is a larger question than the one after it — a reader whose whole session is ungrouped is not helped by being told
 /// about one repository's refs, and one who cannot see a repository at all is not helped by
 /// being told about another one's markers. The markers are about every row of the
 /// repository and are true sweep or no sweep; `gh` is asked only during a sweep, and only
@@ -80,7 +89,8 @@ pub enum Condition {
 /// says has no commit yet, which a fresh repository is in the ordinary course of things: the
 /// line under the list says it of the checkout under the cursor, a sweep that would have
 /// judged it says `no ref here`, and `dump` says what each read found. The same state
-/// without git's word for it is [`Condition::RefMissing`].
+/// without git's word for it is [`Condition::RefMissingRefused`] or
+/// [`Condition::RefMissing`].
 ///
 /// `stale` and `sweep_trouble` are passed in rather than read off the tree. The first is
 /// about the reading that built it, which a tree cannot report about itself; the second is
@@ -130,18 +140,27 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
             words: words.clone(),
         }),
     }));
-    // One per repository, naming each branch, in the order the rows are drawn.
+    // Repository by repository, in the order the tree holds their checkouts. git's words
+    // first, one per checkout, since each says something of its own; then the branches git
+    // wrote nothing about, together, since all the line can say of each is its name.
     for repo in &tree.repos {
-        let branches: Vec<String> = repo
-            .worktrees
-            .iter()
-            .filter(|worktree| {
-                tree.trouble
-                    .ref_missing
-                    .contains(&(RepoKey::of(repo), CheckoutPath::of(worktree)))
-            })
-            .filter_map(|worktree| worktree.branch.name().map(str::to_string))
-            .collect();
+        let mut branches = Vec::new();
+        for worktree in &repo.worktrees {
+            let key = (RepoKey::of(repo), CheckoutPath::of(worktree));
+            let (Some(said), Some(branch)) =
+                (tree.trouble.ref_missing.get(&key), worktree.branch.name())
+            else {
+                continue;
+            };
+            match said {
+                Some(words) => conditions.push(Condition::RefMissingRefused {
+                    repo: repo.display_name.clone(),
+                    branch: branch.to_string(),
+                    words: words.clone(),
+                }),
+                None => branches.push(branch.to_string()),
+            }
+        }
         if !branches.is_empty() {
             conditions.push(Condition::RefMissing {
                 repo: repo.display_name.clone(),
@@ -277,11 +296,13 @@ mod tests {
     }
 
     #[test]
-    fn the_branches_a_ref_is_missing_from_are_one_condition_per_repository() {
-        // git said nothing, so the branches are the words. After the repositories git would
-        // not read, which are missing every marker, and before a checkout the refs disagree
-        // about. A checkout no ref names that is not recorded — git said its branch has no
-        // commit yet — says nothing here.
+    fn the_branches_a_ref_is_missing_from_are_named_repository_by_repository_gits_words_first() {
+        // After the repositories git would not read, which are missing every marker, and
+        // before a checkout the refs disagree about. Within a repository, git's words for a
+        // refusal first, one per checkout; then the branches git wrote nothing about,
+        // together, in the order the tree holds them — here not the order of their paths. A
+        // checkout no ref names that is not recorded — git said its branch has no commit yet
+        // — says nothing here.
         let checkout = |name: &str, position| WorktreeNode {
             branch: Branch::Out {
                 name: name.into(),
@@ -294,20 +315,33 @@ mod tests {
         };
         let mut app = repo("me/app", Refs::Read);
         app.worktrees = vec![
-            checkout("feat2-x", Position::NotSaid),
+            checkout("feat2-y", Position::NotSaid),
             checkout("unborn", Position::NotSaid),
             checkout("shared", Position::Contested),
-            checkout("feat2-y", Position::NotSaid),
+            checkout("feat2-x", Position::NotSaid),
+            checkout("broken", Position::NotSaid),
         ];
+        let mut site = repo("me/site", Refs::Read);
+        site.worktrees = vec![checkout("draft", Position::NotSaid)];
         let mut tree = tree(vec![
             app,
             repo("me/docs", Refs::Unreadable("fatal: bad ref".into())),
+            site,
         ]);
-        for path in ["/wt/feat2-x", "/wt/feat2-y"] {
+        let mut missing = |repo: usize, path: &str, words: Option<&str>| {
+            let key = (RepoKey::of(&tree.repos[repo]), CheckoutPath::for_test(path));
             tree.trouble
                 .ref_missing
-                .insert((RepoKey::of(&tree.repos[0]), CheckoutPath::for_test(path)));
-        }
+                .insert(key, words.map(str::to_string));
+        };
+        missing(0, "/wt/feat2-y", None);
+        missing(0, "/wt/feat2-x", None);
+        missing(
+            0,
+            "/wt/broken",
+            Some("fatal: your current branch appears to be broken"),
+        );
+        missing(2, "/wt/draft", None);
         assert_eq!(
             conditions(&tree, None, None),
             vec![
@@ -315,9 +349,18 @@ mod tests {
                     repo: "me/docs".into(),
                     words: "fatal: bad ref".into(),
                 },
+                Condition::RefMissingRefused {
+                    repo: "me/app".into(),
+                    branch: "broken".into(),
+                    words: "fatal: your current branch appears to be broken".into(),
+                },
                 Condition::RefMissing {
                     repo: "me/app".into(),
-                    branches: vec!["feat2-x".into(), "feat2-y".into()],
+                    branches: vec!["feat2-y".into(), "feat2-x".into()],
+                },
+                Condition::RefMissing {
+                    repo: "me/site".into(),
+                    branches: vec!["draft".into()],
                 },
                 Condition::RefsDisagree {
                     repo: "me/app".into(),

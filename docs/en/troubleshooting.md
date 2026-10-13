@@ -46,9 +46,10 @@ with git's words, and its checkouts read `not read`. If only this page's own sec
 of the refs failed — the picker read them once for its markers, and `dump` reads them
 again for the upstream names — the repository says `refs unreadable on the second read:`
 and its checkouts keep the track the picker is drawing, with `upstream not read`. A
-checkout git lists no ref at says `no ref at this checkout for <branch>`: either the branch
-has no commit yet, or git and herdr disagree about what is checked out where, which is the
-thing to look at. A checkout git
+checkout git lists no ref at says `no ref at this checkout for <branch>`: the branch has no
+commit yet, git left its ref out of the walk without a word — a directory under
+`.git/refs/heads` it may not open — or git and herdr disagree about what is checked out
+where. The last two are on the prompt line as well. A checkout git
 names more than one ref at reads `more than one ref at this checkout:` and then each of
 them as `<branch> → <upstream> <where it stands>`; more than one of the repository's
 worktree registrations names that path, and which of them is stale is not something this
@@ -217,8 +218,9 @@ through this against a real session.
       `r`: the line goes. **CI cannot reach this path** — nothing in the suite draws a real
       walk into a real terminal.
 - [ ] As a user permissions apply to, `chmod 000 .git/refs/heads/<dir>` over a branch a
-      checkout has out — `feat2` for `feat2/x` — and reopen the picker. git says nothing,
-      and the prompt line still names the repository with `git listed no ref for feat2/x`.
+      checkout has out — `feat2` for `feat2/x` — and reopen the picker. The walk says
+      nothing, and the prompt line still names the branch with git's words:
+      ``me/app: feat2/x: fatal: your current branch appears to be broken (`git log -1 --format=%H`)``.
       `chmod 755` it and press `r`: the line goes. In a fresh `git init` with no commit,
       the line says nothing of `main`. **CI cannot reach this path** — the walk is in
       `tests/git_adapter.rs`, the terminal is not.

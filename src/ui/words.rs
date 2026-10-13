@@ -145,9 +145,15 @@ pub fn condition(condition: &Condition) -> String {
         }
         Condition::Unlisted { repo, words } => format!("{repo}: not listed: {words}"),
         Condition::RefsUnreadable { repo, words } => format!("{repo}: refs unreadable: {words}"),
-        Condition::RefMissing { repo, branches } => {
-            format!("{repo}: git listed no ref for {}", branches.join(", "))
-        }
+        Condition::RefMissingRefused {
+            repo,
+            branch,
+            words,
+        } => format!("{repo}: {branch}: {words}"),
+        Condition::RefMissing { repo, branches } => format!(
+            "{repo}: git listed no ref at the checkout of {}",
+            branches.join(", ")
+        ),
         Condition::RefsDisagree { repo, checkout } => format!("{repo}: refs disagree: {checkout}"),
         Condition::SweepTrouble(words) => words.clone(),
     }
@@ -665,12 +671,22 @@ mod tests {
             "me/app: refs disagree: /wt/shared"
         );
         assert_eq!(
+            condition(&Condition::RefMissingRefused {
+                repo: "me/app".into(),
+                branch: "feat2/x".into(),
+                words: "fatal: your current branch appears to be broken".into(),
+            }),
+            "me/app: feat2/x: fatal: your current branch appears to be broken",
+            "git's words do not say which branch is its current one, so the line does"
+        );
+        assert_eq!(
             condition(&Condition::RefMissing {
                 repo: "me/app".into(),
                 branches: vec!["feat2/x".into(), "feat2/y".into()],
             }),
-            "me/app: git listed no ref for feat2/x, feat2/y",
-            "git wrote nothing, so the words are this side's and name every branch"
+            "me/app: git listed no ref at the checkout of feat2/x, feat2/y",
+            "the walk listed no ref there and `log` found a commit, so git wrote nothing \
+             about it: the words are this side's and name every branch"
         );
         assert_eq!(
             condition(&Condition::SweepTrouble(
