@@ -1365,7 +1365,7 @@ fn every_ref_git_dropped_is_named_and_not_just_the_first() {
 }
 
 #[test]
-fn a_ref_git_drops_without_a_word_is_still_missed() {
+fn a_ref_git_drops_without_a_word_reads_as_no_ref_at_its_checkout() {
     // The other half of what the test above holds. git skips a directory under
     // `refs/heads` it may not open, exits 0, and says nothing, so `dropped` has nothing to
     // carry. What is left to notice it by is herdr saying the branch is out at a path no ref
