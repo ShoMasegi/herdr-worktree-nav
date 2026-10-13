@@ -891,9 +891,20 @@ fn a_pull_request_offers_only_the_branch_it_was_actually_for() {
 }
 
 #[test]
-fn a_finished_pull_request_does_not_offer_a_checkout_holding_work() {
+fn a_finished_pull_request_does_not_offer_a_checkout_not_known_to_be_clean() {
     // The twin of the `gone` rule: a working tree not known to be clean is never offered,
-    // whatever GitHub says about the branch.
+    // whatever GitHub says about the branch, and wherever git says it stands — a branch
+    // with commits after its merge included.
+    let one = std::num::NonZeroU32::new(1).unwrap();
+    let positions = [
+        Position::Said(None),
+        Position::Said(Some(Track::Ahead(one))),
+        Position::Said(Some(Track::Behind(one))),
+        Position::Said(Some(Track::Diverged {
+            ahead: one,
+            behind: one,
+        })),
+    ];
     let said = [
         (
             "merged, the whole list",
@@ -915,29 +926,31 @@ fn a_finished_pull_request_does_not_offer_a_checkout_holding_work() {
             ),
         ),
     ];
-    for (what, settled) in &said {
-        for answer in [
-            Some(WorkingTree::Dirty),
-            Some(WorkingTree::Unreadable),
-            None,
-        ] {
-            let trees: BTreeMap<_, _> = answer
-                .map(|answer| (CheckoutPath::for_test("/wt/feat-login"), answer))
-                .into_iter()
-                .collect();
-            let judged = judged(
-                &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
-                &facts(&trees, settled),
-            );
-            assert_eq!(
-                judged[&at("/wt/feat-login")],
-                Candidate::Available,
-                "{what}, {answer:?}"
-            );
-            assert!(
-                judged[&at("/wt/feat-login")].is_markable(),
-                "still the user's to mark"
-            );
+    for position in positions {
+        let mut row = worktree("feat/login", "/wt/feat-login");
+        row.branch.set_position(position);
+        let tree = tree_of(vec![row]);
+        for (what, from_gh) in &said {
+            for answer in [
+                Some(WorkingTree::Dirty),
+                Some(WorkingTree::Unreadable),
+                None,
+            ] {
+                let trees: BTreeMap<_, _> = answer
+                    .map(|answer| (CheckoutPath::for_test("/wt/feat-login"), answer))
+                    .into_iter()
+                    .collect();
+                let judged = judged(&tree, &facts(&trees, from_gh));
+                assert_eq!(
+                    judged[&at("/wt/feat-login")],
+                    Candidate::Available,
+                    "{position:?}, {what}, {answer:?}"
+                );
+                assert!(
+                    judged[&at("/wt/feat-login")].is_markable(),
+                    "still the user's to mark"
+                );
+            }
         }
     }
 }
