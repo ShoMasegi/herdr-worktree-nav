@@ -1461,6 +1461,49 @@ fn a_ref_git_drops_without_a_word_is_still_missed() {
             position: Position::Said(None),
         })
     );
+
+    // And git will not vouch for it as a branch with no commit yet, which is what keeps it
+    // on the prompt line.
+    let words = format!(
+        "{:#}",
+        GitCli
+            .has_no_commit_yet(&checkout)
+            .expect_err("git could not read the branch, and said so")
+    );
+    assert!(
+        words.starts_with("fatal: your current branch appears to be broken"),
+        "git's own words, first: {words}"
+    );
+}
+
+#[test]
+fn a_branch_with_no_commit_yet_is_told_apart_from_one_git_has_no_ref_for() {
+    // The ordinary way to have a branch out that no ref names: a fresh `git init`, which
+    // `git worktree list` names `main` in and `for-each-ref` lists nothing for. Quiet, where
+    // the dropped ref above is not.
+    let fresh = tempfile::tempdir().unwrap();
+    git(
+        fresh.path(),
+        &[
+            "-c",
+            "init.defaultRefFormat=files",
+            "init",
+            "--initial-branch=main",
+        ],
+    );
+    let fresh_root = path_str(fresh.path());
+    assert!(
+        GitCli
+            .local_refs(&fresh_root)
+            .expect("an empty walk")
+            .refs
+            .is_empty(),
+        "the premise: no ref names it"
+    );
+    assert!(GitCli.has_no_commit_yet(&fresh_root).unwrap());
+
+    let repo = repository();
+    assert!(!GitCli.has_no_commit_yet(&path_str(repo.path())).unwrap());
 }
 
 #[test]

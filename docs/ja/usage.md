@@ -205,7 +205,7 @@ git 自身の言葉で、問題が複数あれば残りを数えます。refs �
 
 リポジトリの ref が 2 本以上名指ししている checkout に出ているブランチも、refs が位置として答えられない別の形です。git は読めているので行には `contested` という語が出て、プロンプト行は refs を読めなかったリポジトリと同じようにその checkout を名指しします。`me/app: refs disagree: /path/to/checkout` です。ブランチの載っていない行はどちらも出しませんが、herdr が 1 回しか挙げていなければ、sweep と `Shift-D` はやはり `more than one ref names this checkout` として拒否します。
 
-ブランチが出ているのにそのパスを名指しする ref が 1 本も無い checkout は、行に何も描かず、プロンプト行にも出しません。まだ 1 つも commit の無いブランチがそうなるのは普通のことだからです。git が refs を読めている場合に限り、カーソルを置くと一覧の下の詳細行に `no ref names this checkout` と出ます。出るのはカーソルが止まる checkout に限られ、sweep の外ではそれは pane の無い checkout です。
+ブランチが出ているのにそのパスを名指しする ref が 1 本も無い checkout は、行に何も描きません。git が refs を読めている場合に限り、カーソルを置くと一覧の下の詳細行に `no ref names this checkout` と出ます。出るのはカーソルが止まる checkout に限られ、sweep の外ではそれは pane の無い checkout です。まだ 1 つも commit の無いブランチがそうなるのは普通のことなので、プラグインは git にそれが理由かを訊き、git がそうだと言えばそれだけです。言わなければ、git が walk から何も言わずに ref を落としたということで——開けない `.git/refs/heads` 配下のディレクトリがその一例です——プロンプト行がブランチを名指しします。`me/app: git listed no ref for feat2/x` です。
 
 収まらない幅では、場所ではなく言葉のほうを手放します。まずスピナーがラベルを落とし、次に文そのものが「いくつ問題があるか」の数——`!2`——になります。どの幅でも、行がこれについて黙ることはありません。
 

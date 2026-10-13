@@ -242,6 +242,16 @@ fn listed(branch: &str, path: &str, linked: bool, open_in: Option<&str>) -> Work
     }
 }
 
+/// A branch with nothing to report. Every checkout herdr lists on a branch needs a ref at its
+/// path, or it is one a ref is missing from and the prompt line names it.
+fn level(branch: &str, path: &str) -> GitRef {
+    GitRef {
+        upstream: None,
+        track: None,
+        ..gone(branch, path)
+    }
+}
+
 fn gone(branch: &str, path: &str) -> GitRef {
     GitRef {
         name: branch.into(),
@@ -324,6 +334,7 @@ impl FakeGit for Session {
 
     fn local_refs(&self, _repo_root: &str) -> Result<RefWalk> {
         Ok(RefWalk::of(vec![
+            level("main", "/src/app"),
             gone("feat/login", FEAT_LOGIN),
             gone("fix/crash", FIX_CRASH),
         ]))
@@ -447,7 +458,10 @@ impl FakeGit for Closing {
     }
 
     fn local_refs(&self, _repo_root: &str) -> Result<RefWalk> {
-        Ok(RefWalk::of(vec![gone("feat/login", FEAT_LOGIN)]))
+        Ok(RefWalk::of(vec![
+            level("main", "/src/app"),
+            gone("feat/login", FEAT_LOGIN),
+        ]))
     }
 
     fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {

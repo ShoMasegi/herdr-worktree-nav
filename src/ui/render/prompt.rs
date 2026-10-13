@@ -523,7 +523,7 @@ mod tests {
     use ratatui::crossterm::event::KeyCode;
     use ratatui::Terminal;
 
-    use crate::domain::model::{Refs, WorktreeNode};
+    use crate::domain::model::{Position, Refs, WorktreeNode};
 
     use crate::port::AgentStatus;
 
@@ -549,6 +549,26 @@ mod tests {
         assert!(
             panel.contains("refs/heads/main") && panel.contains("refs/heads/chore/deps"),
             "both refnames are readable in the panel:\n{panel}"
+        );
+    }
+
+    #[test]
+    fn a_ref_git_left_out_without_a_word_reaches_the_line_the_way_a_refusal_does() {
+        // git said nothing, so a row with no marker is all there was — and that row is what
+        // a branch with nothing to report looks like too. Issue #32.
+        let mut tree = tree();
+        tree.repos[0].worktrees[1]
+            .branch
+            .set_position(Position::NotSaid);
+        let key = (
+            RepoKey::of(&tree.repos[0]),
+            CheckoutPath::of(&tree.repos[0].worktrees[1]),
+        );
+        tree.trouble.ref_missing.insert(key);
+        let line = prompt_line(&PanesState::new(tree, None), 92);
+        assert!(
+            line.contains("me/app: git listed no ref for feat/login"),
+            "{line}"
         );
     }
 

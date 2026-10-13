@@ -329,6 +329,9 @@ pub trait FakeGit {
     fn head_ref(&self, _repo_root: &str) -> Result<String> {
         refused("GitPort::head_ref")
     }
+    fn has_no_commit_yet(&self, _checkout_path: &str) -> Result<bool> {
+        refused("GitPort::has_no_commit_yet")
+    }
 }
 
 /// The `gh` half of the same arrangement — see [`FakeGit`].
@@ -428,6 +431,9 @@ macro_rules! fake_git {
             }
             fn head_ref(&self, repo_root: &str) -> ::anyhow::Result<String> {
                 $crate::app::fakes::FakeGit::head_ref(self, repo_root)
+            }
+            fn has_no_commit_yet(&self, checkout_path: &str) -> ::anyhow::Result<bool> {
+                $crate::app::fakes::FakeGit::has_no_commit_yet(self, checkout_path)
             }
         }
     };

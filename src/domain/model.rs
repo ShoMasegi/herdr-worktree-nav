@@ -345,6 +345,11 @@ pub struct Trouble {
     /// what herdr not seeing into a pane also looks like, and the two are nothing alike to
     /// fix.
     pub unplaced: BTreeMap<String, String>,
+    /// Checkouts whose branch no ref of the repository names under refs git read
+    /// ([`Position::NotSaid`]) and which git did not vouch for as having no commit yet —
+    /// [`GitPort::has_no_commit_yet`](crate::port::GitPort::has_no_commit_yet). A ref git
+    /// left out of its walk without a word is how a checkout gets here.
+    pub ref_missing: BTreeSet<(RepoKey, CheckoutPath)>,
 }
 
 /// A repository herdr would not list, and what herdr said instead.

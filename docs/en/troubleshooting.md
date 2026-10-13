@@ -77,9 +77,9 @@ page's own read failed. Each checkout's working tree is walked in the open, one 
 another, so on many checkouts this takes a moment.
 
 git's words arrive in English here and on the prompt line whatever language your git speaks
-in a terminal: the plugin runs git under `LC_ALL=C`, because it decides two things by reading
-those sentences — whether a path is a repository, and whether a ref was left out of a walk —
-and a translated sentence is one it cannot read.
+in a terminal: the plugin runs git under `LC_ALL=C`, because it decides three things by reading
+those sentences — whether a path is a repository, whether a ref was left out of a walk, and
+whether a branch has no commit yet — and a translated sentence is one it cannot read.
 
 If `dump` is right and the picker is wrong, the problem is drawing; if `dump` is already
 wrong, it is what herdr or git reported. Run it from inside a herdr pane — it needs
@@ -216,6 +216,12 @@ through this against a real session.
       draw no ahead/behind/`gone` marker rather than a wrong one. Restore the ref and press
       `r`: the line goes. **CI cannot reach this path** — nothing in the suite draws a real
       walk into a real terminal.
+- [ ] As a user permissions apply to, `chmod 000 .git/refs/heads/<dir>` over a branch a
+      checkout has out — `feat2` for `feat2/x` — and reopen the picker. git says nothing,
+      and the prompt line still names the repository with `git listed no ref for feat2/x`.
+      `chmod 755` it and press `r`: the line goes. In a fresh `git init` with no commit,
+      the line says nothing of `main`. **CI cannot reach this path** — the walk is in
+      `tests/git_adapter.rs`, the terminal is not.
 - [ ] Leave an untracked file in a checkout: `✱` appears on its row a moment after the
       picker opens, with a spinner beside the prompt until every checkout has answered.
       Commit or delete the file and press `r`: the marker goes.

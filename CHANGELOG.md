@@ -75,6 +75,10 @@ All notable changes to this project are documented here. The format follows
   used to lose its markers in silence — indistinguishable from a repository with nothing to
   report. The rows still draw nothing, since no marker beats a wrong one; the prompt line now
   names the repository with git's own words where the search hint was, and counts the rest.
+  A walk that leaves a ref out without a word — git skips a directory under `refs/heads` it
+  may not open, and exits 0 having said nothing — is named there too:
+  `me/app: git listed no ref for feat2/x`. A branch with no commit yet has no ref either, and
+  stays quiet where git says that is why.
 - **`dump` prints what the markers are drawn from.** Under each checkout: the upstream it
   tracks, where it stands against it — `level`, `gone`, `↑2↓1`, `none` when there is no
   upstream and git said nothing about where it would push, or `unreadable` where git printed

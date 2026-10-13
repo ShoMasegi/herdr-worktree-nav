@@ -145,6 +145,9 @@ pub fn condition(condition: &Condition) -> String {
         }
         Condition::Unlisted { repo, words } => format!("{repo}: not listed: {words}"),
         Condition::RefsUnreadable { repo, words } => format!("{repo}: refs unreadable: {words}"),
+        Condition::RefMissing { repo, branches } => {
+            format!("{repo}: git listed no ref for {}", branches.join(", "))
+        }
         Condition::RefsDisagree { repo, checkout } => format!("{repo}: refs disagree: {checkout}"),
         Condition::SweepTrouble(words) => words.clone(),
     }
@@ -660,6 +663,14 @@ mod tests {
                 checkout: "/wt/shared".into(),
             }),
             "me/app: refs disagree: /wt/shared"
+        );
+        assert_eq!(
+            condition(&Condition::RefMissing {
+                repo: "me/app".into(),
+                branches: vec!["feat2/x".into(), "feat2/y".into()],
+            }),
+            "me/app: git listed no ref for feat2/x, feat2/y",
+            "git wrote nothing, so the words are this side's and name every branch"
         );
         assert_eq!(
             condition(&Condition::SweepTrouble(

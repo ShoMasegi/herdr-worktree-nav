@@ -46,6 +46,11 @@ pub enum Condition {
     Unlisted { repo: String, words: String },
     /// git would not read this repository's refs, so every track marker in it is missing.
     RefsUnreadable { repo: String, words: String },
+    /// git read this repository's refs, listed none at these branches' checkouts, and did not
+    /// say they have no commit yet — [`Trouble::ref_missing`](crate::domain::model::Trouble).
+    /// Their rows are missing their track markers and git said nothing, so the branches are
+    /// the words.
+    RefMissing { repo: String, branches: Vec<String> },
     /// git read this repository's refs and more than one of them names this checkout, so
     /// it has no one branch to measure: [`Position::Contested`]. One per repository and
     /// checkout path, carrying the path.
@@ -59,8 +64,9 @@ pub enum Condition {
 /// Everything that is wrong right now, worst first.
 ///
 /// After a list that may be behind: panes that could not be placed at all, then a repository
-/// with no rows at all, then a repository whose rows are missing their markers, then a
-/// checkout the refs disagree about, then what `gh` said. Each is a larger question than the
+/// with no rows at all, then a repository whose rows are missing their markers, then the
+/// branches git listed no ref for, then a checkout the refs disagree about, then what `gh`
+/// said. Each is a larger question than the
 /// one after it — a reader whose whole session is ungrouped is not helped by being told
 /// about one repository's refs, and one who cannot see a repository at all is not helped by
 /// being told about another one's markers. The markers are about every row of the
@@ -70,10 +76,11 @@ pub enum Condition {
 /// Two states that draw no marker deliberately have no line here. One is a single ref whose
 /// `:track` field git printed and the adapter could not read, for the reason written where
 /// the state is, on [`Track::Unreadable`](crate::port::Track::Unreadable). The other is a
-/// branch no ref names the checkout of ([`Position::NotSaid`] under refs git read), which a
-/// branch with no commit yet produces in the ordinary course of things: the line under the
-/// list says it of the checkout under the cursor, a sweep that would have judged it says
-/// `no ref here`, and `dump` says what each read found.
+/// branch no ref names the checkout of ([`Position::NotSaid`] under refs git read) that git
+/// says has no commit yet, which a fresh repository is in the ordinary course of things: the
+/// line under the list says it of the checkout under the cursor, a sweep that would have
+/// judged it says `no ref here`, and `dump` says what each read found. The same state
+/// without git's word for it is [`Condition::RefMissing`].
 ///
 /// `stale` and `sweep_trouble` are passed in rather than read off the tree. The first is
 /// about the reading that built it, which a tree cannot report about itself; the second is
@@ -123,6 +130,25 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
             words: words.clone(),
         }),
     }));
+    // One per repository, naming each branch, in the order the rows are drawn.
+    for repo in &tree.repos {
+        let branches: Vec<String> = repo
+            .worktrees
+            .iter()
+            .filter(|worktree| {
+                tree.trouble
+                    .ref_missing
+                    .contains(&(RepoKey::of(repo), CheckoutPath::of(worktree)))
+            })
+            .filter_map(|worktree| worktree.branch.name().map(str::to_string))
+            .collect();
+        if !branches.is_empty() {
+            conditions.push(Condition::RefMissing {
+                repo: repo.display_name.clone(),
+                branches,
+            });
+        }
+    }
     // One per repository and path rather than per row. Two refs naming one path takes two
     // registrations of it, and `git worktree list` names the path once for each, so a
     // contested checkout is two rows at one path wherever herdr does the same; one sentence
@@ -246,6 +272,57 @@ mod tests {
                 disagree("/wt/c"),
                 disagree("/wt/a"),
                 Condition::SweepTrouble("me/app: gh could not be run".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_branches_a_ref_is_missing_from_are_one_condition_per_repository() {
+        // git said nothing, so the branches are the words. After the repositories git would
+        // not read, which are missing every marker, and before a checkout the refs disagree
+        // about. A checkout no ref names that is not recorded — git said its branch has no
+        // commit yet — says nothing here.
+        let checkout = |name: &str, position| WorktreeNode {
+            branch: Branch::Out {
+                name: name.into(),
+                position,
+            },
+            checkout_path: format!("/wt/{name}"),
+            is_primary: false,
+            open_workspace_id: None,
+            panes: Vec::new(),
+        };
+        let mut app = repo("me/app", Refs::Read);
+        app.worktrees = vec![
+            checkout("feat2-x", Position::NotSaid),
+            checkout("unborn", Position::NotSaid),
+            checkout("shared", Position::Contested),
+            checkout("feat2-y", Position::NotSaid),
+        ];
+        let mut tree = tree(vec![
+            app,
+            repo("me/docs", Refs::Unreadable("fatal: bad ref".into())),
+        ]);
+        for path in ["/wt/feat2-x", "/wt/feat2-y"] {
+            tree.trouble
+                .ref_missing
+                .insert((RepoKey::of(&tree.repos[0]), CheckoutPath::for_test(path)));
+        }
+        assert_eq!(
+            conditions(&tree, None, None),
+            vec![
+                Condition::RefsUnreadable {
+                    repo: "me/docs".into(),
+                    words: "fatal: bad ref".into(),
+                },
+                Condition::RefMissing {
+                    repo: "me/app".into(),
+                    branches: vec!["feat2-x".into(), "feat2-y".into()],
+                },
+                Condition::RefsDisagree {
+                    repo: "me/app".into(),
+                    checkout: "/wt/shared".into(),
+                },
             ]
         );
     }

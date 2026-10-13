@@ -4,7 +4,7 @@ Status: accepted
 
 ## Context
 
-Four things this plugin decides are decided by reading git's own words rather than its exit
+Five things this plugin decides are decided by reading git's own words rather than its exit
 code.
 
 Whether a pane's directory is a repository at all: git answers `fatal: not a git repository (or
@@ -28,6 +28,11 @@ macOS one measured does not translate them). Whether a repository simply has no 
 `remote get-url origin` says `error: No such remote 'origin'` on stderr and exits 2 —
 `no_such_remote` matches that exit and the words `No such remote` together, so every other way
 the call can fail goes up as a refusal instead of as "this repository has no remote".
+Whether a branch no ref names has no commit yet: `log -1` in its checkout says `fatal: your
+current branch 'main' does not have any commits yet` and exits 128, where a branch whose ref
+git could not read gets `fatal: your current branch appears to be broken` — `NO_COMMITS_YET`
+matches the exit and the first sentence's words together, and anything else keeps the branch
+named on the prompt line as one git listed no ref for.
 
 git ships translations of these messages — bar `cannot change to`, and the C library's words
 after the last colon — and picks one from the environment. That environment is whatever
@@ -38,7 +43,9 @@ which is loud and wrong; a directory git could not open, or rules it could not r
 and a dropped ref goes unnoticed: the walk still exits 0, the refs it did list still build the
 markers, and the checkout on the dropped ref carries none — which reads exactly like a checkout
 with nothing to report, with nothing anywhere saying why. A pane that is simply not in a
-repository is read as git refusing. That silence is what issue #21 is about.
+repository is read as git refusing. That silence is what issue #21 is about. A fresh
+repository's branch is named on the prompt line as one git listed no ref for, which is loud
+and wrong in the same way a missing `origin` is.
 
 ## Decision
 

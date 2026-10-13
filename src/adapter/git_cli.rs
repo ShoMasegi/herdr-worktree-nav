@@ -50,6 +50,15 @@ const NOT_A_WORK_TREE: &str = "this operation must be run in a work tree";
 /// [`GIT_LOCALE`] keeps in place.
 const NO_SUCH_REMOTE: (i32, &str) = (2, "No such remote");
 
+/// What `log` says of a branch that has no commit yet: exit 128, with `fatal: your current
+/// branch 'main' does not have any commits yet` on stderr, measured against git 2.43.0. A
+/// branch whose ref git cannot read gets `fatal: your current branch appears to be broken`
+/// instead, under the same exit, so both halves are matched for the reason
+/// [`NOT_A_REPOSITORY`] is.
+///
+/// git's own English, translated, which [`GIT_LOCALE`] keeps in place.
+const NO_COMMITS_YET: (i32, &str) = (GIT_FATAL, "does not have any commits yet");
+
 pub struct GitCli;
 
 /// What git printed when it exited 0.
@@ -67,11 +76,12 @@ struct Said {
 
 /// The locale every git this plugin starts runs under.
 ///
-/// Four things here are decided by reading git's own words — whether the path is a
+/// Five things here are decided by reading git's own words — whether the path is a
 /// repository at all ([`NOT_A_REPOSITORY`] and [`CANNOT_CHANGE_TO`], and [`NOT_A_WORK_TREE`]
 /// for `identify`), whether a ref was dropped from a walk ([`dropped_refs`]), whether
-/// `status` could look at all of the working tree ([`unread_paths`]) and whether a
-/// repository simply has no `origin` ([`NO_SUCH_REMOTE`]) — and all are English literals,
+/// `status` could look at all of the working tree ([`unread_paths`]), whether a repository
+/// simply has no `origin` ([`NO_SUCH_REMOTE`]) and whether a branch has no commit yet
+/// ([`NO_COMMITS_YET`]) — and all are English literals,
 /// while git translates each of these — bar the words `cannot change to`, which it leaves in
 /// English where [`CANNOT_CHANGE_TO`] reads them, and the words after the last colon of
 /// [`CANNOT_CHANGE_TO`]'s and [`unread_paths`]' lines, which are the C library's — and picks
@@ -687,6 +697,20 @@ impl GitPort for GitCli {
             bail!("{words}");
         }
         Ok(!status.stdout.trim().is_empty())
+    }
+
+    fn has_no_commit_yet(&self, checkout_path: &str) -> Result<bool> {
+        let args = ["log", "-1", "--format=%H"];
+        let output = GitCli::output(checkout_path, &args)?;
+        if output.status.success() {
+            return Ok(false);
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let (exit, said) = NO_COMMITS_YET;
+        if output.status.code() == Some(exit) && stderr.contains(said) {
+            return Ok(true);
+        }
+        bail!("{}", refusal(&args, &stderr));
     }
 
     fn head_ref(&self, repo_root: &str) -> Result<String> {

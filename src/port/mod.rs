@@ -389,6 +389,19 @@ pub trait GitPort: Send + Sync {
 
     /// Current `HEAD` of `repo_root`, used as the base for a brand new branch.
     fn head_ref(&self, repo_root: &str) -> Result<String>;
+
+    /// Whether git says the branch out at `checkout_path` has no commit yet.
+    ///
+    /// Asked of a checkout herdr says has a branch out and no ref of the repository names:
+    /// two things reach that state and only one of them is wrong. A branch with no commit
+    /// yet has no ref at all, which every fresh `git init` is until its first commit. A ref
+    /// git left out of a walk without a word — a directory under `refs/heads` it may not
+    /// open — is the silence issue #32 is about.
+    ///
+    /// `true` only where git says so in so many words. `false` and `Err` both leave the
+    /// checkout named on the prompt line, which is the direction to fail in: a ref that is
+    /// missing is said, and a branch with no commit is quiet only when git vouches for it.
+    fn has_no_commit_yet(&self, checkout_path: &str) -> Result<bool>;
 }
 
 /// A pull request, used only to annotate branches. Never load-bearing.
