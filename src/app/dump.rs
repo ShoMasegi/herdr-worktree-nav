@@ -151,14 +151,22 @@ pub fn report(
                 branch_words(repo, worktree, refs),
                 working_tree_words(working_trees.get(&worktree.checkout_path))
             );
-            // What git said when asked whether the branch has no commit yet, where it refused:
-            // the only reason git gives for a ref missing from this checkout.
-            if let Some(Some(words)) = tree
+            // What git said when asked whether the branch has no commit yet: its refusal, the
+            // only reason git gives for a ref missing from this checkout, or that it found a
+            // commit there, which is herdr and git disagreeing about what is out where. A
+            // checkout git was not asked about, or said has no commit yet, has no line.
+            match tree
                 .trouble
                 .ref_missing
                 .get(&(RepoKey::of(repo), CheckoutPath::of(worktree)))
             {
-                let _ = writeln!(out, "      {words}");
+                Some(Some(words)) => {
+                    let _ = writeln!(out, "      {words}");
+                }
+                Some(None) => {
+                    let _ = writeln!(out, "      git found a commit here");
+                }
+                None => {}
             }
             for pane in &worktree.panes {
                 let _ = writeln!(
@@ -216,8 +224,9 @@ pub fn report(
 /// Where this page knows less than the picker it says which: `not read` for an upstream its
 /// own walk could not get, beside the marker the picker is drawing or `not known`. When git
 /// lists no ref at this checkout — a branch with no commit yet, git's list and herdr's
-/// disagreeing about what is out where, or a ref git could not read, whose words `report`
-/// prints under the row — it says so rather than `upstream none`, and when
+/// disagreeing about what is out where, or a ref git could not read — it says so rather
+/// than `upstream none`; `report` prints under the row what git said when asked: its
+/// refusal, or `git found a commit here` for the disagreement. And when
 /// git names more than one it names
 /// each, because `domain::tree::tracks` declines to choose between them. Issue #48 is the
 /// labels.

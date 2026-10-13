@@ -678,7 +678,7 @@ mod tests {
                 words: "fatal: your current branch appears to be broken".into(),
             }),
             "me/app: feat2/x: fatal: your current branch appears to be broken",
-            "git's words do not say which branch is its current one, so the line does"
+            "git's words do not say which checkout they are about, so the line does"
         );
         assert_eq!(
             condition(&Condition::RefMissing {

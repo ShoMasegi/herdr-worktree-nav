@@ -207,12 +207,13 @@ pub struct WorktreeSource {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Worktree {
     /// [`domain::tree::build`](crate::domain::tree::build) reads `is_detached` as nothing
-    /// checked out, and `None` or an empty string beside an `is_detached` of `false` as a
-    /// branch out that git could not name ([`Branch::Unnamed`](crate::domain::model::Branch)).
-    /// Neither draws a track marker. That herdr reports a detached checkout with
-    /// `is_detached` set is an assumption about its API that nothing here can hold — there
-    /// is no herdr in CI; the manual checklist in `docs/en/troubleshooting.md` has an item for
-    /// it.
+    /// checked out, and so is `None` or an empty string where herdr did not say whether the
+    /// checkout is detached; beside an `is_detached` of `false` it is a branch out that git
+    /// could not name ([`Branch::Unnamed`](crate::domain::model::Branch::Unnamed)). None of
+    /// these draws a track marker. That herdr never reports a detached checkout as
+    /// `is_detached: false` with no branch is an assumption about its API that nothing here
+    /// can hold — there is no herdr in CI; the manual checklist in
+    /// `docs/en/troubleshooting.md` has an item for it.
     #[serde(default)]
     pub branch: Option<String>,
     pub path: String,

@@ -394,12 +394,11 @@ pub trait GitPort: Send + Sync {
     ///
     /// Asked of a checkout no ref of the repository names, where herdr says a branch is out
     /// or names none at a checkout it says is not detached (`is_detached: false`). A branch
-    /// with no commit yet is
-    /// the one ordinary way to get there: it has no ref at all, which every fresh `git init`
-    /// is until its first commit. The other ways are something wrong: herdr and git
-    /// disagreeing about what is out where, or a ref git left out of a walk without a word —
-    /// one under a directory in `refs/heads` it may not open, which herdr then lists with no
-    /// branch, and which is the silence issue #32 is about.
+    /// with no commit yet is the one ordinary way to get there: it has no ref at all, which
+    /// every fresh `git init` is until its first commit. The other ways are something wrong:
+    /// herdr and git disagreeing about what is out where, or a ref git left out of a walk
+    /// without a word — one under a directory in `refs/heads` it may not open, which herdr
+    /// then lists with no branch, and which is the silence issue #32 is about.
     ///
     /// `true` only where git says so in so many words. `false` and `Err` both leave the
     /// checkout named on the prompt line, `Err` with git's words, which is the direction to

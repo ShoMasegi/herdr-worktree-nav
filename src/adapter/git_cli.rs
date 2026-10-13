@@ -206,8 +206,9 @@ fn refusal(args: &[&str], stderr: &str) -> String {
 /// A ref git drops in silence — an unreadable directory under `refs/heads`, a dangling
 /// symref — is not here and cannot be: the walk exits 0 with nothing said. Issue #32 asks
 /// the checkout instead, where one has the ref out: [`GitPort::has_no_commit_yet`]. That
-/// catches the unreadable directory and not the dangling symref, which git answers for as
-/// a branch with no commit yet.
+/// catches the unreadable directory where herdr lists the checkout as not detached
+/// (`is_detached: false`), and not the dangling symref, which git answers for as a branch
+/// with no commit yet.
 fn dropped_refs(stderr: &str) -> Option<String> {
     let dropped: Vec<&str> = stderr
         .lines()

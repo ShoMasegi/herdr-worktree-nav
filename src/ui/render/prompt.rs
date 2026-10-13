@@ -558,7 +558,8 @@ mod tests {
         // what a branch with nothing to report looks like too. What git said when asked about
         // the checkout is the only reason git gives. Issue #32. herdr names no branch there,
         // and a checkout's whole path in front of git's words would push them off the line
-        // at an ordinary width: the row's own name goes there instead.
+        // at an ordinary width: the row's own name goes there instead. git's sentence then
+        // fits, and the command after it is what gives way.
         let mut tree = tree();
         let row = &mut tree.repos[0].worktrees[1];
         row.branch = Branch::Unnamed;
@@ -569,7 +570,9 @@ mod tests {
         );
         tree.trouble.ref_missing.insert(
             key,
-            Some("fatal: your current branch appears to be broken".into()),
+            Some(
+                "fatal: your current branch appears to be broken (`git log -1 --format=%H`)".into(),
+            ),
         );
         let line = prompt_line(&PanesState::new(tree, None), 92);
         assert!(

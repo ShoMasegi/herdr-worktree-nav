@@ -425,15 +425,20 @@ what is checked out where — the prompt line names the branches:
 
 A ref under a directory in `.git/refs/heads` git may not open is left out of the walk
 without a word, and git cannot name the branch at its checkout either, so herdr lists that
-checkout with no branch and `is_detached: false`. The row draws nothing, and the plugin asks
+checkout with no branch and `is_detached: false` (measured against herdr 0.9.3). The row draws nothing, and the plugin asks
 git about it the same way; where git refuses to say, the prompt line names the checkout by
 the directory the row shows, with git's words:
 ``me/app: feat2-x: fatal: your current branch appears to be broken (`git log -1 --format=%H`)``.
 The branch is missing from the branches view's list too, since that list is the same walk;
 the view opens on the same sentence for a checkout of the repository it opens on, until
-the first key; where more than one is wrong it counts the rest, and the panes view's `!`
-lists them. A ref left out that no checkout has out is named nowhere, and neither is that
-checkout where herdr omits `is_detached`: it reads as detached.
+the first key; where more than one checkout of it is missing a ref it counts the rest, and
+the panes view's `!` lists them. Why the pane that opened the view has no row comes first
+where there is such a sentence, and the missing ref is then on the panes view alone. A ref
+left out that no checkout has out is named nowhere, and neither is that checkout where
+herdr omits `is_detached`: it reads as detached. Nor is one herdr never listed — a checkout
+added with `git worktree add` outside herdr, which the picker shows for a pane in it — or
+one with no branch that a ref of the repository still names: the plugin does not ask git
+about either, and `dump` shows what git names at the path.
 
 git's word for a branch with no commit yet is all there is to go on: it says the same of a
 branch whose ref was deleted while it was out, and of one out through a symbolic ref to a

@@ -146,9 +146,9 @@ pub enum Branch {
     /// herdr listed the checkout as not detached and named no branch — absent or empty.
     /// git's own `worktree list` says this of a checkout whose `HEAD` names a ref it cannot
     /// read, such as one under a directory in `refs/heads` it may not open (issue #32): a
-    /// branch is out and nothing on this side can say which. No ref of the repository is
-    /// about this row either, so it is asked about the way a branch no ref names is
-    /// ([`Trouble::ref_missing`]).
+    /// branch is out and nothing on this side can say which. It carries no position either;
+    /// where no ref of the repository names its path, it is asked about the way a branch no
+    /// ref names is ([`Trouble::ref_missing`]).
     Unnamed,
     /// Nobody said. `build` makes a row like this for a pane whose directory resolved to a
     /// checkout herdr's worktree list did not mention — a `git worktree add` outside herdr
@@ -240,8 +240,8 @@ pub enum Position {
     Contested,
     /// No ref of the repository names this checkout's path: git would not read the refs at
     /// all ([`Refs`] says so), or it read them and lists no ref there although herdr names a
-    /// branch. Nothing here says why; a branch with no commit yet is one way, having no ref
-    /// at all, and [`Trouble::ref_missing`] is what git said when asked whether it is.
+    /// branch. The position does not say why; a branch with no commit yet is one way, having
+    /// no ref at all, and [`Trouble::ref_missing`] is what git said when asked whether it is.
     NotSaid,
 }
 

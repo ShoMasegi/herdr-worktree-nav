@@ -1009,8 +1009,8 @@ fn a_checkout_a_ref_is_missing_from_carries_what_git_said_of_it() {
     // herdr lists the checkout under a directory in `refs/heads` git may not open as not
     // detached with no branch, and git's refusal is the only reason it gives. The page
     // prints it under the row's branch line, ahead of its panes, and the same for a named
-    // branch git refused about; a checkout git found a commit at has no words to print, so
-    // nothing follows its row.
+    // branch git refused about. A checkout git found a commit at has no words of git's to
+    // print, and the page says what git found instead.
     let mut locked = WorktreeNode {
         branch: Branch::Unnamed,
         ..unlisted("/wt/feat2-x")
@@ -1061,7 +1061,7 @@ fn a_checkout_a_ref_is_missing_from_carries_what_git_said_of_it() {
     assert!(
         page.ends_with(
             "      no ref at this checkout for moved  track not known  working tree \
-             not asked\n"
+             not asked\n      git found a commit here\n"
         ),
         "got:\n{page}"
     );

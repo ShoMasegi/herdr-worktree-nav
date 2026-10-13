@@ -49,9 +49,9 @@ and its checkouts keep the track the picker is drawing, with `upstream not read`
 checkout git lists no ref at says `no ref at this checkout for <branch>`: the branch has no
 commit yet, git and herdr disagree about what is checked out where, or git could not read
 the branch — and where git, asked whether the branch has no commit yet, refused to say,
-its words are on the line under the row. The prompt line names the last two as well. A
-checkout git
-names more than one ref at reads `more than one ref at this checkout:` and then each of
+its words are on the line under the row, and where it found a commit the line under the
+row says `git found a commit here`. The prompt line names the last two as well. A
+checkout git names more than one ref at reads `more than one ref at this checkout:` and then each of
 them as `<branch> → <upstream> <where it stands>`; more than one of the repository's
 worktree registrations names that path, and which of them is stale is not something this
 page can tell you. How many refs name the checkout is the picker's count, and this
@@ -71,8 +71,9 @@ branch on it says which kind of silence that is: `no branch reported` where herd
 listed the checkout as detached, or with no branch and no word on whether it is detached,
 `no branch reported, not detached` where herdr listed it
 as not detached and named no branch — git cannot name the branch, as with a ref under a
-directory in `.git/refs/heads` it may not open, and git's words for it are on the line
-under the row as above — and `herdr did not list this checkout` where herdr never mentioned it — the picker
+directory in `.git/refs/heads` it may not open, and where git, asked about it, refused or
+found a commit, the line under the row says so as above; a row like this that a ref of the repository
+names is not asked, and refs git would not read leave none asked — and `herdr did not list this checkout` where herdr never mentioned it — the picker
 shows that row for a pane whose directory it recognized, and a branch may well be out
 there. In each case `git names at this path:`
 follows with that same list where git names refs there, and where it names more than one
@@ -83,9 +84,11 @@ page's own read failed. Each checkout's working tree is walked in the open, one 
 another, so on many checkouts this takes a moment.
 
 git's words arrive in English here and on the prompt line whatever language your git speaks
-in a terminal: the plugin runs git under `LC_ALL=C`, because it decides three things by reading
-those sentences — whether a path is a repository, whether a ref was left out of a walk, and
-whether a branch has no commit yet — and a translated sentence is one it cannot read.
+in a terminal: the plugin runs git under `LC_ALL=C`, because it decides five things by
+reading those sentences — whether a path is a repository, whether a ref was left out of a
+walk, whether `status` could look at all of the working tree, whether a repository has no
+`origin`, and whether a branch has no commit yet — and a translated sentence is one it
+cannot read.
 
 If `dump` is right and the picker is wrong, the problem is drawing; if `dump` is already
 wrong, it is what herdr or git reported. Run it from inside a herdr pane — it needs
@@ -214,10 +217,11 @@ through this against a real session.
       the remote, the checkout detached. With no pane in it, its row draws no marker, is
       not ticked under `Shift-S`, and the prompt line says nothing of it. **CI cannot reach
       this path** — the guard reads `branch` and `is_detached` from herdr's `worktree.list`,
-      and that herdr reports such a checkout with `is_detached` set is the assumption this
-      item confirms; git alone cannot show it. A herdr that sent `is_detached: false` with
-      no branch would have the checkout named on the prompt line as one a ref is missing
-      from.
+      and that herdr reports such a checkout as detached is the assumption this item
+      confirms; git alone cannot show it. `dump` reads `no branch reported` for it. A herdr
+      that sent `is_detached: false` with no branch would make it read
+      `no branch reported, not detached` there instead; the prompt line stays silent either
+      way, since a ref of the repository still names the path.
 - [ ] Break a loose ref — `printf 'not-a-sha\n' > .git/refs/heads/<branch>` in a repository
       with checkouts open — and reopen the picker. The prompt line names the repository where
       the search hint was, with `refs unreadable:` and git's own words after it, and the rows

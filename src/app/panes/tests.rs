@@ -2157,6 +2157,12 @@ impl FakeHerdr for MissingRefs {
                 ..listed("", "/wt/feat2-x", true, None)
             });
             worktrees.push(listed("moved", "/wt/moved", true, None));
+            // Nameless too, but a ref still names the path: herdr and git disagree about it,
+            // and the fake refuses to be asked.
+            worktrees.push(Worktree {
+                branch: None,
+                ..listed("", "/wt/stale", true, None)
+            });
         }
         Ok(WorktreeList {
             source: WorktreeSource {
@@ -2178,7 +2184,10 @@ impl FakeGit for MissingRefs {
     }
 
     fn local_refs(&self, _repo_root: &str) -> Result<RefWalk> {
-        Ok(RefWalk::of(vec![level("main", "/src/app")]))
+        Ok(RefWalk::of(vec![
+            level("main", "/src/app"),
+            level("old", "/wt/stale/"),
+        ]))
     }
 
     fn has_no_commit_yet(&self, checkout_path: &str) -> Result<bool> {
