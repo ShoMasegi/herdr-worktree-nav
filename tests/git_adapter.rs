@@ -1365,6 +1365,105 @@ fn every_ref_git_dropped_is_named_and_not_just_the_first() {
 }
 
 #[test]
+fn a_ref_git_drops_without_a_word_is_still_missed() {
+    // The other half of what the test above holds. git skips a directory under
+    // `refs/heads` it may not open, exits 0, and says nothing, so `dropped` has nothing to
+    // carry. What is left to notice it by is herdr saying the branch is out at a path no ref
+    // of the repository names, which `domain::tree::build` records as `Position::NotSaid`
+    // under refs git read rather than as a branch with nothing to report. Issue #32.
+    use herdr_worktree_nav::domain::model::{Branch, Position, Refs};
+    use herdr_worktree_nav::domain::tree::{build, RepoInput};
+    use herdr_worktree_nav::port::{Snapshot, Worktree};
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = repository();
+    git(repo.path(), &["branch", "feat2/x"]);
+    let checkout = repo.path().join("feat2-x");
+    git(
+        repo.path(),
+        &["worktree", "add", checkout.to_str().unwrap(), "feat2/x"],
+    );
+    let root = path_str(repo.path());
+    let checkout = path_str(&checkout);
+
+    let locked = repo.path().join(".git/refs/heads/feat2");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _put_back = ReadableAgain(&locked);
+    // As in `a_directory_git_could_not_read_is_not_a_clean_working_tree`: a user the mode
+    // does not apply to reads the directory, and git then drops nothing.
+    assert!(
+        std::fs::read_dir(&locked).is_err(),
+        "this user can read a directory with mode 000, so git will not be refused and there \
+         is nothing here to measure. Run this as a user permissions apply to."
+    );
+
+    let walk = GitCli
+        .local_refs(&root)
+        .expect("git listed what it could and exited 0");
+    assert_eq!(
+        walk.dropped, None,
+        "and said nothing about what it left out"
+    );
+    let names: Vec<&str> = walk.refs.iter().map(|r| r.name.as_str()).collect();
+    assert!(
+        names.contains(&"main") && !names.contains(&"feat2/x"),
+        "the premise: git left `feat2/x` out: {names:?}"
+    );
+
+    // What herdr reports for the same repository: its `worktree.list`, which reads the
+    // worktree registrations rather than `refs/heads`.
+    let listed = |branch: &str, path: &str, linked: bool| Worktree {
+        branch: Some(branch.to_string()),
+        path: path.to_string(),
+        label: String::new(),
+        is_bare: false,
+        is_detached: false,
+        is_linked_worktree: linked,
+        is_prunable: false,
+        open_workspace_id: None,
+    };
+    let input = RepoInput {
+        repo_key: format!("{root}/.git"),
+        repo_root: root.clone(),
+        display_name: "app".into(),
+        worktrees: vec![
+            listed("main", &root, false),
+            listed("feat2/x", &checkout, true),
+        ],
+        refs: Ok(walk.refs),
+    };
+    let tree = build(&Snapshot::default(), &[input], &Default::default());
+    let repo_node = &tree.repos[0];
+    assert_eq!(
+        repo_node.refs,
+        Refs::Read,
+        "git answered, for the rest of them"
+    );
+    let position_at = |path: &str| {
+        repo_node
+            .worktrees
+            .iter()
+            .find(|worktree| worktree.checkout_path == path)
+            .map(|worktree| worktree.branch.clone())
+    };
+    assert_eq!(
+        position_at(&checkout),
+        Some(Branch::Out {
+            name: "feat2/x".into(),
+            position: Position::NotSaid,
+        }),
+        "no ref names the checkout, which is not what a branch with nothing to report reads"
+    );
+    assert_eq!(
+        position_at(&root),
+        Some(Branch::Out {
+            name: "main".into(),
+            position: Position::Said(None),
+        })
+    );
+}
+
+#[test]
 fn a_refusal_puts_gits_words_before_the_call() {
     // The other way round, the `--format=` string puts git's words past the right edge of
     // every prompt line the picker draws.
