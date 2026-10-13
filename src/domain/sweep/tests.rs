@@ -182,7 +182,13 @@ fn a_checkout_more_than_one_ref_names_is_never_swept() {
     // And whatever the row names: two refs at a path take two registrations whether the row
     // there names a branch, nothing out, a branch nobody could name, or herdr never listed
     // it. A row naming none has no position to carry it in, so the tree does.
-    for branch in [Branch::NothingOut, Branch::Unnamed, Branch::NotSaid] {
+    for branch in [
+        Branch::NothingOut,
+        Branch::Unnamed {
+            ref_names_path: false,
+        },
+        Branch::NotSaid,
+    ] {
         let mut wt = worktree("fix/crash", "/wt/fix-crash");
         wt.branch = branch.clone();
         let mut tree = tree_of(vec![wt]);
@@ -378,7 +384,12 @@ fn a_working_tree_git_would_not_read_is_never_offered() {
 fn a_detached_checkout_is_not_called_unjudged_when_gh_could_not_be_asked() {
     // Saying "PR unknown" would blame `gh` for a silence git is responsible for. The same
     // of a checkout whose branch nobody could name: `gh` is asked by branch.
-    for branch in [Branch::NothingOut, Branch::Unnamed] {
+    for branch in [
+        Branch::NothingOut,
+        Branch::Unnamed {
+            ref_names_path: false,
+        },
+    ] {
         let mut wt = worktree("feat/login", "/wt/detached");
         wt.branch = branch.clone();
         let trees = clean(&["/wt/detached"]);

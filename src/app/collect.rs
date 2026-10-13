@@ -13,7 +13,7 @@ use crate::domain::model::{
     is_inside, normalize_path, Branch, CheckoutPath, Position, RepoKey, Tree, Unlisted,
 };
 use crate::domain::tree::{self, PanePlacement, RepoInput};
-use crate::port::{GitPort, HerdrPort, RefKind, Snapshot};
+use crate::port::{GitPort, HerdrPort, Snapshot};
 
 /// Fetch everything and build the tree.
 pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapshot, Tree)> {
@@ -26,7 +26,7 @@ pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapsho
     let mut tree = tree::build(&snapshot, &repos, &placements);
     tree.trouble.unlisted = unlisted;
     tree.trouble.unplaced = unplaced;
-    tree.trouble.ref_missing = refs_missing(git, &tree, &named_paths(&repos));
+    tree.trouble.ref_missing = refs_missing(git, &tree);
     Ok((snapshot, tree))
 }
 
@@ -36,27 +36,24 @@ pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapsho
 /// not say the branch has no commit yet. Each with git's words where it refused to say.
 ///
 /// An `Unnamed` row a ref does name is not asked: herdr and git disagree about it, and
-/// `dump` lists what git names there under `git names at this path:`.
+/// `dump` says so under the row.
 ///
 /// A process per such checkout, on every reading and in front of the frame it builds: a
 /// reading where every branch out has a ref at its checkout starts none, and a fresh
 /// repository with its one unborn branch starts one. A refusal keeps the checkout and git's
 /// words with it — a ref under a directory in `refs/heads` git may not open is one, which
-/// the walk leaves out without a word and `log` calls `your current branch appears to be
-/// broken`.
+/// the walk leaves out without a word, or lists at the value `packed-refs` still holds with
+/// no checkout, and `log` calls `your current branch appears to be broken`.
 fn refs_missing(
     git: &dyn GitPort,
     tree: &Tree,
-    named: &HashSet<(String, String)>,
 ) -> BTreeMap<(RepoKey, CheckoutPath), Option<String>> {
     tree.repos
         .iter()
         .filter(|repo| repo.refs.is_read())
         .flat_map(|repo| repo.worktrees.iter().map(move |worktree| (repo, worktree)))
-        .filter(|(repo, worktree)| match worktree.branch {
-            Branch::Unnamed => {
-                !named.contains(&(repo.repo_key.clone(), worktree.checkout_path.clone()))
-            }
+        .filter(|(_, worktree)| match worktree.branch {
+            Branch::Unnamed { ref_names_path } => !ref_names_path,
             _ => worktree.branch.position() == Some(Position::NotSaid),
         })
         .filter_map(|(repo, worktree)| {
@@ -66,24 +63,6 @@ fn refs_missing(
                 Err(error) => Some(one_line(&format!("{error:#}"))),
             };
             Some(((RepoKey::of(repo), CheckoutPath::of(worktree)), words))
-        })
-        .collect()
-}
-
-/// Every checkout a local ref names, as `(repository key, path)`, normalized the way the
-/// tree's own keys are. Local only, as `domain::tree::tracks` is.
-fn named_paths(repos: &[RepoInput]) -> HashSet<(String, String)> {
-    repos
-        .iter()
-        .flat_map(|repo| {
-            let repo_key = normalize_path(&repo.repo_key);
-            repo.refs
-                .as_deref()
-                .unwrap_or_default()
-                .iter()
-                .filter(|git_ref| git_ref.kind == RefKind::Local)
-                .filter_map(|git_ref| git_ref.worktree_path.as_deref())
-                .map(move |path| (repo_key.to_string(), normalize_path(path).to_string()))
         })
         .collect()
 }
@@ -356,13 +335,12 @@ fn collect_repos(
 #[cfg(test)]
 mod tests {
     use crate::app::fakes::{fake_git, fake_herdr, FakeGit, FakeHerdr};
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
 
     use anyhow::Result;
 
     use super::{
-        collect_repos, collect_tree, is_inside, named_paths, read_refs, refs_missing,
-        resolve_placements,
+        collect_repos, collect_tree, is_inside, read_refs, refs_missing, resolve_placements,
     };
     use crate::domain::tree::{PanePlacement, RepoInput};
     use crate::port::{
@@ -550,8 +528,18 @@ mod tests {
                         at("/wt/unborn", Position::NotSaid),
                         at("/wt/committed", Position::NotSaid),
                         at("/wt/broken", Position::NotSaid),
-                        with("/wt/locked", Branch::Unnamed),
-                        with("/wt/named", Branch::Unnamed),
+                        with(
+                            "/wt/locked",
+                            Branch::Unnamed {
+                                ref_names_path: false,
+                            },
+                        ),
+                        with(
+                            "/wt/named",
+                            Branch::Unnamed {
+                                ref_names_path: true,
+                            },
+                        ),
                         at("/wt/level", Position::Said(None)),
                         at("/wt/contested", Position::Contested),
                         with("/wt/detached", Branch::NothingOut),
@@ -563,7 +551,12 @@ mod tests {
                     Refs::Unreadable("fatal: bad ref".into()),
                     vec![
                         at("/wt/site", Position::NotSaid),
-                        with("/wt/site-x", Branch::Unnamed),
+                        with(
+                            "/wt/site-x",
+                            Branch::Unnamed {
+                                ref_names_path: false,
+                            },
+                        ),
                     ],
                 ),
             ],
@@ -579,13 +572,7 @@ mod tests {
                     .to_string(),
             )
         };
-        // A ref of this repository's names one nameless checkout; one of another
-        // repository's names the other, which says nothing of this repository.
-        let named = HashSet::from([
-            ("/src/app/.git".to_string(), "/wt/named".to_string()),
-            ("/src/site/.git".to_string(), "/wt/locked".to_string()),
-        ]);
-        let missing = refs_missing(&git, &tree, &named);
+        let missing = refs_missing(&git, &tree);
         let app = RepoKey::of(&tree.repos[0]);
         assert_eq!(
             missing,
@@ -605,52 +592,6 @@ mod tests {
             ["/wt/unborn", "/wt/committed", "/wt/broken", "/wt/locked"],
             "a ref names the others, the nameless one included, herdr calls one detached and \
              never listed another, and under refs git would not read none could be named"
-        );
-    }
-
-    #[test]
-    fn a_path_is_named_by_a_local_ref_of_its_own_repository() {
-        use crate::port::{GitRef, RefKind};
-        let named = |name: &str, kind, path: Option<&str>| GitRef {
-            name: name.to_string(),
-            kind,
-            committed_at: None,
-            subject: None,
-            upstream: None,
-            track: None,
-            worktree_path: path.map(str::to_string),
-        };
-        let repo = |key: &str, refs| RepoInput {
-            repo_key: key.to_string(),
-            repo_root: key.trim_end_matches("/.git/").to_string(),
-            display_name: String::new(),
-            worktrees: Vec::new(),
-            refs,
-        };
-        let repos = [
-            repo(
-                "/src/app/.git/",
-                Ok(vec![
-                    named("feat/x", RefKind::Local, Some("/wt/feat-x/")),
-                    named("origin/feat/y", RefKind::Remote, Some("/wt/feat-y")),
-                    named("main", RefKind::Local, None),
-                ]),
-            ),
-            repo(
-                "/src/site/.git",
-                Ok(vec![named("site/x", RefKind::Local, Some("/wt/site-x"))]),
-            ),
-            repo("/src/docs/.git", Err("fatal: bad ref".to_string())),
-        ];
-
-        assert_eq!(
-            named_paths(&repos),
-            HashSet::from([
-                ("/src/app/.git".to_string(), "/wt/feat-x".to_string()),
-                ("/src/site/.git".to_string(), "/wt/site-x".to_string()),
-            ]),
-            "local refs with a checkout only, each under its own repository, keyed the way \
-             the tree spells its keys"
         );
     }
 

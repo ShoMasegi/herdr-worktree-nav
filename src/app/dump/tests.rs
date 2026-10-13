@@ -1012,7 +1012,9 @@ fn a_checkout_a_ref_is_missing_from_carries_what_git_said_of_it() {
     // branch git refused about. A checkout git found a commit at has no words of git's to
     // print, and the page says what git found instead.
     let mut locked = WorktreeNode {
-        branch: Branch::Unnamed,
+        branch: Branch::Unnamed {
+            ref_names_path: false,
+        },
         ..unlisted("/wt/feat2-x")
     };
     locked.panes = vec![PaneNode {
@@ -1030,7 +1032,29 @@ fn a_checkout_a_ref_is_missing_from_carries_what_git_said_of_it() {
         },
         ..unlisted(&format!("/wt/{name}"))
     };
-    let mut tree = one_repo(Refs::Read, vec![locked, no_ref("broken"), no_ref("moved")]);
+    // Nameless too, but the picker's read found a ref at its path, so git was not asked.
+    let named = WorktreeNode {
+        branch: Branch::Unnamed {
+            ref_names_path: true,
+        },
+        ..unlisted("/wt/shared")
+    };
+    let mut tree = one_repo(
+        Refs::Read,
+        vec![
+            locked,
+            no_ref("broken"),
+            no_ref("moved"),
+            named,
+            // Nameless and asked about, and git said its branch has no commit yet: nothing.
+            WorktreeNode {
+                branch: Branch::Unnamed {
+                    ref_names_path: false,
+                },
+                ..unlisted("/wt/unborn")
+            },
+        ],
+    );
     let words = "fatal: your current branch appears to be broken (`git log -1 --format=%H`)";
     let key = |worktree: usize| {
         (
@@ -1059,9 +1083,22 @@ fn a_checkout_a_ref_is_missing_from_carries_what_git_said_of_it() {
         "got:\n{page}"
     );
     assert!(
-        page.ends_with(
+        page.contains(
             "      no ref at this checkout for moved  track not known  working tree \
              not asked\n      git found a commit here\n"
+        ),
+        "got:\n{page}"
+    );
+    assert!(
+        page.contains(
+            "      no branch reported, not detached  working tree not asked\n      git not \
+             asked: the picker's read named a ref at this path\n"
+        ),
+        "got:\n{page}"
+    );
+    assert!(
+        page.ends_with(
+            "/wt/unborn\n      no branch reported, not detached  working tree not asked\n"
         ),
         "got:\n{page}"
     );

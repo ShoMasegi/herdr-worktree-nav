@@ -146,10 +146,16 @@ pub enum Branch {
     /// herdr listed the checkout as not detached and named no branch — absent or empty.
     /// git's own `worktree list` says this of a checkout whose `HEAD` names a ref it cannot
     /// read, such as one under a directory in `refs/heads` it may not open (issue #32): a
-    /// branch is out and nothing on this side can say which. It carries no position either;
-    /// where no ref of the repository names its path, it is asked about the way a branch no
-    /// ref names is ([`Trouble::ref_missing`]).
-    Unnamed,
+    /// branch is out and nothing on this side can say which. It carries no position either:
+    /// with no name, a ref at the path is not one this row can be checked against. Where no
+    /// ref of the repository names its path, it is asked about the way a branch no ref names
+    /// is ([`Trouble::ref_missing`]).
+    Unnamed {
+        /// Whether one or more of the repository's local refs name this checkout's path —
+        /// what `domain::tree::tracks` found there. Only an answer under refs git read: where
+        /// git would not read them, `false` is not knowing rather than none.
+        ref_names_path: bool,
+    },
     /// Nobody said. `build` makes a row like this for a pane whose directory resolved to a
     /// checkout herdr's worktree list did not mention — a `git worktree add` outside herdr
     /// is the case its own comment names — so a branch may well be out and nothing on this
@@ -163,7 +169,7 @@ impl Branch {
     pub fn name(&self) -> Option<&str> {
         match self {
             Branch::Out { name, .. } => Some(name),
-            Branch::NothingOut | Branch::Unnamed | Branch::NotSaid => None,
+            Branch::NothingOut | Branch::Unnamed { .. } | Branch::NotSaid => None,
         }
     }
 
@@ -171,7 +177,7 @@ impl Branch {
     pub fn position(&self) -> Option<Position> {
         match self {
             Branch::Out { position, .. } => Some(*position),
-            Branch::NothingOut | Branch::Unnamed | Branch::NotSaid => None,
+            Branch::NothingOut | Branch::Unnamed { .. } | Branch::NotSaid => None,
         }
     }
 
@@ -190,7 +196,7 @@ impl Branch {
     pub fn set_position(&mut self, to: Position) {
         match self {
             Branch::Out { position, .. } => *position = to,
-            Branch::NothingOut | Branch::Unnamed | Branch::NotSaid => {
+            Branch::NothingOut | Branch::Unnamed { .. } | Branch::NotSaid => {
                 panic!("{self:?} names no branch")
             }
         }

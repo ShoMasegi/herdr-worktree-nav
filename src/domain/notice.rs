@@ -49,8 +49,9 @@ pub enum Condition {
     /// git read this repository's refs and listed none at this checkout, and asked whether
     /// its branch has no commit yet, refused to say, in these words. They are the only reason
     /// git gives: a ref under a directory in `refs/heads` git may not open is left out of the
-    /// walk without a word, and its checkout is `your current branch appears to be broken`
-    /// here. One per checkout, carrying
+    /// walk without a word, or listed at the value `packed-refs` still holds and out nowhere,
+    /// and its checkout is `your current branch appears to be broken` here. One per checkout,
+    /// carrying
     /// [`Trouble::ref_missing`](crate::domain::model::Trouble::ref_missing)'s words.
     /// `checkout` is what the list calls the row: the branch herdr names there, or the
     /// checkout's directory where herdr names none
@@ -89,17 +90,21 @@ pub enum Condition {
 /// markers are about every row of the repository and are true sweep or no sweep; `gh` is
 /// asked only during a sweep, and only about the half git could not decide.
 ///
-/// Two states that draw no marker deliberately have no line here. One is a single ref whose
-/// `:track` field git printed and the adapter could not read, for the reason written where
-/// the state is, on [`Track::Unreadable`](crate::port::Track::Unreadable). The other is a
-/// branch no ref names the checkout of ([`Position::NotSaid`] under refs git read) that git
-/// says has no commit yet, which a fresh repository is in the ordinary course of things: the
-/// line under the list says it of the checkout under the cursor, a sweep that would have
-/// judged it says `no ref here`, and `dump` says what each read found. git says the same of
-/// a branch whose ref was deleted while it was out, and of one out through a symbolic ref to
-/// a branch that does not exist, so those are quiet too: git gives nothing to tell them from
-/// a fresh repository by. The same state without git's word for it is
-/// [`Condition::RefMissingRefused`] or [`Condition::RefMissing`].
+/// Three states that draw no marker deliberately have no line here. One is a single ref
+/// whose `:track` field git printed and the adapter could not read, for the reason written
+/// where the state is, on [`Track::Unreadable`](crate::port::Track::Unreadable). Another
+/// is a checkout no ref names under refs git read — a named branch at
+/// [`Position::NotSaid`], or a nameless row
+/// ([`Branch::Unnamed`](crate::domain::model::Branch::Unnamed)) — that git says has no
+/// commit yet, which a fresh repository is in the ordinary course of things: for a named
+/// branch the line under the list says it of the checkout under the cursor and a sweep that
+/// would have judged it says `no ref here`, and `dump` says what each read found. git says
+/// the same of a branch whose ref was deleted while it was out, and of one out through a
+/// symbolic ref to a branch that does not exist, so those are quiet too: git gives nothing
+/// to tell them from a fresh repository by. The same state without git's word for it is
+/// [`Condition::RefMissingRefused`] or [`Condition::RefMissing`]. The third is a nameless
+/// row a ref of the repository does name: either sentence would say no ref is listed
+/// there, so git is not asked, and `dump` says that under the row.
 ///
 /// `stale` and `sweep_trouble` are passed in rather than read off the tree. The first is
 /// about the reading that built it, which a tree cannot report about itself; the second is
@@ -313,9 +318,12 @@ mod tests {
         // refusal first, one per checkout; then the checkouts git wrote nothing about,
         // together, in the order the tree holds them — here not the order of their paths. A
         // checkout no ref names that is not recorded — git said its branch has no commit yet
-        // — says nothing here. A checkout herdr names no branch at is named by its directory.
+        // — says nothing here. A checkout is named by its branch where herdr names one —
+        // `feat2/y`, out at `/wt/feat2-y` — and by its directory where it names none.
         let unnamed = |name: &str| WorktreeNode {
-            branch: Branch::Unnamed,
+            branch: Branch::Unnamed {
+                ref_names_path: false,
+            },
             checkout_path: format!("/wt/{name}"),
             is_primary: false,
             open_workspace_id: None,
@@ -332,8 +340,15 @@ mod tests {
             panes: Vec::new(),
         };
         let mut app = repo("me/app", Refs::Read);
+        let feat2_y = WorktreeNode {
+            branch: Branch::Out {
+                name: "feat2/y".into(),
+                position: Position::NotSaid,
+            },
+            ..checkout("feat2-y", Position::NotSaid)
+        };
         app.worktrees = vec![
-            checkout("feat2-y", Position::NotSaid),
+            feat2_y,
             unnamed("locked"),
             checkout("unborn", Position::NotSaid),
             unnamed("nameless"),
@@ -387,7 +402,7 @@ mod tests {
                 },
                 Condition::RefMissing {
                     repo: "me/app".into(),
-                    checkouts: vec!["feat2-y".into(), "nameless".into(), "feat2-x".into()],
+                    checkouts: vec!["feat2/y".into(), "nameless".into(), "feat2-x".into()],
                 },
                 Condition::RefMissing {
                     repo: "me/site".into(),

@@ -294,7 +294,9 @@ mod tests {
         assert!(Removal::sweeping("/src/app", &checkout(Some("fix/crash"))).delete_branch());
         assert!(!Removal::sweeping("/src/app", &checkout(None)).delete_branch());
         let unnamed = WorktreeNode {
-            branch: Branch::Unnamed,
+            branch: Branch::Unnamed {
+                ref_names_path: false,
+            },
             ..checkout(None)
         };
         assert!(

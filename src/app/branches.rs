@@ -412,8 +412,9 @@ fn first_frame(
     // A pane git could not place has no row, and may have no root; the view opens on
     // whatever it was handed or fell back to, and the sentence says only why the pane is
     // not there. Behind both, a checkout of the repository on screen that a ref is missing
-    // from: the list below is git's walk, and a ref the walk left out without a word is
-    // missing from it with nothing else here to say so.
+    // from: the list below is git's walk, which shows a ref git could not read as missing,
+    // or as a branch out nowhere at the value `packed-refs` still holds, with nothing else
+    // here to say so.
     let ref_missing = ref_missing_words(state.repo(), ref_missing);
     if let Some(said) = said.or(unplaced).or(ref_missing) {
         state.set_message(said);
@@ -802,7 +803,9 @@ mod tests {
         repo.worktrees = checkouts
             .iter()
             .map(|path| WorktreeNode {
-                branch: Branch::Unnamed,
+                branch: Branch::Unnamed {
+                    ref_names_path: false,
+                },
                 checkout_path: path.to_string(),
                 is_primary: false,
                 open_workspace_id: None,
@@ -836,7 +839,8 @@ mod tests {
     #[test]
     fn the_first_frame_names_a_checkout_of_its_repository_a_ref_is_missing_from() {
         // The list is git's walk, and a ref under a directory git may not open is left out
-        // of it without a word: the branch is simply not there. The sentence the panes view
+        // of it without a word, or listed at the value `packed-refs` still holds and out
+        // nowhere: either way the list does not show it out here. The sentence the panes view
         // puts on its prompt line for that checkout is the only thing here that says so —
         // of the repository on screen, and not of another one.
         let mut tree = Tree::default();
@@ -870,12 +874,16 @@ mod tests {
     #[test]
     fn the_first_frame_counts_the_rest_of_its_repositorys_missing_refs() {
         // One line, the way the panes view's prompt line puts it: the rest counted, and
-        // listed by that view's `!`, since this one has no list of its own for them.
+        // listed by that view's `!`, since this one has no list of its own for them. What is
+        // counted is sentences: the checkouts git found a commit at share one.
         let mut tree = Tree::default();
-        tree.repos
-            .push(nameless_at("app", &["/wt/feat2-x", "/wt/moved"]));
+        tree.repos.push(nameless_at(
+            "app",
+            &["/wt/feat2-x", "/wt/moved", "/wt/other"],
+        ));
         ref_missing(&mut tree, 0, 0, Some(BROKEN));
         ref_missing(&mut tree, 0, 1, None);
+        ref_missing(&mut tree, 0, 2, None);
 
         let state = first_frame(tree, Snapshot::default(), &opened_on("/src/app"), None)
             .expect("the repository is listed");
@@ -886,16 +894,19 @@ mod tests {
     }
 
     #[test]
-    fn the_first_frame_names_a_checkout_git_found_a_commit_at() {
+    fn the_first_frame_names_the_checkouts_git_found_a_commit_at_together() {
         let mut tree = Tree::default();
-        tree.repos.push(nameless_at("app", &["/wt/moved"]));
+        tree.repos
+            .push(nameless_at("app", &["/wt/moved", "/wt/other"]));
         ref_missing(&mut tree, 0, 0, None);
+        ref_missing(&mut tree, 0, 1, None);
 
         let state = first_frame(tree, Snapshot::default(), &opened_on("/src/app"), None)
             .expect("the repository is listed");
         assert_eq!(
             state.message(),
-            Some("app: git listed no ref at the checkout of moved")
+            Some("app: git listed no ref at the checkout of moved, other"),
+            "one sentence, and nothing counted"
         );
     }
 

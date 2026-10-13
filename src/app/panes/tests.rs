@@ -2131,7 +2131,9 @@ fn a_refused_removal_stops_its_row_spinning_when_it_reports() {
 /// whether it has no commit yet: `/wt/fresh` has none, `/wt/moved` has a commit, and git
 /// refuses to say of `/wt/feat2-x`. That last one is listed the way herdr lists a checkout
 /// whose ref is under a directory in `refs/heads` git may not open — not detached, and no
-/// `branch` — and refused in the words git gives there. With `fresh_only`, herdr lists
+/// `branch` — and refused in the words git gives there. Beside them, two checkouts a ref
+/// does name, which git is not to be asked about: the repository's own, on `main`, and
+/// `/wt/stale`, listed with no branch like `/wt/feat2-x`. With `fresh_only`, herdr lists
 /// `/wt/fresh` and the repository's own checkout alone.
 struct MissingRefs {
     fresh_only: bool,

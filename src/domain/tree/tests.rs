@@ -893,7 +893,13 @@ fn a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it() {
 
     assert_eq!(
         (&listed.branch, &unnamed.branch, &unlisted.branch),
-        (&Branch::NothingOut, &Branch::Unnamed, &Branch::NotSaid),
+        (
+            &Branch::NothingOut,
+            &Branch::Unnamed {
+                ref_names_path: true
+            },
+            &Branch::NotSaid
+        ),
         "the three rows say who was silent"
     );
     assert_eq!(
@@ -1061,6 +1067,73 @@ fn a_checkout_herdr_flags_detached_draws_no_track_whatever_it_names() {
 }
 
 #[test]
+fn a_nameless_checkout_keeps_whether_a_local_ref_of_its_own_repository_names_its_path() {
+    // Whether git is asked about the row turns on it: the prompt line says no ref is listed
+    // at a checkout git was asked about. The same rule `tracks` keeps for a named branch —
+    // local refs, the repository's own, paths spelled either way — and one ref or two.
+    let nameless = |path: &str| -> Worktree {
+        serde_json::from_value(json!({
+            "path": path,
+            "label": "",
+            "is_bare": false,
+            "is_detached": false,
+            "is_linked_worktree": true,
+            "is_prunable": false,
+        }))
+        .expect("a worktree")
+    };
+    let mut app = repo(
+        "me/app",
+        "/src/app",
+        ["/wt/one", "/wt/two", "/wt/remote", "/wt/other", "/wt/none"]
+            .into_iter()
+            .map(nameless)
+            .collect(),
+    );
+    app.repo_key = "/src/app/.git/".into();
+    app.refs = Ok(vec![
+        local_ref("one", Some("/wt/one/"), None),
+        local_ref("two", Some("/wt/two"), None),
+        local_ref("too", Some("/wt/two"), None),
+        remote_ref("origin/remote", Some("/wt/remote"), None),
+    ]);
+    let mut site = repo("me/site", "/src/site", vec![]);
+    site.refs = Ok(vec![local_ref("other", Some("/wt/other"), None)]);
+    let mut docs = repo("me/docs", "/src/docs", vec![nameless("/wt/unread")]);
+    docs.refs = Err("fatal: bad ref".into());
+
+    let tree = build(&snapshot(json!([])), &[app, site, docs], &HashMap::new());
+    let named = |name: &str| -> Vec<(&str, bool)> {
+        let repo = tree.repos.iter().find(|repo| repo.display_name == name);
+        repo.expect("each repository has a node")
+            .worktrees
+            .iter()
+            .map(|worktree| match worktree.branch {
+                Branch::Unnamed { ref_names_path } => {
+                    (worktree.checkout_path.as_str(), ref_names_path)
+                }
+                ref other => panic!("every row here is nameless: {other:?}"),
+            })
+            .collect()
+    };
+    assert_eq!(
+        named("me/app"),
+        [
+            ("/wt/none", false),
+            ("/wt/one", true),
+            ("/wt/other", false),
+            ("/wt/remote", false),
+            ("/wt/two", true),
+        ]
+    );
+    assert_eq!(
+        named("me/docs"),
+        [("/wt/unread", false)],
+        "not knowing, under refs git would not read"
+    );
+}
+
+#[test]
 fn a_checkout_herdr_names_no_branch_at_is_unnamed_only_where_herdr_says_it_is_not_detached() {
     // git's own `worktree list` prints no `branch` line and no `detached` for a checkout whose
     // `HEAD` names a ref it cannot read, and herdr passes that on as `is_detached: false`
@@ -1086,10 +1159,17 @@ fn a_checkout_herdr_names_no_branch_at_is_unnamed_only_where_herdr_says_it_is_no
             .branch
             .clone()
     };
-    assert_eq!(row(json!({"is_detached": false})), Branch::Unnamed);
+    assert_eq!(
+        row(json!({"is_detached": false})),
+        Branch::Unnamed {
+            ref_names_path: false
+        }
+    );
     assert_eq!(
         row(json!({"is_detached": false, "branch": ""})),
-        Branch::Unnamed
+        Branch::Unnamed {
+            ref_names_path: false
+        }
     );
     assert_eq!(
         row(json!({"is_detached": true, "branch": "feat2/x"})),
