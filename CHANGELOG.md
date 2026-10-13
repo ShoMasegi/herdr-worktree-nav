@@ -82,8 +82,9 @@ All notable changes to this project are documented here. The format follows
   its branch, and in the words git gives when asked about it:
   ``me/app: feat2-x: fatal: your current branch appears to be broken (`git log -1 --format=%H`)``.
   The branches view opens on the same sentence for a checkout of the repository it opens
-  on; its list shows that branch missing, or out nowhere at the packed value, unmarked. A
-  branch herdr says is out where git lists no ref and finds a commit reads
+  on; its list shows that branch missing, or out nowhere at the packed value with nothing
+  on the row to say it is stale. A branch herdr says is out where git lists no ref and finds
+  a commit reads
   `me/app: git listed no ref at the checkout of moved`, and `dump` says
   `git found a commit here` under its row. A branch with no commit yet has no ref either,
   and stays quiet where git says that is why; so do a branch whose ref was deleted while it
