@@ -279,20 +279,28 @@ fn no_ref_here_is_named_on_a_clean_checkout_unless_gh_names_a_finished_pull_requ
     );
     // But not where the working tree is not clean: the pull request offers nothing there,
     // and git's silence is not named either.
-    for working_tree in [WorkingTree::Dirty, WorkingTree::Unreadable] {
-        let trees = BTreeMap::from([(CheckoutPath::for_test("/wt/fix-crash"), working_tree)]);
-        let found = judged(&tree, &facts(&trees, &asked(vec![merged(7, "fix/crash")])));
-        assert_eq!(
-            found[&at("/wt/fix-crash")],
-            Candidate::Available,
-            "{working_tree:?}"
-        );
+    let finished = [
+        ("the whole list", asked(vec![merged(7, "fix/crash")])),
+        ("a window", told(vec![merged(7, "fix/crash")], false)),
+    ];
+    for (what, settled) in &finished {
+        for working_tree in [
+            Some(WorkingTree::Dirty),
+            Some(WorkingTree::Unreadable),
+            None,
+        ] {
+            let trees: BTreeMap<_, _> = working_tree
+                .map(|answer| (CheckoutPath::for_test("/wt/fix-crash"), answer))
+                .into_iter()
+                .collect();
+            let found = judged(&tree, &facts(&trees, settled));
+            assert_eq!(
+                found[&at("/wt/fix-crash")],
+                Candidate::Available,
+                "{what}, {working_tree:?}"
+            );
+        }
     }
-    let found = judged(
-        &tree,
-        &facts(&BTreeMap::new(), &asked(vec![merged(7, "fix/crash")])),
-    );
-    assert_eq!(found[&at("/wt/fix-crash")], Candidate::Available);
 }
 
 #[test]
@@ -884,10 +892,17 @@ fn a_pull_request_offers_only_the_branch_it_was_actually_for() {
 
 #[test]
 fn a_merged_pull_request_does_not_offer_a_checkout_holding_work() {
-    // The twin of the `gone` rule: a working tree with something in it is never offered,
+    // The twin of the `gone` rule: a working tree not known to be clean is never offered,
     // whatever GitHub says about the branch.
-    for answer in [WorkingTree::Dirty, WorkingTree::Unreadable] {
-        let trees = BTreeMap::from([(CheckoutPath::for_test("/wt/feat-login"), answer)]);
+    for answer in [
+        Some(WorkingTree::Dirty),
+        Some(WorkingTree::Unreadable),
+        None,
+    ] {
+        let trees: BTreeMap<_, _> = answer
+            .map(|answer| (CheckoutPath::for_test("/wt/feat-login"), answer))
+            .into_iter()
+            .collect();
         let judged = judged(
             &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
             &facts(&trees, &asked(vec![merged(4, "feat/login")])),
