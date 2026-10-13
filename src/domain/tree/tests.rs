@@ -208,7 +208,10 @@ fn the_branch_is_matched_by_the_checkout_git_says_has_it() {
         "/src/app",
         vec![
             worktree("main", "/src/app", false),
-            worktree("", "/wt/detached", true),
+            Worktree {
+                is_detached: true,
+                ..worktree("", "/wt/detached", true)
+            },
         ],
     );
     input.refs = Ok(vec![
@@ -843,28 +846,32 @@ fn two_refs_that_agree_about_where_they_stand_are_contested_all_the_same() {
 
 #[test]
 fn a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it() {
-    // The two rows `build` makes, over one repository's identical git facts: a stale
+    // The three rows `build` makes, over one repository's identical git facts: a stale
     // registration goes on naming `/wt/shared` for `chore/deps`, whose upstream was
-    // deleted, and nothing is checked out there. Neither row names a branch, so neither
+    // deleted, and nothing herdr names is checked out there. No row names a branch, so none
     // may carry a marker about one: `gone` beside a directory name is about a branch the
     // row never names (issue #49). One rule over both arms, pinned here because the arms
     // are far apart and each can be read as reasonable on its own.
     let shared = "/wt/shared";
     let stale = || local_ref("chore/deps", Some(shared), Some(Track::Gone));
 
-    let mut listed = repo("me/app", "/src/app", vec![]);
-    listed.worktrees = vec![serde_json::from_value(json!({
-        "branch": "",
-        "path": shared,
-        "label": "shared",
-        "is_bare": false,
-        "is_detached": true,
-        "is_linked_worktree": true,
-        "is_prunable": false,
-    }))
-    .expect("worktree fixture should deserialize")];
-    listed.refs = Ok(vec![stale()]);
-    let listed = &build(&snapshot(json!([])), &[listed], &HashMap::new()).repos[0].worktrees[0];
+    let listed_as = |detached: bool| {
+        let mut listed = repo("me/app", "/src/app", vec![]);
+        listed.worktrees = vec![serde_json::from_value(json!({
+            "branch": "",
+            "path": shared,
+            "label": "shared",
+            "is_bare": false,
+            "is_detached": detached,
+            "is_linked_worktree": true,
+            "is_prunable": false,
+        }))
+        .expect("worktree fixture should deserialize")];
+        listed.refs = Ok(vec![stale()]);
+        build(&snapshot(json!([])), &[listed], &HashMap::new()).repos[0].worktrees[0].clone()
+    };
+    let listed = &listed_as(true);
+    let unnamed = &listed_as(false);
 
     let mut unlisted = repo(
         "me/app",
@@ -884,19 +891,27 @@ fn a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it() {
         .expect("the row build made for the pane");
 
     assert_eq!(
-        (&listed.branch, &unlisted.branch),
-        (&Branch::NothingOut, &Branch::NotSaid),
-        "the two rows say who was silent"
+        (&listed.branch, &unnamed.branch, &unlisted.branch),
+        (&Branch::NothingOut, &Branch::Unnamed, &Branch::NotSaid),
+        "the three rows say who was silent"
     );
     assert_eq!(
-        (listed.branch.name(), unlisted.branch.name()),
-        (None, None),
-        "and neither names a branch"
+        (
+            listed.branch.name(),
+            unnamed.branch.name(),
+            unlisted.branch.name()
+        ),
+        (None, None, None),
+        "and none names a branch"
     );
     assert_eq!(
-        (listed.branch.position(), unlisted.branch.position()),
-        (None, None),
-        "so neither carries the stale registration's `gone`"
+        (
+            listed.branch.position(),
+            unnamed.branch.position(),
+            unlisted.branch.position()
+        ),
+        (None, None, None),
+        "so none carries the stale registration's `gone`"
     );
 }
 
@@ -1042,4 +1057,50 @@ fn a_checkout_herdr_flags_detached_draws_no_track_whatever_it_names() {
         "detached wins over whatever herdr named"
     );
     assert_eq!(row.branch.position(), None);
+}
+
+#[test]
+fn a_checkout_herdr_names_no_branch_at_is_unnamed_unless_herdr_calls_it_detached() {
+    // git's own `worktree list` prints no `branch` line and no `detached` for a checkout whose
+    // `HEAD` names a ref it cannot read, and herdr passes that on as `is_detached: false`
+    // with no `branch`: measured against herdr 0.9.3, with `chmod 000 .git/refs/heads/feat2`
+    // under `feat2/x`.
+    // That row has a branch out and nobody can say which, which is not what a detached
+    // checkout is (issue #32).
+    let row = |fields: serde_json::Value| {
+        let mut fixture = json!({
+            "path": "/wt/x",
+            "label": "x",
+            "is_bare": false,
+            "is_linked_worktree": true,
+            "is_prunable": false,
+        });
+        fixture
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        let mut repo = repo("me/app", "/src/app", vec![]);
+        repo.worktrees = vec![serde_json::from_value(fixture).expect("a worktree")];
+        build(&snapshot(json!([])), &[repo], &HashMap::new()).repos[0].worktrees[0]
+            .branch
+            .clone()
+    };
+    assert_eq!(row(json!({"is_detached": false})), Branch::Unnamed);
+    assert_eq!(
+        row(json!({"is_detached": false, "branch": ""})),
+        Branch::Unnamed
+    );
+    assert_eq!(
+        row(json!({"is_detached": true, "branch": "feat2/x"})),
+        Branch::NothingOut,
+        "detached wins over a name, as it did before"
+    );
+    assert_eq!(row(json!({"is_detached": true})), Branch::NothingOut);
+    assert_eq!(
+        row(json!({"is_detached": false, "branch": "feat2/x"})),
+        Branch::Out {
+            name: "feat2/x".into(),
+            position: Position::NotSaid,
+        }
+    );
 }

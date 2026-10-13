@@ -31,8 +31,8 @@ the call can fail goes up as a refusal instead of as "this repository has no rem
 Whether a branch no ref names has no commit yet: `log -1` in its checkout says `fatal: your
 current branch 'main' does not have any commits yet` and exits 128, where a branch whose ref
 git could not read gets `fatal: your current branch appears to be broken` — `NO_COMMITS_YET`
-matches the exit and the first sentence's words together, and anything else keeps the branch
-named on the prompt line, with git's words where it refused.
+matches the exit and the words `does not have any commits yet` together, and anything else
+keeps the checkout named on the prompt line, with git's words where it refused.
 
 git ships translations of these messages — bar `cannot change to`, and the C library's words
 after the last colon — and picks one from the environment. That environment is whatever
@@ -77,12 +77,17 @@ answer in another language and checks that it does not. It needs a locale the ho
 a translation for, and where there is none it fails rather than skipping, because libtest
 keeps a passing test's output to itself and a skip would read as a pass.
 
-**A ref git drops in silence is noticed from the other side.** An unreadable directory under
-`refs/heads`, a dangling symref: the walk exits 0 with nothing said, in any language, and
-nothing in this decision changes that. What issue #32 added is a question asked of the
-checkout instead: a branch herdr says is out where no ref is listed gets a `log -1`, whose
-refusal — `your current branch appears to be broken`, for the unreadable directory — is put on
-the prompt line in git's words. A ref dropped that no checkout has out is still silent.
+**A ref git drops in silence is noticed from the other side, where git will say so.** An
+unreadable directory under `refs/heads`, a dangling symref: the walk exits 0 with nothing
+said, in any language, and nothing in this decision changes that. What issue #32 added is a
+question asked of the checkout instead: a checkout no ref is listed at — herdr naming a
+branch there, or naming none at a checkout it does not call detached, which is how it lists
+one whose ref is under the unreadable directory — gets a `log -1`, and a refusal is put on
+the prompt line in git's words: `your current branch appears to be broken`, for that
+directory. A dangling symref a checkout has out is not caught: `log -1` there says the branch
+it points to `does not have any commits yet`, which is a fresh repository's answer too, and
+so is a branch whose ref was deleted while it was out. A ref dropped that no checkout has out
+is still silent.
 
 ## Measured
 

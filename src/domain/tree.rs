@@ -123,8 +123,9 @@ pub fn build(
                 .filter(|worktree| !worktree.is_bare)
                 .map(|worktree| {
                     let checkout_path = normalize_path(&worktree.path);
-                    // herdr listed this checkout, so `NothingOut` is herdr's own answer
-                    // and not an absence: `branch` absent or empty, or `is_detached`.
+                    // herdr listed this checkout, so `NothingOut` and `Unnamed` are herdr's
+                    // own answers and not an absence: `is_detached`, or not detached with
+                    // `branch` absent or empty.
                     //
                     // Nothing out, and no ref of this repository's is about this row. git
                     // can still name the path from a registration that lost its directory,
@@ -133,19 +134,18 @@ pub fn build(
                     // in `tests/git_adapter.rs`. The row `build` makes below for a pane
                     // herdr never listed carries no position either, for a reason of its
                     // own: git may name a branch there, but the row cannot.
-                    let branch = worktree
-                        .branch
-                        .clone()
-                        .filter(|b| !b.is_empty())
-                        .filter(|_| !worktree.is_detached)
-                        .map_or(Branch::NothingOut, |name| Branch::Out {
+                    let branch = match worktree.branch.clone().filter(|b| !b.is_empty()) {
+                        _ if worktree.is_detached => Branch::NothingOut,
+                        None => Branch::Unnamed,
+                        Some(name) => Branch::Out {
                             name,
                             position: Named::position(
                                 tracks
                                     .get(&(normalize_path(&repo.repo_key), checkout_path))
                                     .copied(),
                             ),
-                        });
+                        },
+                    };
                     WorktreeNode {
                         branch,
                         checkout_path: checkout_path.to_string(),

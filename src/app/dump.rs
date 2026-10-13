@@ -17,7 +17,9 @@ use std::fmt::Write;
 use crate::adapter::plugin_config::Loaded;
 use crate::app::one_line;
 use crate::domain::chrome::Chrome;
-use crate::domain::model::{normalize_path, Branch, Position, Refs, RepoNode, Tree, WorktreeNode};
+use crate::domain::model::{
+    normalize_path, Branch, CheckoutPath, Position, Refs, RepoKey, RepoNode, Tree, WorktreeNode,
+};
 use crate::port::{GitPort, GitRef, RefKind, Snapshot, Track};
 
 /// What the second ref walk — the one `main` makes for this page, for the upstream names —
@@ -149,6 +151,15 @@ pub fn report(
                 branch_words(repo, worktree, refs),
                 working_tree_words(working_trees.get(&worktree.checkout_path))
             );
+            // What git said when asked whether the branch has no commit yet, where it refused:
+            // the only reason git gives for a ref missing from this checkout.
+            if let Some(Some(words)) = tree
+                .trouble
+                .ref_missing
+                .get(&(RepoKey::of(repo), CheckoutPath::of(worktree)))
+            {
+                let _ = writeln!(out, "      {words}");
+            }
             for pane in &worktree.panes {
                 let _ = writeln!(
                     out,
@@ -366,6 +377,7 @@ fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {
         // Only a row naming no branch reaches here, `branch_words` having returned above
         // for the rest.
         Branch::NothingOut | Branch::Out { .. } => "no branch reported".to_string(),
+        Branch::Unnamed => "no branch reported, not detached".to_string(),
         Branch::NotSaid => "herdr did not list this checkout".to_string(),
     };
     match read {

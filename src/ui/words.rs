@@ -147,12 +147,12 @@ pub fn condition(condition: &Condition) -> String {
         Condition::RefsUnreadable { repo, words } => format!("{repo}: refs unreadable: {words}"),
         Condition::RefMissingRefused {
             repo,
-            branch,
+            checkout,
             words,
-        } => format!("{repo}: {branch}: {words}"),
-        Condition::RefMissing { repo, branches } => format!(
+        } => format!("{repo}: {checkout}: {words}"),
+        Condition::RefMissing { repo, checkouts } => format!(
             "{repo}: git listed no ref at the checkout of {}",
-            branches.join(", ")
+            checkouts.join(", ")
         ),
         Condition::RefsDisagree { repo, checkout } => format!("{repo}: refs disagree: {checkout}"),
         Condition::SweepTrouble(words) => words.clone(),
@@ -673,7 +673,7 @@ mod tests {
         assert_eq!(
             condition(&Condition::RefMissingRefused {
                 repo: "me/app".into(),
-                branch: "feat2/x".into(),
+                checkout: "feat2/x".into(),
                 words: "fatal: your current branch appears to be broken".into(),
             }),
             "me/app: feat2/x: fatal: your current branch appears to be broken",
@@ -682,9 +682,9 @@ mod tests {
         assert_eq!(
             condition(&Condition::RefMissing {
                 repo: "me/app".into(),
-                branches: vec!["feat2/x".into(), "feat2/y".into()],
+                checkouts: vec!["moved".into(), "/wt/unnamed".into()],
             }),
-            "me/app: git listed no ref at the checkout of feat2/x, feat2/y",
+            "me/app: git listed no ref at the checkout of moved, /wt/unnamed",
             "the walk listed no ref there and `log` found a commit, so git wrote nothing \
              about it: the words are this side's and name every branch"
         );

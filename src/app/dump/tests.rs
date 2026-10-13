@@ -1003,3 +1003,52 @@ fn a_row_with_no_branch_and_no_ref_reads_no_branch_reported_alone() {
         page(&tree, &refs)
     );
 }
+
+#[test]
+fn a_checkout_a_ref_is_missing_from_carries_what_git_said_of_it() {
+    // herdr lists the checkout under a directory in `refs/heads` git may not open as not
+    // detached with no branch, and git's refusal is the only reason it gives. The page
+    // prints it under the row; a checkout git found a commit at has no words to print, so
+    // nothing follows its row.
+    let mut tree = one_repo(
+        Refs::Read,
+        vec![
+            WorktreeNode {
+                branch: Branch::Unnamed,
+                ..unlisted("/wt/feat2-x")
+            },
+            WorktreeNode {
+                branch: Branch::Out {
+                    name: "moved".into(),
+                    position: Position::NotSaid,
+                },
+                ..unlisted("/wt/moved")
+            },
+        ],
+    );
+    let words = "fatal: your current branch appears to be broken (`git log -1 --format=%H`)";
+    let key = |worktree: usize| {
+        (
+            RepoKey::of(&tree.repos[0]),
+            CheckoutPath::of(&tree.repos[0].worktrees[worktree]),
+        )
+    };
+    let (locked, moved) = (key(0), key(1));
+    tree.trouble.ref_missing.insert(locked, Some(words.into()));
+    tree.trouble.ref_missing.insert(moved, None);
+    let refs = RefsByRepo::from([("/src/app".to_string(), Ok(Vec::new()))]);
+    let page = page(&tree, &refs);
+    assert!(
+        page.contains(&format!(
+            "      no branch reported, not detached  working tree not asked\n      {words}\n"
+        )),
+        "got:\n{page}"
+    );
+    assert!(
+        page.ends_with(
+            "      no ref at this checkout for moved  track not known  working tree \
+             not asked\n"
+        ),
+        "got:\n{page}"
+    );
+}

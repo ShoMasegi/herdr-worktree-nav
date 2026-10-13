@@ -1365,12 +1365,13 @@ fn every_ref_git_dropped_is_named_and_not_just_the_first() {
 }
 
 #[test]
-fn a_ref_git_drops_without_a_word_reads_as_no_ref_at_its_checkout() {
+fn a_ref_git_drops_without_a_word_leaves_its_checkout_with_no_branch_named() {
     // The other half of what the test above holds. git skips a directory under
     // `refs/heads` it may not open, exits 0, and says nothing, so `dropped` has nothing to
-    // carry. What is left to notice it by is herdr saying the branch is out at a path no ref
-    // of the repository names, which `domain::tree::build` records as `Position::NotSaid`
-    // under refs git read rather than as a branch with nothing to report. Issue #32.
+    // carry. `git worktree list` cannot name the branch either, and herdr, which reads it,
+    // lists the checkout as not detached with no branch — measured against herdr 0.9.3.
+    // `domain::tree::build` records that as `Branch::Unnamed` rather than as a detached
+    // checkout, and `log` in it is what says something is wrong. Issue #32.
     use herdr_worktree_nav::domain::model::{Branch, Position, Refs};
     use herdr_worktree_nav::domain::tree::{build, RepoInput};
     use herdr_worktree_nav::port::{Snapshot, Worktree};
@@ -1410,10 +1411,30 @@ fn a_ref_git_drops_without_a_word_reads_as_no_ref_at_its_checkout() {
         "the premise: git left `feat2/x` out: {names:?}"
     );
 
-    // What herdr reports for the same repository: its `worktree.list`, which reads the
-    // worktree registrations rather than `refs/heads`.
-    let listed = |branch: &str, path: &str, linked: bool| Worktree {
-        branch: Some(branch.to_string()),
+    // What herdr reads for the same repository: `git worktree list`, whose stanza for the
+    // checkout has neither a `branch` line nor `detached`.
+    let porcelain = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .expect("git should run");
+    let porcelain = String::from_utf8_lossy(&porcelain.stdout).to_string();
+    let stanza = porcelain
+        .split("\n\n")
+        .find(|stanza| {
+            stanza
+                .lines()
+                .next()
+                .is_some_and(|l| l.ends_with("/feat2-x"))
+        })
+        .unwrap_or_else(|| panic!("git lists the checkout: {porcelain}"));
+    assert!(
+        !stanza.contains("\nbranch ") && !stanza.contains("\ndetached"),
+        "the premise: git names no branch there and does not call it detached: {stanza}"
+    );
+    let listed = |branch: Option<&str>, path: &str, linked: bool| Worktree {
+        branch: branch.map(str::to_string),
         path: path.to_string(),
         label: String::new(),
         is_bare: false,
@@ -1427,8 +1448,8 @@ fn a_ref_git_drops_without_a_word_reads_as_no_ref_at_its_checkout() {
         repo_root: root.clone(),
         display_name: "app".into(),
         worktrees: vec![
-            listed("main", &root, false),
-            listed("feat2/x", &checkout, true),
+            listed(Some("main"), &root, false),
+            listed(None, &checkout, true),
         ],
         refs: Ok(walk.refs),
     };
@@ -1448,11 +1469,8 @@ fn a_ref_git_drops_without_a_word_reads_as_no_ref_at_its_checkout() {
     };
     assert_eq!(
         position_at(&checkout),
-        Some(Branch::Out {
-            name: "feat2/x".into(),
-            position: Position::NotSaid,
-        }),
-        "no ref names the checkout, which is not what a branch with nothing to report reads"
+        Some(Branch::Unnamed),
+        "a branch is out and nobody can say which, which is not what a detached checkout reads"
     );
     assert_eq!(
         position_at(&root),
@@ -1463,7 +1481,7 @@ fn a_ref_git_drops_without_a_word_reads_as_no_ref_at_its_checkout() {
     );
 
     // And git will not vouch for it as a branch with no commit yet, and says why in words of
-    // its own — the words the prompt line carries for it.
+    // its own, which `app::collect` keeps for the prompt line.
     let words = format!(
         "{:#}",
         GitCli
@@ -1478,9 +1496,8 @@ fn a_ref_git_drops_without_a_word_reads_as_no_ref_at_its_checkout() {
 
 #[test]
 fn a_branch_with_no_commit_yet_is_told_apart_from_one_with_a_commit() {
-    // The ordinary way to have a branch out that no ref names: a fresh `git init`, which
-    // `git worktree list` names `main` in and `for-each-ref` lists nothing for. Quiet, where
-    // the dropped ref above is not.
+    // The ordinary way to have a branch out that no ref names: a fresh `git init`, whose
+    // `main` `for-each-ref` lists nothing for. Quiet, where the dropped ref above is not.
     let fresh = tempfile::tempdir().unwrap();
     git(
         fresh.path(),

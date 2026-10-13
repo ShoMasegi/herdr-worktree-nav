@@ -419,12 +419,20 @@ A checkout whose branch no ref names at its path draws nothing. With the cursor 
 breadcrumb under the list says `no ref names this checkout` — under refs git read, and only
 on a checkout the cursor stops on, which outside a sweep is one with no panes. A branch with
 no commit yet is the ordinary way to get there, and the plugin asks git whether that is why;
-where git says so, that is all. Where git refuses to say, the prompt line names the branch
-with git's words: a ref under a directory in `.git/refs/heads` git may not open is left out
-of the walk without a word, and reads
-``me/app: feat2/x: fatal: your current branch appears to be broken (`git log -1 --format=%H`)``.
-Where git finds a commit there — herdr and git disagree about what is checked out where —
-the line names the branches: `me/app: git listed no ref at the checkout of feat2/x`.
+where git says so, that is all. Where git finds a commit there — herdr and git disagree about
+what is checked out where — the prompt line names the branches:
+`me/app: git listed no ref at the checkout of moved`.
+
+A ref under a directory in `.git/refs/heads` git may not open is left out of the walk
+without a word, and git cannot name the branch at its checkout either, so herdr lists that
+checkout with no branch, though not as detached. The row draws nothing, and the plugin asks
+git about it the same way; where git refuses to say, the prompt line names the checkout by
+its path, with git's words:
+``me/app: /path/to/checkout: fatal: your current branch appears to be broken (`git log -1 --format=%H`)``.
+
+git's word for a branch with no commit yet is all there is to go on: it says the same of a
+branch whose ref was deleted while it was out, and of one out through a symbolic ref to a
+branch that does not exist, and those stay quiet too.
 
 On a line too narrow to hold it, it gives up its words rather than its place: the spinners
 lose their labels first, and then the sentence becomes a count of how many things are wrong,

@@ -204,8 +204,8 @@ fn refusal(args: &[&str], stderr: &str) -> String {
 /// string.
 ///
 /// A ref git drops in silence — an unreadable directory under `refs/heads`, a dangling
-/// symref — is not here and cannot be: the walk exits 0 with nothing said. That is issue
-/// #32, and it is what is left of #21 once this branch has closed the rest of it.
+/// symref — is not here and cannot be: the walk exits 0 with nothing said. Issue #32 asks
+/// the checkout instead, where one has the ref out: [`GitPort::has_no_commit_yet`].
 fn dropped_refs(stderr: &str) -> Option<String> {
     let dropped: Vec<&str> = stderr
         .lines()

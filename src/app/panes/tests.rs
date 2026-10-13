@@ -243,7 +243,7 @@ fn listed(branch: &str, path: &str, linked: bool, open_in: Option<&str>) -> Work
 }
 
 /// A branch with nothing to report. Every checkout herdr lists on a branch needs a ref at its
-/// path, or it is one a ref is missing from and the prompt line names it.
+/// path: one without is asked `has_no_commit_yet`, which these fakes do not answer.
 fn level(branch: &str, path: &str) -> GitRef {
     GitRef {
         upstream: None,
@@ -2127,10 +2127,12 @@ fn a_refused_removal_stops_its_row_spinning_when_it_reports() {
     );
 }
 
-/// A herdr listing branches out at checkouts no ref names, and a git that answers for each
-/// when asked whether it has no commit yet: `/wt/fresh` has none, `/wt/feat2-x` is under a
-/// directory git may not open, and `/wt/moved` has a commit. With `fresh_only`, herdr lists
-/// the first alone.
+/// A herdr listing checkouts no ref names, and a git that answers for each when asked
+/// whether it has no commit yet: `/wt/fresh` has none, `/wt/moved` has a commit, and git
+/// refuses to say of `/wt/feat2-x`. That last one is listed the way herdr lists a checkout
+/// whose ref is under a directory in `refs/heads` git may not open — not detached, and no
+/// `branch` — and refused in the words git gives there. With `fresh_only`, herdr lists
+/// `/wt/fresh` and the repository's own checkout alone.
 struct MissingRefs {
     fresh_only: bool,
 }
@@ -2150,7 +2152,10 @@ impl FakeHerdr for MissingRefs {
             listed("fresh", "/wt/fresh", true, None),
         ];
         if !self.fresh_only {
-            worktrees.push(listed("feat2/x", "/wt/feat2-x", true, None));
+            worktrees.push(Worktree {
+                branch: None,
+                ..listed("", "/wt/feat2-x", true, None)
+            });
             worktrees.push(listed("moved", "/wt/moved", true, None));
         }
         Ok(WorktreeList {
@@ -2202,14 +2207,14 @@ fn a_reading_hands_the_conditions_every_checkout_a_ref_is_missing_from() {
         [
             Condition::RefMissingRefused {
                 repo: "me/app".into(),
-                branch: "feat2/x".into(),
+                checkout: "/wt/feat2-x".into(),
                 words: "fatal: your current branch appears to be broken \
                         (`git log -1 --format=%H`)"
                     .into(),
             },
             Condition::RefMissing {
                 repo: "me/app".into(),
-                branches: vec!["moved".into()],
+                checkouts: vec!["moved".into()],
             },
         ]
     );

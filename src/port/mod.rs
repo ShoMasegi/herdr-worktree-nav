@@ -392,17 +392,19 @@ pub trait GitPort: Send + Sync {
 
     /// Whether git says the branch out at `checkout_path` has no commit yet.
     ///
-    /// Asked of a checkout herdr says has a branch out and no ref of the repository names.
-    /// A branch with no commit yet is the one ordinary way to get there: it has no ref at
-    /// all, which every fresh `git init` is until its first commit. Every other way is
-    /// something wrong, and one of them says nothing anywhere else — a ref git left out of a
-    /// walk without a word, under a directory in `refs/heads` it may not open, which is the
-    /// silence issue #32 is about.
+    /// Asked of a checkout no ref of the repository names, where herdr says a branch is out
+    /// or names none at a checkout it does not call detached. A branch with no commit yet is
+    /// the one ordinary way to get there: it has no ref at all, which every fresh `git init`
+    /// is until its first commit. The other ways are something wrong: herdr and git
+    /// disagreeing about what is out where, or a ref git left out of a walk without a word —
+    /// one under a directory in `refs/heads` it may not open, which herdr then lists with no
+    /// branch, and which is the silence issue #32 is about.
     ///
     /// `true` only where git says so in so many words. `false` and `Err` both leave the
     /// checkout named on the prompt line, `Err` with git's words, which is the direction to
-    /// fail in: a ref that is missing is said, and a branch with no commit is quiet only
-    /// when git vouches for it.
+    /// fail in. git's words are all there is to go on, though: it says the same of a branch
+    /// whose ref was deleted while it was out, and of one out through a symbolic ref to a
+    /// branch that does not exist, so those are quiet too.
     fn has_no_commit_yet(&self, checkout_path: &str) -> Result<bool>;
 }
 

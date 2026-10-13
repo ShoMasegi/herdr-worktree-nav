@@ -120,19 +120,19 @@ impl Refs {
 
 /// What is checked out at a path, as far as anybody has said.
 ///
-/// Three answers rather than two, because a row with no branch name on it is two different
-/// facts and nothing downstream can work out which: herdr listing the checkout and saying
-/// nothing is out is an answer about the checkout, and herdr never listing it is the
-/// question never having been put. `refs/heads/x` can be out at a path herdr did not list;
-/// it cannot be out at one herdr listed as detached.
+/// Four answers rather than two, because a row with no branch name on it is three different
+/// facts and nothing downstream can work out which: herdr listing the checkout as detached
+/// is an answer about the checkout, herdr listing it as not detached with no branch is git
+/// failing to say which branch is out, and herdr never listing it is the question never
+/// having been put. `refs/heads/x` can be out at a path herdr did not list, and at one herdr
+/// listed with no branch; it cannot be out at one herdr listed as detached.
 ///
 /// The [`Position`] rides on the one answer that names a branch, because it is about that
 /// branch: a row naming none has nothing a marker could be about, and here it has nowhere
 /// to carry one either.
 ///
-/// [`domain::tree::build`](crate::domain::tree::build) writes each of the three at a
-/// construction site of its own, and
-/// `a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it` is the two that name no
+/// [`domain::tree::build`](crate::domain::tree::build) writes each of them, and
+/// `a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it` is the ones that name no
 /// branch, over one repository's identical git facts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Branch {
@@ -140,9 +140,15 @@ pub enum Branch {
     /// put it — off a ref walk that is happening anyway rather than a process of its own; see
     /// [`port::Track`](crate::port::Track).
     Out { name: String, position: Position },
-    /// herdr listed the checkout and said nothing is out — an empty branch, or
-    /// `is_detached`. No ref of the repository is about this row.
+    /// herdr listed the checkout as detached. No ref of the repository is about this row.
     NothingOut,
+    /// herdr listed the checkout, not as detached, and named no branch — absent or empty.
+    /// git's own `worktree list` says this of a checkout whose `HEAD` names a ref it cannot
+    /// read, such as one under a directory in `refs/heads` it may not open (issue #32): a
+    /// branch is out and nothing on this side can say which. No ref of the repository is
+    /// about this row either, so it is asked about the way a branch no ref names is
+    /// ([`Trouble::ref_missing`]).
+    Unnamed,
     /// Nobody said. `build` makes a row like this for a pane whose directory resolved to a
     /// checkout herdr's worktree list did not mention — a `git worktree add` outside herdr
     /// is the case its own comment names — so a branch may well be out and nothing on this
@@ -156,7 +162,7 @@ impl Branch {
     pub fn name(&self) -> Option<&str> {
         match self {
             Branch::Out { name, .. } => Some(name),
-            Branch::NothingOut | Branch::NotSaid => None,
+            Branch::NothingOut | Branch::Unnamed | Branch::NotSaid => None,
         }
     }
 
@@ -164,7 +170,7 @@ impl Branch {
     pub fn position(&self) -> Option<Position> {
         match self {
             Branch::Out { position, .. } => Some(*position),
-            Branch::NothingOut | Branch::NotSaid => None,
+            Branch::NothingOut | Branch::Unnamed | Branch::NotSaid => None,
         }
     }
 
@@ -183,7 +189,9 @@ impl Branch {
     pub fn set_position(&mut self, to: Position) {
         match self {
             Branch::Out { position, .. } => *position = to,
-            Branch::NothingOut | Branch::NotSaid => panic!("{self:?} names no branch"),
+            Branch::NothingOut | Branch::Unnamed | Branch::NotSaid => {
+                panic!("{self:?} names no branch")
+            }
         }
     }
 }
@@ -345,11 +353,13 @@ pub struct Trouble {
     /// what herdr not seeing into a pane also looks like, and the two are nothing alike to
     /// fix.
     pub unplaced: BTreeMap<String, String>,
-    /// Checkouts whose branch no ref of the repository names under refs git read
-    /// ([`Position::NotSaid`]) and which git did not vouch for as having no commit yet —
-    /// [`GitPort::has_no_commit_yet`](crate::port::GitPort::has_no_commit_yet) — each with
-    /// git's words where it refused to say, on one line. `None` is git finding a commit
-    /// there: the checkout is not a branch with no commit yet, and no ref was listed at it.
+    /// Checkouts no ref of the repository names under refs git read — a named branch at
+    /// [`Position::NotSaid`], or [`Branch::Unnamed`] — which git did not vouch for as having
+    /// no commit yet ([`GitPort::has_no_commit_yet`](crate::port::GitPort::has_no_commit_yet)),
+    /// each with git's words where it refused to say, on one line. A ref under a directory
+    /// in `refs/heads` git may not open gets words. `None` is git finding a commit there: no
+    /// ref was listed at a checkout that is not a branch with no commit yet, which is herdr
+    /// and git disagreeing about what is out where.
     pub ref_missing: BTreeMap<(RepoKey, CheckoutPath), Option<String>>,
 }
 

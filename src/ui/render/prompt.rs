@@ -556,7 +556,7 @@ mod tests {
     fn a_ref_missing_from_its_checkout_reaches_the_line_in_gits_words() {
         // The walk said nothing, so a row with no marker is all there was — and that row is
         // what a branch with nothing to report looks like too. What git said when asked about
-        // the checkout is the one account of it. Issue #32.
+        // the checkout is the only reason git gives. Issue #32.
         let mut tree = tree();
         tree.repos[0].worktrees[1]
             .branch
