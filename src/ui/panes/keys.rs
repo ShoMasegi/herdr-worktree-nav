@@ -61,15 +61,58 @@ impl PanesState {
         };
         let repo = &self.tree.repos[r];
         let worktree = &repo.worktrees[w];
+        let path = CheckoutPath::of(worktree);
+        // First, as in the sweep, so both rows say the same thing whichever of them is the
+        // repository's own: the refusal is about the path, not about either row.
+        if repo
+            .worktrees
+            .iter()
+            .filter(|other| CheckoutPath::of(other) == path)
+            .count()
+            > 1
+        {
+            // Two registrations of one path, and at most one of them has the panes: `git
+            // worktree remove` picks the registration, not this row, so neither the question
+            // nor the panes it would close can be about the checkout that goes.
+            self.message = Some("herdr lists this path twice".into());
+            return Action::Consumed;
+        }
         if worktree.is_primary {
             // git cannot remove the main working tree, and it is not a worktree anyway.
             self.message = Some("that is the repository itself, not a worktree".into());
             return Action::Consumed;
         }
-        if self.options.removing.contains(&CheckoutPath::of(worktree)) {
+        if self.tree.is_contested(repo, worktree) {
+            // Two refs at one path take two registrations, listed once here: `git worktree
+            // remove` would take whichever of them git picks, as with a path listed twice.
+            self.message = Some("more than one ref names this checkout".into());
+            return Action::Consumed;
+        }
+        if !repo.refs.is_read() {
+            // Then nothing can say whether two refs name this path, and the question would
+            // be asked on the strength of that silence.
+            self.message = Some("git would not read this repository's refs".into());
+            return Action::Consumed;
+        }
+        if self.options.removing.contains(&path) {
             // A second one would race the first, and would close panes that the first is
             // already having removed out from under them.
             self.message = Some("that checkout is already being removed".into());
+            return Action::Consumed;
+        }
+        // Any pane standing in here that this row does not draw — see
+        // [`Tree::panes_standing_in`](crate::domain::model::Tree::panes_standing_in). The
+        // question closes this row's panes only, so it would leave that one standing in a
+        // directory that is about to go — what `docs/adr/0010-closing-the-panes-first.md`
+        // exists to prevent. Empty checkout or not: the pane at stake is not this row's.
+        // Named, because it is drawn under some other row or under `not in any repository`,
+        // and the first is enough to go and find.
+        if let Some(pane_id) = self
+            .tree
+            .panes_standing_in(path.as_str())
+            .find(|pane_id| !worktree.panes.iter().any(|pane| pane.pane_id == *pane_id))
+        {
+            self.message = Some(words::standing_in(&self.tree, pane_id));
             return Action::Consumed;
         }
         // The refusals below are only reached by a checkout with panes in it, and that is
@@ -79,7 +122,7 @@ impl PanesState {
             // `None` is not `Clean`: only an answer is a licence to close somebody's panes.
             // The walk lands after the first frame, so `None` is the ordinary state of the
             // checkout the picker opens on — the one the cursor is already sitting in.
-            let refusal = match self.options.working_trees.get(&CheckoutPath::of(worktree)) {
+            let refusal = match self.options.working_trees.get(&path) {
                 Some(WorkingTree::Clean) => None,
                 Some(WorkingTree::Dirty) => {
                     Some("that checkout is holding work nobody has committed")
@@ -401,7 +444,7 @@ impl PanesState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{Refs, RepoNode, Tree, WorkingTree, WorktreeNode};
+    use crate::domain::model::{Branch, Position, Refs, RepoNode, Tree, WorkingTree, WorktreeNode};
     use crate::port::AgentStatus;
     use crate::ui::panes::fixtures::*;
 
@@ -653,6 +696,370 @@ mod tests {
     }
 
     #[test]
+    fn a_path_herdr_lists_twice_is_not_offered_from_either_row() {
+        // Two registrations of one path, the panes on the first row only. From the second,
+        // the question would close nothing and `git worktree remove` would take the
+        // directory the first row's pane is standing in — and git, not the row, picks
+        // which registration goes.
+        let mut state = state();
+        let mut tree = state.tree().clone();
+        tree.repos[0].worktrees.push(WorktreeNode {
+            branch: Branch::out("chore/deps"),
+            checkout_path: "/wt/app/feat-login".into(),
+            is_primary: false,
+            open_workspace_id: None,
+            panes: vec![],
+        });
+        state.replace_tree(tree);
+        state.set_working_trees(answers(&[("/wt/app/feat-login", WorkingTree::Clean)]));
+        for row in ["chore/deps", "codex"] {
+            select(&mut state, row);
+            assert_eq!(state.handle_key(key(KeyCode::Char('D'))), Action::Consumed);
+            assert!(state.pending_removal().is_none(), "{row}");
+            assert_eq!(
+                state.message(),
+                Some("herdr lists this path twice"),
+                "{row}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_checkout_a_pane_drawn_elsewhere_stands_in_is_not_offered() {
+        // The question closes this row's panes, and only those: a pane this row does not
+        // draw would be left standing in a directory that is about to go. Here, a pane drawn
+        // under `not in any repository`, found by its directory and by an unlisted
+        // repository's placement;
+        // `a_pane_standing_in_a_checkout_is_found_however_it_is_drawn` has the rest.
+        let elsewhere = |tree: &mut Tree| {
+            tree.pane_cwds
+                .insert("w9:p1".into(), vec!["/wt/app/fix-crash/src".into()]);
+        };
+        let unlisted = |tree: &mut Tree| {
+            tree.trouble.unlisted.push(crate::domain::model::Unlisted {
+                repo_key: "/src/old/.git".into(),
+                words: "herdr rejected worktree.list".into(),
+                // Placed in a checkout nested inside this one, which a removal of this one
+                // would take with it. Drawn under `not in any repository`, as `build` draws
+                // every pane an unlisted repository placed.
+                panes: [("w9:p1".to_string(), "/wt/app/fix-crash/sub".to_string())].into(),
+            });
+        };
+        for (what, standing, said) in [
+            (
+                "a working directory",
+                &elsewhere as &dyn Fn(&mut Tree),
+                "pane w9:p1 (zsh) is standing in it",
+            ),
+            (
+                "an unlisted repository's placement",
+                &unlisted,
+                "pane w9:p1 (zsh) is standing in it",
+            ),
+            (
+                "a pane with no name",
+                &|tree: &mut Tree| {
+                    elsewhere(tree);
+                    tree.ungrouped[0].display_name = None;
+                },
+                "pane w9:p1 is standing in it",
+            ),
+        ] {
+            let mut state = state();
+            let mut tree = state.tree().clone();
+            standing(&mut tree);
+            state.replace_tree(tree);
+            select(&mut state, "fix/crash");
+            state.handle_key(key(KeyCode::Char('D')));
+            assert!(state.pending_removal().is_none(), "{what}");
+            assert_eq!(state.message(), Some(said), "{what}");
+        }
+
+        // Its own panes are the ones the question closes, so they are not "elsewhere".
+        let mut state = state();
+        let mut tree = state.tree().clone();
+        tree.pane_cwds
+            .insert("w2:p1".into(), vec!["/wt/app/feat-login".into()]);
+        state.replace_tree(tree);
+        state.set_working_trees(answers(&[("/wt/app/feat-login", WorkingTree::Clean)]));
+        select(&mut state, "codex");
+        state.handle_key(key(KeyCode::Char('D')));
+        assert!(state.pending_removal().is_some());
+    }
+
+    #[test]
+    fn shift_d_says_why_in_the_same_order_whatever_else_is_true() {
+        // A path listed twice outranks being the repository itself, so both rows say the
+        // same thing, as in the sweep.
+        let mut twin = state();
+        let mut tree = twin.tree().clone();
+        tree.repos[0].worktrees.push(WorktreeNode {
+            branch: Branch::out("zzz/twin"),
+            checkout_path: "/src/app".into(),
+            is_primary: false,
+            open_workspace_id: None,
+            panes: vec![],
+        });
+        twin.replace_tree(tree);
+        for row in ["main", "zzz/twin"] {
+            select(&mut twin, row);
+            twin.handle_key(key(KeyCode::Char('D')));
+            assert_eq!(twin.message(), Some("herdr lists this path twice"), "{row}");
+        }
+
+        // A contested checkout comes after the repository itself and before a removal
+        // already going, as in the sweep — and holds on an empty checkout too.
+        let mut contested = state();
+        let mut tree = contested.tree().clone();
+        for worktree in &mut tree.repos[0].worktrees {
+            worktree.branch.set_position(Position::Contested);
+        }
+        contested.replace_tree(tree);
+        contested.set_removing(vec![CheckoutPath::for_test("/wt/app/fix-crash")]);
+        // `codex` is `feat/login`'s pane, its working tree answered clean: with panes in it
+        // too, the question is never reached.
+        contested.set_working_trees(answers(&[("/wt/app/feat-login", WorkingTree::Clean)]));
+        for (row, said) in [
+            ("main", "that is the repository itself, not a worktree"),
+            ("fix/crash", "more than one ref names this checkout"),
+            ("codex", "more than one ref names this checkout"),
+        ] {
+            select(&mut contested, row);
+            contested.handle_key(key(KeyCode::Char('D')));
+            assert!(contested.pending_removal().is_none(), "{row}");
+            assert_eq!(contested.message(), Some(said), "{row}");
+        }
+
+        // A row naming no branch has no position to say it in, and the tree does.
+        let mut branchless = state();
+        let mut tree = branchless.tree().clone();
+        tree.repos[0].worktrees[2].branch = Branch::NothingOut;
+        let at_fix_crash = at(&branchless, "/wt/app/fix-crash");
+        tree.contested.insert(at_fix_crash);
+        branchless.replace_tree(tree);
+        select(&mut branchless, "fix-crash");
+        branchless.handle_key(key(KeyCode::Char('D')));
+        assert!(branchless.pending_removal().is_none());
+        assert_eq!(
+            branchless.message(),
+            Some("more than one ref names this checkout")
+        );
+
+        // Refs git would not read cannot say whether the path is contested, so they are
+        // refused where a contested one is, on the empty checkout and the one with panes.
+        let mut unread = state();
+        let mut tree = unread.tree().clone();
+        tree.repos[0].refs = Refs::Unreadable("fatal: bad ref".into());
+        unread.replace_tree(tree);
+        unread.set_removing(vec![CheckoutPath::for_test("/wt/app/fix-crash")]);
+        unread.set_working_trees(answers(&[("/wt/app/feat-login", WorkingTree::Clean)]));
+        for (row, said) in [
+            ("main", "that is the repository itself, not a worktree"),
+            ("fix/crash", "git would not read this repository's refs"),
+            ("codex", "git would not read this repository's refs"),
+        ] {
+            select(&mut unread, row);
+            unread.handle_key(key(KeyCode::Char('D')));
+            assert!(unread.pending_removal().is_none(), "{row}");
+            assert_eq!(unread.message(), Some(said), "{row}");
+        }
+        // A real reading never gives contested and unread refs together, but a fixture can,
+        // and the contested one is named.
+        let mut tree = unread.tree().clone();
+        tree.repos[0].worktrees[2]
+            .branch
+            .set_position(Position::Contested);
+        unread.replace_tree(tree);
+        unread.set_removing(vec![]);
+        select(&mut unread, "fix/crash");
+        unread.handle_key(key(KeyCode::Char('D')));
+        assert!(unread.pending_removal().is_none());
+        assert_eq!(
+            unread.message(),
+            Some("more than one ref names this checkout")
+        );
+
+        // Whose refs: another repository's going unread refuses its own rows, a row naming
+        // no branch among them, and leaves this one's alone.
+        let mut beside = state();
+        let mut tree = beside.tree().clone();
+        tree.repos.push(RepoNode {
+            repo_key: "/src/site/.git".into(),
+            repo_root: "/src/site".into(),
+            display_name: "me/site".into(),
+            refs: Refs::Unreadable("fatal: bad ref".into()),
+            worktrees: vec![WorktreeNode {
+                branch: Branch::NothingOut,
+                checkout_path: "/wt/site/detached".into(),
+                is_primary: false,
+                open_workspace_id: None,
+                panes: vec![],
+            }],
+        });
+        beside.replace_tree(tree);
+        select(&mut beside, "detached");
+        beside.handle_key(key(KeyCode::Char('D')));
+        assert!(beside.pending_removal().is_none());
+        assert_eq!(
+            beside.message(),
+            Some("git would not read this repository's refs")
+        );
+        select(&mut beside, "fix/crash");
+        beside.handle_key(key(KeyCode::Char('D')));
+        assert!(beside.pending_removal().is_some(), "{:?}", beside.message());
+
+        // Then a removal already going, then a pane listed elsewhere, then the checkout's
+        // own working tree — each one peeled off in turn on a checkout that earns all of
+        // them.
+        let mut state = state();
+        let mut tree = state.tree().clone();
+        tree.pane_cwds
+            .insert("w9:p1".into(), vec!["/wt/app/feat-login".into()]);
+        tree.repos[0].worktrees.push(WorktreeNode {
+            branch: Branch::out("chore/deps"),
+            checkout_path: "/wt/app/feat-login".into(),
+            is_primary: false,
+            open_workspace_id: None,
+            panes: vec![],
+        });
+        state.replace_tree(tree.clone());
+        state.set_removing(vec![CheckoutPath::for_test("/wt/app/feat-login")]);
+        let said = |state: &mut PanesState| {
+            select(state, "codex");
+            state.handle_key(key(KeyCode::Char('D')));
+            state.message().map(str::to_string)
+        };
+        assert_eq!(
+            said(&mut state).as_deref(),
+            Some("herdr lists this path twice")
+        );
+        tree.repos[0].worktrees.pop();
+        state.replace_tree(tree.clone());
+        assert_eq!(
+            said(&mut state).as_deref(),
+            Some("that checkout is already being removed")
+        );
+        state.set_removing(Vec::new());
+        assert_eq!(
+            said(&mut state).as_deref(),
+            Some("pane w9:p1 (zsh) is standing in it")
+        );
+        tree.pane_cwds.clear();
+        state.replace_tree(tree);
+        assert_eq!(
+            said(&mut state).as_deref(),
+            Some("still reading that working tree — try again")
+        );
+    }
+
+    #[test]
+    fn a_pane_standing_in_a_checkout_is_found_however_it_is_drawn() {
+        // Each way a pane can be in a directory without being this row's, one at a time.
+        let refused = |change: &dyn Fn(&mut Tree), on: &str| {
+            let mut state = state();
+            let mut tree = state.tree().clone();
+            change(&mut tree);
+            state.replace_tree(tree);
+            select(&mut state, on);
+            state.handle_key(key(KeyCode::Char('D')));
+            state.message().map(str::to_string)
+        };
+        let codex = Some("pane w5:p1 (codex) is standing in it".to_string());
+
+        // Only its foreground process is in here; the shell is elsewhere.
+        assert_eq!(
+            refused(
+                &|tree| {
+                    tree.pane_cwds.insert(
+                        "w9:p1".into(),
+                        vec!["/tmp".into(), "/wt/app/fix-crash".into()],
+                    );
+                },
+                "fix/crash"
+            ),
+            Some("pane w9:p1 (zsh) is standing in it".to_string())
+        );
+
+        // A checkout nested inside this one, with a pane drawn under it — and the pane's
+        // directory reported through a symlink, so only the row it is drawn under says where
+        // it is.
+        assert_eq!(
+            refused(
+                &|tree| {
+                    tree.repos[0].worktrees.push(WorktreeNode {
+                        branch: Branch::out("feat/nested"),
+                        checkout_path: "/wt/app/fix-crash/nested".into(),
+                        is_primary: false,
+                        open_workspace_id: Some("w5".into()),
+                        panes: vec![pane("w5:p1", "codex", AgentStatus::Working)],
+                    });
+                    tree.pane_cwds
+                        .insert("w5:p1".into(), vec!["/link/fix-crash/nested".into()]);
+                },
+                "fix/crash"
+            ),
+            codex
+        );
+
+        // A row that has panes of its own: the one standing in it from elsewhere is found
+        // wherever it falls among them — here between this row's pane drawn under it and the
+        // same pane found again by its directory.
+        assert_eq!(
+            refused(
+                &|tree| {
+                    tree.repos[0].worktrees.push(WorktreeNode {
+                        branch: Branch::out("feat/nested"),
+                        checkout_path: "/wt/app/feat-login/nested".into(),
+                        is_primary: false,
+                        open_workspace_id: Some("w5".into()),
+                        panes: vec![pane("w5:p1", "aider", AgentStatus::Working)],
+                    });
+                    tree.pane_cwds
+                        .insert("w5:p1".into(), vec!["/link/feat-login/nested".into()]);
+                    tree.pane_cwds
+                        .insert("w2:p1".into(), vec!["/wt/app/feat-login".into()]);
+                },
+                "codex"
+            )
+            .as_deref(),
+            Some("pane w5:p1 (aider) is standing in it")
+        );
+
+        // Another repository's registration of the same path, its row holding the pane —
+        // again with the directory spelled through a symlink.
+        let theirs = |tree: &mut Tree| {
+            tree.repos.push(RepoNode {
+                repo_key: "/src/old/.git".into(),
+                repo_root: "/src/old".into(),
+                display_name: "me/old".into(),
+                refs: Refs::Read,
+                worktrees: vec![WorktreeNode {
+                    branch: Branch::out("chore/deps"),
+                    checkout_path: "/wt/app/fix-crash".into(),
+                    is_primary: false,
+                    open_workspace_id: Some("w5".into()),
+                    panes: vec![pane("w5:p1", "codex", AgentStatus::Working)],
+                }],
+            });
+            tree.pane_cwds
+                .insert("w5:p1".into(), vec!["/link/fix-crash".into()]);
+        };
+        assert_eq!(refused(&theirs, "fix/crash"), codex);
+
+        // Two repositories at one path are two keys, not a path listed twice: with no pane
+        // there, the question is asked.
+        let mut state = state();
+        let mut tree = state.tree().clone();
+        theirs(&mut tree);
+        tree.repos[1].worktrees[0].panes.clear();
+        tree.pane_cwds.clear();
+        state.replace_tree(tree);
+        select(&mut state, "fix/crash");
+        state.handle_key(key(KeyCode::Char('D')));
+        assert!(state.pending_removal().is_some(), "{:?}", state.message());
+    }
+
+    #[test]
     fn a_checkout_already_being_removed_is_not_offered_again() {
         // The checkout's row stops being selectable but its panes' rows do not, so a second
         // confirmation is still reachable from a pane.
@@ -728,19 +1135,17 @@ mod tests {
                     refs: Refs::Read,
                     worktrees: vec![
                         WorktreeNode {
-                            branch: Some("main".into()),
+                            branch: Branch::out("main"),
                             checkout_path: "/src/app".into(),
                             is_primary: true,
                             open_workspace_id: None,
-                            track: None,
                             panes: vec![],
                         },
                         WorktreeNode {
-                            branch: Some("feat/login".into()),
+                            branch: Branch::out("feat/login"),
                             checkout_path: "/wt/app/feat-login".into(),
                             is_primary: false,
                             open_workspace_id: Some("w2".into()),
-                            track: None,
                             panes: vec![pane("w2:p1", "codex", AgentStatus::Blocked)],
                         },
                     ],

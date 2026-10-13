@@ -86,4 +86,11 @@ marked row, refusals included. A checkout with panes in it is never swept: closi
 panes is [ADR 0010](./0010-closing-the-panes-first.md)'s single deliberate act, and a batch
 is not where it belongs.
 
+**A refusal comes before any widening.** `gh` widens what git did not offer, where the
+working tree is clean, and never a checkout the sweep refuses. Refs git would not read are
+one reason it refuses: they cannot say whether two refs name a checkout, so every checkout
+of that repository stays refused, a merged pull request included. The obvious reading of
+"`gh` may only widen" is that a pull request should still mark such a row, and it should
+not: the removal would act on a silence.
+
 **`SECURITY.md` gains branch deletion**, which it currently promises never happens.

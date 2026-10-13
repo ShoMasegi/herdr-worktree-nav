@@ -1597,12 +1597,12 @@ fn a_worktree_whose_directory_moved_is_still_listed_at_the_path_it_had() {
 
 #[test]
 fn a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out() {
-    // Why `domain::tree::build` asks for a track only where herdr says something is checked
-    // out. Two entries name one path and the checkout sitting there is then detached, so
-    // one entry goes on naming a path with nothing out — while the ref that entry is for
-    // carries `[gone]`, because its upstream was deleted on the remote. Nothing but the
-    // guard keeps that `[gone]` off the branchless row, and `domain::sweep::judge` offers a
-    // clean `gone` row for deletion by default.
+    // Why `domain::model::Branch` keeps a position only on a row that names a branch. Two
+    // entries name one path and the checkout sitting there is then detached, so one entry
+    // goes on naming a path with nothing out — while the ref that entry is for carries
+    // `[gone]`, because its upstream was deleted on the remote. A branchless row with that
+    // `[gone]` on it is one `domain::sweep::judge` would offer for deletion by default, and
+    // the type is what leaves it nowhere to be carried.
     //
     // This holds git's half. The other half — that herdr reports that path as a checkout
     // with no branch — is an assumption about herdr's API, written down on

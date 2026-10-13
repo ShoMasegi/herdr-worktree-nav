@@ -1,5 +1,7 @@
 use super::*;
-use crate::domain::model::{Refs, RepoNode, Tree, Unlisted, WorkingTree, WorktreeNode};
+use crate::domain::model::{
+    Branch, Position, Refs, RepoNode, Tree, Unlisted, WorkingTree, WorktreeNode,
+};
 use crate::domain::notice::Condition;
 use crate::domain::sweep::{Half, Reason, Refusal};
 use crate::port::{AgentStatus, PullRequestOutcome, SettledPullRequest, Track};
@@ -41,7 +43,9 @@ fn a_working_tree_answering_clean_during_a_sweep_reaches_the_marks() {
     let mut state = state();
     state.tree.repos[0].worktrees[1].panes.clear();
     state.tree.repos[0].worktrees[1].open_workspace_id = None;
-    state.tree.repos[0].worktrees[2].track = Some(Track::Gone);
+    state.tree.repos[0].worktrees[2]
+        .branch
+        .set_position(Position::Said(Some(Track::Gone)));
     state.replace_tree(state.tree.clone());
     state.handle_key(key(KeyCode::Char('S')));
     assert_eq!(
@@ -296,7 +300,7 @@ fn a_mark_does_not_move_to_whatever_is_at_that_path_next() {
     assert!(state.chosen().contains(&at(&state, "/wt/app/feat-login")));
 
     let mut moved = state.tree.clone();
-    moved.repos[0].worktrees[1].branch = Some("release/v2".into());
+    moved.repos[0].worktrees[1].branch = Branch::out("release/v2");
     state.replace_tree(moved);
 
     assert!(
@@ -361,7 +365,9 @@ fn a_tree_read_again_under_a_sweep_is_judged_again() {
 
     // The upstream came back — somebody pushed the branch again.
     let mut tree = state.tree.clone();
-    tree.repos[0].worktrees[2].track = None;
+    tree.repos[0].worktrees[2]
+        .branch
+        .set_position(Position::Said(None));
     state.replace_tree(tree);
     assert_eq!(mark_of(&state, "fix/crash"), Some(Mark::Staying));
     assert!(state.chosen().is_empty());
@@ -616,7 +622,9 @@ fn a_row_the_re_read_added_is_in_the_box() {
     let mut state = state();
     state.tree.repos[0].worktrees[1].panes.clear();
     state.tree.repos[0].worktrees[1].open_workspace_id = None;
-    state.tree.repos[0].worktrees[2].track = Some(Track::Gone);
+    state.tree.repos[0].worktrees[2]
+        .branch
+        .set_position(Position::Said(Some(Track::Gone)));
     state.replace_tree(state.tree.clone());
     state.set_working_trees(answers(&[("/wt/app/feat-login", WorkingTree::Clean)]));
     state.handle_key(key(KeyCode::Char('S')));
@@ -720,11 +728,10 @@ fn only_a_swept_checkout_with_a_branch_deletes_one() {
     // hand, and its label is a directory name that must never reach `git branch -d`.
     let mut state = sweeping();
     state.tree.repos[0].worktrees.push(WorktreeNode {
-        branch: None,
+        branch: Branch::NothingOut,
         checkout_path: "/wt/app/scratch".into(),
         is_primary: false,
         open_workspace_id: None,
-        track: None,
         panes: vec![],
     });
     state.replace_tree(state.tree.clone());
@@ -824,8 +831,9 @@ fn a_repository_the_re_read_could_not_list_is_named_rather_than_nothing_left() {
         "the row was in me/app, and me/app was listed"
     );
 
-    // And refs that went unread are a condition too, but not a reason rows go: here the
-    // row went for another reason, so this line does not name them.
+    // And refs that went unread are a condition too, but the only conditions this line names
+    // are a repository herdr would not list and panes git could not place, so it does not
+    // name them.
     let mut state = sweeping();
     state.handle_key(key(KeyCode::Enter));
     let mut unread = state.tree.clone();
@@ -876,11 +884,13 @@ fn a_row_dropped_by_the_re_read_is_named_by_the_repository_its_key_names() {
         display_name: "me/old".into(),
         refs: Refs::Read,
         worktrees: vec![WorktreeNode {
-            branch: Some("chore/deps".into()),
+            branch: Branch::Out {
+                name: "chore/deps".into(),
+                position: Position::Said(Some(Track::Gone)),
+            },
             checkout_path: "/wt/app/fix-crash".into(),
             is_primary: false,
             open_workspace_id: None,
-            track: Some(Track::Gone),
             panes: vec![],
         }],
     });
@@ -914,11 +924,13 @@ fn two_marks_asked() -> PanesState {
         display_name: "me/old".into(),
         refs: Refs::Read,
         worktrees: vec![WorktreeNode {
-            branch: Some("chore/deps".into()),
+            branch: Branch::Out {
+                name: "chore/deps".into(),
+                position: Position::Said(Some(Track::Gone)),
+            },
             checkout_path: "/wt/app/fix-crash".into(),
             is_primary: false,
             open_workspace_id: None,
-            track: Some(Track::Gone),
             panes: vec![],
         }],
     });

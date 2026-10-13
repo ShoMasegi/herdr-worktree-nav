@@ -11,8 +11,8 @@
 //! it, and those three reading differently would be a bug nothing would catch.
 
 use crate::domain::dest::{Destination, Landing, SpaceName, TabName};
-use crate::domain::model::Tree;
 use crate::domain::model::WorkingTree;
+use crate::domain::model::{Position, Tree};
 use crate::domain::notice::Condition;
 use crate::domain::order::{Order, SortKey};
 use crate::domain::preview::Refusal;
@@ -145,6 +145,7 @@ pub fn condition(condition: &Condition) -> String {
         }
         Condition::Unlisted { repo, words } => format!("{repo}: not listed: {words}"),
         Condition::RefsUnreadable { repo, words } => format!("{repo}: refs unreadable: {words}"),
+        Condition::RefsDisagree { repo, checkout } => format!("{repo}: refs disagree: {checkout}"),
         Condition::SweepTrouble(words) => words.clone(),
     }
 }
@@ -170,6 +171,10 @@ const UNREADABLE: &str = "  ?";
 /// git cannot find the ref this branch tracks. A word rather than a glyph: it is the one of
 /// these that says a branch is finished with, and it is worth being unmissable.
 const GONE: &str = "gone";
+/// More than one of the repository's refs names this checkout:
+/// [`Position::Contested`]. A word, as [`GONE`] is, and the one `app::dump` prints after
+/// `track`.
+const CONTESTED: &str = "contested";
 
 /// What a row is called, which for a group is its name and how much it holds.
 ///
@@ -204,7 +209,9 @@ pub fn marks(row: &Row) -> String {
         // nothing to report and the other has nothing to report *yet*.
         Some(WorkingTree::Clean) | None => {}
     }
-    out.push_str(&track_mark(row.track));
+    if let Some(position) = row.position {
+        out.push_str(&track_mark(position));
+    }
     out
 }
 
@@ -222,29 +229,37 @@ pub fn marks_reserve(row: &Row) -> usize {
     if !row.reference.is_worktree() {
         return 0;
     }
-    DIRTY.chars().count() + track_mark(row.track).chars().count()
+    DIRTY.chars().count()
+        + row
+            .position
+            .map_or(0, |position| track_mark(position).chars().count())
 }
 
 /// Where the branch stands against its upstream, with the gap that precedes it.
-pub fn track_mark(track: Option<Track>) -> String {
-    match track {
-        Some(Track::Gone) => format!("  {GONE}"),
-        Some(Track::Ahead(ahead)) => format!("  \u{2191}{ahead}"),
-        Some(Track::Behind(behind)) => format!("  \u{2193}{behind}"),
-        Some(Track::Diverged { ahead, behind }) => format!("  \u{2191}{ahead}\u{2193}{behind}"),
-        // Nothing to draw; what an absent track leaves open is not this row's to say. A
-        // field git printed and the adapter could not read draws nothing either, and for
-        // the stronger reason: there is no position to draw, and a marker that is wrong is
-        // worse than none. That is what kind 4 of `docs/en/error-handling.md` asks for.
-        // Which of the two is which is `app::dump`'s to say; a line of the list has no
-        // room for it, and no git prints the second.
-        Some(Track::Unreadable) | None => String::new(),
+pub fn track_mark(position: Position) -> String {
+    match position {
+        Position::Said(Some(Track::Gone)) => format!("  {GONE}"),
+        Position::Said(Some(Track::Ahead(ahead))) => format!("  \u{2191}{ahead}"),
+        Position::Said(Some(Track::Behind(behind))) => format!("  \u{2193}{behind}"),
+        Position::Said(Some(Track::Diverged { ahead, behind })) => {
+            format!("  \u{2191}{ahead}\u{2193}{behind}")
+        }
+        Position::Contested => format!("  {CONTESTED}"),
+        // Nothing to draw, for reasons the row has no room to tell apart. git reported
+        // nothing, which is not this row's to interpret; a field git printed could not be
+        // read, where there is no position to draw at all and a marker that is wrong is
+        // worse than none — kind 4 of `docs/en/error-handling.md`; or no ref names this
+        // checkout. `app::dump` is where they are told apart, and the line under the list
+        // names the last for the checkout under the cursor.
+        Position::Said(Some(Track::Unreadable) | None) | Position::NotSaid => String::new(),
     }
 }
 
 /// The same marks with no gap in front, for a page that is not a row of the list.
 pub fn track_alone(track: Track) -> String {
-    track_mark(Some(track)).trim_start().to_string()
+    track_mark(Position::Said(Some(track)))
+        .trim_start()
+        .to_string()
 }
 
 /// Narrowing the list to one agent state, as the chip beside the search box reads.
@@ -312,6 +327,20 @@ pub fn detail(tree: &Tree, reference: RowRef) -> String {
             if worktree.is_primary {
                 parts.push("main checkout".to_string());
             }
+            match worktree.branch.position() {
+                Some(Position::Contested) => {
+                    parts.push("more than one ref names this checkout".to_string());
+                }
+                // Under refs git read: where it would not read them, every checkout of the
+                // repository with a branch out is here at once and the prompt line already
+                // says why. A branch
+                // with no commit yet is the ordinary way to get here, so it is said where the
+                // cursor is rather than among the conditions.
+                Some(Position::NotSaid) if repo.refs.is_read() => {
+                    parts.push("no ref names this checkout".to_string());
+                }
+                Some(Position::Said(_) | Position::NotSaid) | None => {}
+            }
             parts.push(worktree.checkout_path.clone());
             parts
         }
@@ -371,6 +400,21 @@ fn plural(count: usize, noun: &str) -> String {
     }
 }
 
+/// Why `Shift-D` will not ask about a checkout a pane it does not draw is standing in: that
+/// pane by id, and by the name its row draws where herdr gave it one. A pane with none,
+/// drawn as `shell`, is given by its id alone.
+pub fn standing_in(tree: &Tree, pane_id: &str) -> String {
+    let name = tree
+        .find_pane(pane_id)
+        .map(|(_, _, pane)| pane)
+        .or_else(|| tree.ungrouped.iter().find(|pane| pane.pane_id == pane_id))
+        .and_then(|pane| pane.display_name.as_deref());
+    match name {
+        Some(name) => format!("pane {pane_id} ({name}) is standing in it"),
+        None => format!("pane {pane_id} is standing in it"),
+    }
+}
+
 /// What a sweep's row says beside its mark, or nothing.
 ///
 /// [`Reason::Gone`] is left out: [`marks`] draws it as the branch's upstream marker on every
@@ -398,7 +442,7 @@ pub fn sweep_note(mark: &Mark) -> Option<String> {
 /// Which half of the sweep's question nobody could answer, as the row says it.
 fn unjudged(half: Half) -> &'static str {
     match half {
-        Half::Refs => "refs unreadable",
+        Half::NoRef => "no ref here",
         Half::PullRequests => "PR unknown",
     }
 }
@@ -410,6 +454,9 @@ fn unjudged(half: Half) -> &'static str {
 pub fn sweep_refusal(mark: &Mark) -> Option<&'static str> {
     Some(match mark.refused()? {
         SweepRefusal::Primary => "the repository itself",
+        SweepRefusal::ListedTwice => "herdr lists this path twice",
+        SweepRefusal::Contested => "more than one ref names this checkout",
+        SweepRefusal::RefsUnreadable => "git would not read this repository's refs",
         SweepRefusal::Running => "panes are running in it",
         SweepRefusal::Removing => "already being removed",
     })
@@ -419,7 +466,7 @@ pub fn sweep_refusal(mark: &Mark) -> Option<&'static str> {
 mod tests {
     use super::*;
     use crate::domain::dest::fixtures::{space_name, tab_name};
-    use crate::domain::model::{CheckoutPath, WorkingTree};
+    use crate::domain::model::{Branch, CheckoutPath, Refs, WorkingTree};
     use crate::domain::rows::fixtures::*;
     use crate::domain::rows::{flatten, ViewOptions};
     use crate::port::SplitDirection;
@@ -608,6 +655,13 @@ mod tests {
             "me/app: refs unreadable: fatal: bad ref"
         );
         assert_eq!(
+            condition(&Condition::RefsDisagree {
+                repo: "me/app".into(),
+                checkout: "/wt/shared".into(),
+            }),
+            "me/app: refs disagree: /wt/shared"
+        );
+        assert_eq!(
             condition(&Condition::SweepTrouble(
                 "me/app: gh could not be run".into()
             )),
@@ -655,9 +709,9 @@ mod tests {
     /// `None` is a checkout nobody has answered for, which is a third thing and not a
     /// synonym for clean. A bool here would collapse the two into one `false`, naming
     /// neither state.
-    fn marks_for(working_tree: Option<WorkingTree>, track: Option<Track>) -> String {
+    fn marks_for(working_tree: Option<WorkingTree>, position: Position) -> String {
         let mut tree = tree();
-        tree.repos[0].worktrees[2].track = track;
+        tree.repos[0].worktrees[2].branch.set_position(position);
         let options = ViewOptions {
             working_trees: working_tree.map(answered).unwrap_or_default(),
             ..Default::default()
@@ -667,9 +721,13 @@ mod tests {
 
     #[test]
     fn a_checkout_with_nothing_to_report_says_nothing() {
-        assert_eq!(marks_for(None, None), "", "nobody has answered for it");
         assert_eq!(
-            marks_for(Some(WorkingTree::Clean), None),
+            marks_for(None, Position::Said(None)),
+            "",
+            "nobody has answered for it"
+        );
+        assert_eq!(
+            marks_for(Some(WorkingTree::Clean), Position::Said(None)),
             "",
             "and git answered and had nothing to report — the same absence of a marker for \
              two different reasons, which is the whole of why the list is not rebuilt when \
@@ -679,8 +737,14 @@ mod tests {
 
     #[test]
     fn every_answer_a_working_tree_can_give_reads_on_its_own() {
-        assert_eq!(marks_for(Some(WorkingTree::Dirty), None), "  ✱");
-        assert_eq!(marks_for(Some(WorkingTree::Unreadable), None), "  ?");
+        assert_eq!(
+            marks_for(Some(WorkingTree::Dirty), Position::Said(None)),
+            "  ✱"
+        );
+        assert_eq!(
+            marks_for(Some(WorkingTree::Unreadable), Position::Said(None)),
+            "  ?"
+        );
     }
 
     #[test]
@@ -688,7 +752,9 @@ mod tests {
         // Which is what stops every path in the list moving sideways when a `git status`
         // finally answers.
         let mut tree = tree();
-        tree.repos[0].worktrees[2].track = Some(Track::Gone);
+        tree.repos[0].worktrees[2]
+            .branch
+            .set_position(Position::Said(Some(Track::Gone)));
         let clean = flatten(&tree, &ViewOptions::default());
         let dirty = flatten(
             &tree,
@@ -706,35 +772,56 @@ mod tests {
             0,
             "a repository heading has no checkout to say anything about"
         );
+
+        // A checkout with no branch out keeps the room for `✱` and nothing for a track it
+        // cannot carry.
+        tree.repos[0].worktrees[2].branch = Branch::NothingOut;
+        let detached = flatten(&tree, &ViewOptions::default());
+        assert_eq!(
+            marks_reserve(find(&detached, "fix-crash")),
+            DIRTY.chars().count()
+        );
     }
 
     #[test]
     fn each_thing_a_checkout_can_be_reads_on_its_own() {
-        assert_eq!(marks_for(Some(WorkingTree::Dirty), None), "  \u{2731}");
         assert_eq!(
-            marks_for(None, Some(Track::Ahead(NonZeroU32::new(2).unwrap()))),
+            marks_for(Some(WorkingTree::Dirty), Position::Said(None)),
+            "  \u{2731}"
+        );
+        assert_eq!(
+            marks_for(
+                None,
+                Position::Said(Some(Track::Ahead(NonZeroU32::new(2).unwrap())))
+            ),
             "  \u{2191}2"
         );
         assert_eq!(
-            marks_for(None, Some(Track::Behind(NonZeroU32::new(1).unwrap()))),
+            marks_for(
+                None,
+                Position::Said(Some(Track::Behind(NonZeroU32::new(1).unwrap())))
+            ),
             "  \u{2193}1"
         );
         assert_eq!(
             marks_for(
                 None,
-                Some(Track::Diverged {
+                Position::Said(Some(Track::Diverged {
                     ahead: NonZeroU32::new(2).unwrap(),
                     behind: NonZeroU32::new(1).unwrap()
-                })
+                }))
             ),
             "  \u{2191}2\u{2193}1",
             "one gap, not two: they are one answer"
         );
-        assert_eq!(marks_for(None, Some(Track::Gone)), "  gone");
-        // A position that went unread draws what a row with nothing to report draws. The
-        // two are told apart on `app::dump`'s page, not here.
-        assert_eq!(marks_for(None, Some(Track::Unreadable)), "");
-        assert_eq!(marks_for(None, None), "");
+        assert_eq!(marks_for(None, Position::Said(Some(Track::Gone))), "  gone");
+        assert_eq!(marks_for(None, Position::Contested), "  contested");
+        // Two that draw what a row with nothing to report draws: a position that went
+        // unread, and no ref naming this checkout. They are told apart on `app::dump`'s
+        // page, not here.
+        assert_eq!(marks_for(None, Position::Said(Some(Track::Unreadable))), "");
+        assert_eq!(marks_for(None, Position::NotSaid), "");
+        assert_eq!(marks_for(None, Position::Said(None)), "");
     }
 
     #[test]
@@ -742,7 +829,7 @@ mod tests {
         // Which is the pair that decides whether a checkout can be swept: gone says it is
         // finished with, and dirty says it cannot go anyway.
         assert_eq!(
-            marks_for(Some(WorkingTree::Dirty), Some(Track::Gone)),
+            marks_for(Some(WorkingTree::Dirty), Position::Said(Some(Track::Gone))),
             "  \u{2731}  gone"
         );
     }
@@ -777,12 +864,20 @@ mod tests {
     #[test]
     fn a_checkout_carries_what_git_said_about_its_branch() {
         let mut tree = tree();
-        tree.repos[0].worktrees[2].track = Some(Track::Gone);
+        tree.repos[0].worktrees[2]
+            .branch
+            .set_position(Position::Said(Some(Track::Gone)));
         let rows = flatten(&tree, &ViewOptions::default());
-        assert_eq!(find(&rows, "fix/crash").track, Some(Track::Gone));
-        assert_eq!(find(&rows, "feat/login").track, None);
         assert_eq!(
-            find(&rows, "me/app").track,
+            find(&rows, "fix/crash").position,
+            Some(Position::Said(Some(Track::Gone)))
+        );
+        assert_eq!(
+            find(&rows, "feat/login").position,
+            Some(Position::Said(None))
+        );
+        assert_eq!(
+            find(&rows, "me/app").position,
             None,
             "a repository heading has no branch of its own"
         );
@@ -842,6 +937,38 @@ mod tests {
     }
 
     #[test]
+    fn the_breadcrumb_says_more_than_one_ref_names_a_contested_checkout() {
+        let mut tree = tree();
+        tree.repos[0].worktrees[1]
+            .branch
+            .set_position(Position::Contested);
+        assert_eq!(
+            detail(&tree, RowRef::Worktree(0, 1)),
+            "me/app · feat/login · more than one ref names this checkout · /wt/feat-login"
+        );
+    }
+
+    #[test]
+    fn the_breadcrumb_says_no_ref_names_a_checkout_only_where_the_refs_were_read() {
+        let mut tree = tree();
+        tree.repos[0].worktrees[1]
+            .branch
+            .set_position(Position::NotSaid);
+        assert_eq!(
+            detail(&tree, RowRef::Worktree(0, 1)),
+            "me/app · feat/login · no ref names this checkout · /wt/feat-login"
+        );
+
+        // Refs git would not read leave every checkout without a ref, and the prompt line
+        // says so once for the repository.
+        tree.repos[0].refs = Refs::Unreadable("fatal: bad ref".into());
+        assert_eq!(
+            detail(&tree, RowRef::Worktree(0, 1)),
+            "me/app · feat/login · /wt/feat-login"
+        );
+    }
+
+    #[test]
     fn the_breadcrumb_is_empty_rather_than_panicking_on_a_stale_reference() {
         let tree = tree();
         assert_eq!(detail(&tree, RowRef::Repo(99)), "");
@@ -878,8 +1005,8 @@ mod tests {
              to find"
         );
         assert_eq!(
-            sweep_note(&Mark::GoingUnjudged(Half::Refs)).as_deref(),
-            Some("refs unreadable"),
+            sweep_note(&Mark::GoingUnjudged(Half::NoRef)).as_deref(),
+            Some("no ref here"),
             "marked by hand, it still says nobody judged it — and which half"
         );
     }
@@ -920,6 +1047,18 @@ mod tests {
         assert_eq!(
             sweep_refusal(&Mark::Refused(SweepRefusal::Removing)),
             Some("already being removed")
+        );
+        assert_eq!(
+            sweep_refusal(&Mark::Refused(SweepRefusal::ListedTwice)),
+            Some("herdr lists this path twice")
+        );
+        assert_eq!(
+            sweep_refusal(&Mark::Refused(SweepRefusal::Contested)),
+            Some("more than one ref names this checkout")
+        );
+        assert_eq!(
+            sweep_refusal(&Mark::Refused(SweepRefusal::RefsUnreadable)),
+            Some("git would not read this repository's refs")
         );
         assert_eq!(
             sweep_refusal(&Mark::Going(Reason::Gone)),

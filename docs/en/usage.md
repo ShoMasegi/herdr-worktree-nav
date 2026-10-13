@@ -86,11 +86,16 @@ is marked too, and that row says `PR #123 merged` — the number, so you can go 
 "Nothing running" is about the directory a pane is known to stand in, not the row. Two
 repositories can both register one path — one of the registrations stale — and a pane shows in
 only one of their rows; a pane whose own repository herdr would not list shows in none, under
-`not in any repository`. Either way, every row naming that path is refused as running. So is
-any row whose checkout holds a working directory of a pane — its shell's, or the one its
-foreground process has moved to — whether the pane is drawn under another row, as when one
-checkout sits inside another, or under that heading; only a pane herdr cannot see into has no
-working directory to go by.
+`not in any repository`. Either way, every row naming that path is refused. Any row whose
+checkout holds a working directory of a pane — its shell's, or the one its foreground process
+has moved to — is refused the same way, whether the pane is drawn under another row, as when
+one checkout sits inside another, or under that heading; only a pane herdr cannot see into
+has no working directory to go by. Where no refusal checked ahead of this one claims the row
+first, `Space` there says `panes are running in it`.
+
+A path herdr lists twice within one repository is refused on both of its rows. The sweep
+keeps its marks by repository and path, so a mark could not say which of the two
+registrations `Enter` would remove; `Space` there says `herdr lists this path twice`.
 
 `Space` adds a mark and takes it away again. The same key does both, because disagreeing with
 the sweep should cost exactly what agreeing with it extra does. `Shift-S` again, `q` or `Esc`
@@ -135,15 +140,26 @@ mode.
 
 #### Without git's refs
 
-The same rule holds for git's own half. A repository whose refs git would not read — the one
-`for-each-ref` that `gone` comes from — has no `gone` to offer, and the checkouts it would
-otherwise have judged — clean, on a branch, nothing running in them, and not the repository's
-own — read `refs unreadable` in a sweep, before and after you mark them by hand. The prompt
-line names the repository with git's words, as it does for `gh`. `gh` still widens the sweep
-there: a merged pull request marks the row as it would anywhere. When git and `gh` have both
-failed, the prompt line names git's failure first — it is the one the track markers on the
-row went with — and counts `gh`'s behind it, so one being named does not read as the only
-thing wrong.
+git's own half is not like `gh`'s. A repository whose refs git would not read — the one
+`for-each-ref` that `gone` comes from — has no `gone` to offer, and cannot say either whether
+two of its refs name one checkout, where a removal would take whichever registration git
+picks. So a sweep refuses every checkout in it, merged pull request or not. `Space` says
+`git would not read this repository's refs` on each but the repository's own checkout and a
+path herdr lists twice, which keep their own reasons, and so does `Shift-D`. The prompt line
+names the repository with git's words, as it does for `gh`. A checkout more than one of the
+repository's refs names is refused rather than judged: two refs at one path take two
+registrations of it, so `git worktree remove` would take whichever of them git picks, and
+`git branch -d` the branch herdr names. `git worktree list` names the path once for each
+registration, so where herdr does the same both rows are refused as
+`herdr lists this path twice`; listed once, `Space` says
+`more than one ref names this checkout`, merged pull request or not. A checkout whose branch
+no ref names at its path — git read the refs and found none there, as for a branch with no
+commit yet, which has no ref at all — is not refused for that. Where nothing else refuses it,
+it reads `no ref here` when it is clean, unless `gh` names a finished pull request for it.
+`gh` still widens the sweep wherever a row is judged rather than refused: a merged pull
+request marks it as it would anywhere. When git and `gh` have both failed, the prompt line
+names git's failure first — it is the one the track markers on the row went with — and counts
+`gh`'s behind it, so one being named does not read as the only thing wrong.
 
 ### Deleting a checkout
 
@@ -218,6 +234,24 @@ at stake: on an empty checkout git can answer for itself, but here the panes wou
 closed by the time it did — and "nobody has asked yet" is not the same answer as "clean",
 which is why pressing `Shift-D` in the first moments after the picker opens asks you to try
 again rather than guessing.
+
+Four more are about whose directory it is, and hold whether or not the checkout has panes
+of its own. A checkout any pane it does not draw is standing in names the first such pane, as in
+`pane w5:p1 (codex) is standing in it`, or by id alone where it has no name — a pane under another repository's row for the
+same path, under a checkout nested inside this one, under `not in any repository`, or one
+whose foreground process has moved in here: the question closes this row's panes only, and
+would leave that one in a directory that is about to go. A path herdr lists twice within one
+repository says `herdr lists this path twice` on both rows, the repository's own checkout
+included: git, not the row, picks which registration `git worktree remove` takes, and the
+panes are drawn under at most one of them. The registration the directory's own `.git` file names is the live one; the
+other was left behind when a directory was moved away, and `git worktree repair <where that
+directory is now>` points it back. Not `git worktree prune`: it keeps whichever of the two
+entries comes first, and that can be the stale one. A checkout more than one of the
+repository's refs names says `more than one ref names this checkout` where herdr lists it
+once: two refs at one path take two registrations, so git picks here too. Where git would
+not read the repository's refs, nothing can say whether that is so, and every checkout of it
+but the repository's own and a path herdr lists twice says
+`git would not read this repository's refs`.
 
 `y` comes straight back. The removal runs somewhere else — git has to walk a whole working
 tree before it can delete it, which is seconds on a repository of any size — and the row
@@ -310,6 +344,7 @@ a column that is blank on most rows is a permanent gap between the name and the 
 | `?` | git would not read this working tree, so nothing is claimed about it |
 | `↑2↓1` | two commits its upstream does not have, one it does not have |
 | `gone` | git cannot find the ref this branch tracks |
+| `contested` | more than one of the repository's refs names this checkout, so there is no one branch to measure |
 
 `✱` is the one that stops `Shift-D` finishing: git refuses to remove a checkout holding work
 nobody has committed, and this is that refusal in advance — the picker will still let you
@@ -372,6 +407,18 @@ git's own words, and a count when more than one thing is wrong. It stays for as 
 refs cannot be read, and it sits beside a state filter's chip and beside a search you have
 left in the field rather than giving the line up to either. It steps aside only while you
 are typing in the field, where the cursor is yours.
+
+A branch at a checkout more than one of the repository's refs names is another answer from
+the refs that is not a position. git did read them, so the row has a word for it, `contested`,
+and the prompt line names the checkout the way it names a repository whose refs it could not
+read: `me/app: refs disagree: /path/to/checkout`. A row naming no branch draws neither, and
+where herdr lists it once a sweep and `Shift-D` still refuse it as
+`more than one ref names this checkout`.
+
+A checkout whose branch no ref names at its path draws nothing and is not a condition, since
+a branch with no commit yet is the ordinary way to get there; with the cursor on it, the
+breadcrumb under the list says `no ref names this checkout` — under refs git read, and only
+on a checkout the cursor stops on, which outside a sweep is one with no panes.
 
 On a line too narrow to hold it, it gives up its words rather than its place: the spinners
 lose their labels first, and then the sentence becomes a count of how many things are wrong,

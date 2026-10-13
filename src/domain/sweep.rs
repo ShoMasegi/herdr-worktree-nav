@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::domain::model::{
-    is_inside, CheckoutPath, RepoKey, RepoNode, Tree, WorkingTree, WorktreeNode,
+    CheckoutPath, Position, RepoKey, RepoNode, Tree, WorkingTree, WorktreeNode,
 };
 use crate::port::{PullRequestOutcome, SettledPullRequest, SettledPullRequests, Track};
 
@@ -36,6 +36,30 @@ pub enum Refusal {
     /// Panes are running in it. Closing somebody's panes is one deliberate act — see
     /// `docs/adr/0010-closing-the-panes-first.md` — and a batch is not where it belongs.
     Running,
+    /// herdr lists more than one checkout at this path in one repository. The sweep's
+    /// judgements, the user's changes and what `Enter` removes are keyed by repository and
+    /// path, so two rows sharing both are one key, and what `Enter` would remove is whichever
+    /// of them the tree lists first — not necessarily the row the reason was found on. The
+    /// rows themselves can still be told apart; this is about what a sweep can act on without
+    /// choosing between them.
+    ///
+    /// Decided for the key ahead of every other refusal, so both rows carry it even where one
+    /// of them is the repository's own checkout and would otherwise read [`Refusal::Primary`].
+    ListedTwice,
+    /// More than one of the repository's refs names this checkout — [`Position::Contested`],
+    /// or [`Tree::is_contested`] for a row naming no branch.
+    /// Two refs at one path take two registrations of it, so this is
+    /// [`Refusal::ListedTwice`]'s reason on a path herdr lists once: `git worktree remove`
+    /// would take whichever registration git picks, and, on a row naming a branch,
+    /// `git branch -d` the branch herdr names, which is not known to be the one at this
+    /// path. A finished pull request does not lift it, for the same reason.
+    Contested,
+    /// git would not read the repository's refs, so nothing can say whether two of them name
+    /// this checkout: [`Refusal::Contested`] is that answer, and this is its absence. A
+    /// removal here would take whichever registration git picks on the strength of a
+    /// silence, so every checkout of the repository is refused at once, a finished pull
+    /// request included.
+    RefsUnreadable,
     /// Its removal is already going, in a process of its own. Never read out: the cursor does
     /// not stop on a row being removed, sweep or no sweep — see
     /// [`domain::rows::Row::is_selectable`](crate::domain::rows::Row::is_selectable). The
@@ -50,10 +74,12 @@ pub enum Refusal {
 /// neither could settle says which one went unanswered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Half {
-    /// git would not read the repository's refs, so `gone` was never on offer — for every
-    /// checkout of the repository at once. Named ahead of `gh` when both are missing: it is
-    /// true outside a sweep too, and the ahead, behind and `gone` markers are missing with it.
-    Refs,
+    /// git read the repository's refs and none names this checkout, though herdr says a
+    /// branch is out here — [`Position::NotSaid`] on a row that names one — so there is no
+    /// ref here to be `gone`. Named ahead of `gh` when both are missing: the row's track
+    /// marker is missing with it. Refs git would not read at all are
+    /// [`Refusal::RefsUnreadable`] instead.
+    NoRef,
     /// `gh` could not settle it: could not be asked, asked and the window it was given came
     /// back full, or asked and answered in a state this does not know.
     PullRequests,
@@ -71,10 +97,11 @@ pub enum Candidate {
     /// and one whose working tree has not been read are rows nothing was going to offer
     /// anyway, so nothing about them is unknown that matters.
     ///
-    /// git's half fails one way: the ref walk failed, and every checkout of the repository
-    /// then has `track: None` — which is also what a branch level with its upstream has, so
-    /// the row cannot tell and the repository carries the fact instead
-    /// ([`domain::model::Refs`](crate::domain::model::Refs)).
+    /// git's half goes unanswered one way here: the ref walk succeeded and no ref named this
+    /// checkout, which the checkout carries
+    /// ([`domain::model::Position`](crate::domain::model::Position)). The walk failing is
+    /// [`Refusal::RefsUnreadable`] instead, and more than one ref [`Refusal::Contested`]:
+    /// neither leaves anything to say which registration a removal would take.
     Unjudged(Half),
     /// Nothing says it should go, and `Space` still marks it.
     Available,
@@ -138,39 +165,36 @@ pub struct Facts<'a> {
 
 /// What the sweep may do with every checkout in the tree, by repository and checkout path.
 pub fn candidates(tree: &Tree, facts: &Facts) -> BTreeMap<(RepoKey, CheckoutPath), Candidate> {
-    // Every directory a pane is standing in, whichever row shows the pane. One path can be
-    // two rows — two repositories' registrations of it, one of them stale — and a pane shows
-    // in only one of them; the panes of a repository herdr would not list show in none,
-    // under `not in any repository`. Running is about the directory, not the row: a
-    // checkout that holds any pane's working directory is somebody's, whichever row, if any,
-    // draws that pane — a checkout nested inside another can hold the directory of a pane
-    // drawn under the outer one.
-    let occupied: BTreeSet<&str> = tree
-        .repos
-        .iter()
-        .flat_map(|repo| &repo.worktrees)
-        .filter(|worktree| !worktree.panes.is_empty())
-        .map(|worktree| worktree.checkout_path.as_str())
-        .chain(
-            tree.trouble
-                .unlisted
-                .iter()
-                .flat_map(|repo| repo.panes.values().map(String::as_str)),
-        )
-        .collect();
+    // How many rows each key has. A key that names two is one the rest of the sweep cannot
+    // act on without picking one of them — see [`Refusal::ListedTwice`].
+    let mut listed: BTreeMap<(RepoKey, CheckoutPath), usize> = BTreeMap::new();
+    for repo in &tree.repos {
+        for worktree in &repo.worktrees {
+            *listed
+                .entry((RepoKey::of(repo), CheckoutPath::of(worktree)))
+                .or_default() += 1;
+        }
+    }
     let mut out = BTreeMap::new();
     for repo in &tree.repos {
         let settled = facts.settled.get(&RepoRoot::of(repo));
         for worktree in &repo.worktrees {
             let path = CheckoutPath::of(worktree);
-            let running = occupied.contains(path.as_str())
-                || tree
-                    .pane_cwds
-                    .values()
-                    .flatten()
-                    .any(|cwd| is_inside(cwd, path.as_str()));
-            let candidate = judge(repo, worktree, &path, running, settled, facts);
-            out.insert((RepoKey::of(repo), path), candidate);
+            // Running is about the directory, not the row: one path can be two repositories'
+            // rows with the pane drawn in only one, and a checkout nested in another can hold
+            // the directory of a pane drawn under the outer one — see
+            // [`Tree::panes_standing_in`].
+            let running = tree.panes_standing_in(path.as_str()).next().is_some();
+            let key = (RepoKey::of(repo), path);
+            // Decided for the key before any of its rows is asked about, so which refusal it
+            // carries does not turn on which row came last — a primary among them included.
+            let candidate = if listed[&key] > 1 {
+                Candidate::Refused(Refusal::ListedTwice)
+            } else {
+                let contested = tree.is_contested(repo, worktree);
+                judge(repo, worktree, &key.1, running, contested, settled, facts)
+            };
+            out.insert(key, candidate);
         }
     }
     out
@@ -181,16 +205,27 @@ fn judge(
     worktree: &WorktreeNode,
     path: &CheckoutPath,
     running: bool,
+    contested: bool,
     settled: Option<&Option<SettledPullRequests>>,
     facts: &Facts,
 ) -> Candidate {
     // The refusals come first because they are about the checkout rather than about whether
     // anyone is finished with it. Their order among themselves decides only which refusal a
     // checkout that earns two of them carries, and it runs most permanent first: being the
-    // repository itself is not a state that passes, a removal already going will end, and
-    // panes close whenever somebody closes them.
+    // repository itself is not a state that passes, a stale registration stays until
+    // somebody repairs it, and so do refs git would not read, a removal already going will
+    // end, and panes close whenever somebody closes them. A path listed twice is refused by
+    // `candidates` before any of this, being about the key rather than about a row.
     if worktree.is_primary {
         return Candidate::Refused(Refusal::Primary);
+    }
+    if contested {
+        return Candidate::Refused(Refusal::Contested);
+    }
+    // Never both with the one above from a real reading: refs git would not read name
+    // nothing, two refs at one path included. A fixture can set both, and carries `Contested`.
+    if !repo.refs.is_read() {
+        return Candidate::Refused(Refusal::RefsUnreadable);
     }
     if facts.removing.contains(path) {
         return Candidate::Refused(Refusal::Removing);
@@ -207,7 +242,7 @@ fn judge(
         .get(path)
         .is_some_and(|answer| answer.is_clean());
 
-    if clean && worktree.track == Some(Track::Gone) {
+    if clean && worktree.branch.position() == Some(Position::Said(Some(Track::Gone))) {
         return Candidate::Offered(Reason::Gone);
     }
 
@@ -215,19 +250,34 @@ fn judge(
     // reach is `Unjudged` rather than `Available` — but only where its answer would have
     // changed the outcome. The same gate holds for git's own half: `gone` was never going to
     // offer a dirty or a detached checkout.
-    let could_have_decided = clean && worktree.branch.is_some();
-    let refs_unread = could_have_decided && !repo.refs.is_read();
+    let could_have_decided = clean && worktree.branch.name().is_some();
+    // git's silence, where it would have decided the row: refs read, and no ref here.
+    let git_silent = match worktree.branch.position() {
+        _ if !could_have_decided => None,
+        Some(Position::NotSaid) => Some(Half::NoRef),
+        // `Contested` was refused above, and a row naming no branch is not one
+        // `could_have_decided` lets through.
+        Some(Position::Said(_) | Position::Contested) | None => None,
+    };
     let settled = match settled {
         // Nobody has asked `gh` yet: an answer is still on its way, and a permanent word on
         // a temporary state is what the working-tree walk already avoids. git's half is not
         // on its way — the refs are read before the first frame — so that half is said now.
-        None if refs_unread => return Candidate::Unjudged(Half::Refs),
-        None => return Candidate::Available,
+        None => {
+            return match git_silent {
+                Some(half) => Candidate::Unjudged(half),
+                None => Candidate::Available,
+            }
+        }
         // Asked, and `gh` could not answer — unless git could not either, in which case the
-        // half named is git's, since fixing that is what makes `gh`'s half worth reading.
-        Some(None) if refs_unread => return Candidate::Unjudged(Half::Refs),
-        Some(None) if could_have_decided => return Candidate::Unjudged(Half::PullRequests),
-        Some(None) => return Candidate::Available,
+        // half named is git's, the one the row's track marker is missing with.
+        Some(None) => {
+            return match (git_silent, could_have_decided) {
+                (Some(half), _) => Candidate::Unjudged(half),
+                (None, true) => Candidate::Unjudged(Half::PullRequests),
+                (None, false) => Candidate::Available,
+            }
+        }
         Some(Some(settled)) => settled,
     };
 
@@ -236,28 +286,28 @@ fn judge(
     // meanings land in one arm; this shape cannot.
     let found = worktree
         .branch
-        .as_ref()
+        .name()
         .and_then(|branch| finished_with(settled.pull_requests(), branch));
-    match (found, settled) {
+    match (found, git_silent, settled) {
         // `gh` widens whatever git could or could not say: a finished pull request offers
-        // the row even in a repository whose refs were not read.
-        (Some(pull_request), _) if clean => Candidate::Offered(Reason::PullRequest {
+        // the row even where no ref names the branch here.
+        (Some(pull_request), _, _) if clean => Candidate::Offered(Reason::PullRequest {
             number: pull_request.number,
             outcome: pull_request.outcome,
         }),
-        // Found, and the working tree has something in it: git would refuse the removal.
-        (Some(_), _) => Candidate::Available,
+        // Found, and the working tree is not known to be clean — see `clean` above.
+        (Some(_), _, _) => Candidate::Available,
         // Not found, and git never got to look for `gone`: nobody judged this row.
-        (None, _) if refs_unread => Candidate::Unjudged(Half::Refs),
+        (None, Some(half), _) => Candidate::Unjudged(half),
         // Missing from all of them: this branch has no finished pull request.
-        (None, SettledPullRequests::All(_)) => Candidate::Available,
+        (None, None, SettledPullRequests::All(_)) => Candidate::Available,
         // Missing from as many as `gh` was asked for: the window may not reach back far
         // enough, and "nothing to sweep" on the strength of a page size is a confident
         // wrong claim.
-        (None, SettledPullRequests::Window(_)) if could_have_decided => {
+        (None, None, SettledPullRequests::Window(_)) if could_have_decided => {
             Candidate::Unjudged(Half::PullRequests)
         }
-        (None, SettledPullRequests::Window(_)) => Candidate::Available,
+        (None, None, SettledPullRequests::Window(_)) => Candidate::Available,
     }
 }
 
@@ -313,10 +363,11 @@ struct Decision {
     /// different branch at a path the user has already said yes to, on the list `Enter` acts
     /// on.
     ///
-    /// `None` is a detached checkout. Two of those at one path are as different as two
-    /// branches are, and this cannot tell them apart: a `WorktreeNode` carries no commit, so
-    /// an answer about one carries over to the other. What would close that is a commit id on
-    /// the node, which nothing reads yet.
+    /// `None` is a detached checkout, or one herdr did not list —
+    /// [`Branch::name`](crate::domain::model::Branch::name) answers `None` for both. Two of
+    /// those at one path are as different as two branches are, and this cannot tell them
+    /// apart: a `WorktreeNode` carries no commit, so an answer about one carries over to the
+    /// other. What would close that is a commit id on the node, which nothing reads yet.
     branch: Option<String>,
     going: bool,
 }
@@ -335,7 +386,7 @@ impl Changes {
         self.0.insert(
             (RepoKey::of(repo), CheckoutPath::of(worktree)),
             Decision {
-                branch: worktree.branch.clone(),
+                branch: worktree.branch.name().map(str::to_string),
                 going,
             },
         );
@@ -356,7 +407,7 @@ impl Changes {
                 repo.worktrees.iter().map(move |worktree| {
                     (
                         (RepoKey::of(repo), CheckoutPath::of(worktree)),
-                        worktree.branch.as_deref(),
+                        worktree.branch.name(),
                     )
                 })
             })

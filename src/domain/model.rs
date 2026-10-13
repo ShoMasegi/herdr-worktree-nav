@@ -1,7 +1,7 @@
 //! The model both pickers display: repositories, their worktrees, and the panes sitting in
 //! each one.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::port::{AgentStatus, Track};
 
@@ -82,11 +82,10 @@ impl WorkingTree {
 /// repository, and the prompt line says it once rather than every row guessing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refs {
-    /// git answered. A checkout here with no track marker has nothing git reported for it,
-    /// or is one `domain::tree::tracks` answered with nothing because two refs of its own
-    /// repository name its path, or is one whose `:track` field git printed and the adapter
-    /// could not read — [`Track::Unreadable`], which draws no marker for a reason of its
-    /// own.
+    /// git answered. A checkout here with no track marker is one of four: a branch git
+    /// reported nothing for, one whose `:track` field git printed and the adapter could not
+    /// read ([`Track::Unreadable`]), one whose path no ref names ([`Position::NotSaid`]), or
+    /// a row that names no branch ([`Branch`]). Each carries its own reason.
     Read,
     /// git did not, in its own words — or, in a debug build only, the thread that asked
     /// did not finish.
@@ -98,8 +97,8 @@ pub enum Refs {
     /// readable twin of this one to draw from either —
     /// `one_repository_is_asked_about_once_however_many_panes_are_in_it` and
     /// `a_placement_carries_one_spelling_of_a_repository_key_whichever_answered`. A fixture
-    /// can still pair the two directly, and `domain::sweep::judge` offers the row on `gone`
-    /// either way.
+    /// can still pair the two directly, and `domain::sweep::judge` refuses the row either
+    /// way.
     Unreadable(String),
 }
 
@@ -108,8 +107,8 @@ impl Refs {
     ///
     /// Spelled out rather than written as `matches!(_, Unreadable(_))`, for the reason
     /// [`WorkingTree::is_drawn`] is: a third variant — refs not read yet, say — would have
-    /// gone on compiling as "read" in `domain::sweep::judge`, which is the one predicate
-    /// that decides whether a row says `refs unreadable`, and that is the direction it must
+    /// gone on compiling as "read" in `domain::sweep::judge` and `Shift-D`, where this
+    /// decides whether a checkout may be removed at all, and that is the direction it must
     /// not fail in. The compiler asks now.
     pub fn is_read(&self) -> bool {
         match self {
@@ -119,25 +118,136 @@ impl Refs {
     }
 }
 
+/// What is checked out at a path, as far as anybody has said.
+///
+/// Three answers rather than two, because a row with no branch name on it is two different
+/// facts and nothing downstream can work out which: herdr listing the checkout and saying
+/// nothing is out is an answer about the checkout, and herdr never listing it is the
+/// question never having been put. `refs/heads/x` can be out at a path herdr did not list;
+/// it cannot be out at one herdr listed as detached.
+///
+/// The [`Position`] rides on the one answer that names a branch, because it is about that
+/// branch: a row naming none has nothing a marker could be about, and here it has nowhere
+/// to carry one either.
+///
+/// [`domain::tree::build`](crate::domain::tree::build) writes each of the three at a
+/// construction site of its own, and
+/// `a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it` is the two that name no
+/// branch, over one repository's identical git facts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Branch {
+    /// herdr named the branch this checkout has out, and this is where the repository's refs
+    /// put it — off a ref walk that is happening anyway rather than a process of its own; see
+    /// [`port::Track`](crate::port::Track).
+    Out { name: String, position: Position },
+    /// herdr listed the checkout and said nothing is out — an empty branch, or
+    /// `is_detached`. No ref of the repository is about this row.
+    NothingOut,
+    /// Nobody said. `build` makes a row like this for a pane whose directory resolved to a
+    /// checkout herdr's worktree list did not mention — a `git worktree add` outside herdr
+    /// is the case its own comment names — so a branch may well be out and nothing on this
+    /// side has heard.
+    NotSaid,
+}
+
+impl Branch {
+    /// The name, where a branch was named. `None` for both of the other two, which is the
+    /// question [`Branch`] exists to keep answerable past this point.
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Branch::Out { name, .. } => Some(name),
+            Branch::NothingOut | Branch::NotSaid => None,
+        }
+    }
+
+    /// Where the named branch stands, and `None` on a row that names no branch.
+    pub fn position(&self) -> Option<Position> {
+        match self {
+            Branch::Out { position, .. } => Some(*position),
+            Branch::NothingOut | Branch::NotSaid => None,
+        }
+    }
+
+    /// A branch one ref named and git had nothing to report about: the row that draws no
+    /// marker and that nothing is unknown about.
+    #[cfg(test)]
+    pub fn out(name: impl Into<String>) -> Branch {
+        Branch::Out {
+            name: name.into(),
+            position: Position::Said(None),
+        }
+    }
+
+    /// Move the named branch to `to`. A row naming no branch has no position to move.
+    #[cfg(test)]
+    pub fn set_position(&mut self, to: Position) {
+        match self {
+            Branch::Out { position, .. } => *position = to,
+            Branch::NothingOut | Branch::NotSaid => panic!("{self:?} names no branch"),
+        }
+    }
+}
+
+/// Where a checkout's branch stands against what it is measured against, as far as the
+/// repository's refs could say.
+///
+/// A bare [`Track`] and an absence were two answers for three facts. The third is
+/// [`domain::tree::tracks`](crate::domain::tree) declining: more than one of the
+/// repository's refs names one checkout's path, they disagree about which branch is there,
+/// and a marker picked by list order is not an answer. Collapsed into the absence, that
+/// refusal was a thing the domain worked out and threw away — indistinguishable from a
+/// branch level with its upstream, so no reader could say it (issue #47).
+///
+/// [`Refs`] is the same argument one level up, about a whole repository. This is about one
+/// checkout, which is the level the refusal happens at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Position {
+    /// One ref of the repository names this checkout, and this is what git reported about
+    /// it: a [`Track`], or `None` where git reported nothing — the branch is level with its
+    /// upstream, or has nothing to be level with. Which of those two is the upstream's to
+    /// say, and no row has both.
+    Said(Option<Track>),
+    /// More than one of the repository's refs names this checkout's path, so nothing here
+    /// is about one branch, and the domain will not choose.
+    ///
+    /// Said in six places: the row draws `contested`
+    /// ([`ui::words::track_mark`](crate::ui::words::track_mark)), a condition names the
+    /// checkout as `refs disagree`
+    /// ([`Condition::RefsDisagree`](crate::domain::notice::Condition::RefsDisagree)),
+    /// [`app::dump`](crate::app::dump) says `track contested`, and the line under the list, a
+    /// sweep's `Space` and `Shift-D` all say `more than one ref names this checkout` — the last
+    /// two refusing it ([`Refusal::Contested`](crate::domain::sweep::Refusal::Contested))
+    /// wherever no refusal they ask first does. A row naming no branch has no position to
+    /// carry it in, so it says none of the first four: [`Tree::contested`] carries the fact for
+    /// it, and only the two refusals read it. Two refs at one path take two registrations of
+    /// it, and a list that names the path once for each, as `git worktree list` does, gives two
+    /// rows that are refused before either is judged
+    /// ([`Refusal::ListedTwice`](crate::domain::sweep::Refusal::ListedTwice)).
+    ///
+    /// `git worktree add` and `git worktree move` both refuse a path a worktree is already
+    /// registered at, but `git worktree repair` will register a second and `git worktree
+    /// prune` calls the result a `duplicate entry`:
+    /// `one_repository_can_name_one_path_from_two_refs`.
+    Contested,
+    /// No ref of the repository names this checkout's path: git would not read the refs at
+    /// all ([`Refs`] says so), or it read them and lists no ref there although herdr names a
+    /// branch. Nothing here says why; a branch with no commit yet is one way, having no ref
+    /// at all.
+    NotSaid,
+}
+
 /// One checkout of a repository: the primary one, or a linked worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeNode {
-    /// `None` for a checkout herdr listed with nothing out — and also for one herdr never
-    /// listed, which [`domain::tree::build`](crate::domain::tree::build) synthesizes for a
-    /// pane and where a branch may well be out. Neither carries a `track`, because a marker
-    /// about a branch the row does not name is one nobody can act on:
-    /// `a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it`. Carrying the
-    /// difference between the two is issue #52; until then the second loses a marker it
-    /// might have deserved, which is the cheaper of the two mistakes.
-    pub branch: Option<String>,
+    /// What is out here and where it stands, or, where nothing is named, which of the two
+    /// reasons that is. Neither branchless row carries a position, because a marker about a
+    /// branch the row does not name is one nobody can act on:
+    /// `a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it`.
+    pub branch: Branch,
     pub checkout_path: String,
     pub is_primary: bool,
     /// The workspace herdr has this checkout open in, when it has one.
     pub open_workspace_id: Option<String>,
-    /// Where this checkout's branch stands against its upstream, when it has anything to
-    /// say. It rides on a ref walk that is happening anyway rather than costing a process
-    /// of its own; see [`port::Track`](crate::port::Track).
-    pub track: Option<Track>,
     /// Panes currently working in this checkout, in the order herdr reported them.
     pub panes: Vec<PaneNode>,
 }
@@ -148,9 +258,11 @@ impl WorktreeNode {
         self.panes.is_empty()
     }
 
-    /// What to show for the checkout. Falls back to the directory name when detached.
+    /// What to show for the checkout. Falls back to the directory name where no branch is
+    /// named, which both of [`Branch`]'s other two answers are: the path is all either row
+    /// has to be called by, whatever the reason.
     pub fn label(&self) -> &str {
-        self.branch.as_deref().unwrap_or_else(|| {
+        self.branch.name().unwrap_or_else(|| {
             self.checkout_path
                 .rsplit('/')
                 .next()
@@ -247,8 +359,8 @@ pub struct Unlisted {
     /// The panes placed in this repository, by pane id, with the checkout each stands in —
     /// the paths herdr was asked about. Those panes are under `not in any repository` rather
     /// than in a row, so a row another repository lists at one of these paths shows no pane
-    /// and the path is still somebody's working directory: `domain::sweep::candidates` reads
-    /// it here. And the pane the branches view was opened from may be one of them.
+    /// and the path is still somebody's working directory: [`Tree::panes_standing_in`] reads it
+    /// here. And the pane the branches view was opened from may be one of them.
     pub panes: BTreeMap<String, String>,
 }
 
@@ -283,11 +395,28 @@ pub struct Tree {
     /// pane is drawn in one row at most, and a checkout can hold its directory without being
     /// that row: one nested inside the checkout the pane was placed in, one another
     /// repository registers at the same path, or any checkout at all for a pane under
-    /// `not in any repository`. `domain::sweep::candidates` reads it here.
+    /// `not in any repository`. [`Tree::panes_standing_in`] reads it here.
     pub pane_cwds: BTreeMap<String, Vec<String>>,
+    /// Every row's repository and path that more than one of the repository's refs names,
+    /// whatever the row names. A row naming a branch carries the same fact as
+    /// [`Position::Contested`]; a row naming none — nothing out, or a checkout herdr did not
+    /// list — has no position to carry it in, and the two registrations are there all the
+    /// same. [`Tree::is_contested`] reads it here.
+    pub contested: BTreeSet<(RepoKey, CheckoutPath)>,
 }
 
 impl Tree {
+    /// Whether more than one of `repo`'s refs names `worktree`'s path, so two registrations
+    /// share it and `git worktree remove` would take whichever git picks, whether the row
+    /// names a branch or not. Where it falls among the refusals is `sweep::candidates`'s and
+    /// `judge`'s, and `ask_to_remove`'s, to say.
+    pub fn is_contested(&self, repo: &RepoNode, worktree: &WorktreeNode) -> bool {
+        worktree.branch.position() == Some(Position::Contested)
+            || self
+                .contested
+                .contains(&(RepoKey::of(repo), CheckoutPath::of(worktree)))
+    }
+
     /// Locate the repository and checkout a pane sits in.
     pub fn find_pane(&self, pane_id: &str) -> Option<(&RepoNode, &WorktreeNode, &PaneNode)> {
         self.repos.iter().find_map(|repo| {
@@ -299,6 +428,42 @@ impl Tree {
                     .map(|pane| (repo, worktree, pane))
             })
         })
+    }
+
+    /// The panes standing in `path`, by pane id, whichever row or heading draws them, and the
+    /// one rule the sweep's `Running` and `Shift-D` both ask. Three ways in, because no one of
+    /// them catches every pane:
+    ///
+    /// - drawn under a row whose checkout is `path` or is inside it, in any repository. A
+    ///   row's path is git's spelling, and this is what catches a pane whose own directory
+    ///   herdr reported through a symlink, which the next one compares as text and misses;
+    /// - a working directory at or under `path` — its shell's or its foreground process's —
+    ///   which catches a pane drawn under some other row, or under `not in any repository`;
+    /// - placed at `path` or inside it in a repository herdr would not list.
+    ///
+    /// A pane can come in by more than one of them, so an id can repeat. A pane herdr cannot
+    /// see into, drawn under `not in any repository`, has nothing to be found by.
+    pub fn panes_standing_in<'a>(&'a self, path: &'a str) -> impl Iterator<Item = &'a str> {
+        let by_row = self
+            .repos
+            .iter()
+            .flat_map(|repo| &repo.worktrees)
+            .filter(move |worktree| is_inside(&worktree.checkout_path, path))
+            .flat_map(|worktree| &worktree.panes)
+            .map(|pane| pane.pane_id.as_str());
+        let by_directory = self
+            .pane_cwds
+            .iter()
+            .filter(move |(_, cwds)| cwds.iter().any(|cwd| is_inside(cwd, path)))
+            .map(|(pane_id, _)| pane_id.as_str());
+        let unlisted = self
+            .trouble
+            .unlisted
+            .iter()
+            .flat_map(|repo| &repo.panes)
+            .filter(move |(_, checkout)| is_inside(checkout, path))
+            .map(|(pane_id, _)| pane_id.as_str());
+        by_row.chain(by_directory).chain(unlisted)
     }
 
     /// Locate the repository and checkout a key names, and nothing when the tree no longer
@@ -399,17 +564,16 @@ mod tests {
     #[test]
     fn falls_back_to_the_directory_name_for_a_detached_checkout() {
         let detached = WorktreeNode {
-            branch: None,
+            branch: Branch::NothingOut,
             checkout_path: "/tmp/wt/detached-head".into(),
             is_primary: false,
             open_workspace_id: None,
-            track: None,
             panes: vec![],
         };
         assert_eq!(detached.label(), "detached-head");
 
         let on_branch = WorktreeNode {
-            branch: Some("feat/login".into()),
+            branch: Branch::out("feat/login"),
             ..detached
         };
         assert_eq!(on_branch.label(), "feat/login");

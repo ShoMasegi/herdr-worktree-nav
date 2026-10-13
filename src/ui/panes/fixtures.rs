@@ -8,7 +8,8 @@ use std::collections::BTreeMap;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::domain::model::{
-    CheckoutPath, PaneNode, Refs, RepoKey, RepoNode, Tree, WorkingTree, WorktreeNode,
+    Branch, CheckoutPath, PaneNode, Position, Refs, RepoKey, RepoNode, Tree, WorkingTree,
+    WorktreeNode,
 };
 use crate::domain::rows::DisplayLine;
 use crate::domain::sweep::Mark;
@@ -61,27 +62,24 @@ pub(crate) fn state() -> PanesState {
                 refs: Refs::Read,
                 worktrees: vec![
                     WorktreeNode {
-                        branch: Some("main".into()),
+                        branch: Branch::out("main"),
                         checkout_path: "/src/app".into(),
                         is_primary: true,
                         open_workspace_id: Some("w1".into()),
-                        track: None,
                         panes: vec![pane("w1:p1", "claude", AgentStatus::Working)],
                     },
                     WorktreeNode {
-                        branch: Some("feat/login".into()),
+                        branch: Branch::out("feat/login"),
                         checkout_path: "/wt/app/feat-login".into(),
                         is_primary: false,
                         open_workspace_id: Some("w2".into()),
-                        track: None,
                         panes: vec![pane("w2:p1", "codex", AgentStatus::Blocked)],
                     },
                     WorktreeNode {
-                        branch: Some("fix/crash".into()),
+                        branch: Branch::out("fix/crash"),
                         checkout_path: "/wt/app/fix-crash".into(),
                         is_primary: false,
                         open_workspace_id: None,
-                        track: None,
                         panes: vec![],
                     },
                 ],
@@ -128,13 +126,17 @@ pub(crate) fn sweeping() -> PanesState {
     let mut state = state();
     state.tree.repos[0].worktrees[1].panes.clear();
     state.tree.repos[0].worktrees[1].open_workspace_id = None;
-    state.tree.repos[0].worktrees[2].track = Some(Track::Gone);
+    state.tree.repos[0].worktrees[2]
+        .branch
+        .set_position(Position::Said(Some(Track::Gone)));
     state.tree.repos[0].worktrees.push(WorktreeNode {
-        branch: Some("feat/wip".into()),
+        branch: Branch::Out {
+            name: "feat/wip".into(),
+            position: Position::Said(Some(Track::Gone)),
+        },
         checkout_path: "/wt/app/feat-wip".into(),
         is_primary: false,
         open_workspace_id: Some("w3".into()),
-        track: Some(Track::Gone),
         panes: vec![pane("w3:p1", "codex", AgentStatus::Working)],
     });
     state.replace_tree(state.tree.clone());

@@ -4,12 +4,12 @@
 //! separates "herdr or git told us something odd" from "the UI drew it wrong". So it prints
 //! what the rows are drawn from, and the answers the rows deliberately leave out — that git
 //! would not read a repository's refs, that a branch has no upstream to be level with, and why
-//! git would not read a working tree. Outside a sweep a row draws nothing for the first two
-//! and only `?` for the third, because no marker beats a wrong one
+//! git would not read a working tree. A row draws nothing for the first two and only `?` for
+//! the third, because no marker beats a wrong one
 //! ([`domain::model::Refs`](crate::domain::model::Refs),
-//! [`domain::model::WorkingTree`](crate::domain::model::WorkingTree)); in a sweep a row it
-//! would have judged says `refs unreadable`, which is that something is missing rather than
-//! what.
+//! [`domain::model::WorkingTree`](crate::domain::model::WorkingTree)). A sweep and `Shift-D`
+//! refuse every checkout of a repository whose refs git would not read, without git's words,
+//! which are here and on the prompt line.
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -17,7 +17,7 @@ use std::fmt::Write;
 use crate::adapter::plugin_config::Loaded;
 use crate::app::one_line;
 use crate::domain::chrome::Chrome;
-use crate::domain::model::{normalize_path, Refs, RepoNode, Tree, WorktreeNode};
+use crate::domain::model::{normalize_path, Branch, Position, Refs, RepoNode, Tree, WorktreeNode};
 use crate::port::{GitPort, GitRef, RefKind, Snapshot, Track};
 
 /// What the second ref walk — the one `main` makes for this page, for the upstream names —
@@ -190,10 +190,12 @@ pub fn report(
     out
 }
 
-/// `upstream origin/x  track gone` — the two facts a marker is drawn from, in words the
-/// marker cannot hold: `level` for a branch even with its upstream, `none` for one with no
-/// upstream to be even with, `unreadable` for one whose `:track` field git printed and the
-/// adapter could not read, and `not read` when git would not read the refs at all.
+/// `upstream origin/x  track gone` — the two facts a marker is drawn from, each in a word
+/// of its own: `level` for a branch even with its upstream, `none` for one with no upstream
+/// to be even with, `unreadable` for one whose `:track` field git printed and the adapter
+/// could not read, `contested` for a branch at a checkout more than one of the repository's
+/// refs names, and `not read` when git would not read the refs at all — and, where this page
+/// has no upstream to say `level` or `none` beside, `nothing reported` and `not known` ([`found`]).
 ///
 /// A branch with no upstream is measured against where it would push — see
 /// [`adapter::git_cli`](crate::adapter::git_cli) — so `upstream none` can still be followed by
@@ -202,45 +204,95 @@ pub fn report(
 ///
 /// Where this page knows less than the picker it says which: `not read` for an upstream its
 /// own walk could not get, beside the marker the picker is drawing or `not known`. When git
-/// lists no ref at this checkout — its list and herdr's disagree about what is checked out
-/// where — it says so rather than `upstream none`, and when git names more than one it names
-/// each, because `domain::tree::tracks` declines to choose between them and this page has no
-/// better grounds. Issue #48 is the labels.
+/// lists no ref at this checkout — a branch with no commit yet, or git's list and herdr's
+/// disagreeing about what is out where — it says so rather than `upstream none`, and when
+/// git names more than one it names
+/// each, because `domain::tree::tracks` declines to choose between them. Issue #48 is the
+/// labels.
+///
+/// How many refs name the checkout is the row's answer, read off its [`Position`] rather
+/// than counted again here (#47). This page's own walk is a second one, and where the two
+/// counts differ the line says both rather than letting either stand for the other.
 fn branch_words(repo: &RepoNode, worktree: &WorktreeNode, refs: &RefsByRepo) -> String {
     let read = RefsRead::of(repo, refs);
-    let Some(branch) = worktree.branch.as_deref() else {
+    let Branch::Out { name, position } = &worktree.branch else {
         return detached_words(worktree, read);
     };
-    let tree_track = || match worktree.track {
-        Some(track) => track_words(track),
-        None => "not known".to_string(),
-    };
+    let found = found(*position);
     let read = match read {
         RefsRead::NotRead => return "upstream not read  track not read".to_string(),
-        RefsRead::NotReadAgain => return format!("upstream not read  track {}", tree_track()),
+        RefsRead::NotReadAgain => return format!("upstream not read  track {found}"),
         RefsRead::Read(read) => read,
     };
     // By the checkout git says has the branch, which is how the tree matched them too.
     let named = refs_at(read, &worktree.checkout_path);
-    let git_ref = match named.as_slice() {
-        [only] => only,
-        [] => {
-            return format!(
-                "no ref at this checkout for {branch}  track {}",
-                tree_track()
+    match (
+        Count::of_position(*position),
+        Count::of(&named),
+        named.as_slice(),
+    ) {
+        (Count::None, Count::None, _) => {
+            format!("no ref at this checkout for {name}  track {found}")
+        }
+        (Count::One, Count::One, [only]) => {
+            let upstream = only.upstream.as_deref();
+            let track = standing(*position, upstream);
+            format!("upstream {}  track {track}", upstream.unwrap_or("none"))
+        }
+        (Count::More, Count::More, more) => {
+            format!(
+                "more than one ref at this checkout: {}  track {found}",
+                each_of(more)
             )
         }
-        more => {
-            return format!(
-                "more than one ref at this checkout: {}  track {}",
-                each_of(more),
-                tree_track()
-            );
+        (picker, _, []) => format!(
+            "the picker's read named {} at this checkout and this one names none  track {found}",
+            picker.words(),
+        ),
+        (picker, _, named) => format!(
+            "the picker's read named {} at this checkout and this one names {}  track {found}",
+            picker.words(),
+            each_of(named),
+        ),
+    }
+}
+
+/// How many refs named a checkout: the three answers `domain::tree::tracks` gives, so that
+/// the picker's walk and this page's can be held side by side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Count {
+    None,
+    One,
+    More,
+}
+
+impl Count {
+    /// The picker's count, as the row carries it. A position is only ever said off one ref;
+    /// [`Position::NotSaid`] reaches here only under refs git read, so it is no ref at all.
+    fn of_position(position: Position) -> Self {
+        match position {
+            Position::Said(_) => Count::One,
+            Position::Contested => Count::More,
+            Position::NotSaid => Count::None,
         }
-    };
-    let upstream = git_ref.upstream.as_deref();
-    let track = standing(worktree.track, upstream);
-    format!("upstream {}  track {track}", upstream.unwrap_or("none"))
+    }
+
+    /// This page's own count.
+    fn of(named: &[&GitRef]) -> Self {
+        match named {
+            [] => Count::None,
+            [_] => Count::One,
+            _ => Count::More,
+        }
+    }
+
+    fn words(self) -> &'static str {
+        match self {
+            Count::None => "no ref",
+            Count::One => "one ref",
+            Count::More => "more than one ref",
+        }
+    }
 }
 
 /// Which of the two walks failed: under `NotRead` the picker has no markers either, and
@@ -292,7 +344,7 @@ fn each_of(named: &[&GitRef]) -> String {
                 "{} \u{2192} {} {}",
                 git_ref.name,
                 upstream.unwrap_or("none"),
-                standing(git_ref.track, upstream)
+                standing(Position::Said(git_ref.track), upstream)
             )
         })
         .collect::<Vec<_>>()
@@ -301,16 +353,21 @@ fn each_of(named: &[&GitRef]) -> String {
 
 /// What the page says about a row with no branch on it.
 ///
-/// Two rows reach here: the checkout herdr listed with nothing out, and the one herdr never
-/// listed, which `build` makes for a pane and where a branch may well be out (issue #52).
-/// Neither carries a track — [`WorktreeNode::branch`] names the test — so the refs git names
-/// at the path are named and not explained (issue #49). The `track` arms stay because
-/// [`WorktreeNode`] does not make the state unrepresentable, and a page that dropped a track
-/// it was handed would be the page lying rather than the tree. They say `track`, not
-/// `marker`, because [`Track::Unreadable`] is a track that draws no marker. No `upstream …`:
-/// this row names no branch for one to be about.
+/// Two rows reach here and they are not the same news: the checkout herdr listed with
+/// nothing out, and the one herdr never listed, which `build` makes for a pane and where a
+/// branch may well be out. The row says which ([`Branch`]), so the page does too: on the
+/// second, `no branch reported` would be this side's inference dressed as herdr's answer.
+/// Neither carries a position — [`Branch`] keeps one only on the answer that names a
+/// branch — so the refs git names at the path are named and not explained (issue #49).
+///
+/// No `upstream …` either way: this row names no branch for one to be about.
 fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {
-    let mut out = "no branch reported".to_string();
+    let mut out = match worktree.branch {
+        // Only a row naming no branch reaches here, `branch_words` having returned above
+        // for the rest.
+        Branch::NothingOut | Branch::Out { .. } => "no branch reported".to_string(),
+        Branch::NotSaid => "herdr did not list this checkout".to_string(),
+    };
     match read {
         RefsRead::NotRead => out.push_str("  refs not read"),
         RefsRead::NotReadAgain => out.push_str("  refs not read on the second read"),
@@ -318,18 +375,27 @@ fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {
             let named = refs_at(read, &worktree.checkout_path);
             if !named.is_empty() {
                 let _ = write!(out, "  git names at this path: {}", each_of(&named));
-            } else if worktree.track.is_some() {
-                // This page's walk names no ref here and the picker's walk did: a track on
-                // this row comes off a ref git named at this path, whether or not it is one
-                // the row can draw.
-                out.push_str("  no ref at this checkout");
             }
         }
     }
-    if let Some(track) = worktree.track {
-        let _ = write!(out, "  track {}", track_words(track));
-    }
     out
+}
+
+/// What the picker's own ref walk found for this checkout, where this page has no upstream
+/// of its own to measure it against.
+///
+/// `level` and `none` are not among these: both need an upstream to be a claim about, and
+/// where one is known [`standing`] says them. What is left is the marker, `nothing
+/// reported` for the walk having found one ref and git having reported nothing about it,
+/// `unreadable` for [`Track::Unreadable`], `contested` for [`Position::Contested`], and
+/// `not known`, which is the walk having found no ref at this path at all.
+fn found(position: Position) -> String {
+    match position {
+        Position::Said(Some(track)) => track_words(track),
+        Position::Said(None) => "nothing reported".to_string(),
+        Position::Contested => "contested".to_string(),
+        Position::NotSaid => "not known".to_string(),
+    }
 }
 
 /// The marks the list draws for a track, with no row in front of them.
@@ -350,17 +416,20 @@ fn track_words(track: Track) -> String {
     }
 }
 
-/// The words for a track: the marker where git reported one, else `level` beside an
-/// upstream and `none` without one.
+/// The words for a position beside an upstream this page knows: the marker where git
+/// reported one, else `level` with an upstream and `none` without one.
 ///
-/// Both of those are claims — even with the ref git named, and nothing to be even with —
-/// so neither may stand for a reading that did not read. [`Track::Unreadable`] is not an
-/// absence and does not arrive here as one.
-fn standing(track: Option<Track>, upstream: Option<&str>) -> String {
-    match track {
-        Some(track) => track_words(track),
-        None if upstream.is_some() => "level".to_string(),
-        None => "none".to_string(),
+/// Both of those are claims — even with the ref git named, and nothing to be even with — so
+/// neither may stand for a reading that did not read. [`Track::Unreadable`] is not an
+/// absence and does not arrive here as one, and neither is [`Position::Contested`]: `level`
+/// is exactly the claim `domain::tree::tracks` refused to make there, and this page has no
+/// better grounds for making it.
+fn standing(position: Position, upstream: Option<&str>) -> String {
+    match position {
+        Position::Said(Some(track)) => track_words(track),
+        Position::Said(None) if upstream.is_some() => "level".to_string(),
+        Position::Said(None) => "none".to_string(),
+        Position::Contested | Position::NotSaid => found(position),
     }
 }
 

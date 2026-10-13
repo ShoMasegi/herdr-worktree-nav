@@ -4,7 +4,7 @@
 //! readers serve all three: a screen is drawn from one state and read back one cell at a
 //! time, and the readers are the same whichever picker drew it.
 
-use crate::domain::model::{CheckoutPath, WorkingTree};
+use crate::domain::model::{Branch, CheckoutPath, Position, WorkingTree};
 use crate::ui::render::{branches, panes};
 use std::collections::BTreeMap;
 
@@ -51,11 +51,10 @@ pub(crate) fn pane(id: &str, name: Option<&str>, status: AgentStatus, focused: b
 
 pub(crate) fn worktree(branch: &str, primary: bool, panes: Vec<PaneNode>) -> WorktreeNode {
     WorktreeNode {
-        branch: Some(branch.into()),
+        branch: Branch::out(branch),
         checkout_path: format!("/wt/{}", branch.replace('/', "-")),
         is_primary: primary,
         open_workspace_id: panes.first().map(|p| p.workspace_id.clone()),
-        track: None,
         panes,
     }
 }
@@ -145,9 +144,13 @@ pub(crate) fn panes_help(width: u16) -> &'static str {
 pub(crate) fn swept() -> PanesState {
     let mut tree = tree();
     // Finished with: gone upstream, nothing running in it.
-    tree.repos[0].worktrees[2].track = Some(Track::Gone);
+    tree.repos[0].worktrees[2]
+        .branch
+        .set_position(Position::Said(Some(Track::Gone)));
     // Gone too, but somebody is working in it.
-    tree.repos[0].worktrees[1].track = Some(Track::Gone);
+    tree.repos[0].worktrees[1]
+        .branch
+        .set_position(Position::Said(Some(Track::Gone)));
     // Nobody is finished with this one, and the user may still say otherwise.
     tree.repos[1]
         .worktrees
@@ -205,9 +208,10 @@ pub(crate) fn finished_tree(finished: &[&str]) -> Tree {
         true,
         vec![pane("w1:p1", Some("claude"), AgentStatus::Working, true)],
     )];
-    worktrees.extend(finished.iter().map(|branch| WorktreeNode {
-        track: Some(Track::Gone),
-        ..worktree(branch, false, vec![])
+    worktrees.extend(finished.iter().map(|branch| {
+        let mut row = worktree(branch, false, vec![]);
+        row.branch.set_position(Position::Said(Some(Track::Gone)));
+        row
     }));
     Tree {
         repos: vec![RepoNode {

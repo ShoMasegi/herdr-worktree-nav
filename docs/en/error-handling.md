@@ -105,10 +105,16 @@ not enumerate. There *is* a value to store, and every ordinary value in range is
 
 **What it gets:** a state of its own, so that "we do not know" cannot be read as an answer.
 `WorkingTree` is `Clean | Dirty | Unreadable`, not a `bool`. `Refs` is
-`Read | Unreadable(String)`, carrying the words. The row then draws no marker — no marker
-beats the wrong marker — and, where a frame can produce the sentence, a condition (kind 3)
-says why the markers are missing. Where no reachable failure would produce it, the state is
-still carried and the reason for the silent row is written where the state is.
+`Read | Unreadable(String)`, carrying the words. The row then draws no marker that reads as
+an answer — no marker beats the wrong marker — and, where a frame can produce the sentence,
+a condition (kind 3) says why the markers are missing. Where no reachable failure would
+produce it, the state is still carried and the reason for the silent row is written where
+the state is.
+
+A row may still draw a mark that names the state itself, because that is not an answer:
+`?` for a working tree git would not read, and `contested` for a branch at a checkout more
+than one of the repository's refs names. For the latter a blank would read as `level` — the one claim
+the refusal exists not to make (issue #47).
 
 This is the kind that costs the most when it is got wrong, because nothing looks broken. It
 is the subject of the rule in the next section.

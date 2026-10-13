@@ -15,19 +15,19 @@
 //! Getting the two the wrong way round is what issues #64 and #35 are about, and
 //! `docs/en/error-handling.md` is where the distinction is written down.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::domain::model::{Refs, Tree};
+use crate::domain::model::{CheckoutPath, Position, Refs, RepoKey, Tree};
 
 /// One thing the picker has to say about the list it is showing.
 ///
 /// A value rather than a sentence: which of these hold is derived every frame, and what
 /// each one reads as on a prompt line that may have no room for it is
 /// [`ui::words`](crate::ui::words)'s to decide. There is deliberately no severity here yet.
-/// Every condition produced today is about one repository, a set of panes that failed alike,
-/// the reading as a whole, or what `gh` could not be asked, so an ordering field would be a
-/// guess; the order is the order they are gathered in, and
-/// [`conditions`] says what that order means.
+/// Every condition produced today is about one repository, one checkout, a set of panes that
+/// failed alike, the reading as a whole, or what `gh` could not be asked, so an ordering
+/// field would be a guess; the order is the order they are gathered in, and [`conditions`]
+/// says what that order means.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Condition {
     /// The reading that built the list failed, so the rows may be behind. Carries the words
@@ -46,6 +46,10 @@ pub enum Condition {
     Unlisted { repo: String, words: String },
     /// git would not read this repository's refs, so every track marker in it is missing.
     RefsUnreadable { repo: String, words: String },
+    /// git read this repository's refs and more than one of them names this checkout, so
+    /// it has no one branch to measure: [`Position::Contested`]. One per repository and
+    /// checkout path, carrying the path.
+    RefsDisagree { repo: String, checkout: String },
     /// What could not be asked of `gh` in this sweep, already counted by
     /// [`app::settled`](crate::app::settled) because which repositories were asked is not
     /// something the tree knows.
@@ -55,23 +59,27 @@ pub enum Condition {
 /// Everything that is wrong right now, worst first.
 ///
 /// After a list that may be behind: panes that could not be placed at all, then a repository
-/// with no rows at all, then a repository whose rows are missing their markers, then what
-/// `gh` said. Each is a larger question than the one after it — a reader whose whole session
-/// is ungrouped is not helped by being told about one repository's refs, and one who cannot
-/// see a repository at all is not helped by being told about another one's markers. The
-/// markers are about every row of the repository and are true sweep or no sweep; `gh` is
-/// asked only during a sweep, and only about the half git could not decide.
+/// with no rows at all, then a repository whose rows are missing their markers, then a
+/// checkout the refs disagree about, then what `gh` said. Each is a larger question than the
+/// one after it — a reader whose whole session is ungrouped is not helped by being told
+/// about one repository's refs, and one who cannot see a repository at all is not helped by
+/// being told about another one's markers. The markers are about every row of the
+/// repository and are true sweep or no sweep; `gh` is asked only during a sweep, and only
+/// about the half git could not decide.
 ///
-/// One state that draws no marker deliberately has no line here: a single ref whose
-/// `:track` field git printed and the adapter could not read. Why it does not is written
-/// where the state is, on [`Track::Unreadable`](crate::port::Track::Unreadable).
+/// Two states that draw no marker deliberately have no line here. One is a single ref whose
+/// `:track` field git printed and the adapter could not read, for the reason written where
+/// the state is, on [`Track::Unreadable`](crate::port::Track::Unreadable). The other is a
+/// branch no ref names the checkout of ([`Position::NotSaid`] under refs git read), which a
+/// branch with no commit yet produces in the ordinary course of things: the line under the
+/// list says it of the checkout under the cursor, a sweep that would have judged it says
+/// `no ref here`, and `dump` says what each read found.
 ///
 /// `stale` and `sweep_trouble` are passed in rather than read off the tree. The first is
 /// about the reading that built it, which a tree cannot report about itself; the second is
 /// already one sentence for however many repositories `gh` could not be asked about, which
 /// [`app::settled`](crate::app::settled) builds because which repositories were asked is
-/// not something the tree
-/// knows.
+/// not something the tree knows.
 pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>) -> Vec<Condition> {
     // In front of the rest: the others are about what a row is missing, and this one is
     // about whether the rows are the right rows at all.
@@ -115,6 +123,27 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
             words: words.clone(),
         }),
     }));
+    // One per repository and path rather than per row. Two refs naming one path takes two
+    // registrations of it, and `git worktree list` names the path once for each, so a
+    // contested checkout is two rows at one path wherever herdr does the same; one sentence
+    // twice would count as two things wrong. Kept apart by the repository's key, not by its
+    // name: two clones of one remote share a name and are two repositories, each with its
+    // own registrations to repair, so two clones contested at one path read as the same
+    // sentence twice, and are two things wrong.
+    let mut said = BTreeSet::new();
+    for repo in &tree.repos {
+        for worktree in &repo.worktrees {
+            if worktree.branch.position() != Some(Position::Contested)
+                || !said.insert((RepoKey::of(repo), CheckoutPath::of(worktree)))
+            {
+                continue;
+            }
+            conditions.push(Condition::RefsDisagree {
+                repo: repo.display_name.clone(),
+                checkout: worktree.checkout_path.clone(),
+            });
+        }
+    }
     conditions.extend(sweep_trouble.map(|words| Condition::SweepTrouble(words.to_string())));
     conditions
 }
@@ -122,7 +151,7 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{RepoNode, Tree, Unlisted};
+    use crate::domain::model::{Branch, RepoNode, Tree, Unlisted, WorktreeNode};
 
     fn repo(name: &str, refs: Refs) -> RepoNode {
         RepoNode {
@@ -168,6 +197,55 @@ mod tests {
                     repo: "me/docs".into(),
                     words: "fatal: index file corrupt".into(),
                 },
+            ]
+        );
+    }
+
+    #[test]
+    fn every_checkout_the_refs_disagree_about_is_its_own_condition() {
+        let checkout = |path: &str, position| WorktreeNode {
+            branch: Branch::Out {
+                name: "b".into(),
+                position,
+            },
+            checkout_path: path.into(),
+            is_primary: false,
+            open_workspace_id: None,
+            panes: Vec::new(),
+        };
+        let mut app = repo("me/app", Refs::Read);
+        app.worktrees = vec![
+            checkout("/wt/a", Position::Contested),
+            checkout("/wt/b", Position::Said(None)),
+            checkout("/wt/c", Position::Contested),
+            // A second registration of `/wt/a`, which is how a path comes to be contested.
+            checkout("/wt/a", Position::Contested),
+        ];
+        // A second clone of the same remote: the same name, another repository, and its own
+        // contested `/wt/a`.
+        let mut clone = repo("me/app", Refs::Read);
+        clone.repo_key = "/elsewhere/app/.git".into();
+        clone.worktrees = vec![checkout("/wt/a", Position::Contested)];
+        // A row naming no branch at a contested path has no position to say `contested`
+        // in, and no `refs disagree` condition names it either.
+        app.worktrees.push(WorktreeNode {
+            branch: Branch::NothingOut,
+            ..checkout("/wt/d", Position::NotSaid)
+        });
+        let mut tree = tree(vec![app, clone]);
+        tree.contested
+            .insert((RepoKey::of(&tree.repos[0]), CheckoutPath::for_test("/wt/d")));
+        let disagree = |checkout: &str| Condition::RefsDisagree {
+            repo: "me/app".into(),
+            checkout: checkout.into(),
+        };
+        assert_eq!(
+            conditions(&tree, None, Some("me/app: gh could not be run")),
+            vec![
+                disagree("/wt/a"),
+                disagree("/wt/c"),
+                disagree("/wt/a"),
+                Condition::SweepTrouble("me/app: gh could not be run".into()),
             ]
         );
     }

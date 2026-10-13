@@ -199,6 +199,7 @@ mod tests {
     use super::*;
     use crate::app::fakes::until;
     use crate::app::fakes::{fake_git, FakeGit};
+    use crate::domain::model::Branch;
     use crate::domain::model::{Refs, RepoNode, WorktreeNode};
 
     use anyhow::Result;
@@ -270,11 +271,10 @@ mod tests {
                 worktrees: checkouts
                     .iter()
                     .map(|path| WorktreeNode {
-                        branch: Some("b".into()),
+                        branch: Branch::out("b"),
                         checkout_path: (*path).to_string(),
                         is_primary: false,
                         open_workspace_id: None,
-                        track: None,
                         panes: Vec::new(),
                     })
                     .collect(),

@@ -666,7 +666,7 @@ mod tests {
     use super::*;
     use crate::adapter::plugin_config;
     use crate::domain::chrome::Chrome;
-    use crate::domain::model::{CheckoutPath, WorkingTree};
+    use crate::domain::model::{Branch, CheckoutPath, Position, WorkingTree};
     use crate::ui::render::fixtures::*;
     use ratatui::backend::TestBackend;
     use ratatui::crossterm::event::KeyCode;
@@ -1258,11 +1258,9 @@ mod tests {
     }
 
     #[test]
-    fn a_row_in_a_repository_whose_refs_git_would_not_read_says_so_in_a_sweep() {
-        // The prompt line names the repository; the row says which half of the question
-        // went unanswered, and goes on saying it once marked — the same rule `PR unknown`
-        // is under. The row is found by its path's tail because here the note takes the
-        // label's place.
+    fn a_row_in_a_repository_whose_refs_git_would_not_read_is_refused_in_a_sweep() {
+        // The prompt line names the repository, and the row draws no box: nothing can say
+        // whether two refs name its path. `Space` says why, as on the other refused rows.
         let mut state = swept();
         let mut tree = state.tree().clone();
         tree.repos[1].refs = Refs::Unreadable("fatal: bad ref".into());
@@ -1278,7 +1276,7 @@ mod tests {
         let row_of = |drawn: &str| {
             drawn
                 .lines()
-                .find(|line| line.contains("chore-deps") && !line.starts_with(" me/site"))
+                .find(|line| line.contains("chore/deps") && !line.starts_with(" me/site"))
                 .expect("the row is drawn")
                 .to_string()
         };
@@ -1286,10 +1284,9 @@ mod tests {
             let drawn = screen(&state, width, 20);
             let row = row_of(&drawn);
             assert!(
-                row.contains("[ ]"),
-                "unjudged is not offered at {width}: {row}"
+                !row.contains("[ ]") && !row.contains("[x]"),
+                "refused at {width}: {row}"
             );
-            assert!(row.contains("refs unreadable"), "at {width}: {row}");
             assert!(
                 drawn.contains("me/site: refs unreadable: fatal"),
                 "named once, on the prompt line, at {width}:\n{drawn}"
@@ -1297,9 +1294,12 @@ mod tests {
         }
 
         press(&mut state, KeyCode::Char(' '));
-        let row = row_of(&screen(&state, 92, 20));
-        assert!(row.contains("[x]"), "marked: {row}");
-        assert!(row.contains("refs unreadable"), "and still unjudged: {row}");
+        let drawn = screen(&state, 92, 20);
+        assert!(!row_of(&drawn).contains("[x]"), "still refused:\n{drawn}");
+        assert!(
+            drawn.contains("git would not read this repository's refs"),
+            "{drawn}"
+        );
     }
 
     #[test]
@@ -1328,12 +1328,20 @@ mod tests {
         // The four answers, on four checkouts: ahead and behind its upstream, an upstream
         // that is gone, uncommitted work, and a checkout with nothing to report at all.
         let mut tree = tree();
-        tree.repos[0].worktrees[0].track = Some(Track::Diverged {
-            ahead: NonZeroU32::new(2).unwrap(),
-            behind: NonZeroU32::new(1).unwrap(),
-        });
-        tree.repos[0].worktrees[1].track = Some(Track::Gone);
-        tree.repos[0].worktrees[2].track = Some(Track::Behind(NonZeroU32::new(3).unwrap()));
+        tree.repos[0].worktrees[0]
+            .branch
+            .set_position(Position::Said(Some(Track::Diverged {
+                ahead: NonZeroU32::new(2).unwrap(),
+                behind: NonZeroU32::new(1).unwrap(),
+            })));
+        tree.repos[0].worktrees[1]
+            .branch
+            .set_position(Position::Said(Some(Track::Gone)));
+        tree.repos[0].worktrees[2]
+            .branch
+            .set_position(Position::Said(Some(Track::Behind(
+                NonZeroU32::new(3).unwrap(),
+            ))));
         let mut state = PanesState::new(tree, None);
         state.set_working_trees(answers(&[
             ("/wt/feat-login", WorkingTree::Dirty),
@@ -1553,7 +1561,7 @@ mod tests {
     #[test]
     fn the_column_stops_short_of_the_edge_so_something_always_fits_after_it() {
         let mut tree = tree();
-        tree.repos[0].worktrees[0].branch = Some("a".repeat(80));
+        tree.repos[0].worktrees[0].branch = Branch::out("a".repeat(80));
         let state = PanesState::new(tree, None);
         assert_eq!(meta_column(state.rows(), 60), 60 - MIN_META_WIDTH);
     }

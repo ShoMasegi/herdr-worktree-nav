@@ -46,19 +46,35 @@ with git's words, and its checkouts read `not read`. If only this page's own sec
 of the refs failed — the picker read them once for its markers, and `dump` reads them
 again for the upstream names — the repository says `refs unreadable on the second read:`
 and its checkouts keep the track the picker is drawing, with `upstream not read`. A
-checkout git lists no ref at says `no ref at this checkout for <branch>`: git and herdr
-disagree about what is checked out where, which is the thing to look at. A checkout git
+checkout git lists no ref at says `no ref at this checkout for <branch>`: either the branch
+has no commit yet, or git and herdr disagree about what is checked out where, which is the
+thing to look at. A checkout git
 names more than one ref at reads `more than one ref at this checkout:` and then each of
 them as `<branch> → <upstream> <where it stands>`; more than one of the repository's
 worktree registrations names that path, and which of them is stale is not something this
-page can tell you. The `track` after them is what the picker's own walk found: its marker
-where it is drawing one, `unreadable` where it could not read the field git printed, and
-`not known` where it found nothing — on the row itself the last two are the same empty
-marker as `track level` and `upstream none`. A row with no branch on it reads
-`no branch reported`, then `git names at this path:` with that same list where git names
-refs there; where git would not read the refs it says `refs not read`, and `refs not read
-on the second read` where only this page's own read failed. Each checkout's working tree is
-walked in the open, one after another, so on many checkouts this takes a moment.
+page can tell you. How many refs name the checkout is the picker's count, and this
+page's read of the refs is a second one; where the two differ the line says both —
+`the picker's read named one ref at this checkout and this one names` and then this
+page's list, or `none`. The `track` that ends the line is what the picker's own walk
+found: its marker where it is drawing one, `unreadable` where it could not read the field
+git printed, `nothing reported` where it found one ref and git reported nothing about it,
+`contested` where it found more than one and would not choose between them, and
+`not known` where it found none. On the row itself `unreadable`, `nothing reported` and
+`not known` are the same empty marker as `track level` and `upstream none`, and
+`contested` is drawn as `contested`. In a sweep a contested checkout herdr lists once per
+registration is refused as `herdr lists this path twice`, one listed once is refused as
+`more than one ref names this checkout`, and one the picker found no ref for can read
+`no ref here` (see *Without git's refs* in [usage](usage.md)). A row with no
+branch on it says which kind of silence that is: `no branch reported` where herdr
+listed the checkout and said nothing is out, and `herdr did not list this checkout`
+where herdr never mentioned it — the picker shows that row for a pane whose directory
+it recognized, and a branch may well be out there. Either way `git names at this path:`
+follows with that same list where git names refs there, and where it names more than one
+and herdr lists the path once, a sweep and `Shift-D` refuse the row as
+`more than one ref names this checkout`, though it draws no `contested`; where git would not read the
+refs it says `refs not read`, and `refs not read on the second read` where only this
+page's own read failed. Each checkout's working tree is walked in the open, one after
+another, so on many checkouts this takes a moment.
 
 git's words arrive in English here and on the prompt line whatever language your git speaks
 in a terminal: the plugin runs git under `LC_ALL=C`, because it decides two things by reading
@@ -238,10 +254,23 @@ through this against a real session.
 - [ ] `herdr-worktree-nav dump` from inside a pane prints, under each checkout, the upstream
       it tracks, where it stands against it and the working tree — `upstream origin/x`,
       `track gone`, `working tree clean`. A branch level with its upstream reads
-      `track level`; one with no upstream reads `upstream none`. A repository whose refs
+      `track level`; one with no upstream reads `upstream none`; one at a path more than one
+      of the repository's refs names reads `track contested`. A repository whose refs
       could not be read says `refs unreadable:` under its name, with git's words.
-- [ ] With that ref still broken, `Shift-S` shows the checkouts it would otherwise have
-      judged reading `refs unreadable`, and `Space` on one keeps that reason on the row.
+- [ ] A checkout two of the repository's refs name — `one_repository_can_name_one_path_from_two_refs`
+      in `tests/git_adapter.rs` builds it: a second worktree registered onto an occupied path
+      with `git worktree repair`, which `git worktree prune -v --dry-run` then calls a
+      `duplicate entry`. Its row draws `contested`, the breadcrumb under the list says
+      `more than one ref names this checkout` with the cursor on it, `!` lists
+      `<repo>: refs disagree: <path>` once, and `dump` says `track contested` for it.
+      herdr lists the path once per registration, as `git worktree list` does, so there are
+      two rows: under `Shift-S` both are refused and `Space` says
+      `herdr lists this path twice`, as `Shift-D` does on either row. Do not clear it with
+      `git worktree prune`, which can keep the stale entry and drop the live one.
+- [ ] With a ref still broken, `Shift-S` draws no box on any checkout of that repository,
+      merged pull request or not, and `Space` says `git would not read this repository's refs`
+      on each one that does not keep a reason of its own (see *Without git's refs* in
+      [usage](usage.md)), as `Shift-D` does.
       `Tab` to the branches view: every branch git could still read is listed there.
 - [ ] Typing `/login` and then pressing `Shift-S` opens the whole list again: what the sweep
       judges is what is on the screen.

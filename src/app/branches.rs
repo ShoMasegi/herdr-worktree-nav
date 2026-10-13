@@ -820,11 +820,10 @@ mod tests {
             display_name: "me/old".into(),
             refs: Refs::Read,
             worktrees: vec![crate::domain::model::WorktreeNode {
-                branch: Some("chore/deps".into()),
+                branch: crate::domain::model::Branch::out("chore/deps"),
                 checkout_path: "/wt/shared".into(),
                 is_primary: false,
                 open_workspace_id: None,
-                track: None,
                 panes: Vec::new(),
             }],
         });

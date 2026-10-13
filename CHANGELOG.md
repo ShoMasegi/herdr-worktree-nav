@@ -22,8 +22,14 @@ All notable changes to this project are documented here. The format follows
   the sweep is entered rather than when the picker opens, it only ever widens the sweep, and
   a repository it could not answer for is named on the prompt line with its rows reading
   `PR unknown` rather than nothing — before and after you mark them — and one whose refs git
-  would not read is named there ahead of it, the rows it would have judged reading
-  `refs unreadable`. `Space` marks and unmarks, and a mark keeps its reason at every width
+  would not read is named there ahead of it, with every checkout in it refused, since nothing
+  can say whether two refs name its path; one whose branch no ref names at its path can read
+  `no ref here`. A
+  path herdr lists twice in one repository is never swept, since a mark could not say which
+  of the two registrations it would remove. Two refs at one path take two registrations, so
+  a contested checkout herdr lists once per registration is refused this way, and one listed
+  once is refused too, since git rather than the row would pick the registration.
+  `Space` marks and unmarks, and a mark keeps its reason at every width
   the picker supports. `Enter` removes what is marked: it reads the list and the working
   trees again first, asks once with the count, and then removes each checkout the way
   `Shift-D` does and, where it has one, deletes its branch with `git branch -d` — never
@@ -39,12 +45,19 @@ All notable changes to this project are documented here. The format follows
   flight. A checkout holding uncommitted work, or one git would not read, is refused before
   the question rather than after its panes have gone — as is one whose working tree git has
   not finished reading, since "nobody has asked yet" is not the answer "clean". On an empty
-  checkout git still answers for itself. See [ADR 0010](docs/adr/0010-closing-the-panes-first.md).
+  checkout git still answers for itself, though some refusals hold with or without panes,
+  among them a checkout a pane this row does not draw is standing in, which names that
+  pane, and a path herdr lists twice in one repository or one more than one of its refs
+  name, where git rather than the row picks the registration that goes, and a checkout in a
+  repository whose refs git would not read, where nothing can say whether that is so. See [ADR 0010](docs/adr/0010-closing-the-panes-first.md).
 
 - **Every checkout says what state it is in**, beside its branch name in the panes view:
   `✱` for a working tree holding uncommitted changes or untracked files, `↑2↓1` for how far
   it has drifted from its upstream, `gone` when git cannot find the ref it tracks, and `?`
-  when git would not read the working tree at all. `gone` reads in the branches view too,
+  when git would not read the working tree at all. `contested` marks a branch at a checkout
+  more than one of the repository's refs names, which the prompt line names as `refs disagree`, and the
+  breadcrumb says so for the checkout under the cursor; under refs git read it says
+  `no ref names this checkout` for a branch no ref names at its path. `gone` reads in the branches view too,
   beside what the branch is — `checked out gone`, `local gone`.
 - Ahead, behind and `gone` are fields on the `git for-each-ref` the picker already runs, so
   they are on screen in the first frame and cost no extra process. Whether a working tree is
@@ -63,9 +76,16 @@ All notable changes to this project are documented here. The format follows
   report. The rows still draw nothing, since no marker beats a wrong one; the prompt line now
   names the repository with git's own words where the search hint was, and counts the rest.
 - **`dump` prints what the markers are drawn from.** Under each checkout: the upstream it
-  tracks, where it stands against it — `level`, `gone`, `↑2↓1`, or `none` when there is no
-  upstream and git said nothing about where it would push — and the working tree, with git's
-  own words where it would not read one.
+  tracks, where it stands against it — `level`, `gone`, `↑2↓1`, `none` when there is no
+  upstream and git said nothing about where it would push, or `unreadable` where git printed
+  a field this side could not read — and the working tree, with git's own words where it
+  would not read one. A checkout herdr never listed, which the picker shows for a pane whose
+  directory it recognized, says so rather than reading as a checkout with nothing out: the
+  refs git names at its path are named without a claim about which of them is out. A
+  branch at a checkout more than one of the repository's refs names reads `track contested`, which is
+  the picker declining to pick one of them rather than a branch level with its upstream.
+  How many refs name a checkout is the picker's count; where `dump`'s own read counts
+  differently, the line says both.
 
 ### Changed
 

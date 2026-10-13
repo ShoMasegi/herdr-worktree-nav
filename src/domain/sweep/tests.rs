@@ -1,14 +1,13 @@
 use super::*;
-use crate::domain::model::{PaneNode, Refs, RepoNode, Unlisted, WorktreeNode};
+use crate::domain::model::{Branch, PaneNode, Refs, RepoNode, Unlisted, WorktreeNode};
 use crate::port::{AgentStatus, SettledPullRequest};
 
 fn worktree(branch: &str, path: &str) -> WorktreeNode {
     WorktreeNode {
-        branch: Some(branch.to_string()),
+        branch: Branch::out(branch.to_string()),
         checkout_path: path.to_string(),
         is_primary: false,
         open_workspace_id: None,
-        track: None,
         panes: Vec::new(),
     }
 }
@@ -107,7 +106,7 @@ fn facts<'a>(
 #[test]
 fn a_clean_checkout_whose_upstream_is_gone_is_offered_with_its_reason() {
     let mut wt = worktree("fix/crash", "/wt/fix-crash");
-    wt.track = Some(Track::Gone);
+    wt.branch.set_position(Position::Said(Some(Track::Gone)));
     let trees = clean(&["/wt/fix-crash"]);
     let none = BTreeMap::new();
     let judged = judged(&tree_of(vec![wt]), &facts(&trees, &none));
@@ -124,12 +123,13 @@ fn a_position_that_went_unread_is_never_offered() {
     // Read as "git said something", it would offer to delete a branch whose commits may
     // exist nowhere else.
     //
-    // `Available` rather than `Unjudged(Half::Refs)`, which is the shape this is otherwise:
+    // `Available` rather than `Unjudged`, which is the shape this is otherwise:
     // git's half of the question went unanswered for this row. `Unjudged` puts a sentence
     // on the row, and the same argument that keeps this state out of `domain::notice`
     // keeps it from having one here — see `Track::Unreadable`.
     let mut wt = worktree("fix/crash", "/wt/fix-crash");
-    wt.track = Some(Track::Unreadable);
+    wt.branch
+        .set_position(Position::Said(Some(Track::Unreadable)));
     let trees = clean(&["/wt/fix-crash"]);
     let none = BTreeMap::new();
     let judged = judged(&tree_of(vec![wt]), &facts(&trees, &none));
@@ -137,11 +137,220 @@ fn a_position_that_went_unread_is_never_offered() {
 }
 
 #[test]
+fn a_checkout_more_than_one_ref_names_is_never_swept() {
+    // git answered, and its answer about this checkout was two branches
+    // (`Position::Contested`), which takes two registrations of one path. Listed once here,
+    // `git worktree remove` would take whichever registration git picks and `git branch -d`
+    // the branch herdr names — neither known to be this row's. Refused whatever `gh` said, a
+    // finished pull request included: what it finished is a branch, not this path.
+    let contested = || {
+        let mut wt = worktree("fix/crash", "/wt/fix-crash");
+        wt.branch.set_position(Position::Contested);
+        tree_of(vec![wt])
+    };
+    let trees = clean(&["/wt/fix-crash"]);
+    let not_asked = BTreeMap::new();
+    let nothing_found = asked(vec![merged(9, "feat/other")]);
+    let could_not_ask = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
+    let landed = asked(vec![merged(7, "fix/crash")]);
+    for settled in [&not_asked, &nothing_found, &could_not_ask, &landed] {
+        let judged = judged(&contested(), &facts(&trees, settled));
+        assert_eq!(
+            judged[&at("/wt/fix-crash")],
+            Candidate::Refused(Refusal::Contested),
+            "settled: {settled:?}"
+        );
+    }
+
+    // Whatever its working tree says: the registration git would pick is not about what is
+    // in the directory.
+    let dirty = BTreeMap::from([(CheckoutPath::for_test("/wt/fix-crash"), WorkingTree::Dirty)]);
+    let unreadable = BTreeMap::from([(
+        CheckoutPath::for_test("/wt/fix-crash"),
+        WorkingTree::Unreadable,
+    )]);
+    let unread = BTreeMap::new();
+    for trees in [&dirty, &unreadable, &unread] {
+        let judged = judged(&contested(), &facts(trees, &not_asked));
+        assert_eq!(
+            judged[&at("/wt/fix-crash")],
+            Candidate::Refused(Refusal::Contested),
+            "working trees: {trees:?}"
+        );
+    }
+
+    // And whatever the row names: two refs at a path take two registrations whether the row
+    // there names a branch, nothing out, or herdr never listed it. A row naming none has no
+    // position to carry it in, so the tree does.
+    for branch in [Branch::NothingOut, Branch::NotSaid] {
+        let mut wt = worktree("fix/crash", "/wt/fix-crash");
+        wt.branch = branch.clone();
+        let mut tree = tree_of(vec![wt]);
+        tree.contested.insert(at("/wt/fix-crash"));
+        let judged = judged(&tree, &facts(&trees, &not_asked));
+        assert_eq!(
+            judged[&at("/wt/fix-crash")],
+            Candidate::Refused(Refusal::Contested),
+            "{branch:?}"
+        );
+    }
+}
+
+#[test]
+fn a_branch_no_ref_names_the_checkout_of_says_which_half_went_unanswered() {
+    // herdr says `fix/crash` is out here and git, reading its refs fine, names no ref at the
+    // path, so there is no ref to be `gone`. `Available` would be the sweep calling a
+    // silence "nothing to find".
+    let mut wt = worktree("fix/crash", "/wt/fix-crash");
+    wt.branch.set_position(Position::NotSaid);
+    let trees = clean(&["/wt/fix-crash"]);
+    let none = BTreeMap::new();
+    let read = judged(&tree_of(vec![wt.clone()]), &facts(&trees, &none));
+    assert_eq!(read[&at("/wt/fix-crash")], Candidate::Unjudged(Half::NoRef));
+
+    // Under refs git would not read, no ref is named anywhere, and nothing says whether two
+    // name this path: the row is refused rather than judged.
+    let unread = judged(&tree_unread(vec![wt]), &facts(&trees, &none));
+    assert_eq!(
+        unread[&at("/wt/fix-crash")],
+        Candidate::Refused(Refusal::RefsUnreadable)
+    );
+}
+
+#[test]
+fn no_ref_here_is_named_on_a_clean_checkout_unless_gh_names_a_finished_pull_request() {
+    // git's silence is named ahead of `gh`'s, and only where it would have decided the row:
+    // a working tree with something in it, one git would not read, or one not read yet was
+    // never going to be offered.
+    let mut wt = worktree("fix/crash", "/wt/fix-crash");
+    wt.branch.set_position(Position::NotSaid);
+    let tree = tree_of(vec![wt]);
+    let unavailable = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
+    let answers = [
+        ("gh not asked", BTreeMap::new()),
+        ("gh unavailable", unavailable),
+        ("the whole list, not in it", asked(vec![])),
+        (
+            "a window, not in it",
+            told(vec![merged(1, "some/other")], false),
+        ),
+    ];
+
+    for (what, settled) in &answers {
+        let found = judged(&tree, &facts(&clean(&["/wt/fix-crash"]), settled));
+        assert_eq!(
+            found[&at("/wt/fix-crash")],
+            Candidate::Unjudged(Half::NoRef),
+            "{what}"
+        );
+
+        for working_tree in [
+            Some(WorkingTree::Dirty),
+            Some(WorkingTree::Unreadable),
+            None,
+        ] {
+            let trees: BTreeMap<_, _> = working_tree
+                .map(|answer| (CheckoutPath::for_test("/wt/fix-crash"), answer))
+                .into_iter()
+                .collect();
+            let found = judged(&tree, &facts(&trees, settled));
+            assert_eq!(
+                found[&at("/wt/fix-crash")],
+                Candidate::Available,
+                "{what}, {working_tree:?}: not clean, so nothing would have offered it"
+            );
+        }
+    }
+
+    // And a finished pull request still widens it.
+    let found = judged(
+        &tree,
+        &facts(
+            &clean(&["/wt/fix-crash"]),
+            &asked(vec![merged(7, "fix/crash")]),
+        ),
+    );
+    assert_eq!(
+        found[&at("/wt/fix-crash")],
+        Candidate::Offered(Reason::PullRequest {
+            number: 7,
+            outcome: PullRequestOutcome::Merged,
+        })
+    );
+    // But not where the working tree is not clean: the pull request offers nothing there,
+    // and git's silence is not named either.
+    let finished = [
+        ("the whole list", asked(vec![merged(7, "fix/crash")])),
+        ("a window", told(vec![merged(7, "fix/crash")], false)),
+    ];
+    for (what, settled) in &finished {
+        for working_tree in [
+            Some(WorkingTree::Dirty),
+            Some(WorkingTree::Unreadable),
+            None,
+        ] {
+            let trees: BTreeMap<_, _> = working_tree
+                .map(|answer| (CheckoutPath::for_test("/wt/fix-crash"), answer))
+                .into_iter()
+                .collect();
+            let found = judged(&tree, &facts(&trees, settled));
+            assert_eq!(
+                found[&at("/wt/fix-crash")],
+                Candidate::Available,
+                "{what}, {working_tree:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_path_herdr_lists_twice_in_one_repository_is_never_swept() {
+    // Two rows, one key: a judgement and a removal are both keyed by repository and path,
+    // so whatever `Enter` removed would be whichever row the tree lists first, on the
+    // strength of a reason found on either. The key is refused, and a refusal is not the
+    // user's to overrule.
+    let mut gone = worktree("fix/crash", "/wt/shared");
+    gone.branch.set_position(Position::Said(Some(Track::Gone)));
+    let other = worktree("chore/deps", "/wt/shared");
+    let trees = clean(&["/wt/shared"]);
+    let none = BTreeMap::new();
+    let twice = judged(&tree_of(vec![other, gone]), &facts(&trees, &none));
+    assert_eq!(
+        twice[&at("/wt/shared")],
+        Candidate::Refused(Refusal::ListedTwice)
+    );
+
+    // The shape a contested checkout comes in when herdr lists each registration: two rows,
+    // both contested. Refused before either is judged, merged pull request or not.
+    let mut one = worktree("fix/crash", "/wt/shared");
+    one.branch.set_position(Position::Contested);
+    let mut other = worktree("chore/deps", "/wt/shared");
+    other.branch.set_position(Position::Contested);
+    let landed = asked(vec![merged(7, "fix/crash")]);
+    let contested = judged(&tree_of(vec![one, other]), &facts(&trees, &landed));
+    assert_eq!(
+        contested[&at("/wt/shared")],
+        Candidate::Refused(Refusal::ListedTwice)
+    );
+
+    // A path two repositories list is two keys, and is not this.
+    let mut theirs = tree_of(vec![worktree("fix/crash", "/wt/shared")]);
+    theirs.repos.push(RepoNode {
+        repo_key: "/src/old/.git".into(),
+        repo_root: "/src/old".into(),
+        worktrees: vec![worktree("chore/deps", "/wt/shared")],
+        ..only_repo()
+    });
+    let apart = judged(&theirs, &facts(&trees, &none));
+    assert_eq!(apart[&at("/wt/shared")], Candidate::Available);
+}
+
+#[test]
 fn nothing_is_offered_on_a_working_tree_nobody_has_answered_for() {
     // The state the picker opens in. Offering here deletes a checkout because a walk has
     // not finished yet, which waiting a moment longer cannot undo.
     let mut wt = worktree("fix/crash", "/wt/fix-crash");
-    wt.track = Some(Track::Gone);
+    wt.branch.set_position(Position::Said(Some(Track::Gone)));
     let nothing = BTreeMap::new();
     let none = BTreeMap::new();
     let judged = judged(&tree_of(vec![wt]), &facts(&nothing, &none));
@@ -155,7 +364,7 @@ fn a_working_tree_git_would_not_read_is_never_offered() {
     // offering on that offers to delete whatever is in there on the strength of a failed
     // question.
     let mut wt = worktree("fix/crash", "/wt/fix-crash");
-    wt.track = Some(Track::Gone);
+    wt.branch.set_position(Position::Said(Some(Track::Gone)));
     let unreadable = BTreeMap::from([(
         CheckoutPath::for_test("/wt/fix-crash"),
         WorkingTree::Unreadable,
@@ -169,7 +378,7 @@ fn a_working_tree_git_would_not_read_is_never_offered() {
 fn a_detached_checkout_is_not_called_unjudged_when_gh_could_not_be_asked() {
     // Saying "PR unknown" would blame `gh` for a silence git is responsible for.
     let mut wt = worktree("feat/login", "/wt/detached");
-    wt.branch = None;
+    wt.branch = Branch::NothingOut;
     let trees = clean(&["/wt/detached"]);
     let unavailable = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
     let judged = judged(&tree_of(vec![wt]), &facts(&trees, &unavailable));
@@ -180,7 +389,7 @@ fn a_detached_checkout_is_not_called_unjudged_when_gh_could_not_be_asked() {
 fn a_working_tree_holding_work_is_not_offered_but_can_still_be_marked() {
     // git refuses the removal, and says what would have been lost.
     let mut wt = worktree("fix/crash", "/wt/fix-crash");
-    wt.track = Some(Track::Gone);
+    wt.branch.set_position(Position::Said(Some(Track::Gone)));
     let dirty = BTreeMap::from([(CheckoutPath::for_test("/wt/fix-crash"), WorkingTree::Dirty)]);
     let none = BTreeMap::new();
     let judged = judged(&tree_of(vec![wt]), &facts(&dirty, &none));
@@ -189,12 +398,16 @@ fn a_working_tree_holding_work_is_not_offered_but_can_still_be_marked() {
 }
 
 #[test]
-fn the_three_checkouts_a_sweep_never_touches() {
+fn three_kinds_of_checkout_a_sweep_never_touches() {
     let mut primary = worktree("main", "/src/app");
     primary.is_primary = true;
-    primary.track = Some(Track::Gone);
+    primary
+        .branch
+        .set_position(Position::Said(Some(Track::Gone)));
     let mut running = worktree("feat/login", "/wt/feat-login");
-    running.track = Some(Track::Gone);
+    running
+        .branch
+        .set_position(Position::Said(Some(Track::Gone)));
     running.panes = vec![PaneNode {
         pane_id: "w2:p1".into(),
         workspace_id: "w2".into(),
@@ -204,7 +417,7 @@ fn the_three_checkouts_a_sweep_never_touches() {
         focused: false,
     }];
     let mut going = worktree("fix/crash", "/wt/fix-crash");
-    going.track = Some(Track::Gone);
+    going.branch.set_position(Position::Said(Some(Track::Gone)));
 
     let trees = clean(&["/src/app", "/wt/feat-login", "/wt/fix-crash"]);
     let none = BTreeMap::new();
@@ -239,7 +452,7 @@ fn a_checkout_a_pane_of_an_unlisted_repository_stands_in_is_running() {
     // `not in any repository` and this row — another repository's registration of the same
     // path — has no panes to show. It is still somebody's working directory.
     let mut wt = worktree("chore/deps", "/wt/shared");
-    wt.track = Some(Track::Gone);
+    wt.branch.set_position(Position::Said(Some(Track::Gone)));
     let mut tree = tree_of(vec![wt]);
     let trees = clean(&["/wt/shared"]);
     let none = BTreeMap::new();
@@ -274,7 +487,7 @@ fn a_pane_with_no_row_keeps_the_checkout_its_directory_is_in() {
     // This pane is under `not in any repository` — git would not place it, say — yet its
     // directory is inside a checkout a row names.
     let mut wt = worktree("feat/x", "/wt/feat");
-    wt.track = Some(Track::Gone);
+    wt.branch.set_position(Position::Said(Some(Track::Gone)));
     let mut tree = tree_of(vec![wt]);
     let trees = clean(&["/wt/feat"]);
     let none = BTreeMap::new();
@@ -299,7 +512,7 @@ fn a_shell_standing_in_a_checkout_keeps_it_while_its_foreground_process_is_elsew
     // the pane is placed — and drawn — by `/tmp/x`. The checkout loses the shell's directory
     // all the same.
     let mut wt = worktree("feat/x", "/wt/feat");
-    wt.track = Some(Track::Gone);
+    wt.branch.set_position(Position::Said(Some(Track::Gone)));
     let mut tree = tree_of(vec![wt]);
     let trees = clean(&["/wt/feat"]);
     let none = BTreeMap::new();
@@ -318,6 +531,17 @@ fn a_shell_standing_in_a_checkout_keeps_it_while_its_foreground_process_is_elsew
         judged(&tree, &facts(&trees, &none))[&at("/wt/feat")],
         Candidate::Refused(Refusal::Running)
     );
+
+    // And the other way round: the shell elsewhere, the process it is running in here.
+    tree.pane_cwds.insert(
+        "w9:p1".to_string(),
+        vec!["/tmp/x".to_string(), "/wt/feat/src".to_string()],
+    );
+    assert_eq!(
+        judged(&tree, &facts(&trees, &none))[&at("/wt/feat")],
+        Candidate::Refused(Refusal::Running),
+        "a process standing in the checkout is as much in it as a shell"
+    );
 }
 
 #[test]
@@ -335,7 +559,7 @@ fn a_checkout_nested_inside_the_one_a_pane_is_drawn_under_is_running_too() {
         focused: false,
     }];
     let mut inner = worktree("feat/b", "/wt/a/.claude/worktrees/b");
-    inner.track = Some(Track::Gone);
+    inner.branch.set_position(Position::Said(Some(Track::Gone)));
     let mut tree = tree_of(vec![outer, inner]);
     let trees = clean(&["/wt/a", "/wt/a/.claude/worktrees/b"]);
     let none = BTreeMap::new();
@@ -369,7 +593,9 @@ fn a_pane_in_one_repositorys_row_keeps_another_repositorys_row_at_that_path() {
         focused: false,
     }];
     let mut theirs = worktree("chore/deps", "/wt/shared");
-    theirs.track = Some(Track::Gone);
+    theirs
+        .branch
+        .set_position(Position::Said(Some(Track::Gone)));
     let mut tree = tree_of(vec![mine]);
     tree.repos.push(RepoNode {
         repo_key: "/src/old/.git".into(),
@@ -414,7 +640,7 @@ fn gh_widens_and_never_overrides() {
     // A branch git already called `gone` keeps git's reason even where a pull request
     // would have given another.
     let mut wt = worktree("fix/crash", "/wt/fix-crash");
-    wt.track = Some(Track::Gone);
+    wt.branch.set_position(Position::Said(Some(Track::Gone)));
     let trees = clean(&["/wt/fix-crash"]);
     let settled = asked(vec![merged(7, "fix/crash")]);
     let judged = judged(&tree_of(vec![wt]), &facts(&trees, &settled));
@@ -431,7 +657,9 @@ fn a_repository_gh_could_not_be_asked_about_says_so_on_the_rows_it_would_have_ju
     // sweeps fewer rows and nothing says why.
     let judgeable = worktree("feat/login", "/wt/feat-login");
     let mut already = worktree("fix/crash", "/wt/fix-crash");
-    already.track = Some(Track::Gone);
+    already
+        .branch
+        .set_position(Position::Said(Some(Track::Gone)));
     let mut running = worktree("chore/tidy", "/wt/tidy");
     running.panes = vec![PaneNode {
         pane_id: "w3:p1".into(),
@@ -465,15 +693,15 @@ fn a_repository_gh_could_not_be_asked_about_says_so_on_the_rows_it_would_have_ju
 }
 
 #[test]
-fn a_repository_whose_refs_git_would_not_read_says_so_on_the_rows_git_would_have_judged() {
-    // git's half of ADR 0011's price. A failed ref walk leaves every checkout with
-    // `track: None`, which is what a branch level with its upstream has too, so without
-    // this the repository looks like one with nothing to find. The gate is the one
-    // `gh`'s half is under: a dirty or a detached checkout is never offered on `gone`.
+fn a_repository_whose_refs_git_would_not_read_has_nothing_swept() {
+    // Refs git would not read cannot say whether two of them name a checkout's path, and
+    // two do take two registrations, of which `git worktree remove` takes whichever git
+    // picks. So every row is refused, whatever else is true of it; where this sits among the
+    // other refusals is `which_refusal_a_checkout_that_earns_two_of_them_shows`.
     let judgeable = worktree("feat/login", "/wt/feat-login");
     let holding_work = worktree("fix/crash", "/wt/fix-crash");
     let mut detached = worktree("", "/wt/detached");
-    detached.branch = None;
+    detached.branch = Branch::NothingOut;
     let mut running = worktree("chore/tidy", "/wt/tidy");
     running.panes = vec![PaneNode {
         pane_id: "w3:p1".into(),
@@ -483,93 +711,37 @@ fn a_repository_whose_refs_git_would_not_read_says_so_on_the_rows_git_would_have
         agent_status: AgentStatus::Idle,
         focused: false,
     }];
-    let mut trees = clean(&["/wt/feat-login", "/wt/detached", "/wt/tidy"]);
+    let mut gone = worktree("chore/deps", "/wt/deps");
+    gone.branch.set_position(Position::Said(Some(Track::Gone)));
+    let mut trees = clean(&["/wt/feat-login", "/wt/detached", "/wt/tidy", "/wt/deps"]);
     trees.insert(CheckoutPath::for_test("/wt/fix-crash"), WorkingTree::Dirty);
-    let not_asked = BTreeMap::new();
-
-    let judged = judged(
-        &tree_unread(vec![judgeable, holding_work, detached, running]),
-        &facts(&trees, &not_asked),
-    );
-    assert_eq!(
-        judged[&at("/wt/feat-login")],
-        Candidate::Unjudged(Half::Refs)
-    );
-    assert_eq!(
-        judged[&at("/wt/fix-crash")],
-        Candidate::Available,
-        "git would refuse it anyway, so nothing unknown about it matters"
-    );
-    assert_eq!(
-        judged[&at("/wt/detached")],
-        Candidate::Available,
-        "nothing to be gone from"
-    );
-    assert_eq!(
-        judged[&at("/wt/tidy")],
-        Candidate::Refused(Refusal::Running)
-    );
-}
-
-#[test]
-fn gh_still_widens_a_repository_whose_refs_git_would_not_read() {
-    // A failed ref walk takes nothing away from `gh`: a finished pull request offers the
-    // row exactly as it would otherwise. Where `gh` has nothing to offer — no pull
-    // request, or no answer — the half the row names is git's.
-    let trees = clean(&["/wt/feat-login", "/wt/fix-crash"]);
-    let both = vec![
-        worktree("feat/login", "/wt/feat-login"),
-        worktree("fix/crash", "/wt/fix-crash"),
-    ];
-
-    let found = judged(
-        &tree_unread(both.clone()),
-        &facts(&trees, &asked(vec![merged(7, "feat/login")])),
-    );
-    assert_eq!(
-        found[&at("/wt/feat-login")],
-        Candidate::Offered(Reason::PullRequest {
-            number: 7,
-            outcome: PullRequestOutcome::Merged,
-        })
-    );
-    assert_eq!(
-        found[&at("/wt/fix-crash")],
-        Candidate::Unjudged(Half::Refs),
-        "the whole list, and not in it — which is an answer from gh and none from git"
-    );
+    let rows = vec![judgeable, holding_work, detached, running, gone];
 
     let unavailable = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
-    let neither = judged(&tree_unread(both.clone()), &facts(&trees, &unavailable));
-    assert_eq!(
-        neither[&at("/wt/feat-login")],
-        Candidate::Unjudged(Half::Refs),
-        "both halves missing: git's is the one named"
-    );
-
-    let window = judged(
-        &tree_unread(both.clone()),
-        &facts(&trees, &told(vec![merged(1, "some/other")], false)),
-    );
-    assert_eq!(
-        window[&at("/wt/feat-login")],
-        Candidate::Unjudged(Half::Refs)
-    );
-
-    // And a window that does reach the branch offers it, whatever git could not read.
-    // Pinned separately because the arms are separate, and a guard on the wrong one
-    // would leave this reading `Unjudged`.
-    let reached = judged(
-        &tree_unread(both),
-        &facts(&trees, &told(vec![merged(7, "feat/login")], false)),
-    );
-    assert_eq!(
-        reached[&at("/wt/feat-login")],
-        Candidate::Offered(Reason::PullRequest {
-            number: 7,
-            outcome: PullRequestOutcome::Merged,
-        })
-    );
+    for (what, settled) in [
+        ("gh not asked", BTreeMap::new()),
+        ("gh unavailable", unavailable),
+        ("merged", asked(vec![merged(7, "feat/login")])),
+        (
+            "window reaching it",
+            told(vec![merged(7, "feat/login")], false),
+        ),
+    ] {
+        let judged = judged(&tree_unread(rows.clone()), &facts(&trees, &settled));
+        for path in [
+            "/wt/feat-login",
+            "/wt/fix-crash",
+            "/wt/detached",
+            "/wt/tidy",
+            "/wt/deps",
+        ] {
+            assert_eq!(
+                judged[&at(path)],
+                Candidate::Refused(Refusal::RefsUnreadable),
+                "{what}: {path}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -719,24 +891,67 @@ fn a_pull_request_offers_only_the_branch_it_was_actually_for() {
 }
 
 #[test]
-fn a_merged_pull_request_does_not_offer_a_checkout_holding_work() {
-    // The twin of the `gone` rule: a working tree with something in it is never offered,
-    // whatever GitHub says about the branch.
-    for answer in [WorkingTree::Dirty, WorkingTree::Unreadable] {
-        let trees = BTreeMap::from([(CheckoutPath::for_test("/wt/feat-login"), answer)]);
-        let judged = judged(
-            &tree_of(vec![worktree("feat/login", "/wt/feat-login")]),
-            &facts(&trees, &asked(vec![merged(4, "feat/login")])),
-        );
-        assert_eq!(
-            judged[&at("/wt/feat-login")],
-            Candidate::Available,
-            "{answer:?}"
-        );
-        assert!(
-            judged[&at("/wt/feat-login")].is_markable(),
-            "still the user's to mark"
-        );
+fn a_finished_pull_request_does_not_offer_a_checkout_not_known_to_be_clean() {
+    // The twin of the `gone` rule: a working tree not known to be clean is never offered,
+    // whatever GitHub says about the branch, and wherever git says it stands — a branch
+    // with commits after its merge included.
+    let one = std::num::NonZeroU32::new(1).unwrap();
+    let positions = [
+        Position::Said(None),
+        Position::Said(Some(Track::Ahead(one))),
+        Position::Said(Some(Track::Behind(one))),
+        Position::Said(Some(Track::Diverged {
+            ahead: one,
+            behind: one,
+        })),
+    ];
+    let said = [
+        (
+            "merged, the whole list",
+            asked(vec![merged(4, "feat/login")]),
+        ),
+        (
+            "merged, a window",
+            told(vec![merged(4, "feat/login")], false),
+        ),
+        (
+            "closed, the whole list",
+            asked(vec![settled(4, "feat/login", PullRequestOutcome::Closed)]),
+        ),
+        (
+            "closed, a window",
+            told(
+                vec![settled(4, "feat/login", PullRequestOutcome::Closed)],
+                false,
+            ),
+        ),
+    ];
+    for position in positions {
+        let mut row = worktree("feat/login", "/wt/feat-login");
+        row.branch.set_position(position);
+        let tree = tree_of(vec![row]);
+        for (what, from_gh) in &said {
+            for answer in [
+                Some(WorkingTree::Dirty),
+                Some(WorkingTree::Unreadable),
+                None,
+            ] {
+                let trees: BTreeMap<_, _> = answer
+                    .map(|answer| (CheckoutPath::for_test("/wt/feat-login"), answer))
+                    .into_iter()
+                    .collect();
+                let judged = judged(&tree, &facts(&trees, from_gh));
+                assert_eq!(
+                    judged[&at("/wt/feat-login")],
+                    Candidate::Available,
+                    "{position:?}, {what}, {answer:?}"
+                );
+                assert!(
+                    judged[&at("/wt/feat-login")].is_markable(),
+                    "still the user's to mark"
+                );
+            }
+        }
     }
 }
 
@@ -876,8 +1091,8 @@ fn a_row_git_would_refuse_anyway_is_not_called_unjudged_by_a_full_window_either(
 
 #[test]
 fn which_refusal_a_checkout_that_earns_two_of_them_shows() {
-    // Every other test here gives a checkout exactly one refusal, so the order among them
-    // cancels out and only this pins it.
+    // Most tests here give a checkout one refusal, so the order among them cancels out
+    // there.
     let mut all_three = worktree("main", "/src/app");
     all_three.is_primary = true;
     all_three.panes = vec![PaneNode {
@@ -901,6 +1116,115 @@ fn which_refusal_a_checkout_that_earns_two_of_them_shows() {
     assert_eq!(
         judged[&at("/src/app")],
         Candidate::Refused(Refusal::Primary)
+    );
+
+    // Being listed twice is about the key, and is decided before any row is asked about:
+    // a primary at that path does not change it, whichever order the rows come in.
+    let mut primary = worktree("main", "/src/app");
+    primary.is_primary = true;
+    let linked = worktree("chore/deps", "/src/app");
+    for rows in [vec![primary.clone(), linked.clone()], vec![linked, primary]] {
+        let judged = candidates(
+            &tree_of(rows),
+            &Facts {
+                working_trees: &clean(&["/src/app"]),
+                settled: &none,
+                removing: &[],
+            },
+        );
+        assert_eq!(
+            judged[&at("/src/app")],
+            Candidate::Refused(Refusal::ListedTwice)
+        );
+    }
+
+    // And it outranks a removal already going: one ends, the other lasts until somebody
+    // repairs it.
+    let judged = candidates(
+        &tree_of(vec![
+            worktree("feat/login", "/wt/feat-login"),
+            worktree("chore/deps", "/wt/feat-login"),
+        ]),
+        &Facts {
+            working_trees: &clean(&["/wt/feat-login"]),
+            settled: &none,
+            removing: &[CheckoutPath::for_test("/wt/feat-login")],
+        },
+    );
+    assert_eq!(
+        judged[&at("/wt/feat-login")],
+        Candidate::Refused(Refusal::ListedTwice)
+    );
+
+    // A contested checkout sits between the two: below the repository itself, which never
+    // passes, and above a removal already going, which will end.
+    let mut contested = worktree("main", "/src/app");
+    contested.is_primary = true;
+    contested.branch.set_position(Position::Contested);
+    let judged = candidates(
+        &tree_of(vec![contested]),
+        &Facts {
+            working_trees: &clean(&["/src/app"]),
+            settled: &none,
+            removing: &[CheckoutPath::for_test("/src/app")],
+        },
+    );
+    assert_eq!(
+        judged[&at("/src/app")],
+        Candidate::Refused(Refusal::Primary)
+    );
+    let mut contested = worktree("feat/login", "/wt/feat-login");
+    contested.branch.set_position(Position::Contested);
+    let judged = candidates(
+        &tree_of(vec![contested]),
+        &Facts {
+            working_trees: &clean(&["/wt/feat-login"]),
+            settled: &none,
+            removing: &[CheckoutPath::for_test("/wt/feat-login")],
+        },
+    );
+    assert_eq!(
+        judged[&at("/wt/feat-login")],
+        Candidate::Refused(Refusal::Contested)
+    );
+
+    // Refs git would not read sit where a contested checkout does, for the same reason: below
+    // the repository itself, above a removal already going.
+    let mut primary = worktree("main", "/src/app");
+    primary.is_primary = true;
+    for (row, path, refusal) in [
+        (primary, "/src/app", Refusal::Primary),
+        (
+            worktree("feat/login", "/wt/feat-login"),
+            "/wt/feat-login",
+            Refusal::RefsUnreadable,
+        ),
+    ] {
+        let judged = candidates(
+            &tree_unread(vec![row]),
+            &Facts {
+                working_trees: &clean(&[path]),
+                settled: &none,
+                removing: &[CheckoutPath::for_test(path)],
+            },
+        );
+        assert_eq!(judged[&at(path)], Candidate::Refused(refusal));
+    }
+    // A real reading never gives both — refs git would not read name nothing — but a fixture
+    // can, and the contested one is named.
+    let mut contested = worktree("feat/login", "/wt/feat-login");
+    contested.branch.set_position(Position::Contested);
+    let judged = candidates(
+        &tree_unread(vec![contested]),
+        &Facts {
+            working_trees: &clean(&["/wt/feat-login"]),
+            settled: &none,
+            removing: &[],
+        },
+    );
+    assert_eq!(
+        judged[&at("/wt/feat-login")],
+        Candidate::Refused(Refusal::Contested)
     );
 
     // And the pair below it, which asserting only the top of the order leaves free. The
@@ -942,7 +1266,7 @@ fn one_repositorys_judgement_never_lands_on_anothers_checkout_at_the_same_path()
     // `me/app` a live checkout whose refs git would not read. Keyed by the path alone,
     // the stale `Offered(Gone)` took the live row.
     let mut stale = worktree("chore/deps", "/wt/shared");
-    stale.track = Some(Track::Gone);
+    stale.branch.set_position(Position::Said(Some(Track::Gone)));
     let tree = Tree {
         repos: vec![
             RepoNode {
@@ -970,7 +1294,7 @@ fn one_repositorys_judgement_never_lands_on_anothers_checkout_at_the_same_path()
             RepoKey::of(&tree.repos[0]),
             CheckoutPath::of(&tree.repos[0].worktrees[0])
         )],
-        Candidate::Unjudged(Half::Refs)
+        Candidate::Refused(Refusal::RefsUnreadable)
     );
     assert_eq!(
         judged[&(
@@ -1113,8 +1437,12 @@ fn an_answer_is_about_the_checkout_it_was_given_about_and_not_about_the_path() {
     );
     assert!(chosen(&candidates, &changes.still_about(&tree)).contains(&at("/wt/feat-login")));
 
-    // Same path, different branch.
-    let moved = tree_of(vec![worktree("release/v2", "/wt/feat-login")]);
+    // Same path, different branch — and the branch now somewhere else, so an answer kept
+    // for the branch wherever it is would still land on this path.
+    let moved = tree_of(vec![
+        worktree("release/v2", "/wt/feat-login"),
+        worktree("feat/login", "/wt/feat-login-2"),
+    ]);
     assert!(
         !chosen(&candidates, &changes.still_about(&moved)).contains(&at("/wt/feat-login")),
         "the answer was about feat/login, and feat/login is not there any more"
@@ -1128,7 +1456,7 @@ fn an_answer_is_about_the_checkout_it_was_given_about_and_not_about_the_path() {
 fn a_detached_checkout_is_not_the_same_checkout_as_a_branch_at_the_same_path() {
     // Two checkouts with no branch at one path are as different as two branches are.
     let mut detached = worktree("feat/login", "/wt/feat-login");
-    detached.branch = None;
+    detached.branch = Branch::NothingOut;
     let candidates = BTreeMap::from([(at("/wt/feat-login"), Candidate::Available)]);
 
     let mut changes = Changes::default();
@@ -1243,7 +1571,9 @@ fn the_reason_a_gone_branch_is_going_is_the_marker_the_row_already_carries() {
     // exactly the rows the marks the picker draws draws `gone` on. If that comes apart, a row
     // goes with nothing on it saying why.
     let mut worktree = worktree("feat/login", "/wt/feat-login");
-    worktree.track = Some(Track::Gone);
+    worktree
+        .branch
+        .set_position(Position::Said(Some(Track::Gone)));
     let judged = judged(
         &tree_of(vec![worktree]),
         &facts(&clean(&["/wt/feat-login"]), &BTreeMap::new()),
@@ -1320,23 +1650,23 @@ fn a_row_marked_where_gh_could_not_look_goes_on_saying_so() {
 fn a_row_says_which_half_of_the_question_went_unanswered() {
     // The two halves are fixed in different places, so the row says which one to go to.
     let candidates = BTreeMap::from([
-        (at("/wt/refs"), Candidate::Unjudged(Half::Refs)),
+        (at("/wt/no-ref"), Candidate::Unjudged(Half::NoRef)),
         (at("/wt/prs"), Candidate::Unjudged(Half::PullRequests)),
     ]);
     let mut changes = Changes::default();
     let shown = marks(&candidates, &changes);
-    assert_eq!(shown[&at("/wt/refs")], Mark::Unjudged(Half::Refs));
+    assert_eq!(shown[&at("/wt/no-ref")], Mark::Unjudged(Half::NoRef));
     assert_eq!(
         shown[&at("/wt/prs")],
         Mark::Unjudged(Half::PullRequests),
         "each names its own half, so the row can send the reader to the right place"
     );
 
-    flip(&mut changes, &candidates, "/wt/refs");
+    flip(&mut changes, &candidates, "/wt/no-ref");
     let shown = marks(&candidates, &changes);
     assert_eq!(
-        shown[&at("/wt/refs")],
-        Mark::GoingUnjudged(Half::Refs),
+        shown[&at("/wt/no-ref")],
+        Mark::GoingUnjudged(Half::NoRef),
         "marked by hand, it still carries that nobody judged it — and which half"
     );
 }
@@ -1397,7 +1727,14 @@ fn what_the_sweep_marks_and_what_the_user_may_mark_are_different_questions() {
         assert!(!own.is_offered(), "{own:?} is not marked for the user");
         assert!(own.is_markable(), "{own:?} is still the user's to mark");
     }
-    for refusal in [Refusal::Primary, Refusal::Running, Refusal::Removing] {
+    for refusal in [
+        Refusal::Primary,
+        Refusal::ListedTwice,
+        Refusal::Contested,
+        Refusal::RefsUnreadable,
+        Refusal::Running,
+        Refusal::Removing,
+    ] {
         let refused = Candidate::Refused(refusal);
         assert!(!refused.is_offered());
         assert!(
@@ -1411,7 +1748,7 @@ fn what_the_sweep_marks_and_what_the_user_may_mark_are_different_questions() {
 fn a_detached_checkout_is_never_offered_by_a_pull_request() {
     // Nothing points at it, so there is no head ref for a pull request to match.
     let mut wt = worktree("feat/login", "/wt/detached");
-    wt.branch = None;
+    wt.branch = Branch::NothingOut;
     let trees = clean(&["/wt/detached"]);
     let settled = asked(vec![merged(9, "feat/login")]);
     let judged = judged(&tree_of(vec![wt]), &facts(&trees, &settled));
