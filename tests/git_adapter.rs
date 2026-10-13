@@ -1365,6 +1365,289 @@ fn every_ref_git_dropped_is_named_and_not_just_the_first() {
 }
 
 #[test]
+fn a_ref_git_drops_without_a_word_leaves_its_checkout_with_no_branch_named() {
+    // The other half of what the test above holds. git skips a directory under
+    // `refs/heads` it may not open, exits 0, and says nothing, so `dropped` has nothing to
+    // carry. `git worktree list` cannot name the branch either, and herdr, which reads it,
+    // lists the checkout as not detached with no branch — measured against herdr 0.9.3.
+    // `domain::tree::build` records that as `Branch::Unnamed` rather than as a detached
+    // checkout, and `log` in it is what says something is wrong. Issue #32.
+    use herdr_worktree_nav::domain::model::{Branch, Position, Refs};
+    use herdr_worktree_nav::domain::tree::{build, RepoInput};
+    use herdr_worktree_nav::port::{Snapshot, Worktree};
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = repository();
+    git(repo.path(), &["branch", "feat2/x"]);
+    let checkout = repo.path().join("feat2-x");
+    git(
+        repo.path(),
+        &["worktree", "add", checkout.to_str().unwrap(), "feat2/x"],
+    );
+    let root = path_str(repo.path());
+    let checkout = path_str(&checkout);
+
+    let locked = repo.path().join(".git/refs/heads/feat2");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _put_back = ReadableAgain(&locked);
+    // As in `a_directory_git_could_not_read_is_not_a_clean_working_tree`: a user the mode
+    // does not apply to reads the directory, and git then drops nothing.
+    assert!(
+        std::fs::read_dir(&locked).is_err(),
+        "this user can read a directory with mode 000, so git will not be refused and there \
+         is nothing here to measure. Run this as a user permissions apply to."
+    );
+
+    let walk = GitCli
+        .local_refs(&root)
+        .expect("git listed what it could and exited 0");
+    assert_eq!(
+        walk.dropped, None,
+        "and said nothing about what it left out"
+    );
+    let names: Vec<&str> = walk.refs.iter().map(|r| r.name.as_str()).collect();
+    assert!(
+        names.contains(&"main") && !names.contains(&"feat2/x"),
+        "the premise: git left `feat2/x` out: {names:?}"
+    );
+
+    // What herdr reads for the same repository: `git worktree list`, whose stanza for the
+    // checkout has neither a `branch` line nor `detached`.
+    let porcelain = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .expect("git should run");
+    let porcelain = String::from_utf8_lossy(&porcelain.stdout).to_string();
+    let stanza = porcelain
+        .split("\n\n")
+        .find(|stanza| {
+            stanza
+                .lines()
+                .next()
+                .is_some_and(|l| l.ends_with("/feat2-x"))
+        })
+        .unwrap_or_else(|| panic!("git lists the checkout: {porcelain}"));
+    assert!(
+        !stanza.contains("\nbranch ") && !stanza.contains("\ndetached"),
+        "the premise: git names no branch there and does not call it detached: {stanza}"
+    );
+    let listed = |branch: Option<&str>, path: &str, linked: bool| Worktree {
+        branch: branch.map(str::to_string),
+        path: path.to_string(),
+        label: String::new(),
+        is_bare: false,
+        is_detached: Some(false),
+        is_linked_worktree: linked,
+        is_prunable: false,
+        open_workspace_id: None,
+    };
+    let input = RepoInput {
+        repo_key: format!("{root}/.git"),
+        repo_root: root.clone(),
+        display_name: "app".into(),
+        worktrees: vec![
+            listed(Some("main"), &root, false),
+            listed(None, &checkout, true),
+        ],
+        refs: Ok(walk.refs),
+    };
+    let tree = build(&Snapshot::default(), &[input], &Default::default());
+    let repo_node = &tree.repos[0];
+    assert_eq!(
+        repo_node.refs,
+        Refs::Read,
+        "git answered, for the rest of them"
+    );
+    let branch_at = |path: &str| {
+        repo_node
+            .worktrees
+            .iter()
+            .find(|worktree| worktree.checkout_path == path)
+            .map(|worktree| worktree.branch.clone())
+    };
+    assert_eq!(
+        branch_at(&checkout),
+        Some(Branch::Unnamed {
+            ref_names_path: false
+        }),
+        "a branch is out and nobody can say which, which is not what a detached checkout reads"
+    );
+    assert_eq!(
+        branch_at(&root),
+        Some(Branch::Out {
+            name: "main".into(),
+            position: Position::Said(None),
+        })
+    );
+
+    // And git will not vouch for it as a branch with no commit yet, and says why in words of
+    // its own, which `app::collect` keeps for the prompt line.
+    let words = format!(
+        "{:#}",
+        GitCli
+            .has_no_commit_yet(&checkout)
+            .expect_err("git could not read the branch, and said so")
+    );
+    assert!(
+        words.starts_with("fatal: your current branch appears to be broken"),
+        "git's own words, first: {words}"
+    );
+    assert!(
+        words.ends_with(" (`git log -1 --format=%H`)"),
+        "and the call they answer, as every refusal here carries: {words}"
+    );
+}
+
+#[test]
+fn a_ref_git_cannot_read_but_once_packed_is_listed_at_its_packed_value_with_no_checkout() {
+    // The same unreadable directory as above, in a repository whose refs were packed — by
+    // `git gc`, among others — before the branch moved on. git does not drop the ref then:
+    // it lists what `packed-refs` still holds, says nothing, and names no checkout for it.
+    // The checkout reads the same as above, and is asked about the same way. Issue #32.
+    use herdr_worktree_nav::domain::model::Branch;
+    use herdr_worktree_nav::domain::tree::{build, RepoInput};
+    use herdr_worktree_nav::port::{Snapshot, Worktree};
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = repository();
+    git(repo.path(), &["branch", "feat2/x"]);
+    let checkout = repo.path().join("feat2-x");
+    git(
+        repo.path(),
+        &["worktree", "add", checkout.to_str().unwrap(), "feat2/x"],
+    );
+    git(repo.path(), &["pack-refs", "--all"]);
+    git(&checkout, &["commit", "--allow-empty", "-m", "second"]);
+    let root = path_str(repo.path());
+    let checkout = path_str(&checkout);
+
+    let locked = repo.path().join(".git/refs/heads/feat2");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _put_back = ReadableAgain(&locked);
+    assert!(
+        std::fs::read_dir(&locked).is_err(),
+        "this user can read a directory with mode 000, so git will not be refused and there \
+         is nothing here to measure. Run this as a user permissions apply to."
+    );
+
+    let walk = GitCli
+        .local_refs(&root)
+        .expect("git listed what it could and exited 0");
+    assert_eq!(walk.dropped, None, "and said nothing");
+    let packed = walk
+        .refs
+        .iter()
+        .find(|git_ref| git_ref.name == "feat2/x")
+        .expect("git lists the ref packed-refs holds");
+    assert_eq!(
+        (packed.subject.as_deref(), packed.worktree_path.as_deref()),
+        (Some("first"), None),
+        "at the commit it was packed at, out nowhere"
+    );
+
+    let porcelain = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .expect("git should run");
+    let porcelain = String::from_utf8_lossy(&porcelain.stdout).to_string();
+    let stanza = porcelain
+        .split("\n\n")
+        .find(|stanza| {
+            stanza
+                .lines()
+                .next()
+                .is_some_and(|l| l.ends_with("/feat2-x"))
+        })
+        .unwrap_or_else(|| panic!("git lists the checkout: {porcelain}"));
+    assert!(
+        !stanza.contains("\nbranch ") && !stanza.contains("\ndetached"),
+        "git names no branch there and does not call it detached: {stanza}"
+    );
+
+    let listed = |branch: Option<&str>, path: &str, linked: bool| Worktree {
+        branch: branch.map(str::to_string),
+        path: path.to_string(),
+        label: String::new(),
+        is_bare: false,
+        is_detached: Some(false),
+        is_linked_worktree: linked,
+        is_prunable: false,
+        open_workspace_id: None,
+    };
+    let input = RepoInput {
+        repo_key: format!("{root}/.git"),
+        repo_root: root.clone(),
+        display_name: "app".into(),
+        worktrees: vec![
+            listed(Some("main"), &root, false),
+            listed(None, &checkout, true),
+        ],
+        refs: Ok(walk.refs),
+    };
+    let tree = build(&Snapshot::default(), &[input], &Default::default());
+    let row = tree.repos[0]
+        .worktrees
+        .iter()
+        .find(|worktree| worktree.checkout_path == checkout)
+        .expect("the checkout has a row");
+    assert_eq!(
+        row.branch,
+        Branch::Unnamed {
+            ref_names_path: false
+        },
+        "the packed ref names no checkout, so it does not name this one"
+    );
+
+    let words = format!(
+        "{:#}",
+        GitCli
+            .has_no_commit_yet(&checkout)
+            .expect_err("git could not read the branch, and said so")
+    );
+    assert!(
+        words.starts_with("fatal: your current branch appears to be broken"),
+        "git's own words, first: {words}"
+    );
+    assert!(
+        words.ends_with(" (`git log -1 --format=%H`)"),
+        "and the call they answer, as every refusal here carries: {words}"
+    );
+}
+
+#[test]
+fn a_branch_with_no_commit_yet_is_told_apart_from_one_with_a_commit() {
+    // The ordinary way to have a branch out that no ref names: a fresh `git init`, whose
+    // `main` `for-each-ref` lists nothing for. Quiet, where the dropped ref above is not.
+    let fresh = tempfile::tempdir().unwrap();
+    git(
+        fresh.path(),
+        &[
+            "-c",
+            "init.defaultRefFormat=files",
+            "init",
+            "--initial-branch=main",
+        ],
+    );
+    let fresh_root = path_str(fresh.path());
+    assert!(
+        GitCli
+            .local_refs(&fresh_root)
+            .expect("an empty walk")
+            .refs
+            .is_empty(),
+        "the premise: no ref names it"
+    );
+    assert!(GitCli.has_no_commit_yet(&fresh_root).unwrap());
+
+    let repo = repository();
+    assert!(!GitCli.has_no_commit_yet(&path_str(repo.path())).unwrap());
+}
+
+#[test]
 fn a_refusal_puts_gits_words_before_the_call() {
     // The other way round, the `--format=` string puts git's words past the right edge of
     // every prompt line the picker draws.

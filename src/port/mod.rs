@@ -389,6 +389,24 @@ pub trait GitPort: Send + Sync {
 
     /// Current `HEAD` of `repo_root`, used as the base for a brand new branch.
     fn head_ref(&self, repo_root: &str) -> Result<String>;
+
+    /// Whether git says the branch out at `checkout_path` has no commit yet.
+    ///
+    /// Asked of a checkout no ref of the repository names, where herdr says a branch is out
+    /// or names none at a checkout it says is not detached (`is_detached: false`). A branch
+    /// with no commit yet is the one ordinary way to get there: it has no ref at all, which
+    /// every fresh `git init` is until its first commit. The other ways are something wrong:
+    /// herdr and git disagreeing about what is out where, or a ref under a directory in
+    /// `refs/heads` git may not open, which the walk leaves out without a word or lists at
+    /// the value `packed-refs` still holds, out nowhere, and which herdr then lists with no
+    /// branch — the silence issue #32 is about.
+    ///
+    /// `true` only where git says so in so many words. `false` and `Err` both leave the
+    /// checkout named on the prompt line, `Err` with git's words, which is the direction to
+    /// fail in. git's words are all there is to go on, though: it says the same of a branch
+    /// whose ref was deleted while it was out, and of one out through a symbolic ref to a
+    /// branch that does not exist, so those are quiet too.
+    fn has_no_commit_yet(&self, checkout_path: &str) -> Result<bool>;
 }
 
 /// A pull request, used only to annotate branches. Never load-bearing.

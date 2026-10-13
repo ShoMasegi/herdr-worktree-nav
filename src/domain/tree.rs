@@ -123,29 +123,35 @@ pub fn build(
                 .filter(|worktree| !worktree.is_bare)
                 .map(|worktree| {
                     let checkout_path = normalize_path(&worktree.path);
-                    // herdr listed this checkout, so `NothingOut` is herdr's own answer
-                    // and not an absence: `branch` absent or empty, or `is_detached`.
+                    // herdr listed this checkout, so `NothingOut` and `Unnamed` are herdr's
+                    // own answers and not an absence: `is_detached`, or no word on it beside
+                    // no branch, is nothing out; `is_detached: false` with `branch` absent or
+                    // empty is a branch out that git could not name.
                     //
-                    // Nothing out, and no ref of this repository's is about this row. git
-                    // can still name the path from a registration that lost its directory,
-                    // carrying `[gone]`:
+                    // Neither carries a position: with no branch named, a ref at the path is
+                    // not one the row can be checked against. git can still name the path —
+                    // from a registration that lost its directory, carrying `[gone]`:
                     // `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out`
-                    // in `tests/git_adapter.rs`. The row `build` makes below for a pane
-                    // herdr never listed carries no position either, for a reason of its
-                    // own: git may name a branch there, but the row cannot.
-                    let branch = worktree
-                        .branch
-                        .clone()
-                        .filter(|b| !b.is_empty())
-                        .filter(|_| !worktree.is_detached)
-                        .map_or(Branch::NothingOut, |name| Branch::Out {
+                    // in `tests/git_adapter.rs`. `Unnamed` keeps whether one does, because
+                    // that decides whether git is asked about the row: what the prompt line
+                    // says of a row git was asked about is that no ref is listed at its
+                    // checkout, which a ref at the path makes false. The row `build` makes
+                    // below for a pane herdr never listed carries no position either, for a
+                    // reason of its own: git may name a branch there, but the row cannot.
+                    let named = tracks
+                        .get(&(normalize_path(&repo.repo_key), checkout_path))
+                        .copied();
+                    let branch = match worktree.branch.clone().filter(|b| !b.is_empty()) {
+                        _ if worktree.is_detached == Some(true) => Branch::NothingOut,
+                        None if worktree.is_detached == Some(false) => Branch::Unnamed {
+                            ref_names_path: named.is_some(),
+                        },
+                        None => Branch::NothingOut,
+                        Some(name) => Branch::Out {
                             name,
-                            position: Named::position(
-                                tracks
-                                    .get(&(normalize_path(&repo.repo_key), checkout_path))
-                                    .copied(),
-                            ),
-                        });
+                            position: Named::position(named),
+                        },
+                    };
                     WorktreeNode {
                         branch,
                         checkout_path: checkout_path.to_string(),

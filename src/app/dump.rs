@@ -17,7 +17,9 @@ use std::fmt::Write;
 use crate::adapter::plugin_config::Loaded;
 use crate::app::one_line;
 use crate::domain::chrome::Chrome;
-use crate::domain::model::{normalize_path, Branch, Position, Refs, RepoNode, Tree, WorktreeNode};
+use crate::domain::model::{
+    normalize_path, Branch, CheckoutPath, Position, Refs, RepoKey, RepoNode, Tree, WorktreeNode,
+};
 use crate::port::{GitPort, GitRef, RefKind, Snapshot, Track};
 
 /// What the second ref walk — the one `main` makes for this page, for the upstream names —
@@ -149,6 +151,38 @@ pub fn report(
                 branch_words(repo, worktree, refs),
                 working_tree_words(working_trees.get(&worktree.checkout_path))
             );
+            // What git said when asked whether the branch has no commit yet: its refusal, the
+            // only reason git gives for a ref missing from this checkout, or that it found a
+            // commit there, which is herdr and git disagreeing about what is out where. A
+            // checkout git said has no commit yet has no line, and neither does one nobody
+            // asked about — except a nameless one the picker's own read found a ref at, which
+            // says why: `git names at this path:` above is this page's second read, and may
+            // not agree with it. The picker's read can find one only under refs git read.
+            match tree
+                .trouble
+                .ref_missing
+                .get(&(RepoKey::of(repo), CheckoutPath::of(worktree)))
+            {
+                Some(Some(words)) => {
+                    let _ = writeln!(out, "      {words}");
+                }
+                Some(None) => {
+                    let _ = writeln!(out, "      git found a commit here");
+                }
+                None => {
+                    if matches!(
+                        worktree.branch,
+                        Branch::Unnamed {
+                            ref_names_path: true
+                        }
+                    ) {
+                        let _ = writeln!(
+                            out,
+                            "      git not asked: the picker's read named a ref at this path"
+                        );
+                    }
+                }
+            }
             for pane in &worktree.panes {
                 let _ = writeln!(
                     out,
@@ -204,8 +238,10 @@ pub fn report(
 ///
 /// Where this page knows less than the picker it says which: `not read` for an upstream its
 /// own walk could not get, beside the marker the picker is drawing or `not known`. When git
-/// lists no ref at this checkout — a branch with no commit yet, or git's list and herdr's
-/// disagreeing about what is out where — it says so rather than `upstream none`, and when
+/// lists no ref at this checkout — a branch with no commit yet, git's list and herdr's
+/// disagreeing about what is out where, or a ref git could not read — it says so rather
+/// than `upstream none`; `report` prints under the row what git said when asked: its
+/// refusal, or `git found a commit here` for the disagreement. And when
 /// git names more than one it names
 /// each, because `domain::tree::tracks` declines to choose between them. Issue #48 is the
 /// labels.
@@ -353,12 +389,16 @@ fn each_of(named: &[&GitRef]) -> String {
 
 /// What the page says about a row with no branch on it.
 ///
-/// Two rows reach here and they are not the same news: the checkout herdr listed with
-/// nothing out, and the one herdr never listed, which `build` makes for a pane and where a
-/// branch may well be out. The row says which ([`Branch`]), so the page does too: on the
-/// second, `no branch reported` would be this side's inference dressed as herdr's answer.
-/// Neither carries a position — [`Branch`] keeps one only on the answer that names a
-/// branch — so the refs git names at the path are named and not explained (issue #49).
+/// Three rows reach here and they are not the same news: the checkout herdr listed as
+/// detached, or with no branch and no word on detachment; the one herdr listed as not
+/// detached with no branch, which is a branch out that git could not name; and the one herdr
+/// never listed, which `build` makes for a pane and where a branch may well be out. The row
+/// says which ([`Branch`]), so the page does too: on the last, `no branch reported` would be
+/// this side's inference dressed as herdr's answer. None carries a position — [`Branch`]
+/// keeps one only on the answer that names a branch — so the refs git names at the path are
+/// named and not explained (issue #49). What git said when asked about the second row, or
+/// that it was not asked because the picker's read found a ref at its path, is on the line
+/// `report` prints under it.
 ///
 /// No `upstream …` either way: this row names no branch for one to be about.
 fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {
@@ -366,6 +406,7 @@ fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {
         // Only a row naming no branch reaches here, `branch_words` having returned above
         // for the rest.
         Branch::NothingOut | Branch::Out { .. } => "no branch reported".to_string(),
+        Branch::Unnamed { .. } => "no branch reported, not detached".to_string(),
         Branch::NotSaid => "herdr did not list this checkout".to_string(),
     };
     match read {

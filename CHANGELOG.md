@@ -75,6 +75,23 @@ All notable changes to this project are documented here. The format follows
   used to lose its markers in silence — indistinguishable from a repository with nothing to
   report. The rows still draw nothing, since no marker beats a wrong one; the prompt line now
   names the repository with git's own words where the search hint was, and counts the rest.
+  A ref under a directory in `refs/heads` git may not open — git leaves it out of the walk,
+  or lists the value `packed-refs` still holds for it with no checkout, and exits 0 having
+  said nothing — is named there too where a checkout herdr lists as not detached has it out
+  and no ref names that checkout's path: by the checkout's directory, since git cannot name
+  its branch, and in the words git gives when asked about it:
+  ``me/app: feat2-x: fatal: your current branch appears to be broken (`git log -1 --format=%H`)``.
+  The branches view opens on the same sentence for a checkout of the repository it opens
+  on; its list shows that branch missing, or out nowhere at the packed value with nothing
+  on the row to say it is stale. A branch herdr says is out where git lists no ref and finds
+  a commit reads
+  `me/app: git listed no ref at the checkout of moved`, and `dump` says
+  `git found a commit here` under its row. A branch with no commit yet has no ref either,
+  and stays quiet where git says that is why; so do a branch whose ref was deleted while it
+  was out and one out through a symbolic ref to a branch that does not exist, which git says
+  the same of, an unreadable ref no checkout has out, and one out at a checkout herdr lists
+  without `is_detached`, never listed, or lists with no branch where a ref of the
+  repository still names the path — `dump` says git was not asked there.
 - **`dump` prints what the markers are drawn from.** Under each checkout: the upstream it
   tracks, where it stands against it — `level`, `gone`, `↑2↓1`, `none` when there is no
   upstream and git said nothing about where it would push, or `unreadable` where git printed

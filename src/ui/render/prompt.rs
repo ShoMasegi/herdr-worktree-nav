@@ -553,6 +553,53 @@ mod tests {
     }
 
     #[test]
+    fn a_ref_missing_from_its_checkout_reaches_the_line_in_gits_words() {
+        // The walk said nothing, so a row with no marker is all there was — and that row is
+        // what a branch with nothing to report looks like too. What git said when asked about
+        // the checkout is the only reason git gives. Issue #32. herdr names no branch there,
+        // and a checkout's whole path in front of git's words would push them off the line
+        // at an ordinary width: the row's own name goes there instead. git's sentence then
+        // fits, and the command after it is what gives way — and with it the count of the
+        // rest, which follows the command. `!` lists them.
+        let mut tree = tree();
+        let row = &mut tree.repos[0].worktrees[1];
+        row.branch = Branch::Unnamed {
+            ref_names_path: false,
+        };
+        row.checkout_path = "/Users/me/Workspace/app-worktrees/feat2-x".into();
+        let key = (
+            RepoKey::of(&tree.repos[0]),
+            CheckoutPath::of(&tree.repos[0].worktrees[1]),
+        );
+        tree.trouble.ref_missing.insert(
+            key,
+            Some(
+                "fatal: your current branch appears to be broken (`git log -1 --format=%H`)".into(),
+            ),
+        );
+        let moved = (
+            RepoKey::of(&tree.repos[0]),
+            CheckoutPath::of(&tree.repos[0].worktrees[0]),
+        );
+        tree.trouble.ref_missing.insert(moved, None);
+        let state = PanesState::new(tree, None);
+        let wide = prompt_line(&state, 200);
+        assert!(
+            wide.contains("--format=%H`) (+1 more)"),
+            "the count is there to cut: {wide}"
+        );
+        let line = prompt_line(&state, 92);
+        assert!(
+            line.contains("me/app: feat2-x: fatal: your current branch appears to be broken"),
+            "{line}"
+        );
+        assert!(
+            !line.contains("--format") && !line.contains("more)"),
+            "{line}"
+        );
+    }
+
+    #[test]
     fn a_panel_too_short_for_everything_says_how_much_is_left() {
         // The same answer the line gives when it runs out of columns, for the same reason:
         // a screen that shows two of three things and looks complete is the failure mode.

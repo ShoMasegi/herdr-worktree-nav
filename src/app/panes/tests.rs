@@ -235,10 +235,20 @@ fn listed(branch: &str, path: &str, linked: bool, open_in: Option<&str>) -> Work
         path: path.into(),
         label: String::new(),
         is_bare: false,
-        is_detached: false,
+        is_detached: Some(false),
         is_linked_worktree: linked,
         is_prunable: false,
         open_workspace_id: open_in.map(str::to_string),
+    }
+}
+
+/// A branch with nothing to report. Every checkout herdr lists on a branch needs a ref at its
+/// path: one without is asked `has_no_commit_yet`, which these fakes do not answer.
+fn level(branch: &str, path: &str) -> GitRef {
+    GitRef {
+        upstream: None,
+        track: None,
+        ..gone(branch, path)
     }
 }
 
@@ -324,6 +334,7 @@ impl FakeGit for Session {
 
     fn local_refs(&self, _repo_root: &str) -> Result<RefWalk> {
         Ok(RefWalk::of(vec![
+            level("main", "/src/app"),
             gone("feat/login", FEAT_LOGIN),
             gone("fix/crash", FIX_CRASH),
         ]))
@@ -447,7 +458,10 @@ impl FakeGit for Closing {
     }
 
     fn local_refs(&self, _repo_root: &str) -> Result<RefWalk> {
-        Ok(RefWalk::of(vec![gone("feat/login", FEAT_LOGIN)]))
+        Ok(RefWalk::of(vec![
+            level("main", "/src/app"),
+            gone("feat/login", FEAT_LOGIN),
+        ]))
     }
 
     fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
@@ -2111,4 +2125,117 @@ fn a_refused_removal_stops_its_row_spinning_when_it_reports() {
         "a refused row is an ordinary row again: {:?}",
         state.message()
     );
+}
+
+/// A herdr listing checkouts no ref names, and a git that answers for each when asked
+/// whether it has no commit yet: `/wt/fresh` has none, `/wt/moved` has a commit, and git
+/// refuses to say of `/wt/feat2-x`. That last one is listed the way herdr lists a checkout
+/// whose ref is under a directory in `refs/heads` git may not open — not detached, and no
+/// `branch` — and refused in the words git gives there. Beside them, two checkouts a ref
+/// does name, which git is not to be asked about: the repository's own, on `main`, and
+/// `/wt/stale`, listed with no branch like `/wt/feat2-x`. With `fresh_only`, herdr lists
+/// `/wt/fresh` and the repository's own checkout alone.
+struct MissingRefs {
+    fresh_only: bool,
+}
+
+impl FakeHerdr for MissingRefs {
+    fn snapshot(&self) -> Result<Snapshot> {
+        Ok(Snapshot {
+            workspaces: vec![workspace("w1", "/src/app", false)],
+            panes: vec![snapshot_pane("w1:p1", "/src/app")],
+            ..Snapshot::default()
+        })
+    }
+
+    fn worktree_list(&self, _cwd: &str) -> Result<WorktreeList> {
+        let mut worktrees = vec![
+            listed("main", "/src/app", false, Some("w1")),
+            listed("fresh", "/wt/fresh", true, None),
+        ];
+        if !self.fresh_only {
+            worktrees.push(Worktree {
+                branch: None,
+                ..listed("", "/wt/feat2-x", true, None)
+            });
+            worktrees.push(listed("moved", "/wt/moved", true, None));
+            // Nameless too, but a ref still names the path: herdr and git disagree about it,
+            // and the fake refuses to be asked.
+            worktrees.push(Worktree {
+                branch: None,
+                ..listed("", "/wt/stale", true, None)
+            });
+        }
+        Ok(WorktreeList {
+            source: WorktreeSource {
+                repo_key: "/src/app/.git".into(),
+                repo_name: "app".into(),
+                repo_root: "/src/app".into(),
+                source_checkout_path: "/src/app".into(),
+                source_workspace_id: None,
+            },
+            worktrees,
+        })
+    }
+}
+fake_herdr!(MissingRefs);
+
+impl FakeGit for MissingRefs {
+    fn github_slug(&self, _repo_root: &str) -> Result<Option<Slug>> {
+        Ok(Slug::owner_repo("me", "app"))
+    }
+
+    fn local_refs(&self, _repo_root: &str) -> Result<RefWalk> {
+        Ok(RefWalk::of(vec![
+            level("main", "/src/app"),
+            level("old", "/wt/stale/"),
+        ]))
+    }
+
+    fn has_no_commit_yet(&self, checkout_path: &str) -> Result<bool> {
+        match checkout_path {
+            "/wt/fresh" => Ok(true),
+            "/wt/moved" => Ok(false),
+            "/wt/feat2-x" => anyhow::bail!(
+                "fatal: your current branch appears to be broken\n(`git log -1 --format=%H`)"
+            ),
+            other => panic!("only a checkout no ref names is asked about, not {other}"),
+        }
+    }
+}
+fake_git!(MissingRefs);
+
+#[test]
+fn a_reading_hands_the_conditions_every_checkout_a_ref_is_missing_from() {
+    // `refs_missing` deciding right is worth nothing until the tree carries it: left off,
+    // every test of the decision and of the line still passes, and the picker says nothing
+    // of issue #32.
+    use crate::domain::notice::{conditions, Condition};
+    let git = MissingRefs { fresh_only: false };
+    let (_, tree) = collect::collect_tree(&git, &git).expect("the first reading");
+    assert_eq!(
+        conditions(&tree, None, None),
+        [
+            Condition::RefMissingRefused {
+                repo: "me/app".into(),
+                checkout: "feat2-x".into(),
+                words: "fatal: your current branch appears to be broken \
+                        (`git log -1 --format=%H`)"
+                    .into(),
+            },
+            Condition::RefMissing {
+                repo: "me/app".into(),
+                checkouts: vec!["moved".into()],
+            },
+        ]
+    );
+
+    let git = MissingRefs { fresh_only: true };
+    let (_, tree) = collect::collect_tree(&git, &git).expect("the first reading");
+    assert_eq!(
+        tree.trouble.ref_missing,
+        BTreeMap::new(),
+        "a branch git says has no commit yet is the ordinary way to have no ref"
+    );
+    assert_eq!(conditions(&tree, None, None), []);
 }

@@ -9,7 +9,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use anyhow::Result;
 
 use crate::app::one_line;
-use crate::domain::model::{is_inside, normalize_path, Tree, Unlisted};
+use crate::domain::model::{
+    is_inside, normalize_path, Branch, CheckoutPath, Position, RepoKey, Tree, Unlisted,
+};
 use crate::domain::tree::{self, PanePlacement, RepoInput};
 use crate::port::{GitPort, HerdrPort, Snapshot};
 
@@ -24,7 +26,45 @@ pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapsho
     let mut tree = tree::build(&snapshot, &repos, &placements);
     tree.trouble.unlisted = unlisted;
     tree.trouble.unplaced = unplaced;
+    tree.trouble.ref_missing = refs_missing(git, &tree);
     Ok((snapshot, tree))
+}
+
+/// The checkouts a ref is missing from, under refs git read: herdr says a branch is out and
+/// no ref of the repository names the path, or herdr names no branch at a checkout it says
+/// is not detached ([`Branch::Unnamed`]) and no ref names that path either — and git does
+/// not say the branch has no commit yet. Each with git's words where it refused to say.
+///
+/// An `Unnamed` row a ref does name is not asked: herdr and git disagree about it, and
+/// `dump` says so under the row.
+///
+/// A process per such checkout, on every reading and in front of the frame it builds: a
+/// reading where every branch out has a ref at its checkout starts none, and a fresh
+/// repository with its one unborn branch starts one. A refusal keeps the checkout and git's
+/// words with it — a ref under a directory in `refs/heads` git may not open is one, which
+/// the walk leaves out without a word, or lists at the value `packed-refs` still holds with
+/// no checkout, and `log` calls `your current branch appears to be broken`.
+fn refs_missing(
+    git: &dyn GitPort,
+    tree: &Tree,
+) -> BTreeMap<(RepoKey, CheckoutPath), Option<String>> {
+    tree.repos
+        .iter()
+        .filter(|repo| repo.refs.is_read())
+        .flat_map(|repo| repo.worktrees.iter().map(move |worktree| (repo, worktree)))
+        .filter(|(_, worktree)| match worktree.branch {
+            Branch::Unnamed { ref_names_path } => !ref_names_path,
+            _ => worktree.branch.position() == Some(Position::NotSaid),
+        })
+        .filter_map(|(repo, worktree)| {
+            let words = match git.has_no_commit_yet(&worktree.checkout_path) {
+                Ok(true) => return None,
+                Ok(false) => None,
+                Err(error) => Some(one_line(&format!("{error:#}"))),
+            };
+            Some(((RepoKey::of(repo), CheckoutPath::of(worktree)), words))
+        })
+        .collect()
 }
 
 /// Read every repository's refs, all at once.
@@ -299,7 +339,9 @@ mod tests {
 
     use anyhow::Result;
 
-    use super::{collect_repos, collect_tree, is_inside, read_refs, resolve_placements};
+    use super::{
+        collect_repos, collect_tree, is_inside, read_refs, refs_missing, resolve_placements,
+    };
     use crate::domain::tree::{PanePlacement, RepoInput};
     use crate::port::{
         AgentStatus, Pane, Slug, Snapshot, Workspace, WorkspaceWorktree, Worktree, WorktreeList,
@@ -430,6 +472,126 @@ mod tests {
         assert_eq!(
             repos[0].refs,
             Err("the thread reading them did not finish".to_string())
+        );
+    }
+
+    /// A git that says, of each checkout it is asked about, whether its branch has no commit
+    /// yet — or refuses to say — and records which it was asked about.
+    struct Commits {
+        asked: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl FakeGit for Commits {
+        fn has_no_commit_yet(&self, checkout_path: &str) -> Result<bool> {
+            self.asked.lock().unwrap().push(checkout_path.to_string());
+            match checkout_path {
+                "/wt/unborn" => Ok(true),
+                "/wt/committed" => Ok(false),
+                _ => anyhow::bail!(
+                    "fatal: your current branch appears to be broken\n(`git log -1 --format=%H`)"
+                ),
+            }
+        }
+    }
+    fake_git!(Commits);
+
+    #[test]
+    fn a_checkout_no_ref_names_is_missing_one_unless_git_says_it_has_no_commit_yet() {
+        use crate::domain::model::{
+            Branch, CheckoutPath, Position, Refs, RepoKey, RepoNode, Tree, WorktreeNode,
+        };
+        use std::collections::BTreeMap;
+        let with = |path: &str, branch| WorktreeNode {
+            branch,
+            checkout_path: path.to_string(),
+            is_primary: false,
+            open_workspace_id: None,
+            panes: Vec::new(),
+        };
+        let at = |path: &str, position| {
+            let name = path.trim_start_matches("/wt/").to_string();
+            with(path, Branch::Out { name, position })
+        };
+        let repo = |key: &str, refs, worktrees| RepoNode {
+            repo_key: format!("{key}/.git"),
+            repo_root: key.to_string(),
+            display_name: key.to_string(),
+            worktrees,
+            refs,
+        };
+        let tree = Tree {
+            repos: vec![
+                repo(
+                    "/src/app",
+                    Refs::Read,
+                    vec![
+                        at("/wt/unborn", Position::NotSaid),
+                        at("/wt/committed", Position::NotSaid),
+                        at("/wt/broken", Position::NotSaid),
+                        with(
+                            "/wt/locked",
+                            Branch::Unnamed {
+                                ref_names_path: false,
+                            },
+                        ),
+                        with(
+                            "/wt/named",
+                            Branch::Unnamed {
+                                ref_names_path: true,
+                            },
+                        ),
+                        at("/wt/level", Position::Said(None)),
+                        at("/wt/contested", Position::Contested),
+                        with("/wt/detached", Branch::NothingOut),
+                        with("/wt/unlisted", Branch::NotSaid),
+                    ],
+                ),
+                repo(
+                    "/src/site",
+                    Refs::Unreadable("fatal: bad ref".into()),
+                    vec![
+                        at("/wt/site", Position::NotSaid),
+                        with(
+                            "/wt/site-x",
+                            Branch::Unnamed {
+                                ref_names_path: false,
+                            },
+                        ),
+                    ],
+                ),
+            ],
+            ..Default::default()
+        };
+        let git = Commits {
+            asked: Default::default(),
+        };
+
+        let broken = || {
+            Some(
+                "fatal: your current branch appears to be broken (`git log -1 --format=%H`)"
+                    .to_string(),
+            )
+        };
+        let missing = refs_missing(&git, &tree);
+        let app = RepoKey::of(&tree.repos[0]);
+        assert_eq!(
+            missing,
+            BTreeMap::from([
+                ((app.clone(), CheckoutPath::for_test("/wt/committed")), None),
+                (
+                    (app.clone(), CheckoutPath::for_test("/wt/broken")),
+                    broken()
+                ),
+                ((app, CheckoutPath::for_test("/wt/locked")), broken()),
+            ]),
+            "git's refusal keeps the checkout and its words, on one line: only its word for \
+             an unborn branch is quiet"
+        );
+        assert_eq!(
+            *git.asked.lock().unwrap(),
+            ["/wt/unborn", "/wt/committed", "/wt/broken", "/wt/locked"],
+            "a ref names the others, the nameless one included, herdr calls one detached and \
+             never listed another, and under refs git would not read none could be named"
         );
     }
 

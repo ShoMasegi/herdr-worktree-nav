@@ -21,8 +21,8 @@ use crate::app::home_dir;
 use crate::app::Summoned;
 use crate::domain::dest;
 use crate::domain::listing;
-use crate::domain::model::{normalize_path, Refs, RepoNode, Tree};
-use crate::domain::notice::Condition;
+use crate::domain::model::{normalize_path, CheckoutPath, Refs, RepoKey, RepoNode, Tree};
+use crate::domain::notice::{self, Condition};
 use crate::domain::progress::Stage;
 use crate::domain::resolve::{self, BranchPlan};
 use crate::port::{
@@ -379,6 +379,7 @@ fn first_frame(
     let repo_root = summoned.repo_root.as_deref();
     let unlisted = repo_root.and_then(|root| unlisted_words(&tree, from_pane_id, root));
     let unplaced = unplaced_words(&tree, from_pane_id);
+    let ref_missing = tree.trouble.ref_missing.clone();
 
     // Where the picker was summoned from, as precisely as it can be known: the checkout the
     // invoking pane is in beats the repository it belongs to, because it is the row the
@@ -410,8 +411,12 @@ fn first_frame(
     let mut state = BranchesState::new(repos, from.as_deref(), destinations, snapshot, home);
     // A pane git could not place has no row, and may have no root; the view opens on
     // whatever it was handed or fell back to, and the sentence says only why the pane is
-    // not there.
-    if let Some(said) = said.or(unplaced) {
+    // not there. Behind both, a checkout of the repository on screen that a ref is missing
+    // from: the list below is git's walk, which shows a ref git could not read as missing,
+    // or as a branch out nowhere at the value `packed-refs` still holds, with nothing else
+    // here to say so.
+    let ref_missing = ref_missing_words(state.repo(), ref_missing);
+    if let Some(said) = said.or(unplaced).or(ref_missing) {
         state.set_message(said);
     }
     Some(state)
@@ -453,6 +458,31 @@ fn unplaced_words(tree: &Tree, pane_id: Option<&str>) -> Option<String> {
         panes,
         words: words.clone(),
     }))
+}
+
+/// What the first frame says of the checkouts of `repo` a ref is missing from, or nothing:
+/// the conditions the panes view gathers for them, on one line the way its prompt line puts
+/// them — the rest counted, which the panes view's `!` lists, since this view has no list of
+/// its own for them. Like the other sentences here it goes with the first key.
+fn ref_missing_words(
+    repo: &RepoNode,
+    missing: std::collections::BTreeMap<(RepoKey, CheckoutPath), Option<String>>,
+) -> Option<String> {
+    let mut tree = Tree {
+        repos: vec![repo.clone()],
+        ..Default::default()
+    };
+    tree.trouble.ref_missing = missing;
+    let conditions: Vec<Condition> = notice::conditions(&tree, None, None)
+        .into_iter()
+        .filter(|condition| {
+            matches!(
+                condition,
+                Condition::RefMissingRefused { .. } | Condition::RefMissing { .. }
+            )
+        })
+        .collect();
+    words::conditions_line(&conditions)
 }
 
 /// A repository herdr has no worktree record for. Its branches are still listable.
@@ -762,6 +792,160 @@ mod tests {
             state.message(),
             Some("app: not listed: herdr rejected worktree.list: internal error")
         );
+    }
+
+    /// A repository herdr listed at `/src/{name}`, with a checkout herdr names no branch at
+    /// for each of `checkouts`.
+    fn nameless_at(name: &str, checkouts: &[&str]) -> RepoNode {
+        use crate::domain::model::{Branch, WorktreeNode};
+        let mut repo = bare(&format!("/src/{name}"));
+        repo.repo_key = format!("/src/{name}/.git");
+        repo.worktrees = checkouts
+            .iter()
+            .map(|path| WorktreeNode {
+                branch: Branch::Unnamed {
+                    ref_names_path: false,
+                },
+                checkout_path: path.to_string(),
+                is_primary: false,
+                open_workspace_id: None,
+                panes: Vec::new(),
+            })
+            .collect();
+        repo
+    }
+
+    /// Records what git said of the `worktree`th checkout of the `repo`th repository.
+    fn ref_missing(tree: &mut Tree, repo: usize, worktree: usize, words: Option<&str>) {
+        let repo = &tree.repos[repo];
+        let key = (
+            RepoKey::of(repo),
+            CheckoutPath::of(&repo.worktrees[worktree]),
+        );
+        tree.trouble
+            .ref_missing
+            .insert(key, words.map(str::to_string));
+    }
+
+    fn opened_on(root: &str) -> Summoned {
+        Summoned {
+            pane: None,
+            repo_root: Some(root.into()),
+        }
+    }
+
+    const BROKEN: &str = "fatal: your current branch appears to be broken";
+
+    #[test]
+    fn the_first_frame_names_a_checkout_of_its_repository_a_ref_is_missing_from() {
+        // The list is git's walk, and a ref under a directory git may not open is left out
+        // of it without a word, or listed at the value `packed-refs` still holds and out
+        // nowhere: either way the list does not show it out here. The sentence the panes view
+        // puts on its prompt line for that checkout is the only thing here that says so —
+        // of the repository on screen, and not of another one.
+        let mut tree = Tree::default();
+        tree.repos.push(nameless_at("app", &["/wt/feat2-x"]));
+        tree.repos.push(nameless_at("site", &["/wt/site-x"]));
+        ref_missing(&mut tree, 0, 0, Some(BROKEN));
+        ref_missing(&mut tree, 1, 0, Some(BROKEN));
+
+        let state = first_frame(
+            tree.clone(),
+            Snapshot::default(),
+            &opened_on("/src/app"),
+            None,
+        )
+        .expect("the repository is listed");
+        assert_eq!(
+            state.message(),
+            Some(format!("app: feat2-x: {BROKEN}").as_str())
+        );
+
+        tree.trouble.ref_missing.pop_first();
+        let state = first_frame(tree, Snapshot::default(), &opened_on("/src/app"), None)
+            .expect("the repository is listed");
+        assert_eq!(
+            state.message(),
+            None,
+            "the other repository's is not this one's"
+        );
+    }
+
+    #[test]
+    fn the_first_frame_counts_the_rest_of_its_repositorys_missing_refs() {
+        // One line, the way the panes view's prompt line puts it: the rest counted, and
+        // listed by that view's `!`, since this one has no list of its own for them. What is
+        // counted is sentences: the checkouts git found a commit at share one.
+        let mut tree = Tree::default();
+        tree.repos.push(nameless_at(
+            "app",
+            &["/wt/feat2-x", "/wt/moved", "/wt/other"],
+        ));
+        ref_missing(&mut tree, 0, 0, Some(BROKEN));
+        ref_missing(&mut tree, 0, 1, None);
+        ref_missing(&mut tree, 0, 2, None);
+
+        let state = first_frame(tree, Snapshot::default(), &opened_on("/src/app"), None)
+            .expect("the repository is listed");
+        assert_eq!(
+            state.message(),
+            Some(format!("app: feat2-x: {BROKEN} (+1 more)").as_str())
+        );
+    }
+
+    #[test]
+    fn the_first_frame_names_the_checkouts_git_found_a_commit_at_together() {
+        let mut tree = Tree::default();
+        tree.repos
+            .push(nameless_at("app", &["/wt/moved", "/wt/other"]));
+        ref_missing(&mut tree, 0, 0, None);
+        ref_missing(&mut tree, 0, 1, None);
+
+        let state = first_frame(tree, Snapshot::default(), &opened_on("/src/app"), None)
+            .expect("the repository is listed");
+        assert_eq!(
+            state.message(),
+            Some("app: git listed no ref at the checkout of moved, other"),
+            "one sentence, and nothing counted"
+        );
+    }
+
+    #[test]
+    fn a_pane_git_could_not_place_is_said_before_a_missing_ref() {
+        // Why the pane that opened the picker has no row comes first: it is about the very
+        // thing the user did. The missing ref is still on the panes view's `!`.
+        let mut tree = Tree::default();
+        tree.repos.push(nameless_at("app", &["/wt/feat2-x"]));
+        ref_missing(&mut tree, 0, 0, Some(BROKEN));
+        let refused = "git could not be run: no such file or directory (`git rev-parse`)";
+        tree.trouble
+            .unplaced
+            .insert("w1:p1".to_string(), refused.to_string());
+        let summoned = Summoned {
+            pane: Some("w1:p1".into()),
+            repo_root: Some("/src/app".into()),
+        };
+
+        let state = first_frame(tree, Snapshot::default(), &summoned, None)
+            .expect("the repository is listed");
+        assert_eq!(
+            state.message(),
+            Some(format!("1 pane not placed: {refused}").as_str())
+        );
+    }
+
+    #[test]
+    fn the_first_frame_says_nothing_else_the_panes_view_says_of_its_repository() {
+        // Refs git would not read are the panes view's to say, on its prompt line. The
+        // sentence here is about a missing ref and nothing else of that view's.
+        let mut tree = Tree::default();
+        let mut app = nameless_at("app", &["/wt/feat2-x"]);
+        app.refs = Refs::Unreadable("fatal: bad ref".into());
+        tree.repos.push(app);
+
+        let state = first_frame(tree, Snapshot::default(), &opened_on("/src/app"), None)
+            .expect("the repository is listed");
+        assert_eq!(state.message(), None);
     }
 
     #[test]

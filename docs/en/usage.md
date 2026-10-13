@@ -415,10 +415,40 @@ read: `me/app: refs disagree: /path/to/checkout`. A row naming no branch draws n
 where herdr lists it once a sweep and `Shift-D` still refuse it as
 `more than one ref names this checkout`.
 
-A checkout whose branch no ref names at its path draws nothing and is not a condition, since
-a branch with no commit yet is the ordinary way to get there; with the cursor on it, the
+A checkout whose branch no ref names at its path draws nothing. With the cursor on it, the
 breadcrumb under the list says `no ref names this checkout` — under refs git read, and only
-on a checkout the cursor stops on, which outside a sweep is one with no panes.
+on a checkout the cursor stops on, which outside a sweep is one with no panes. A branch with
+no commit yet is the ordinary way to get there, and the plugin asks git whether that is why;
+where git says so, that is all. Where git finds a commit there — herdr and git disagree about
+what is checked out where — the prompt line names the branches:
+`me/app: git listed no ref at the checkout of moved`.
+
+A ref under a directory in `.git/refs/heads` git may not open is left out of the walk
+without a word — or, where `packed-refs` also holds it, as after `git gc`, listed at the
+packed value with no checkout — and git cannot name the branch at its checkout either, so
+herdr lists that checkout with no branch and `is_detached: false` (measured against herdr
+0.9.3 for the first; git's `worktree list` gives the same stanza for both). The row draws nothing, and the plugin asks git about it the same way, where no
+ref of the repository names the checkout's path; where git refuses to say, the prompt line
+names the checkout by the directory the row shows, with git's words:
+``me/app: feat2-x: fatal: your current branch appears to be broken (`git log -1 --format=%H`)``.
+The branches view's list is the same walk, so the branch is missing there too, or listed
+as out nowhere at its packed value, with nothing on its row to say the date, subject and
+markers are stale. The view opens on the same sentence for a checkout of the repository
+it opens on, until the first key. It counts the rest of those sentences the way the
+prompt line does — one per checkout git refused about, and one for every checkout git
+found a commit at, named together — and the panes view's `!` lists them. Why the pane
+that opened the view has no row comes first where there is such a sentence, and the
+missing ref is then on the panes view alone. A ref git could not read that no checkout
+has out is named nowhere, and neither is that checkout where herdr omits `is_detached`:
+it reads as detached. Nor is one herdr never listed — a checkout added with
+`git worktree add` outside herdr, which the picker shows for a pane in it — or one with no
+branch that a ref of the repository still names: the plugin does not ask git about
+either. `dump` shows what git names at the path, and for the second says git was not
+asked.
+
+git's word for a branch with no commit yet is all there is to go on: it says the same of a
+branch whose ref was deleted while it was out, and of one out through a symbolic ref to a
+branch that does not exist, and those stay quiet too.
 
 On a line too narrow to hold it, it gives up its words rather than its place: the spinners
 lose their labels first, and then the sentence becomes a count of how many things are wrong,

@@ -4,7 +4,7 @@ Status: accepted
 
 ## Context
 
-Four things this plugin decides are decided by reading git's own words rather than its exit
+Five things this plugin decides are decided by reading git's own words rather than its exit
 code.
 
 Whether a pane's directory is a repository at all: git answers `fatal: not a git repository (or
@@ -28,6 +28,11 @@ macOS one measured does not translate them). Whether a repository simply has no 
 `remote get-url origin` says `error: No such remote 'origin'` on stderr and exits 2 —
 `no_such_remote` matches that exit and the words `No such remote` together, so every other way
 the call can fail goes up as a refusal instead of as "this repository has no remote".
+Whether a branch no ref names has no commit yet: `log -1` in its checkout says `fatal: your
+current branch 'main' does not have any commits yet` and exits 128, where a branch whose ref
+git could not read gets `fatal: your current branch appears to be broken` — `NO_COMMITS_YET`
+matches the exit and the words `does not have any commits yet` together, and anything else
+keeps the checkout named on the prompt line, with git's words where it refused.
 
 git ships translations of these messages — bar `cannot change to`, and the C library's words
 after the last colon — and picks one from the environment. That environment is whatever
@@ -38,7 +43,9 @@ which is loud and wrong; a directory git could not open, or rules it could not r
 and a dropped ref goes unnoticed: the walk still exits 0, the refs it did list still build the
 markers, and the checkout on the dropped ref carries none — which reads exactly like a checkout
 with nothing to report, with nothing anywhere saying why. A pane that is simply not in a
-repository is read as git refusing. That silence is what issue #21 is about.
+repository is read as git refusing. That silence is what issue #21 is about. A fresh
+repository's branch is named on the prompt line with git's translated refusal, which is loud
+and wrong in the same way a missing `origin` is.
 
 ## Decision
 
@@ -70,9 +77,21 @@ answer in another language and checks that it does not. It needs a locale the ho
 a translation for, and where there is none it fails rather than skipping, because libtest
 keeps a passing test's output to itself and a skip would read as a pass.
 
-**A ref git drops in silence is still silent.** An unreadable directory under `refs/heads`,
-a dangling symref: the walk exits 0 with nothing said, in any language. That is issue #32,
-and it is what is left of #21 once the language is settled.
+**A ref git drops in silence is noticed from the other side, where git will say so.** An
+unreadable directory under `refs/heads`, a dangling symref: the walk exits 0 with nothing
+said, in any language, and nothing in this decision changes that. Under the unreadable
+directory a ref `packed-refs` also holds is not even dropped: the walk lists the packed
+value, out at no checkout. What issue #32 added is a question asked of the checkout
+instead: a checkout no ref is listed at — herdr naming a branch there, or naming none at a
+checkout it says is not detached (`is_detached: false`), which is how herdr 0.9.3 lists
+one whose ref is under the unreadable directory — gets a `log -1`, and a refusal is put on
+the prompt line in git's words: `your current branch appears to be broken`, for that
+directory. A herdr that omits `is_detached` has that checkout read as detached, and it
+stays quiet: read the other way, every detached checkout would be on the prompt line. A
+dangling symref a checkout has out is not caught: `log -1` there says the branch it points
+to `does not have any commits yet`, which is a fresh repository's answer too, and so is a
+branch whose ref was deleted while it was out. An unreadable ref that no checkout has out
+is still silent.
 
 ## Measured
 
@@ -87,6 +106,8 @@ LC_ALL=C            warning: could not open directory 'notes/': Permission denie
 LC_ALL=de_DE.UTF-8  Warnung: konnte Verzeichnis 'notes/' nicht öffnen: Permission denied
 LC_ALL=C            error: No such remote 'origin'
 LC_ALL=de_DE.UTF-8  Fehler: Remote-Repository 'origin' nicht gefunden
+LC_ALL=C            fatal: your current branch 'main' does not have any commits yet
+LC_ALL=de_DE.UTF-8  Schwerwiegend: Ihr aktueller Branch 'main' hat noch keine Commits.
 ```
 
 `GIT_TRACE`, `GIT_TRACE_PERFORMANCE` and `GIT_TRACE2` are read from that same environment and
