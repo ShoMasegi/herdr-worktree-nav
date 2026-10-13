@@ -1008,24 +1008,29 @@ fn a_row_with_no_branch_and_no_ref_reads_no_branch_reported_alone() {
 fn a_checkout_a_ref_is_missing_from_carries_what_git_said_of_it() {
     // herdr lists the checkout under a directory in `refs/heads` git may not open as not
     // detached with no branch, and git's refusal is the only reason it gives. The page
-    // prints it under the row; a checkout git found a commit at has no words to print, so
+    // prints it under the row's branch line, ahead of its panes, and the same for a named
+    // branch git refused about; a checkout git found a commit at has no words to print, so
     // nothing follows its row.
-    let mut tree = one_repo(
-        Refs::Read,
-        vec![
-            WorktreeNode {
-                branch: Branch::Unnamed,
-                ..unlisted("/wt/feat2-x")
-            },
-            WorktreeNode {
-                branch: Branch::Out {
-                    name: "moved".into(),
-                    position: Position::NotSaid,
-                },
-                ..unlisted("/wt/moved")
-            },
-        ],
-    );
+    let mut locked = WorktreeNode {
+        branch: Branch::Unnamed,
+        ..unlisted("/wt/feat2-x")
+    };
+    locked.panes = vec![PaneNode {
+        pane_id: "w2:p1".into(),
+        workspace_id: "w2".into(),
+        tab_id: "w2:t1".into(),
+        display_name: Some("claude".into()),
+        agent_status: AgentStatus::Idle,
+        focused: false,
+    }];
+    let no_ref = |name: &str| WorktreeNode {
+        branch: Branch::Out {
+            name: name.into(),
+            position: Position::NotSaid,
+        },
+        ..unlisted(&format!("/wt/{name}"))
+    };
+    let mut tree = one_repo(Refs::Read, vec![locked, no_ref("broken"), no_ref("moved")]);
     let words = "fatal: your current branch appears to be broken (`git log -1 --format=%H`)";
     let key = |worktree: usize| {
         (
@@ -1033,14 +1038,23 @@ fn a_checkout_a_ref_is_missing_from_carries_what_git_said_of_it() {
             CheckoutPath::of(&tree.repos[0].worktrees[worktree]),
         )
     };
-    let (locked, moved) = (key(0), key(1));
+    let (locked, broken, moved) = (key(0), key(1), key(2));
     tree.trouble.ref_missing.insert(locked, Some(words.into()));
+    tree.trouble.ref_missing.insert(broken, Some(words.into()));
     tree.trouble.ref_missing.insert(moved, None);
     let refs = RefsByRepo::from([("/src/app".to_string(), Ok(Vec::new()))]);
     let page = page(&tree, &refs);
     assert!(
         page.contains(&format!(
-            "      no branch reported, not detached  working tree not asked\n      {words}\n"
+            "      no branch reported, not detached  working tree not asked\n      {words}\n      \
+             w2:p1  Idle  claude\n"
+        )),
+        "got:\n{page}"
+    );
+    assert!(
+        page.contains(&format!(
+            "      no ref at this checkout for broken  track not known  working tree not \
+             asked\n      {words}\n"
         )),
         "got:\n{page}"
     );

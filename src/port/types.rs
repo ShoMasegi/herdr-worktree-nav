@@ -206,11 +206,13 @@ pub struct WorktreeSource {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Worktree {
-    /// [`domain::tree::build`](crate::domain::tree::build) reads `None`, an empty string, or
-    /// `is_detached` as nothing checked out, and draws no track marker on the strength of it.
-    /// That herdr reports such a checkout one of those ways is an assumption about its API
-    /// that nothing here can hold — there is no herdr in CI; the manual checklist in
-    /// `docs/en/troubleshooting.md` has an item for it.
+    /// [`domain::tree::build`](crate::domain::tree::build) reads `is_detached` as nothing
+    /// checked out, and `None` or an empty string beside an `is_detached` of `false` as a
+    /// branch out that git could not name ([`Branch::Unnamed`](crate::domain::model::Branch)).
+    /// Neither draws a track marker. That herdr reports a detached checkout with
+    /// `is_detached` set is an assumption about its API that nothing here can hold — there
+    /// is no herdr in CI; the manual checklist in `docs/en/troubleshooting.md` has an item for
+    /// it.
     #[serde(default)]
     pub branch: Option<String>,
     pub path: String,
@@ -218,8 +220,12 @@ pub struct Worktree {
     pub label: String,
     #[serde(default)]
     pub is_bare: bool,
+    /// `None` where herdr did not say. A checkout with no branch and no word on whether it is
+    /// detached is read as detached, as it was before herdr's `false` meant anything here: a
+    /// herdr that omits the field would otherwise put every detached checkout on the prompt
+    /// line, at the cost of reading a checkout git could not name the branch of as detached.
     #[serde(default)]
-    pub is_detached: bool,
+    pub is_detached: Option<bool>,
     #[serde(default)]
     pub is_linked_worktree: bool,
     #[serde(default)]

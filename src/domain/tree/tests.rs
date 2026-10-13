@@ -209,7 +209,7 @@ fn the_branch_is_matched_by_the_checkout_git_says_has_it() {
         vec![
             worktree("main", "/src/app", false),
             Worktree {
-                is_detached: true,
+                is_detached: Some(true),
                 ..worktree("", "/wt/detached", true)
             },
         ],
@@ -850,8 +850,9 @@ fn a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it() {
     // registration goes on naming `/wt/shared` for `chore/deps`, whose upstream was
     // deleted, and nothing herdr names is checked out there. No row names a branch, so none
     // may carry a marker about one: `gone` beside a directory name is about a branch the
-    // row never names (issue #49). One rule over both arms, pinned here because the arms
-    // are far apart and each can be read as reasonable on its own.
+    // row never names (issue #49). One rule over every row that names no branch, pinned here
+    // because the places that make them are far apart and each can be read as reasonable on
+    // its own.
     let shared = "/wt/shared";
     let stale = || local_ref("chore/deps", Some(shared), Some(Track::Gone));
 
@@ -1060,7 +1061,7 @@ fn a_checkout_herdr_flags_detached_draws_no_track_whatever_it_names() {
 }
 
 #[test]
-fn a_checkout_herdr_names_no_branch_at_is_unnamed_unless_herdr_calls_it_detached() {
+fn a_checkout_herdr_names_no_branch_at_is_unnamed_only_where_herdr_says_it_is_not_detached() {
     // git's own `worktree list` prints no `branch` line and no `detached` for a checkout whose
     // `HEAD` names a ref it cannot read, and herdr passes that on as `is_detached: false`
     // with no `branch`: measured against herdr 0.9.3, with `chmod 000 .git/refs/heads/feat2`
@@ -1096,6 +1097,18 @@ fn a_checkout_herdr_names_no_branch_at_is_unnamed_unless_herdr_calls_it_detached
         "detached wins over a name, as it did before"
     );
     assert_eq!(row(json!({"is_detached": true})), Branch::NothingOut);
+    // A herdr that says nothing of detachment: no branch reads as detached, as it did before
+    // `false` meant anything here, so a herdr that omits the field does not put every
+    // detached checkout on the prompt line.
+    assert_eq!(row(json!({})), Branch::NothingOut);
+    assert_eq!(row(json!({"branch": ""})), Branch::NothingOut);
+    assert_eq!(
+        row(json!({"branch": "feat2/x"})),
+        Branch::Out {
+            name: "feat2/x".into(),
+            position: Position::NotSaid,
+        }
+    );
     assert_eq!(
         row(json!({"is_detached": false, "branch": "feat2/x"})),
         Branch::Out {

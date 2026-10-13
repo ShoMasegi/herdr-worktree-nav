@@ -393,7 +393,8 @@ pub trait GitPort: Send + Sync {
     /// Whether git says the branch out at `checkout_path` has no commit yet.
     ///
     /// Asked of a checkout no ref of the repository names, where herdr says a branch is out
-    /// or names none at a checkout it does not call detached. A branch with no commit yet is
+    /// or names none at a checkout it says is not detached (`is_detached: false`). A branch
+    /// with no commit yet is
     /// the one ordinary way to get there: it has no ref at all, which every fresh `git init`
     /// is until its first commit. The other ways are something wrong: herdr and git
     /// disagreeing about what is out where, or a ref git left out of a walk without a word —

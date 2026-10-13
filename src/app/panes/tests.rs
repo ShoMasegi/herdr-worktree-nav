@@ -235,7 +235,7 @@ fn listed(branch: &str, path: &str, linked: bool, open_in: Option<&str>) -> Work
         path: path.into(),
         label: String::new(),
         is_bare: false,
-        is_detached: false,
+        is_detached: Some(false),
         is_linked_worktree: linked,
         is_prunable: false,
         open_workspace_id: open_in.map(str::to_string),
@@ -2207,7 +2207,7 @@ fn a_reading_hands_the_conditions_every_checkout_a_ref_is_missing_from() {
         [
             Condition::RefMissingRefused {
                 repo: "me/app".into(),
-                checkout: "/wt/feat2-x".into(),
+                checkout: "feat2-x".into(),
                 words: "fatal: your current branch appears to be broken \
                         (`git log -1 --format=%H`)"
                     .into(),

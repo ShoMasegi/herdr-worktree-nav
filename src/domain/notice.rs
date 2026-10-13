@@ -52,7 +52,8 @@ pub enum Condition {
     /// walk without a word, and its checkout is `your current branch appears to be broken`
     /// here. One per checkout, carrying
     /// [`Trouble::ref_missing`](crate::domain::model::Trouble::ref_missing)'s words.
-    /// `checkout` is the branch herdr names there, or the path where herdr names none
+    /// `checkout` is what the list calls the row: the branch herdr names there, or the
+    /// checkout's directory where herdr names none
     /// ([`Branch::Unnamed`](crate::domain::model::Branch::Unnamed)), as it does for that
     /// directory.
     RefMissingRefused {
@@ -62,7 +63,7 @@ pub enum Condition {
     },
     /// git read this repository's refs and listed none at these checkouts, and found a commit
     /// at each, so none is a branch with no commit yet. git wrote nothing about any of it, so
-    /// the checkouts are the words: each the branch herdr names there, or the path.
+    /// the checkouts are the words: each what the list calls its row.
     RefMissing {
         repo: String,
         checkouts: Vec<String>,
@@ -151,8 +152,9 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
     // Repository by repository, in the order the tree holds their checkouts. git's words
     // first, one per checkout, since each says something of its own; then the checkouts git
     // wrote nothing about, together, since all the line can say of each is its name. A
-    // checkout is named by its branch where herdr names one and by its path where not, so a
-    // row herdr names no branch at is said rather than skipped.
+    // checkout is named the way the list names its row — its branch, or its directory where
+    // herdr names none — so a row herdr names no branch at is said rather than skipped, and
+    // git's words are not pushed off the line by a whole path in front of them.
     for repo in &tree.repos {
         let mut checkouts = Vec::new();
         for worktree in &repo.worktrees {
@@ -160,11 +162,7 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
             let Some(said) = tree.trouble.ref_missing.get(&key) else {
                 continue;
             };
-            let checkout = worktree
-                .branch
-                .name()
-                .unwrap_or(&worktree.checkout_path)
-                .to_string();
+            let checkout = worktree.label().to_string();
             match said {
                 Some(words) => conditions.push(Condition::RefMissingRefused {
                     repo: repo.display_name.clone(),
@@ -315,7 +313,7 @@ mod tests {
         // refusal first, one per checkout; then the checkouts git wrote nothing about,
         // together, in the order the tree holds them — here not the order of their paths. A
         // checkout no ref names that is not recorded — git said its branch has no commit yet
-        // — says nothing here. A checkout herdr names no branch at is named by its path.
+        // — says nothing here. A checkout herdr names no branch at is named by its directory.
         let unnamed = |name: &str| WorktreeNode {
             branch: Branch::Unnamed,
             checkout_path: format!("/wt/{name}"),
@@ -379,7 +377,7 @@ mod tests {
                 },
                 Condition::RefMissingRefused {
                     repo: "me/app".into(),
-                    checkout: "/wt/locked".into(),
+                    checkout: "locked".into(),
                     words: "fatal: your current branch appears to be broken".into(),
                 },
                 Condition::RefMissingRefused {
@@ -389,7 +387,7 @@ mod tests {
                 },
                 Condition::RefMissing {
                     repo: "me/app".into(),
-                    checkouts: vec!["feat2-y".into(), "/wt/nameless".into(), "feat2-x".into()],
+                    checkouts: vec!["feat2-y".into(), "nameless".into(), "feat2-x".into()],
                 },
                 Condition::RefMissing {
                     repo: "me/site".into(),

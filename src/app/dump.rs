@@ -215,8 +215,9 @@ pub fn report(
 ///
 /// Where this page knows less than the picker it says which: `not read` for an upstream its
 /// own walk could not get, beside the marker the picker is drawing or `not known`. When git
-/// lists no ref at this checkout — a branch with no commit yet, or git's list and herdr's
-/// disagreeing about what is out where — it says so rather than `upstream none`, and when
+/// lists no ref at this checkout — a branch with no commit yet, git's list and herdr's
+/// disagreeing about what is out where, or a ref git could not read, whose words `report`
+/// prints under the row — it says so rather than `upstream none`, and when
 /// git names more than one it names
 /// each, because `domain::tree::tracks` declines to choose between them. Issue #48 is the
 /// labels.
@@ -364,12 +365,14 @@ fn each_of(named: &[&GitRef]) -> String {
 
 /// What the page says about a row with no branch on it.
 ///
-/// Two rows reach here and they are not the same news: the checkout herdr listed with
-/// nothing out, and the one herdr never listed, which `build` makes for a pane and where a
-/// branch may well be out. The row says which ([`Branch`]), so the page does too: on the
-/// second, `no branch reported` would be this side's inference dressed as herdr's answer.
-/// Neither carries a position — [`Branch`] keeps one only on the answer that names a
-/// branch — so the refs git names at the path are named and not explained (issue #49).
+/// Three rows reach here and they are not the same news: the checkout herdr listed as
+/// detached, or with no branch and no word on detachment; the one herdr listed as not
+/// detached with no branch, which is a branch out that git could not name; and the one herdr
+/// never listed, which `build` makes for a pane and where a branch may well be out. The row
+/// says which ([`Branch`]), so the page does too: on the last, `no branch reported` would be
+/// this side's inference dressed as herdr's answer. None carries a position — [`Branch`]
+/// keeps one only on the answer that names a branch — so the refs git names at the path are
+/// named and not explained (issue #49).
 ///
 /// No `upstream …` either way: this row names no branch for one to be about.
 fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {

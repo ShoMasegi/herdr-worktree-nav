@@ -293,6 +293,14 @@ mod tests {
     fn only_a_sweep_of_a_checkout_on_a_branch_asks_for_the_branch_to_go() {
         assert!(Removal::sweeping("/src/app", &checkout(Some("fix/crash"))).delete_branch());
         assert!(!Removal::sweeping("/src/app", &checkout(None)).delete_branch());
+        let unnamed = WorktreeNode {
+            branch: Branch::Unnamed,
+            ..checkout(None)
+        };
+        assert!(
+            !Removal::sweeping("/src/app", &unnamed).delete_branch(),
+            "a branch is out there and nothing can say which, so there is none to name"
+        );
         assert!(
             !Removal::of("/src/app", &checkout(Some("fix/crash"))).delete_branch(),
             "`Shift-D` keeps the branch"

@@ -81,10 +81,12 @@ keeps a passing test's output to itself and a skip would read as a pass.
 unreadable directory under `refs/heads`, a dangling symref: the walk exits 0 with nothing
 said, in any language, and nothing in this decision changes that. What issue #32 added is a
 question asked of the checkout instead: a checkout no ref is listed at — herdr naming a
-branch there, or naming none at a checkout it does not call detached, which is how it lists
-one whose ref is under the unreadable directory — gets a `log -1`, and a refusal is put on
-the prompt line in git's words: `your current branch appears to be broken`, for that
-directory. A dangling symref a checkout has out is not caught: `log -1` there says the branch
+branch there, or naming none at a checkout it says is not detached (`is_detached: false`),
+which is how herdr 0.9.3 lists one whose ref is under the unreadable directory — gets a
+`log -1`, and a refusal is put on the prompt line in git's words: `your current branch
+appears to be broken`, for that directory. A herdr that omits `is_detached` has that
+checkout read as detached, and it stays quiet: read the other way, every detached checkout
+would be on the prompt line. A dangling symref a checkout has out is not caught: `log -1` there says the branch
 it points to `does not have any commits yet`, which is a fresh repository's answer too, and
 so is a branch whose ref was deleted while it was out. A ref dropped that no checkout has out
 is still silent.

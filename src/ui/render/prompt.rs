@@ -523,7 +523,7 @@ mod tests {
     use ratatui::crossterm::event::KeyCode;
     use ratatui::Terminal;
 
-    use crate::domain::model::{Position, Refs, WorktreeNode};
+    use crate::domain::model::{Refs, WorktreeNode};
 
     use crate::port::AgentStatus;
 
@@ -556,11 +556,13 @@ mod tests {
     fn a_ref_missing_from_its_checkout_reaches_the_line_in_gits_words() {
         // The walk said nothing, so a row with no marker is all there was — and that row is
         // what a branch with nothing to report looks like too. What git said when asked about
-        // the checkout is the only reason git gives. Issue #32.
+        // the checkout is the only reason git gives. Issue #32. herdr names no branch there,
+        // and a checkout's whole path in front of git's words would push them off the line
+        // at an ordinary width: the row's own name goes there instead.
         let mut tree = tree();
-        tree.repos[0].worktrees[1]
-            .branch
-            .set_position(Position::NotSaid);
+        let row = &mut tree.repos[0].worktrees[1];
+        row.branch = Branch::Unnamed;
+        row.checkout_path = "/Users/me/Workspace/app-worktrees/feat2-x".into();
         let key = (
             RepoKey::of(&tree.repos[0]),
             CheckoutPath::of(&tree.repos[0].worktrees[1]),
@@ -571,7 +573,7 @@ mod tests {
         );
         let line = prompt_line(&PanesState::new(tree, None), 92);
         assert!(
-            line.contains("me/app: feat/login: fatal: your current branch appears to be broken"),
+            line.contains("me/app: feat2-x: fatal: your current branch appears to be broken"),
             "{line}"
         );
     }

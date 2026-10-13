@@ -140,9 +140,10 @@ pub enum Branch {
     /// put it — off a ref walk that is happening anyway rather than a process of its own; see
     /// [`port::Track`](crate::port::Track).
     Out { name: String, position: Position },
-    /// herdr listed the checkout as detached. No ref of the repository is about this row.
+    /// herdr listed the checkout as detached, or named no branch and said nothing of whether
+    /// it is detached. No ref of the repository is about this row.
     NothingOut,
-    /// herdr listed the checkout, not as detached, and named no branch — absent or empty.
+    /// herdr listed the checkout as not detached and named no branch — absent or empty.
     /// git's own `worktree list` says this of a checkout whose `HEAD` names a ref it cannot
     /// read, such as one under a directory in `refs/heads` it may not open (issue #32): a
     /// branch is out and nothing on this side can say which. No ref of the repository is
@@ -157,7 +158,7 @@ pub enum Branch {
 }
 
 impl Branch {
-    /// The name, where a branch was named. `None` for both of the other two, which is the
+    /// The name, where a branch was named. `None` for each of the other three, which is the
     /// question [`Branch`] exists to keep answerable past this point.
     pub fn name(&self) -> Option<&str> {
         match self {
@@ -240,15 +241,15 @@ pub enum Position {
     /// No ref of the repository names this checkout's path: git would not read the refs at
     /// all ([`Refs`] says so), or it read them and lists no ref there although herdr names a
     /// branch. Nothing here says why; a branch with no commit yet is one way, having no ref
-    /// at all.
+    /// at all, and [`Trouble::ref_missing`] is what git said when asked whether it is.
     NotSaid,
 }
 
 /// One checkout of a repository: the primary one, or a linked worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeNode {
-    /// What is out here and where it stands, or, where nothing is named, which of the two
-    /// reasons that is. Neither branchless row carries a position, because a marker about a
+    /// What is out here and where it stands, or, where nothing is named, which of the three
+    /// reasons that is. No branchless row carries a position, because a marker about a
     /// branch the row does not name is one nobody can act on:
     /// `a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it`.
     pub branch: Branch,
@@ -267,7 +268,7 @@ impl WorktreeNode {
     }
 
     /// What to show for the checkout. Falls back to the directory name where no branch is
-    /// named, which both of [`Branch`]'s other two answers are: the path is all either row
+    /// named, which each of [`Branch`]'s other three answers is: the path is all such a row
     /// has to be called by, whatever the reason.
     pub fn label(&self) -> &str {
         self.branch.name().unwrap_or_else(|| {

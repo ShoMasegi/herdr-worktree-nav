@@ -124,10 +124,11 @@ pub fn build(
                 .map(|worktree| {
                     let checkout_path = normalize_path(&worktree.path);
                     // herdr listed this checkout, so `NothingOut` and `Unnamed` are herdr's
-                    // own answers and not an absence: `is_detached`, or not detached with
-                    // `branch` absent or empty.
+                    // own answers and not an absence: `is_detached`, or no word on it beside
+                    // no branch, is nothing out; `is_detached: false` with `branch` absent or
+                    // empty is a branch out that git could not name.
                     //
-                    // Nothing out, and no ref of this repository's is about this row. git
+                    // No ref of this repository's is about either row. git
                     // can still name the path from a registration that lost its directory,
                     // carrying `[gone]`:
                     // `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out`
@@ -135,8 +136,9 @@ pub fn build(
                     // herdr never listed carries no position either, for a reason of its
                     // own: git may name a branch there, but the row cannot.
                     let branch = match worktree.branch.clone().filter(|b| !b.is_empty()) {
-                        _ if worktree.is_detached => Branch::NothingOut,
-                        None => Branch::Unnamed,
+                        _ if worktree.is_detached == Some(true) => Branch::NothingOut,
+                        None if worktree.is_detached == Some(false) => Branch::Unnamed,
+                        None => Branch::NothingOut,
                         Some(name) => Branch::Out {
                             name,
                             position: Named::position(

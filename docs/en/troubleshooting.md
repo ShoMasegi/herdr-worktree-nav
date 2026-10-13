@@ -47,8 +47,10 @@ of the refs failed — the picker read them once for its markers, and `dump` rea
 again for the upstream names — the repository says `refs unreadable on the second read:`
 and its checkouts keep the track the picker is drawing, with `upstream not read`. A
 checkout git lists no ref at says `no ref at this checkout for <branch>`: the branch has no
-commit yet, or git and herdr disagree about what is checked out where, which the prompt
-line names as well. A checkout git
+commit yet, git and herdr disagree about what is checked out where, or git could not read
+the branch — and where git, asked whether the branch has no commit yet, refused to say,
+its words are on the line under the row. The prompt line names the last two as well. A
+checkout git
 names more than one ref at reads `more than one ref at this checkout:` and then each of
 them as `<branch> → <upstream> <where it stands>`; more than one of the repository's
 worktree registrations names that path, and which of them is stale is not something this
@@ -66,11 +68,11 @@ registration is refused as `herdr lists this path twice`, one listed once is ref
 `more than one ref names this checkout`, and one the picker found no ref for can read
 `no ref here` (see *Without git's refs* in [usage](usage.md)). A row with no
 branch on it says which kind of silence that is: `no branch reported` where herdr
-listed the checkout as detached, `no branch reported, not detached` where herdr listed it
+listed the checkout as detached, or with no branch and no word on whether it is detached,
+`no branch reported, not detached` where herdr listed it
 as not detached and named no branch — git cannot name the branch, as with a ref under a
-directory in `.git/refs/heads` it may not open, and where git refused to say whether the
-branch has a commit the line under it carries git's words, which the prompt line names as
-well — and `herdr did not list this checkout` where herdr never mentioned it — the picker
+directory in `.git/refs/heads` it may not open, and git's words for it are on the line
+under the row as above — and `herdr did not list this checkout` where herdr never mentioned it — the picker
 shows that row for a pane whose directory it recognized, and a branch may well be out
 there. In each case `git names at this path:`
 follows with that same list where git names refs there, and where it names more than one
@@ -209,11 +211,13 @@ through this against a real session.
       still names — the state `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out`
       in `tests/git_adapter.rs` builds: two worktrees of branches pushed with `-u`, one moved aside and
       the other moved into its place then `git worktree repair`ed, both branches deleted on
-      the remote, the checkout detached. With no pane in it, its row draws no marker and is
-      not ticked under `Shift-S`. **CI cannot reach this path** — the guard
-      reads `branch` and `is_detached` from herdr's `worktree.list`, and that herdr reports
-      such a checkout with `branch` absent or empty, or `is_detached` set, is the assumption
-      this item confirms; git alone cannot show it.
+      the remote, the checkout detached. With no pane in it, its row draws no marker, is
+      not ticked under `Shift-S`, and the prompt line says nothing of it. **CI cannot reach
+      this path** — the guard reads `branch` and `is_detached` from herdr's `worktree.list`,
+      and that herdr reports such a checkout with `is_detached` set is the assumption this
+      item confirms; git alone cannot show it. A herdr that sent `is_detached: false` with
+      no branch would have the checkout named on the prompt line as one a ref is missing
+      from.
 - [ ] Break a loose ref — `printf 'not-a-sha\n' > .git/refs/heads/<branch>` in a repository
       with checkouts open — and reopen the picker. The prompt line names the repository where
       the search hint was, with `refs unreadable:` and git's own words after it, and the rows
@@ -223,8 +227,8 @@ through this against a real session.
 - [ ] As a user permissions apply to, `chmod 000 .git/refs/heads/<dir>` over a branch a
       checkout has out — `feat2` for `feat2/x` — and reopen the picker. The walk says
       nothing and herdr names no branch there, and the prompt line still names the
-      checkout by its path with git's words:
-      ``me/app: /path/to/checkout: fatal: your current branch appears to be broken (`git log -1 --format=%H`)``.
+      checkout by its directory with git's words:
+      ``me/app: feat2-x: fatal: your current branch appears to be broken (`git log -1 --format=%H`)``.
       `chmod 755` it and press `r`: the line goes. In a fresh `git init` with no commit,
       the line says nothing of `main`. **CI cannot reach this path** — the walk is in
       `tests/git_adapter.rs`, the terminal is not.

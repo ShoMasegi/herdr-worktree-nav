@@ -1438,7 +1438,7 @@ fn a_ref_git_drops_without_a_word_leaves_its_checkout_with_no_branch_named() {
         path: path.to_string(),
         label: String::new(),
         is_bare: false,
-        is_detached: false,
+        is_detached: Some(false),
         is_linked_worktree: linked,
         is_prunable: false,
         open_workspace_id: None,
@@ -1460,7 +1460,7 @@ fn a_ref_git_drops_without_a_word_leaves_its_checkout_with_no_branch_named() {
         Refs::Read,
         "git answered, for the rest of them"
     );
-    let position_at = |path: &str| {
+    let branch_at = |path: &str| {
         repo_node
             .worktrees
             .iter()
@@ -1468,12 +1468,12 @@ fn a_ref_git_drops_without_a_word_leaves_its_checkout_with_no_branch_named() {
             .map(|worktree| worktree.branch.clone())
     };
     assert_eq!(
-        position_at(&checkout),
+        branch_at(&checkout),
         Some(Branch::Unnamed),
         "a branch is out and nobody can say which, which is not what a detached checkout reads"
     );
     assert_eq!(
-        position_at(&root),
+        branch_at(&root),
         Some(Branch::Out {
             name: "main".into(),
             position: Position::Said(None),

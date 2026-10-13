@@ -31,8 +31,8 @@ pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapsho
 }
 
 /// The checkouts a ref is missing from, under refs git read: herdr says a branch is out and
-/// no ref of the repository names the path, or herdr names no branch at a checkout it does
-/// not call detached ([`Branch::Unnamed`]) — and git does not say the branch has no commit
+/// no ref of the repository names the path, or herdr names no branch at a checkout it says
+/// is not detached ([`Branch::Unnamed`]) — and git does not say the branch has no commit
 /// yet. Each with git's words where it refused to say.
 ///
 /// A process per such checkout, on every reading and in front of the frame it builds: a
@@ -535,7 +535,10 @@ mod tests {
                 repo(
                     "/src/site",
                     Refs::Unreadable("fatal: bad ref".into()),
-                    vec![at("/wt/site", Position::NotSaid)],
+                    vec![
+                        at("/wt/site", Position::NotSaid),
+                        with("/wt/site-x", Branch::Unnamed),
+                    ],
                 ),
             ],
             ..Default::default()

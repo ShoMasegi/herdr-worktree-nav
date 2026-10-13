@@ -259,7 +259,8 @@ pub fn track_mark(position: Position) -> String {
         // read, where there is no position to draw at all and a marker that is wrong is
         // worse than none — kind 4 of `docs/en/error-handling.md`; or no ref names this
         // checkout. `app::dump` is where they are told apart, and the line under the list
-        // names the last for the checkout under the cursor.
+        // names the last for the checkout under the cursor; the prompt line names it too,
+        // where git would not say the branch has no commit yet.
         Position::Said(Some(Track::Unreadable) | None) | Position::NotSaid => String::new(),
     }
 }
@@ -344,7 +345,7 @@ pub fn detail(tree: &Tree, reference: RowRef) -> String {
                 // repository with a branch out is here at once and the prompt line already
                 // says why. A branch
                 // with no commit yet is the ordinary way to get here, so it is said where the
-                // cursor is rather than among the conditions.
+                // cursor is; the conditions name it only where git would not say that is why.
                 Some(Position::NotSaid) if repo.refs.is_read() => {
                     parts.push("no ref names this checkout".to_string());
                 }
@@ -682,11 +683,11 @@ mod tests {
         assert_eq!(
             condition(&Condition::RefMissing {
                 repo: "me/app".into(),
-                checkouts: vec!["moved".into(), "/wt/unnamed".into()],
+                checkouts: vec!["moved".into(), "feat2-x".into()],
             }),
-            "me/app: git listed no ref at the checkout of moved, /wt/unnamed",
+            "me/app: git listed no ref at the checkout of moved, feat2-x",
             "the walk listed no ref there and `log` found a commit, so git wrote nothing \
-             about it: the words are this side's and name every branch"
+             about it: the words are this side's and name every checkout"
         );
         assert_eq!(
             condition(&Condition::SweepTrouble(
