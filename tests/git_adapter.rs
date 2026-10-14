@@ -707,6 +707,161 @@ fn head_ref_names_the_branch_and_falls_back_to_a_commit_when_detached() {
     assert_eq!(detached.len(), 40, "a full commit id: {detached}");
 }
 
+#[test]
+fn worktree_heads_reads_each_commit_off_the_registration_rather_than_the_checkout() {
+    // All that tells a checkout naming no branch from the next one at its path — issue #29.
+    // Read where git keeps the registration, a directory that has gone and one that lost its
+    // `.git` answer with the commit they were made at, and not with nothing or with the
+    // commit of the repository around them; an unborn branch and a ref git could not read
+    // answer with no commit.
+    use std::collections::BTreeMap;
+    use std::os::unix::fs::PermissionsExt;
+
+    let commit_of = |rev: &str, repo: &Path| {
+        let said = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["rev-parse", rev])
+            .output()
+            .expect("git should run");
+        String::from_utf8(said.stdout).unwrap().trim().to_string()
+    };
+    let repo = repository();
+    let around = tempfile::tempdir().unwrap();
+    let add = |args: &[&str]| git(repo.path(), &[&["worktree", "add"][..], args].concat());
+    let first = commit_of("main", repo.path());
+
+    // A space in a path is part of it, at its end too: the line is `worktree <path>`, and
+    // nothing more.
+    let detached = around.path().join("a detached one ");
+    let gone = around.path().join("gone");
+    let nested = repo.path().join(".wt").join("x");
+    for checkout in [&detached, &gone, &nested] {
+        add(&["--detach", checkout.to_str().unwrap(), "main"]);
+    }
+    let orphan = around.path().join("orphan");
+    add(&["--orphan", "-b", "orphan", orphan.to_str().unwrap()]);
+    git(repo.path(), &["branch", "feat2/x"]);
+    let unread = around.path().join("feat2-x");
+    add(&[unread.to_str().unwrap(), "feat2/x"]);
+    let at = |checkout: &Path| path_str(checkout);
+    let listed = [
+        (at(&detached), Some(first.clone())),
+        (at(&gone), Some(first.clone())),
+        (at(&nested), Some(first.clone())),
+        (at(&orphan), None),
+        (at(&unread), None),
+    ];
+
+    git(repo.path(), &["commit", "--allow-empty", "-m", "second"]);
+    let second = commit_of("main", repo.path());
+    assert_ne!(first, second);
+    std::fs::rename(&gone, around.path().join("moved-away")).expect("the directory moves");
+    std::fs::rename(nested.join(".git"), around.path().join("x.git")).expect("the file moves");
+    let locked = repo.path().join(".git/refs/heads/feat2");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _put_back = ReadableAgain(&locked);
+    assert!(
+        std::fs::read_dir(&locked).is_err(),
+        "this user can read a directory with mode 000, so git will not be refused and there \
+         is nothing here to measure. Run this as a user permissions apply to."
+    );
+
+    let root = path_str(repo.path());
+    assert_eq!(
+        GitCli
+            .worktree_heads(&root)
+            .expect("git listed the checkouts"),
+        BTreeMap::from_iter([(root.clone(), Some(second))].into_iter().chain(listed))
+    );
+
+    let elsewhere = tempfile::tempdir().unwrap();
+    assert!(
+        GitCli.worktree_heads(&path_str(elsewhere.path())).is_err(),
+        "a directory that is no repository is refused rather than listed as empty"
+    );
+}
+
+#[test]
+fn worktree_heads_reads_a_sha256_null_id_as_no_commit() {
+    // The null object id is as long as the repository's hash: 64 zeros under sha256.
+    let repo = tempfile::tempdir().unwrap();
+    git(
+        repo.path(),
+        &["init", "--object-format=sha256", "--initial-branch=main"],
+    );
+    git(
+        repo.path(),
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "first",
+        ],
+    );
+    let around = tempfile::tempdir().unwrap();
+    let orphan = around.path().join("orphan");
+    git(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            "--orphan",
+            "-b",
+            "orphan",
+            orphan.to_str().unwrap(),
+        ],
+    );
+
+    let heads = GitCli.worktree_heads(&path_str(repo.path())).unwrap();
+    assert_eq!(heads.get(&path_str(&orphan)), Some(&None), "{heads:?}");
+    assert_eq!(
+        heads[&path_str(repo.path())].as_ref().map(String::len),
+        Some(64),
+        "a sha256 id: {heads:?}"
+    );
+}
+
+#[test]
+fn worktree_heads_leaves_a_bare_repository_out() {
+    // A bare repository's own entry is `bare`, with no `HEAD` line: nothing is checked out
+    // there, so it is not a checkout at no commit either.
+    let repo = repository();
+    let around = tempfile::tempdir().unwrap();
+    let bare = around.path().join("bare.git");
+    git(
+        around.path(),
+        &[
+            "clone",
+            "--bare",
+            repo.path().to_str().unwrap(),
+            bare.to_str().unwrap(),
+        ],
+    );
+    let detached = around.path().join("detached");
+    git(
+        &bare,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            detached.to_str().unwrap(),
+            "main",
+        ],
+    );
+
+    let heads = GitCli.worktree_heads(&path_str(&bare)).unwrap();
+    let listed: Vec<(&str, bool)> = heads
+        .iter()
+        .map(|(path, commit)| (path.as_str(), commit.is_some()))
+        .collect();
+    assert_eq!(listed, [(path_str(&detached).as_str(), true)]);
+}
+
 /// A repository with an `origin` that is a real bare repository on disk, so upstream
 /// tracking is exercised without a network.
 fn with_origin() -> (TempDir, TempDir) {

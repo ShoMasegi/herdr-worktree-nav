@@ -104,7 +104,8 @@ pub enum Condition {
 /// to tell them from a fresh repository by. The same state without git's word for it is
 /// [`Condition::RefMissingRefused`] or [`Condition::RefMissing`]. The third is a nameless
 /// row a ref of the repository does name: either sentence would say no ref is listed
-/// there, so git is not asked, and `dump` says that under the row.
+/// there, so git is not asked whether its branch has no commit yet, and `dump` says that
+/// under the row.
 ///
 /// `stale` and `sweep_trouble` are passed in rather than read off the tree. The first is
 /// about the reading that built it, which a tree cannot report about itself; the second is
@@ -212,7 +213,7 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{Branch, RepoNode, Tree, Unlisted, WorktreeNode};
+    use crate::domain::model::{Branch, Head, RepoNode, Tree, Unlisted, WorktreeNode};
 
     fn repo(name: &str, refs: Refs) -> RepoNode {
         RepoNode {
@@ -269,6 +270,7 @@ mod tests {
                 name: "b".into(),
                 position,
             },
+            head: Head::NotSaid,
             checkout_path: path.into(),
             is_primary: false,
             open_workspace_id: None,
@@ -324,6 +326,7 @@ mod tests {
             branch: Branch::Unnamed {
                 ref_names_path: false,
             },
+            head: Head::NotSaid,
             checkout_path: format!("/wt/{name}"),
             is_primary: false,
             open_workspace_id: None,
@@ -334,6 +337,7 @@ mod tests {
                 name: name.into(),
                 position,
             },
+            head: Head::NotSaid,
             checkout_path: format!("/wt/{name}"),
             is_primary: false,
             open_workspace_id: None,

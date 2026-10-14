@@ -13,7 +13,7 @@ use ratatui::style::Style;
 use crate::domain::chrome::Chrome;
 use crate::domain::dest::fixtures::{space_name, tab_name};
 use crate::domain::dest::Destination;
-use crate::domain::model::{PaneNode, Refs, RepoNode, Tree, WorktreeNode};
+use crate::domain::model::{Head, PaneNode, Refs, RepoNode, Tree, WorktreeNode};
 use crate::domain::rows::DisplayLine;
 use crate::port::{AgentStatus, GitRef, PullRequest, RefKind, SplitDirection, Track};
 use crate::ui::branches::BranchData;
@@ -52,6 +52,7 @@ pub(crate) fn pane(id: &str, name: Option<&str>, status: AgentStatus, focused: b
 pub(crate) fn worktree(branch: &str, primary: bool, panes: Vec<PaneNode>) -> WorktreeNode {
     WorktreeNode {
         branch: Branch::out(branch),
+        head: Head::NotSaid,
         checkout_path: format!("/wt/{}", branch.replace('/', "-")),
         is_primary: primary,
         open_workspace_id: panes.first().map(|p| p.workspace_id.clone()),

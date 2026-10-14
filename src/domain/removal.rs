@@ -179,7 +179,7 @@ pub fn parse_report(line: &str) -> Option<RemovalOutcome> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{Branch, WorktreeNode};
+    use crate::domain::model::{Branch, Head, WorktreeNode};
     use crate::port::RemovalOutcome;
 
     const REFUSAL: &str = "`git worktree remove /wt/fix-crash` failed: fatal: '/wt/fix-crash' \
@@ -192,6 +192,7 @@ mod tests {
     fn checkout(branch: Option<&str>) -> WorktreeNode {
         WorktreeNode {
             branch: branch.map_or(Branch::NothingOut, Branch::out),
+            head: Head::NotSaid,
             checkout_path: "/wt/fix-crash".to_string(),
             is_primary: false,
             open_workspace_id: None,

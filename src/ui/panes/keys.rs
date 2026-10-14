@@ -444,7 +444,9 @@ impl PanesState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{Branch, Position, Refs, RepoNode, Tree, WorkingTree, WorktreeNode};
+    use crate::domain::model::{
+        Branch, Head, Position, Refs, RepoNode, Tree, WorkingTree, WorktreeNode,
+    };
     use crate::port::AgentStatus;
     use crate::ui::panes::fixtures::*;
 
@@ -705,6 +707,7 @@ mod tests {
         let mut tree = state.tree().clone();
         tree.repos[0].worktrees.push(WorktreeNode {
             branch: Branch::out("chore/deps"),
+            head: Head::NotSaid,
             checkout_path: "/wt/app/feat-login".into(),
             is_primary: false,
             open_workspace_id: None,
@@ -795,6 +798,7 @@ mod tests {
         let mut tree = twin.tree().clone();
         tree.repos[0].worktrees.push(WorktreeNode {
             branch: Branch::out("zzz/twin"),
+            head: Head::NotSaid,
             checkout_path: "/src/app".into(),
             is_primary: false,
             open_workspace_id: None,
@@ -890,6 +894,7 @@ mod tests {
             refs: Refs::Unreadable("fatal: bad ref".into()),
             worktrees: vec![WorktreeNode {
                 branch: Branch::NothingOut,
+                head: Head::At("c0ffee".into()),
                 checkout_path: "/wt/site/detached".into(),
                 is_primary: false,
                 open_workspace_id: None,
@@ -917,6 +922,7 @@ mod tests {
             .insert("w9:p1".into(), vec!["/wt/app/feat-login".into()]);
         tree.repos[0].worktrees.push(WorktreeNode {
             branch: Branch::out("chore/deps"),
+            head: Head::NotSaid,
             checkout_path: "/wt/app/feat-login".into(),
             is_primary: false,
             open_workspace_id: None,
@@ -988,6 +994,7 @@ mod tests {
                 &|tree| {
                     tree.repos[0].worktrees.push(WorktreeNode {
                         branch: Branch::out("feat/nested"),
+                        head: Head::NotSaid,
                         checkout_path: "/wt/app/fix-crash/nested".into(),
                         is_primary: false,
                         open_workspace_id: Some("w5".into()),
@@ -1009,6 +1016,7 @@ mod tests {
                 &|tree| {
                     tree.repos[0].worktrees.push(WorktreeNode {
                         branch: Branch::out("feat/nested"),
+                        head: Head::NotSaid,
                         checkout_path: "/wt/app/feat-login/nested".into(),
                         is_primary: false,
                         open_workspace_id: Some("w5".into()),
@@ -1035,6 +1043,7 @@ mod tests {
                 refs: Refs::Read,
                 worktrees: vec![WorktreeNode {
                     branch: Branch::out("chore/deps"),
+                    head: Head::NotSaid,
                     checkout_path: "/wt/app/fix-crash".into(),
                     is_primary: false,
                     open_workspace_id: Some("w5".into()),
@@ -1136,6 +1145,7 @@ mod tests {
                     worktrees: vec![
                         WorktreeNode {
                             branch: Branch::out("main"),
+                            head: Head::NotSaid,
                             checkout_path: "/src/app".into(),
                             is_primary: true,
                             open_workspace_id: None,
@@ -1143,6 +1153,7 @@ mod tests {
                         },
                         WorktreeNode {
                             branch: Branch::out("feat/login"),
+                            head: Head::NotSaid,
                             checkout_path: "/wt/app/feat-login".into(),
                             is_primary: false,
                             open_workspace_id: Some("w2".into()),

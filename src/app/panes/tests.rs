@@ -710,7 +710,7 @@ fn no_pane_tree() -> crate::domain::model::Tree {
 }
 
 fn one_pane_tree() -> crate::domain::model::Tree {
-    use crate::domain::model::{PaneNode, Refs, RepoNode, Tree, WorktreeNode};
+    use crate::domain::model::{Head, PaneNode, Refs, RepoNode, Tree, WorktreeNode};
     Tree {
         repos: vec![RepoNode {
             repo_key: "/src/app/.git".into(),
@@ -719,6 +719,7 @@ fn one_pane_tree() -> crate::domain::model::Tree {
             refs: Refs::Read,
             worktrees: vec![WorktreeNode {
                 branch: Branch::out("feat/login"),
+                head: Head::NotSaid,
                 checkout_path: "/wt/feat-login".into(),
                 is_primary: false,
                 open_workspace_id: Some("w2".into()),
@@ -2132,9 +2133,11 @@ fn a_refused_removal_stops_its_row_spinning_when_it_reports() {
 /// refuses to say of `/wt/feat2-x`. That last one is listed the way herdr lists a checkout
 /// whose ref is under a directory in `refs/heads` git may not open — not detached, and no
 /// `branch` — and refused in the words git gives there. Beside them, two checkouts a ref
-/// does name, which git is not to be asked about: the repository's own, on `main`, and
-/// `/wt/stale`, listed with no branch like `/wt/feat2-x`. With `fresh_only`, herdr lists
-/// `/wt/fresh` and the repository's own checkout alone.
+/// does name, which git is not to be asked whether they have no commit yet: the
+/// repository's own, on `main`, and `/wt/stale`, listed with no branch like `/wt/feat2-x`.
+/// Asked which commit each checkout is at, git lists `/wt/stale` at one and `/wt/feat2-x` at
+/// none, the way it lists a checkout whose ref it could not read. With `fresh_only`, herdr
+/// lists `/wt/fresh` and the repository's own checkout alone.
 struct MissingRefs {
     fresh_only: bool,
 }
@@ -2160,7 +2163,7 @@ impl FakeHerdr for MissingRefs {
             });
             worktrees.push(listed("moved", "/wt/moved", true, None));
             // Nameless too, but a ref still names the path: herdr and git disagree about it,
-            // and the fake refuses to be asked.
+            // and the fake refuses to be asked whether it has no commit yet.
             worktrees.push(Worktree {
                 branch: None,
                 ..listed("", "/wt/stale", true, None)
@@ -2202,8 +2205,45 @@ impl FakeGit for MissingRefs {
             other => panic!("only a checkout no ref names is asked about, not {other}"),
         }
     }
+
+    fn worktree_heads(&self, repo_root: &str) -> Result<BTreeMap<String, Option<String>>> {
+        assert_eq!(repo_root, "/src/app", "the one repository there is");
+        Ok(BTreeMap::from([
+            ("/src/app".to_string(), Some("feed".to_string())),
+            ("/wt/feat2-x".to_string(), None),
+            ("/wt/stale/".to_string(), Some("c0ffee".to_string())),
+        ]))
+    }
 }
 fake_git!(MissingRefs);
+
+#[test]
+fn a_reading_hands_the_tree_what_git_lists_at_every_checkout_naming_no_branch() {
+    // `read_heads` asking right is worth nothing until the tree carries it: left off, every
+    // test of the asking still passes, and a sweep refuses every detached checkout no other
+    // refusal claims first as one git names no commit for, though git was never asked.
+    use crate::domain::model::Head;
+    let git = MissingRefs { fresh_only: false };
+    let (_, tree) = collect::collect_tree(&git, &git).expect("the first reading");
+    let heads: BTreeMap<&str, &Head> = tree.repos[0]
+        .worktrees
+        .iter()
+        .map(|worktree| (worktree.checkout_path.as_str(), &worktree.head))
+        .collect();
+    assert_eq!(
+        heads,
+        BTreeMap::from([
+            ("/src/app", &Head::NotSaid),
+            ("/wt/fresh", &Head::NotSaid),
+            (
+                "/wt/feat2-x",
+                &Head::Unknown("git lists this checkout at no commit".into())
+            ),
+            ("/wt/moved", &Head::NotSaid),
+            ("/wt/stale", &Head::At("c0ffee".into())),
+        ])
+    );
+}
 
 #[test]
 fn a_reading_hands_the_conditions_every_checkout_a_ref_is_missing_from() {

@@ -1068,9 +1068,10 @@ fn a_checkout_herdr_flags_detached_draws_no_track_whatever_it_names() {
 
 #[test]
 fn a_nameless_checkout_keeps_whether_a_local_ref_of_its_own_repository_names_its_path() {
-    // Whether git is asked about the row turns on it: the prompt line says no ref is listed
-    // at a checkout git was asked about. The same rule `tracks` keeps for a named branch —
-    // local refs, the repository's own, paths spelled either way — and one ref or two.
+    // Whether git is asked if the row's branch has no commit yet turns on it: the prompt line
+    // says no ref is listed at a checkout git was asked that about. The same rule `tracks`
+    // keeps for a named branch — local refs, the repository's own, paths spelled either way —
+    // and one ref or two.
     let nameless = |path: &str| -> Worktree {
         serde_json::from_value(json!({
             "path": path,

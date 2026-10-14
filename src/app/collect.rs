@@ -10,7 +10,7 @@ use anyhow::Result;
 
 use crate::app::one_line;
 use crate::domain::model::{
-    is_inside, normalize_path, Branch, CheckoutPath, Position, RepoKey, Tree, Unlisted,
+    is_inside, normalize_path, Branch, CheckoutPath, Head, Position, RepoKey, Tree, Unlisted,
 };
 use crate::domain::tree::{self, PanePlacement, RepoInput};
 use crate::port::{GitPort, HerdrPort, Snapshot};
@@ -24,6 +24,7 @@ pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapsho
     // After `build` rather than through it: assembling the tree from what was read and
     // recording what could not be are different questions, and `build` is the pure half.
     let mut tree = tree::build(&snapshot, &repos, &placements);
+    read_heads(git, &mut tree);
     tree.trouble.unlisted = unlisted;
     tree.trouble.unplaced = unplaced;
     tree.trouble.ref_missing = refs_missing(git, &tree);
@@ -35,7 +36,7 @@ pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapsho
 /// is not detached ([`Branch::Unnamed`]) and no ref names that path either — and git does
 /// not say the branch has no commit yet. Each with git's words where it refused to say.
 ///
-/// An `Unnamed` row a ref does name is not asked: herdr and git disagree about it, and
+/// An `Unnamed` row a ref does name is not asked this: herdr and git disagree about it, and
 /// `dump` says so under the row.
 ///
 /// A process per such checkout, on every reading and in front of the frame it builds: a
@@ -65,6 +66,46 @@ fn refs_missing(
             Some(((RepoKey::of(repo), CheckoutPath::of(worktree)), words))
         })
         .collect()
+}
+
+/// Ask git which commit each checkout naming no branch is at.
+///
+/// A sweep goes by a branch's name to tell its checkout from the next one made at its path,
+/// and by the commit where a row names none — detached, listed with no branch, or never
+/// listed by herdr ([`Head`]). One process per repository with such a row, on every reading
+/// and in front of the frame it builds; a repository whose every row names a branch starts
+/// none. One whose refs git would not read is asked all the same: a sweep refuses its rows
+/// whatever their commits, but `dump` still says why where git names none.
+fn read_heads(git: &dyn GitPort, tree: &mut Tree) {
+    for repo in &mut tree.repos {
+        if repo
+            .worktrees
+            .iter()
+            .all(|worktree| worktree.branch.name().is_some())
+        {
+            continue;
+        }
+        // Keyed the way `tree::build` keys the rows' paths, so each row's own path finds it.
+        let listed = git.worktree_heads(&repo.repo_root).map(|heads| {
+            heads
+                .into_iter()
+                .map(|(path, commit)| (normalize_path(&path).to_string(), commit))
+                .collect::<BTreeMap<_, _>>()
+        });
+        for worktree in &mut repo.worktrees {
+            if worktree.branch.name().is_some() {
+                continue;
+            }
+            worktree.head = match &listed {
+                Ok(heads) => match heads.get(&worktree.checkout_path) {
+                    Some(Some(commit)) => Head::At(commit.clone()),
+                    Some(None) => Head::Unknown("git lists this checkout at no commit".into()),
+                    None => Head::Unknown("git does not list this checkout".into()),
+                },
+                Err(error) => Head::Unknown(one_line(&format!("{error:#}"))),
+            };
+        }
+    }
 }
 
 /// Read every repository's refs, all at once.
@@ -335,12 +376,13 @@ fn collect_repos(
 #[cfg(test)]
 mod tests {
     use crate::app::fakes::{fake_git, fake_herdr, FakeGit, FakeHerdr};
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
 
     use anyhow::Result;
 
     use super::{
-        collect_repos, collect_tree, is_inside, read_refs, refs_missing, resolve_placements,
+        collect_repos, collect_tree, is_inside, read_heads, read_refs, refs_missing,
+        resolve_placements,
     };
     use crate::domain::tree::{PanePlacement, RepoInput};
     use crate::port::{
@@ -475,6 +517,219 @@ mod tests {
         );
     }
 
+    /// A git that lists each repository's checkouts with the commit each is at — `/src/app`
+    /// with one at no commit and one naming no branch left out — or refuses to list them,
+    /// and records which repositories it was asked about.
+    struct Heads {
+        asked: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl FakeGit for Heads {
+        fn worktree_heads(&self, repo_root: &str) -> Result<BTreeMap<String, Option<String>>> {
+            self.asked.lock().unwrap().push(repo_root.to_string());
+            let at = |path: &str, commit: Option<&str>| (path.to_string(), commit.map(Into::into));
+            match repo_root {
+                "/src/app" => Ok(BTreeMap::from([
+                    at("/src/app", Some("feed")),
+                    // One id whole, as git prints it, so that one shortened on the way shows.
+                    at(
+                        "/wt/detached/",
+                        Some("c0ffee0000000000000000000000000000000001"),
+                    ),
+                    at("/wt/feat2-x", None),
+                ])),
+                "/src/site" => Ok(BTreeMap::from([
+                    at("/src/site", Some("5eed")),
+                    at("/wt/site", Some("decade")),
+                ])),
+                // git's stderr where it may not read `.git/config`, measured against git
+                // 2.55.0, trimmed and kept whole, then the call: `GitCli`'s `refusal`.
+                "/src/held" => anyhow::bail!(
+                    "warning: unable to access '.git/config': Permission denied\n\
+                     fatal: unable to access '.git/config': Permission denied \
+                     (`git worktree list --porcelain`)"
+                ),
+                _ => anyhow::bail!("/src/gone is not a git repository, but was expected to be"),
+            }
+        }
+    }
+    fake_git!(Heads);
+
+    #[test]
+    fn every_checkout_naming_no_branch_is_asked_which_commit_it_is_at() {
+        // A sweep goes by a branch's name, so only a repository with a row naming none is
+        // asked, and only those rows take what it lists. A checkout git lists at no commit,
+        // one it leaves out, and a listing it refuses each keep why, on one line, rather
+        // than reading as a commit. A repository whose refs git would not read is asked too.
+        // Every row takes its answer: both of two rows herdr gives one path, as it does where
+        // two registrations hold it, and each row of a repository whose listing git refuses.
+        use crate::domain::model::{Branch, Head, Refs, RepoNode, Tree, WorktreeNode};
+        let with = |path: &str, branch| WorktreeNode {
+            branch,
+            head: Head::NotSaid,
+            checkout_path: path.to_string(),
+            is_primary: false,
+            open_workspace_id: None,
+            panes: Vec::new(),
+        };
+        let repo = |root: &str, worktrees| RepoNode {
+            repo_key: format!("{root}/.git"),
+            repo_root: root.to_string(),
+            display_name: root.to_string(),
+            refs: Refs::Read,
+            worktrees,
+        };
+        let mut tree = Tree {
+            repos: vec![
+                repo(
+                    "/src/app",
+                    vec![
+                        WorktreeNode {
+                            is_primary: true,
+                            ..with("/src/app", Branch::NothingOut)
+                        },
+                        with("/wt/detached", Branch::NothingOut),
+                        with("/wt/detached", Branch::NothingOut),
+                        with("/wt/named", Branch::out("feat/login")),
+                        with(
+                            "/wt/feat2-x",
+                            Branch::Unnamed {
+                                ref_names_path: false,
+                            },
+                        ),
+                        with("/wt/unlisted", Branch::NotSaid),
+                    ],
+                ),
+                repo("/src/docs", vec![with("/src/docs", Branch::out("main"))]),
+                repo(
+                    "/src/site",
+                    vec![
+                        with("/src/site", Branch::out("main")),
+                        with("/wt/site", Branch::NothingOut),
+                    ],
+                ),
+                repo("/src/gone", vec![with("/wt/gone", Branch::NothingOut)]),
+                // git would not read its configuration, so it would not walk the refs either.
+                // The last line of what it says, which is all this needs.
+                RepoNode {
+                    refs: Refs::Unreadable(
+                        "fatal: unable to access '.git/config': Permission denied".into(),
+                    ),
+                    ..repo(
+                        "/src/held",
+                        vec![
+                            with("/wt/held", Branch::NothingOut),
+                            with("/wt/held-2", Branch::NothingOut),
+                        ],
+                    )
+                },
+            ],
+            ..Default::default()
+        };
+        let git = Heads {
+            asked: Default::default(),
+        };
+        read_heads(&git, &mut tree);
+
+        assert_eq!(
+            *git.asked.lock().unwrap(),
+            ["/src/app", "/src/site", "/src/gone", "/src/held"],
+            "a repository whose every row names a branch is not asked"
+        );
+        let heads: Vec<(&str, &Head)> = tree
+            .repos
+            .iter()
+            .flat_map(|repo| &repo.worktrees)
+            .map(|worktree| (worktree.checkout_path.as_str(), &worktree.head))
+            .collect();
+        assert_eq!(
+            heads,
+            [
+                ("/src/app", &Head::At("feed".into())),
+                (
+                    "/wt/detached",
+                    &Head::At("c0ffee0000000000000000000000000000000001".into())
+                ),
+                (
+                    "/wt/detached",
+                    &Head::At("c0ffee0000000000000000000000000000000001".into())
+                ),
+                ("/wt/named", &Head::NotSaid),
+                (
+                    "/wt/feat2-x",
+                    &Head::Unknown("git lists this checkout at no commit".into())
+                ),
+                (
+                    "/wt/unlisted",
+                    &Head::Unknown("git does not list this checkout".into())
+                ),
+                ("/src/docs", &Head::NotSaid),
+                ("/src/site", &Head::NotSaid),
+                ("/wt/site", &Head::At("decade".into())),
+                (
+                    "/wt/gone",
+                    &Head::Unknown(
+                        "/src/gone is not a git repository, but was expected to be".into()
+                    )
+                ),
+                (
+                    "/wt/held",
+                    &Head::Unknown(
+                        "warning: unable to access '.git/config': Permission denied \
+                         fatal: unable to access '.git/config': Permission denied \
+                         (`git worktree list --porcelain`)"
+                            .into()
+                    )
+                ),
+                (
+                    "/wt/held-2",
+                    &Head::Unknown(
+                        "warning: unable to access '.git/config': Permission denied \
+                         fatal: unable to access '.git/config': Permission denied \
+                         (`git worktree list --porcelain`)"
+                            .into()
+                    )
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_repository_whose_one_row_naming_no_branch_is_its_own_checkout_is_asked() {
+        // A detached primary names no branch like any other row, so its repository is asked
+        // though every other row names one: a sweep refuses it as the repository itself,
+        // and `dump` still says why where git names no commit for it.
+        use crate::domain::model::{Branch, Head, Refs, RepoNode, Tree, WorktreeNode};
+        let row = |path: &str, branch, is_primary| WorktreeNode {
+            branch,
+            head: Head::NotSaid,
+            checkout_path: path.to_string(),
+            is_primary,
+            open_workspace_id: None,
+            panes: Vec::new(),
+        };
+        let mut tree = Tree {
+            repos: vec![RepoNode {
+                repo_key: "/src/site/.git".into(),
+                repo_root: "/src/site".into(),
+                display_name: "me/site".into(),
+                refs: Refs::Read,
+                worktrees: vec![
+                    row("/src/site", Branch::NothingOut, true),
+                    row("/wt/site", Branch::out("main"), false),
+                ],
+            }],
+            ..Default::default()
+        };
+        let git = Heads {
+            asked: Default::default(),
+        };
+        read_heads(&git, &mut tree);
+
+        assert_eq!(*git.asked.lock().unwrap(), ["/src/site"]);
+        assert_eq!(tree.repos[0].worktrees[0].head, Head::At("5eed".into()));
+    }
+
     /// A git that says, of each checkout it is asked about, whether its branch has no commit
     /// yet — or refuses to say — and records which it was asked about.
     struct Commits {
@@ -498,11 +753,12 @@ mod tests {
     #[test]
     fn a_checkout_no_ref_names_is_missing_one_unless_git_says_it_has_no_commit_yet() {
         use crate::domain::model::{
-            Branch, CheckoutPath, Position, Refs, RepoKey, RepoNode, Tree, WorktreeNode,
+            Branch, CheckoutPath, Head, Position, Refs, RepoKey, RepoNode, Tree, WorktreeNode,
         };
         use std::collections::BTreeMap;
         let with = |path: &str, branch| WorktreeNode {
             branch,
+            head: Head::NotSaid,
             checkout_path: path.to_string(),
             is_primary: false,
             open_workspace_id: None,

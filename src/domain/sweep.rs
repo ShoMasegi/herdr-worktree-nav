@@ -60,6 +60,13 @@ pub enum Refusal {
     /// silence, so every checkout of the repository is refused at once, a finished pull
     /// request included.
     RefsUnreadable,
+    /// It names no branch and git names no commit for it
+    /// ([`Head::Unknown`](crate::domain::model::Head::Unknown)), so nothing tells it from the
+    /// next checkout made at its path. An answer about it would carry over to that one —
+    /// [`Changes::still_about`] — so it takes none. A row nobody has asked about yet
+    /// ([`Head::NotSaid`](crate::domain::model::Head::NotSaid)) is refused the same way,
+    /// though `app::collect` asks about every one before a sweep sees it.
+    Unidentified,
     /// Its removal is already going, in a process of its own. Never read out: the cursor does
     /// not stop on a row being removed, sweep or no sweep — see
     /// [`domain::rows::Row::is_selectable`](crate::domain::rows::Row::is_selectable). The
@@ -214,8 +221,14 @@ fn judge(
     // checkout that earns two of them carries, and it runs most permanent first: being the
     // repository itself is not a state that passes, a stale registration stays until
     // somebody repairs it, and so do refs git would not read, a removal already going will
-    // end, and panes close whenever somebody closes them. A path listed twice is refused by
-    // `candidates` before any of this, being about the key rather than about a row.
+    // end, and panes close whenever somebody closes them. A checkout git names no commit for
+    // comes after all of them: each of those is a reason the checkout should not be removed
+    // whatever anybody answers, and this one is only that an answer about it could not be
+    // told from an answer about the next checkout at its path. git names none where it lists
+    // the checkout at no commit — a ref it could not read, or an unborn branch at a checkout
+    // herdr did not list — where it does not list the checkout, and where it would not list
+    // the repository's checkouts at all. A path listed twice is refused by `candidates`
+    // before any of this, being about the key rather than about a row.
     if worktree.is_primary {
         return Candidate::Refused(Refusal::Primary);
     }
@@ -232,6 +245,9 @@ fn judge(
     }
     if running {
         return Candidate::Refused(Refusal::Running);
+    }
+    if Decision::about(worktree).is_none() {
+        return Candidate::Refused(Refusal::Unidentified);
     }
 
     // Every reason to offer below needs a working tree with nothing in it to lose. Clean is
@@ -347,29 +363,55 @@ fn finished_with<'a>(
 /// report it dirty, and a checkout the user said no to comes back marked.
 ///
 /// Keyed by repository and checkout path rather than by row index, because the row list is
-/// rebuilt underneath this every time a working tree answers. A path stays with the checkout
-/// it names, and one whose checkout has left the tree stops matching anything.
+/// rebuilt underneath this every time a working tree answers. A path does not stay with the
+/// checkout it named, so each answer also keeps what it was about ([`About`]), and one whose
+/// checkout has left the tree, or been replaced at its path by a checkout it does not
+/// match, matches no row while that lasts. A checkout that comes back the same keeps it.
 #[derive(Debug, Default, Clone)]
 pub struct Changes(BTreeMap<(RepoKey, CheckoutPath), Decision>);
 
 /// One answer, and what it was about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Decision {
-    /// The branch the row carried when the user answered.
-    ///
-    /// A path outlives the checkout that had it: remove a worktree and make another in the
-    /// same place — which `git worktree add` will do, and which a second herdr session can
-    /// do while the picker is up — and the tree comes back through `replace_tree` with a
-    /// different branch at a path the user has already said yes to, on the list `Enter` acts
-    /// on.
-    ///
-    /// `None` is a detached checkout, or one herdr did not list —
-    /// [`Branch::name`](crate::domain::model::Branch::name) answers `None` for both. Two of
-    /// those at one path are as different as two branches are, and this cannot tell them
-    /// apart: a `WorktreeNode` carries no commit, so an answer about one carries over to the
-    /// other. What would close that is a commit id on the node, which nothing reads yet.
-    branch: Option<String>,
+    about: About,
     going: bool,
+}
+
+/// Which checkout an answer was given about, beyond its path.
+///
+/// A path outlives the checkout that had it: remove a worktree and make another in the same
+/// place — which `git worktree add` will do, and which a second herdr session can do while
+/// the picker is up — and the tree comes back through `replace_tree` with a different
+/// checkout at a path the user has already said yes to, on the list `Enter` acts on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum About {
+    /// The branch the row carried when the user answered: its name, and not the commit it
+    /// points at. A branch moves whenever somebody commits to it, and an answer dropped for
+    /// that would take a no back to what the sweep suggests — on a row the sweep offered, a
+    /// removal the user had just turned down.
+    Branch(String),
+    /// The commit checked out at a row naming no branch, which
+    /// [`Branch::name`](crate::domain::model::Branch::name) answers `None` for alike. It is
+    /// all that tells two such checkouts apart, so two made at one path on one commit are
+    /// one here. Issue #29.
+    Commit(String),
+}
+
+impl Decision {
+    /// What an answer about this row would be about, or `None` where nothing tells it from
+    /// the next checkout at its path: no branch, and no commit git said. A row like that is
+    /// refused before any reason to offer it is weighed — as [`Refusal::Unidentified`] where
+    /// no other refusal claims it first — so no answer is recorded for it, and none given
+    /// earlier applies to it while it reads this way.
+    fn about(worktree: &WorktreeNode) -> Option<About> {
+        match worktree.branch.name() {
+            Some(name) => Some(About::Branch(name.to_string())),
+            None => worktree
+                .head
+                .commit()
+                .map(|id| About::Commit(id.to_string())),
+        }
+    }
 }
 
 impl Changes {
@@ -377,18 +419,19 @@ impl Changes {
     ///
     /// Takes the [`Mark`] rather than only the path so that a refusal cannot be flipped into
     /// a mark by a keypress. `None` is that refusal: nothing was recorded, and the caller has
-    /// a sentence for the prompt line, which the picker composes from [`Mark::refused`].
+    /// a sentence for the prompt line, which the picker composes from [`Mark::refused`]. It is
+    /// also a row nothing tells from the next checkout at its path, handed a mark that would
+    /// let it through: `judge` refuses that row, as [`Refusal::Unidentified`] where no other
+    /// refusal claims it first, so only a mark `judge` did not give reaches here with one.
     pub fn flip(&mut self, repo: &RepoNode, worktree: &WorktreeNode, mark: &Mark) -> Option<bool> {
         if !mark.is_markable() {
             return None;
         }
+        let about = Decision::about(worktree)?;
         let going = !mark.is_going();
         self.0.insert(
             (RepoKey::of(repo), CheckoutPath::of(worktree)),
-            Decision {
-                branch: worktree.branch.name().map(str::to_string),
-                going,
-            },
+            Decision { about, going },
         );
         Some(going)
     }
@@ -400,14 +443,14 @@ impl Changes {
     /// answer landing and a working tree reporting. What it must not outlive is the checkout
     /// it was said about. A path is reused; an answer is not transferable.
     pub fn still_about(&self, tree: &Tree) -> Changes {
-        let listed: BTreeMap<(RepoKey, CheckoutPath), Option<&str>> = tree
+        let listed: BTreeMap<(RepoKey, CheckoutPath), Option<About>> = tree
             .repos
             .iter()
             .flat_map(|repo| {
                 repo.worktrees.iter().map(move |worktree| {
                     (
                         (RepoKey::of(repo), CheckoutPath::of(worktree)),
-                        worktree.branch.name(),
+                        Decision::about(worktree),
                     )
                 })
             })
@@ -415,7 +458,11 @@ impl Changes {
         Changes(
             self.0
                 .iter()
-                .filter(|(key, decision)| listed.get(key) == Some(&decision.branch.as_deref()))
+                .filter(|(key, decision)| {
+                    listed
+                        .get(*key)
+                        .is_some_and(|about| about.as_ref() == Some(&decision.about))
+                })
                 .map(|(key, decision)| (key.clone(), decision.clone()))
                 .collect(),
         )

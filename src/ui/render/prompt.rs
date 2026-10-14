@@ -523,7 +523,7 @@ mod tests {
     use ratatui::crossterm::event::KeyCode;
     use ratatui::Terminal;
 
-    use crate::domain::model::{Refs, WorktreeNode};
+    use crate::domain::model::{Head, Refs, WorktreeNode};
 
     use crate::port::AgentStatus;
 
@@ -781,6 +781,7 @@ mod tests {
         let mut tree = finished_tree(&["feat/login", "fix/crash"]);
         tree.repos[0].worktrees.push(WorktreeNode {
             branch: Branch::NothingOut,
+            head: Head::At("c0ffee".into()),
             checkout_path: "/wt/scratch".into(),
             is_primary: false,
             open_workspace_id: None,
@@ -832,6 +833,7 @@ mod tests {
         let mut tree = finished_tree(&["fix/crash", "feat/login"]);
         tree.repos[0].worktrees.push(WorktreeNode {
             branch: Branch::NothingOut,
+            head: Head::At("c0ffee".into()),
             checkout_path: "/wt/scratch".into(),
             is_primary: false,
             open_workspace_id: None,

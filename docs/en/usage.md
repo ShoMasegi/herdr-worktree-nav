@@ -102,6 +102,17 @@ the sweep should cost exactly what agreeing with it extra does. `Shift-S` again,
 leaves, and leaving forgets the marks: the next sweep opens on what it would suggest now, not
 on what the last one was talked into.
 
+A mark is about the checkout it was put on, not about its path. A path can be removed and
+made again while the sweep is up — by `git worktree add` in another pane, say — and when the
+list is read again, a checkout at a marked path that is on another branch is a different
+checkout, and goes back to what the sweep would suggest for it. A branch is told apart by
+its name, so committing to it keeps the mark. A row that names no branch — detached, or
+listed without a branch name — is told apart by its commit alone, as git lists the
+checkout's registration: one made again at another commit is a different checkout, and one
+made again at the same commit keeps the mark. Where git names no commit for such a row and
+no refusal checked ahead of this one claims it first, a sweep refuses it: `Space` says
+`git names no commit for this checkout`, and `dump` prints why under the row.
+
 `Enter` removes them. First it reads the list and every working tree again: the marks were
 judged on facts from when the picker opened or was last reloaded, and a checkout somebody
 has opened a pane in since, or written a file into, comes off the list here rather than
@@ -440,11 +451,14 @@ found a commit at, named together — and the panes view's `!` lists them. Why t
 that opened the view has no row comes first where there is such a sentence, and the
 missing ref is then on the panes view alone. A ref git could not read that no checkout
 has out is named nowhere, and neither is that checkout where herdr omits `is_detached`:
-it reads as detached. Nor is one herdr never listed — a checkout added with
+it reads as detached, and only its `commit unknown:` line in `dump`, and a sweep refusing
+it where no other refusal claims it first, say that git lists it at no commit. Nor is one
+herdr never listed — a checkout added with
 `git worktree add` outside herdr, which the picker shows for a pane in it — or one with no
-branch that a ref of the repository still names: the plugin does not ask git about
-either. `dump` shows what git names at the path, and for the second says git was not
-asked.
+branch that a ref of the repository still names: the plugin does not ask git whether
+either branch has no commit yet. `dump` shows what git names at the path, and
+`commit unknown:` under either where git lists it at no commit; for the second it also says
+git was not asked that.
 
 git's word for a branch with no commit yet is all there is to go on: it says the same of a
 branch whose ref was deleted while it was out, and of one out through a symbolic ref to a

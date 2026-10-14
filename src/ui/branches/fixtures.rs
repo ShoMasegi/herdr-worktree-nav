@@ -11,7 +11,7 @@ use crate::port::{GitRef, Snapshot};
 use crate::ui::branches::*;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::domain::model::{Branch, PaneNode, Refs, WorktreeNode};
+use crate::domain::model::{Branch, Head, PaneNode, Refs, WorktreeNode};
 use crate::port::{AgentStatus, RefKind, SplitDirection};
 
 pub(crate) fn key(code: KeyCode) -> KeyEvent {
@@ -55,6 +55,7 @@ pub(crate) fn repo() -> RepoNode {
         refs: Refs::Read,
         worktrees: vec![WorktreeNode {
             branch: Branch::out("feat/live"),
+            head: Head::NotSaid,
             checkout_path: "/wt/feat-live".into(),
             is_primary: false,
             open_workspace_id: Some("w2".into()),
@@ -78,6 +79,7 @@ pub(crate) fn other_repo() -> RepoNode {
         refs: Refs::Read,
         worktrees: vec![WorktreeNode {
             branch: Branch::out("main"),
+            head: Head::NotSaid,
             checkout_path: "/src/tools".into(),
             is_primary: true,
             open_workspace_id: Some("w5".into()),

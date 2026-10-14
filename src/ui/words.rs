@@ -467,6 +467,7 @@ pub fn sweep_refusal(mark: &Mark) -> Option<&'static str> {
         SweepRefusal::ListedTwice => "herdr lists this path twice",
         SweepRefusal::Contested => "more than one ref names this checkout",
         SweepRefusal::RefsUnreadable => "git would not read this repository's refs",
+        SweepRefusal::Unidentified => "git names no commit for this checkout",
         SweepRefusal::Running => "panes are running in it",
         SweepRefusal::Removing => "already being removed",
     })
@@ -1087,6 +1088,10 @@ mod tests {
         assert_eq!(
             sweep_refusal(&Mark::Refused(SweepRefusal::RefsUnreadable)),
             Some("git would not read this repository's refs")
+        );
+        assert_eq!(
+            sweep_refusal(&Mark::Refused(SweepRefusal::Unidentified)),
+            Some("git names no commit for this checkout")
         );
         assert_eq!(
             sweep_refusal(&Mark::Going(Reason::Gone)),

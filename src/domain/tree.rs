@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::domain::model::{
-    normalize_path, Branch, CheckoutPath, PaneNode, Position, Refs, RepoKey, RepoNode, Tree,
+    normalize_path, Branch, CheckoutPath, Head, PaneNode, Position, Refs, RepoKey, RepoNode, Tree,
     Trouble, WorktreeNode,
 };
 use crate::port::{GitRef, RefKind, Snapshot, Track, Worktree};
@@ -133,11 +133,12 @@ pub fn build(
                     // from a registration that lost its directory, carrying `[gone]`:
                     // `a_ref_carrying_gone_can_name_a_path_whose_checkout_has_no_branch_out`
                     // in `tests/git_adapter.rs`. `Unnamed` keeps whether one does, because
-                    // that decides whether git is asked about the row: what the prompt line
-                    // says of a row git was asked about is that no ref is listed at its
-                    // checkout, which a ref at the path makes false. The row `build` makes
-                    // below for a pane herdr never listed carries no position either, for a
-                    // reason of its own: git may name a branch there, but the row cannot.
+                    // that decides whether git is asked if the row's branch has no commit
+                    // yet: what the prompt line says of a row git was asked that about is
+                    // that no ref is listed at its checkout, which a ref at the path makes
+                    // false. The row `build` makes below for a pane herdr never listed
+                    // carries no position either, for a reason of its own: git may name a
+                    // branch there, but the row cannot.
                     let named = tracks
                         .get(&(normalize_path(&repo.repo_key), checkout_path))
                         .copied();
@@ -154,6 +155,10 @@ pub fn build(
                     };
                     WorktreeNode {
                         branch,
+                        // Asked by `app::collect` where the row names no branch, and never
+                        // where it names one: a sweep goes by a branch's name to tell its
+                        // checkout from the next one at its path — `Head`.
+                        head: Head::NotSaid,
                         checkout_path: checkout_path.to_string(),
                         is_primary: !worktree.is_linked_worktree,
                         open_workspace_id: worktree.open_workspace_id.clone(),
@@ -232,6 +237,8 @@ pub fn build(
                     // what git has at the path is a registration rather than an answer
                     // about now.
                     branch: Branch::NotSaid,
+                    // Asked by `app::collect` with every other row naming no branch.
+                    head: Head::NotSaid,
                     checkout_path: checkout.to_string(),
                     is_primary: false,
                     open_workspace_id: Some(node.workspace_id.clone()),
