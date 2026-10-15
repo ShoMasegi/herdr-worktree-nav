@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-15
+
 ### Added
 
 - **`p` shows or hides worktrees that contain no pane.** The ordinary panes view shows
@@ -107,6 +109,22 @@ All notable changes to this project are documented here. The format follows
   the picker declining to pick one of them rather than a branch level with its upstream.
   How many refs name a checkout is the picker's count; where `dump`'s own read counts
   differently, the line says both.
+- **The prompt line keeps what is wrong in view, and `!` reads it whole.** A sentence about
+  a state — the list could not be read again, a repository's refs would not read — is worked
+  out again every frame, so it goes when the state does and no keypress, filter chip or kept
+  query takes its place. A sentence about something that just happened sits beside it until
+  the next key that could have answered it. As the pane narrows the line gives up spinner
+  labels first, then the sentence's words to a count such as `!2`, and never goes blank.
+  `!` opens a panel over the list with every such sentence whole, wrapped to the pane, during
+  a sweep too; `!`, `Esc` or `q` closes it. See
+  [error handling](docs/en/error-handling.md).
+- **What the picker could not read is named rather than dropped.** A repository herdr would
+  not list keeps a heading of its own and reads ``app: not listed: herdr rejected
+  worktree.list: …`` on the prompt line, where its checkouts used to leave the screen in
+  silence. Panes git could not place — a `git` that could not be started, say — read
+  `3 panes not placed: git could not be run: …` instead of passing for panes in no
+  repository. `dump` gains a `not listed:` section and prints the words under each pane git
+  could not place.
 
 ### Changed
 
@@ -133,6 +151,41 @@ All notable changes to this project are documented here. The format follows
   no client is attached — is accepted in silence: a refused removal leaves the checkout
   standing, so the row is there next time. See
   [ADR 0014](docs/adr/0014-removing-outlives-the-picker.md).
+
+### Fixed
+
+- **A row the list has not caught up with no longer takes the picker down.** `Enter` on a
+  pane that has closed, or a checkout that has gone, used to close the popup exactly as a
+  jump that worked does. herdr's refusal is now said on the prompt line — `could not go to
+  that pane`, `could not open that checkout`, `could not add a pane there`, then herdr's own
+  words — and the list is read again.
+- **A working tree git could not wholly look at is not clean.** `git status` exits 0 when it
+  could not open a directory and leaves everything under it out, and such a checkout read as
+  clean, so a sweep could offer it. It now reads `?`, like one git would not read at all.
+  Untracked files count whatever `status.showUntrackedFiles` is set to, since they count to
+  `git worktree remove`.
+- **A repository git could not name is not one with no GitHub remote.** A `.git/config` git
+  could not parse, or a repository root that has gone, reached the sweep as
+  `no GitHub remote to ask about`; the sweep now says `git could not name the repository:`
+  with git's words.
+- **Markers are about the checkout they are drawn on.** A checkout's track is read from the
+  repository that owns it, so a stale worktree entry in one repository no longer puts its
+  `gone` on another's checkout. A checkout with nothing out, or one herdr never listed, draws
+  no track about a branch it never names. A track field git printed and the plugin could not
+  read draws nothing and `dump` says `track unreadable`, and a branch level with its upstream
+  draws nothing; neither is measured against where git would push instead.
+- **The prompt line no longer outlives what it says.** A line saying the list could not be
+  read goes once a reading lands, and the sentence about unreadable refs is no longer blank
+  at narrow widths or hidden behind a filter, a kept query or a spinner.
+- **git is kept to the repository it is asked about.** Where a repository's `.git/HEAD`
+  cannot be read, is empty or holds garbage, git used to walk up to a repository around it
+  and answer for that one without a word, so its refs and checkouts were read as the inner
+  repository's and a removal would have run in the outer one. Every call but the one that
+  places a pane now stops at the directory it is handed, and the repository reads as one
+  git would not read.
+- **A checkout git lists on neither a branch nor a detached `HEAD` is not taken to be at a
+  commit.** A registration whose `HEAD` holds a cut-off id is listed under neither line; a
+  sweep now refuses it with the other checkouts git names no commit for, and `dump` says why.
 
 ## [0.1.0] - 2026-08-24
 
@@ -254,5 +307,6 @@ as long as it is up, so switching redraws the screen instead of tearing it down.
   falls back to `cargo build --release`, so a Rust toolchain is never required but never
   needed either.
 
-[Unreleased]: https://github.com/ShoMasegi/herdr-worktree-nav/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ShoMasegi/herdr-worktree-nav/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ShoMasegi/herdr-worktree-nav/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ShoMasegi/herdr-worktree-nav/releases/tag/v0.1.0
