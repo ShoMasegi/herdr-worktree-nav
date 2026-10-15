@@ -233,6 +233,112 @@ fn a_repository_git_would_not_read_is_an_error_rather_than_no_checkout() {
 }
 
 #[test]
+fn a_repository_git_does_not_take_for_one_is_not_answered_for_by_the_one_around_it() {
+    // Where a repository's `.git/HEAD` cannot be read, is empty or holds garbage, git does
+    // not take its `.git` for a repository and walks up to the one around it, exit 0. Every
+    // call handed a repository root or a checkout's own path, as it is or through a link,
+    // has to fail there instead, or the outer repository's refs and checkouts are read as
+    // the inner one's, and a removal or a branch deletion runs in the outer one — issue #93.
+    use std::os::unix::fs::PermissionsExt;
+
+    let outer = repository();
+    git(outer.path(), &["branch", "merged"]);
+    let around = tempfile::tempdir().unwrap();
+    let outer_checkout = around.path().join("outer-checkout");
+    git(
+        outer.path(),
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            outer_checkout.to_str().unwrap(),
+        ],
+    );
+    let inner = outer.path().join("inner");
+    std::fs::create_dir(&inner).unwrap();
+    git(&inner, &["init", "--initial-branch=main"]);
+    git(
+        &inner,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "inner",
+        ],
+    );
+    let head = inner.join(".git").join("HEAD");
+    let link = around.path().join("inner-link");
+    std::os::unix::fs::symlink(&inner, &link).unwrap();
+
+    for how in ["empty", "garbage", "unreadable"] {
+        std::fs::write(&head, "ref: refs/heads/main\n").unwrap();
+        std::fs::set_permissions(&head, std::fs::Permissions::from_mode(0o644)).unwrap();
+        match how {
+            "empty" => std::fs::write(&head, "").unwrap(),
+            "garbage" => std::fs::write(&head, "garbage\n").unwrap(),
+            _ => std::fs::set_permissions(&head, std::fs::Permissions::from_mode(0o000)).unwrap(),
+        }
+        let _put_back = ReadableAgain(&head);
+        if how == "unreadable" {
+            assert!(
+                std::fs::read(&head).is_err(),
+                "this user can read a file with mode 000, so git will not be refused and \
+                 there is nothing here to measure. Run this as a user permissions apply to."
+            );
+        }
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&inner)
+                .args(["worktree", "list", "--porcelain"])
+                .output()
+                .unwrap()
+                .status
+                .success(),
+            "{how}: a git left to look for itself answers for the repository around it"
+        );
+
+        for root in [path_str(&inner), link.to_str().unwrap().to_string()] {
+            let how = format!("{how} at {root}");
+            assert!(GitCli.local_refs(&root).is_err(), "{how}: local_refs");
+            assert!(
+                GitCli.worktree_heads(&root).is_err(),
+                "{how}: worktree_heads"
+            );
+            assert!(GitCli.is_dirty(&root).is_err(), "{how}: is_dirty");
+            assert!(
+                GitCli.has_no_commit_yet(&root).is_err(),
+                "{how}: has_no_commit_yet"
+            );
+            assert!(GitCli.head_ref(&root).is_err(), "{how}: head_ref");
+            assert!(GitCli.github_slug(&root).is_err(), "{how}: github_slug");
+            assert!(
+                GitCli.delete_branch(&root, "merged").is_err(),
+                "{how}: delete_branch"
+            );
+            assert!(
+                GitCli
+                    .remove_worktree(&root, &path_str(&outer_checkout))
+                    .is_err(),
+                "{how}: remove_worktree"
+            );
+        }
+    }
+    assert!(
+        outer_checkout.exists(),
+        "the outer repository's checkout is still there"
+    );
+    git(
+        outer.path(),
+        &["rev-parse", "--verify", "refs/heads/merged"],
+    );
+}
+
+#[test]
 fn a_call_that_needs_a_work_tree_gets_gits_words_in_a_bare_repository() {
     // The other side of the test above: only `identify` reads `must be run in a work tree`
     // as "no checkout here". `is_dirty` asked of a bare repository is asked of something

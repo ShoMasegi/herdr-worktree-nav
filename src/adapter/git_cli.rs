@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
+use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -94,15 +95,43 @@ struct Said {
 /// measured from.
 const GIT_LOCALE: (&str, &str) = ("LC_ALL", "C");
 
+/// Where git may look for the repository a call is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Search {
+    /// From the directory up, as git does unasked. Only `identify`'s: it is handed a pane's
+    /// working directory, which can be anywhere inside its checkout.
+    Upward,
+    /// The directory alone, where git can be held to it. Every other call is handed a
+    /// repository root or a checkout's own path, and a git that walked past it would answer
+    /// for the repository around it, exit 0 and say nothing of it: where a repository's
+    /// `.git/HEAD` cannot be read, is empty or holds garbage, git does not take its `.git`
+    /// for a repository and walks up (issue #93; measured against git 2.43.0 and 2.55.0).
+    /// Held by `GIT_CEILING_DIRECTORIES` set to the parent of the directory's real path, so
+    /// git says the directory is not a repository instead. A directory whose real parent
+    /// holds a `:` is not held: git reads the variable as a list split at `:` (measured on
+    /// 2.55.0).
+    Here,
+}
+
 impl GitCli {
     /// The command every call here runs, before its arguments.
-    fn command(dir: &str) -> Command {
+    fn command(dir: &str, search: Search) -> Command {
         let mut command = Command::new("git");
         command
             .arg("-C")
             .arg(dir)
             .stdin(Stdio::null())
             .env(GIT_LOCALE.0, GIT_LOCALE.1);
+        if search == Search::Here {
+            // The real path's parent, since that is what git compares a ceiling with.
+            if let Some(parent) = std::fs::canonicalize(dir)
+                .ok()
+                .as_deref()
+                .and_then(Path::parent)
+            {
+                command.env("GIT_CEILING_DIRECTORIES", parent);
+            }
+        }
         command
     }
 
@@ -115,8 +144,8 @@ impl GitCli {
     /// different one and "not a repository" is a failure there rather than an answer. The
     /// one call that does not come through here is `identify`'s read of the branch, which
     /// starts from `command` and so runs in the same locale.
-    fn output(dir: &str, args: &[&str]) -> Result<Output> {
-        Self::command(dir)
+    fn output(dir: &str, search: Search, args: &[&str]) -> Result<Output> {
+        Self::command(dir, search)
             .args(args)
             .output()
             .map_err(|error| anyhow!("{}", could_not_run(args, &error)))
@@ -125,16 +154,17 @@ impl GitCli {
     /// Run git in `dir`. Returns `None` when git said the path is not a repository; any
     /// other non-zero exit is an error carrying git's words.
     fn run(dir: &str, args: &[&str]) -> Result<Option<Said>> {
-        Self::run_answering(dir, args, no_repository_here)
+        Self::run_answering(dir, Search::Here, args, no_repository_here)
     }
 
     /// `run`, with what reads as "not here" chosen by the caller.
     fn run_answering(
         dir: &str,
+        search: Search,
         args: &[&str],
         not_here: impl Fn(&str) -> bool,
     ) -> Result<Option<Said>> {
-        let output = Self::output(dir, args)?;
+        let output = Self::output(dir, search, args)?;
         let stderr = String::from_utf8_lossy(&output.stderr);
         if output.status.success() {
             return Ok(Some(Said {
@@ -517,6 +547,7 @@ impl GitPort for GitCli {
         // query runs from the repository root, which would not be a usable identity.
         let Some(paths) = GitCli::run_answering(
             cwd,
+            Search::Upward,
             &[
                 "rev-parse",
                 "--path-format=absolute",
@@ -539,7 +570,7 @@ impl GitPort for GitCli {
         // HEAD makes it exit 1 without a word, which is "no branch".
         // swallows: any other failure to name the branch. The identity is what the caller
         // needs; the branch rides along, and no caller reads it to place a pane.
-        let branch = GitCli::command(cwd)
+        let branch = GitCli::command(cwd, Search::Upward)
             .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
             .output()
             .ok()
@@ -556,7 +587,7 @@ impl GitPort for GitCli {
 
     fn github_slug(&self, repo_root: &str) -> Result<Option<Slug>> {
         let args = ["remote", "get-url", "origin"];
-        let output = GitCli::output(repo_root, &args)?;
+        let output = GitCli::output(repo_root, Search::Here, &args)?;
         if output.status.success() {
             let url = String::from_utf8_lossy(&output.stdout);
             return Ok(github_slug_from_url(&url));
@@ -750,7 +781,7 @@ impl GitPort for GitCli {
 
     fn has_no_commit_yet(&self, checkout_path: &str) -> Result<bool> {
         let args = ["log", "-1", "--format=%H"];
-        let output = GitCli::output(checkout_path, &args)?;
+        let output = GitCli::output(checkout_path, Search::Here, &args)?;
         if output.status.success() {
             return Ok(false);
         }
@@ -785,7 +816,8 @@ impl GitPort for GitCli {
 mod tests {
     use super::{
         could_not_run, dropped_refs, github_slug_from_url, listed_heads, no_repository_here,
-        no_such_remote, parse_track, read_track, refusal, unread_paths, GitCli, Slug, GIT_LOCALE,
+        no_such_remote, parse_track, read_track, refusal, unread_paths, GitCli, Search, Slug,
+        GIT_LOCALE,
     };
     use crate::port::{ListedHead, Track};
     use std::collections::BTreeMap;
@@ -1038,13 +1070,40 @@ mod tests {
         // hands back, so it says nothing about whether a call uses the helper. The other two
         // thirds are `scripts/check-invariants.sh`, which counts the places a git is
         // started, and `tests/git_locale.rs`, which watches a real git obey.
-        let command = GitCli::command("/src/app");
+        let command = GitCli::command("/src/app", Search::Here);
         let locale: Vec<_> = command
             .get_envs()
             .filter(|(key, _)| *key == GIT_LOCALE.0)
             .map(|(_, value)| value.map(|v| v.to_string_lossy().into_owned()))
             .collect();
         assert_eq!(locale, vec![Some("C".to_string())]);
+    }
+
+    #[test]
+    fn a_search_kept_here_sets_the_ceiling_at_the_parent_of_the_real_path() {
+        // What keeps git from answering for the repository around one it could not take for
+        // a repository; `tests/git_adapter.rs` watches a real git stop there.
+        let ceiling = |dir: &str, search: Search| {
+            GitCli::command(dir, search)
+                .get_envs()
+                .filter(|(key, _)| *key == "GIT_CEILING_DIRECTORIES")
+                .map(|(_, value)| value.map(|v| v.to_string_lossy().into_owned()))
+                .collect::<Vec<_>>()
+        };
+        let around = tempfile::tempdir().unwrap();
+        let app = around.path().join("real").join("app");
+        std::fs::create_dir_all(&app).unwrap();
+        let link = around.path().join("link");
+        std::os::unix::fs::symlink(&app, &link).unwrap();
+        let real = std::fs::canonicalize(around.path().join("real")).unwrap();
+        let parent = vec![Some(real.to_string_lossy().into_owned())];
+        let app = app.to_str().unwrap();
+        assert_eq!(ceiling(app, Search::Here), parent);
+        assert_eq!(ceiling(&format!("{app}/"), Search::Here), parent);
+        assert_eq!(ceiling(link.to_str().unwrap(), Search::Here), parent);
+        assert_eq!(ceiling("/", Search::Here), vec![]);
+        assert_eq!(ceiling(&format!("{app}/gone"), Search::Here), vec![]);
+        assert_eq!(ceiling(app, Search::Upward), vec![]);
     }
 
     #[test]
