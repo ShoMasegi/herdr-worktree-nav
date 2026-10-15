@@ -239,103 +239,411 @@ fn a_repository_git_does_not_take_for_one_is_not_answered_for_by_the_one_around_
     // call handed a repository root or a checkout's own path, as it is or through a link,
     // has to fail there instead, or the outer repository's refs and checkouts are read as
     // the inner one's, and a removal or a branch deletion runs in the outer one — issue #93.
+    // The same where the outer repository's directory holds a `:` — issue #96.
     use std::os::unix::fs::PermissionsExt;
 
-    let outer = repository();
-    git(outer.path(), &["branch", "merged"]);
+    let commit = |dir: &Path, message: &str| {
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "--allow-empty",
+                "-m",
+                message,
+            ],
+        );
+    };
     let around = tempfile::tempdir().unwrap();
-    let outer_checkout = around.path().join("outer-checkout");
-    git(
-        outer.path(),
-        &[
-            "worktree",
-            "add",
-            "--detach",
-            outer_checkout.to_str().unwrap(),
-        ],
-    );
-    let inner = outer.path().join("inner");
-    std::fs::create_dir(&inner).unwrap();
-    git(&inner, &["init", "--initial-branch=main"]);
-    git(
-        &inner,
-        &[
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.com",
-            "commit",
-            "--allow-empty",
-            "-m",
-            "inner",
-        ],
-    );
-    let head = inner.join(".git").join("HEAD");
-    let link = around.path().join("inner-link");
-    std::os::unix::fs::symlink(&inner, &link).unwrap();
-
-    for how in ["empty", "garbage", "unreadable"] {
-        std::fs::write(&head, "ref: refs/heads/main\n").unwrap();
-        std::fs::set_permissions(&head, std::fs::Permissions::from_mode(0o644)).unwrap();
-        match how {
-            "empty" => std::fs::write(&head, "").unwrap(),
-            "garbage" => std::fs::write(&head, "garbage\n").unwrap(),
-            _ => std::fs::set_permissions(&head, std::fs::Permissions::from_mode(0o000)).unwrap(),
-        }
-        let _put_back = ReadableAgain(&head);
-        if how == "unreadable" {
+    for name in ["outer", "out:er"] {
+        let outer = around.path().join(name);
+        std::fs::create_dir(&outer).unwrap();
+        git(&outer, &["init", "--initial-branch=main"]);
+        commit(&outer, "outer");
+        git(&outer, &["branch", "merged"]);
+        let outer_checkout = around.path().join(format!("{name}-checkout"));
+        git(
+            &outer,
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                outer_checkout.to_str().unwrap(),
+            ],
+        );
+        let inner = outer.join("inner");
+        std::fs::create_dir(&inner).unwrap();
+        git(&inner, &["init", "--initial-branch=main"]);
+        commit(&inner, "inner");
+        let head = inner.join(".git").join("HEAD");
+        let link = around.path().join(format!("{name}-inner-link"));
+        std::os::unix::fs::symlink(&inner, &link).unwrap();
+        assert_eq!(
+            GitCli.head_ref(&path_str(&inner)).unwrap(),
+            "main",
+            "{name}: a repository git reads answers for itself"
+        );
+        let sub = inner.join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        assert_eq!(
+            GitCli
+                .identify(&path_str(&sub))
+                .unwrap()
+                .map(|found| found.checkout_path),
+            Some(path_str(&inner)),
+            "{name}: a pane below the top of a repository git reads is placed in it"
+        );
+        let linked = around
+            .path()
+            .join(format!("{name}-linked"))
+            .join("checkout");
+        git(
+            &outer,
+            &["worktree", "add", "--detach", linked.to_str().unwrap()],
+        );
+        let dotfiles = around.path().join(format!("{name}-home")).join(".dotfiles");
+        std::fs::create_dir_all(&dotfiles).unwrap();
+        git(&dotfiles, &["init", "--initial-branch=main"]);
+        git(&dotfiles, &["config", "core.worktree", "../.."]);
+        commit(&dotfiles, "dotfiles");
+        let dotfiles_link = around.path().join(format!("{name}-dotfiles-link"));
+        std::os::unix::fs::symlink(&dotfiles, &dotfiles_link).unwrap();
+        let named = around
+            .path()
+            .join(format!("{name}-home2"))
+            .join(".dotfiles");
+        std::fs::create_dir_all(&named).unwrap();
+        let named_git_dir = around.path().join(format!("{name}-dotfiles.git "));
+        git(
+            &named,
+            &[
+                "init",
+                "--initial-branch=main",
+                "--separate-git-dir",
+                named_git_dir.to_str().unwrap(),
+            ],
+        );
+        git(
+            &named,
+            &[
+                "config",
+                "core.worktree",
+                named.parent().unwrap().to_str().unwrap(),
+            ],
+        );
+        commit(&named, "named");
+        let bare = around.path().join(format!("{name}-bare")).join("repo.git");
+        git(
+            around.path(),
+            &[
+                "clone",
+                "--quiet",
+                "--bare",
+                outer.to_str().unwrap(),
+                bare.to_str().unwrap(),
+            ],
+        );
+        let spaced = around.path().join(format!("{name}-bare")).join("repo.git ");
+        git(
+            around.path(),
+            &[
+                "clone",
+                "--quiet",
+                "--bare",
+                outer.to_str().unwrap(),
+                spaced.to_str().unwrap(),
+            ],
+        );
+        let carriage = around
+            .path()
+            .join(format!("{name}-bare"))
+            .join("repo.git\r");
+        git(
+            around.path(),
+            &[
+                "clone",
+                "--quiet",
+                "--bare",
+                outer.to_str().unwrap(),
+                carriage.to_str().unwrap(),
+            ],
+        );
+        let bare_link = around.path().join(format!("{name}-bare-link"));
+        std::os::unix::fs::symlink(&bare, &bare_link).unwrap();
+        let crlf = around.path().join(format!("{name}-crlf")).join("checkout");
+        std::fs::create_dir_all(&crlf).unwrap();
+        git(
+            &crlf,
+            &[
+                "init",
+                "--initial-branch=main",
+                "--separate-git-dir",
+                around
+                    .path()
+                    .join(format!("{name}-crlf.git"))
+                    .to_str()
+                    .unwrap(),
+            ],
+        );
+        commit(&crlf, "crlf");
+        let gitfile = crlf.join(".git");
+        let written = std::fs::read_to_string(&gitfile).unwrap();
+        assert!(
+            written.ends_with('\n'),
+            "{name}: git ends a `.git` file with a line end"
+        );
+        std::fs::write(&gitfile, written.replace('\n', "\r\n")).unwrap();
+        let store = around.path().join(format!("{name}-store"));
+        std::fs::create_dir(&store).unwrap();
+        git(&store, &["init", "--initial-branch=main"]);
+        commit(&store, "store");
+        let symlinked = around.path().join(format!("{name}-home3")).join("checkout");
+        std::fs::create_dir_all(&symlinked).unwrap();
+        std::os::unix::fs::symlink(store.join(".git"), symlinked.join(".git")).unwrap();
+        git(
+            &store,
+            &["config", "core.worktree", symlinked.to_str().unwrap()],
+        );
+        // A volume that ignores case keeps a linked checkout's `.git` file naming its main
+        // checkout's directory as it was spelled when the checkout was added.
+        #[cfg(target_os = "macos")]
+        let respelled = {
+            let main = around.path().join(format!("{name}-Respelled"));
+            std::fs::create_dir(&main).unwrap();
+            git(&main, &["init", "--initial-branch=main"]);
+            commit(&main, "respelled");
+            let checkout = around
+                .path()
+                .join(format!("{name}-respelled-linked"))
+                .join("checkout");
+            git(
+                &main,
+                &["worktree", "add", "--detach", checkout.to_str().unwrap()],
+            );
+            let aside = around.path().join(format!("{name}-respelled-aside"));
+            std::fs::rename(&main, &aside).unwrap();
+            std::fs::rename(&aside, around.path().join(format!("{name}-respelled"))).unwrap();
             assert!(
-                std::fs::read(&head).is_err(),
-                "this user can read a file with mode 000, so git will not be refused and \
-                 there is nothing here to measure. Run this as a user permissions apply to."
+                main.exists(),
+                "this volume tells case apart, so the checkout's `.git` file names a directory \
+                 that has gone and there is nothing here to measure. Run this on one that does not."
+            );
+            Some((
+                "a linked checkout whose main checkout's directory changed case",
+                path_str(&checkout),
+            ))
+        };
+        #[cfg(not(target_os = "macos"))]
+        let respelled = None;
+        for (shape, root) in [
+            ("a bare repository", path_str(&bare)),
+            (
+                "the same through a link",
+                bare_link.to_str().unwrap().to_string(),
+            ),
+            (
+                "a bare repository whose name ends in a space",
+                path_str(&spaced),
+            ),
+            (
+                "a bare repository whose name ends in a carriage return",
+                path_str(&carriage),
+            ),
+            ("a checkout whose `.git` is a link", path_str(&symlinked)),
+            ("a checkout whose `.git` file ends in CRLF", path_str(&crlf)),
+            ("a linked checkout", path_str(&linked)),
+            (
+                "a repository whose work tree is above it",
+                path_str(&dotfiles),
+            ),
+            (
+                "the same through a link",
+                dotfiles_link.to_str().unwrap().to_string(),
+            ),
+            (
+                "the same with a `.git` file naming a git directory whose name ends in a space",
+                path_str(&named),
+            ),
+        ]
+        .into_iter()
+        .chain(respelled)
+        {
+            let answer = GitCli.head_ref(&root);
+            assert!(
+                answer.is_ok(),
+                "{name}: {shape} answers for itself: {answer:?}"
             );
         }
+        let unreadable_config = around.path().join(format!("{name}-config")).join("repo");
+        std::fs::create_dir_all(&unreadable_config).unwrap();
+        git(&unreadable_config, &["init", "--initial-branch=main"]);
+        std::fs::write(unreadable_config.join(".git").join("config"), "[[[\n").unwrap();
+        let words = format!(
+            "{:#}",
+            GitCli
+                .local_refs(&path_str(&unreadable_config))
+                .unwrap_err()
+        );
         assert!(
-            Command::new("git")
-                .arg("-C")
-                .arg(&inner)
-                .args(["worktree", "list", "--porcelain"])
-                .output()
-                .unwrap()
-                .status
-                .success(),
-            "{how}: a git left to look for itself answers for the repository around it"
+            words.contains("bad config"),
+            "{name}: a repository git will not read says so in git's words: {words}"
+        );
+        assert_eq!(
+            std::fs::read_link(&link).unwrap(),
+            inner,
+            "{name}: the link"
         );
 
-        for root in [path_str(&inner), link.to_str().unwrap().to_string()] {
-            let how = format!("{how} at {root}");
-            assert!(GitCli.local_refs(&root).is_err(), "{how}: local_refs");
+        for how in ["empty", "garbage", "unreadable"] {
+            std::fs::write(&head, "ref: refs/heads/main\n").unwrap();
+            std::fs::set_permissions(&head, std::fs::Permissions::from_mode(0o644)).unwrap();
+            match how {
+                "empty" => std::fs::write(&head, "").unwrap(),
+                "garbage" => std::fs::write(&head, "garbage\n").unwrap(),
+                _ => {
+                    std::fs::set_permissions(&head, std::fs::Permissions::from_mode(0o000)).unwrap()
+                }
+            }
+            let _put_back = ReadableAgain(&head);
+            if how == "unreadable" {
+                assert!(
+                    std::fs::read(&head).is_err(),
+                    "this user can read a file with mode 000, so git will not be refused and \
+                     there is nothing here to measure. Run this as a user permissions apply to."
+                );
+            }
             assert!(
-                GitCli.worktree_heads(&root).is_err(),
-                "{how}: worktree_heads"
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&inner)
+                    .args(["worktree", "list", "--porcelain"])
+                    .output()
+                    .unwrap()
+                    .status
+                    .success(),
+                "{how}: a git left to look for itself answers for the repository around it"
             );
-            assert!(GitCli.is_dirty(&root).is_err(), "{how}: is_dirty");
-            assert!(
-                GitCli.has_no_commit_yet(&root).is_err(),
-                "{how}: has_no_commit_yet"
+
+            for root in [path_str(&inner), link.to_str().unwrap().to_string()] {
+                let how = format!("{how} at {root}");
+                let words = format!("{:#}", GitCli.local_refs(&root).unwrap_err());
+                let refused = if name == "outer" {
+                    "is not a git repository, but was expected to be"
+                } else {
+                    "is not a git repository: git answered for the repository around it"
+                };
+                assert!(words.contains(refused), "{how}: local_refs: {words}");
+                assert!(
+                    GitCli.worktree_heads(&root).is_err(),
+                    "{how}: worktree_heads"
+                );
+                assert!(GitCli.is_dirty(&root).is_err(), "{how}: is_dirty");
+                assert!(
+                    GitCli.has_no_commit_yet(&root).is_err(),
+                    "{how}: has_no_commit_yet"
+                );
+                assert!(GitCli.head_ref(&root).is_err(), "{how}: head_ref");
+                assert!(GitCli.github_slug(&root).is_err(), "{how}: github_slug");
+                assert!(
+                    GitCli.delete_branch(&root, "merged").is_err(),
+                    "{how}: delete_branch"
+                );
+                assert!(
+                    GitCli
+                        .remove_worktree(&root, &path_str(&outer_checkout))
+                        .is_err(),
+                    "{how}: remove_worktree"
+                );
+            }
+        }
+        assert!(
+            outer_checkout.exists(),
+            "{name}: the outer repository's checkout is still there"
+        );
+        git(&outer, &["rev-parse", "--verify", "refs/heads/merged"]);
+
+        // An outer repository whose git directory sits inside the nested one: inside the
+        // directory, and still not the nested repository's own.
+        let outer = around.path().join(format!("{name}2"));
+        let inner = outer.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        git(
+            &outer,
+            &[
+                "init",
+                "--initial-branch=main",
+                "--separate-git-dir",
+                inner.join("outer.git").to_str().unwrap(),
+            ],
+        );
+        commit(&outer, "outer");
+        git(&outer, &["branch", "merged"]);
+        git(&inner, &["init", "--initial-branch=main"]);
+        commit(&inner, "inner");
+        std::fs::write(inner.join(".git").join("HEAD"), "").unwrap();
+        assert!(
+            GitCli.delete_branch(&path_str(&inner), "merged").is_err(),
+            "{name}: an outer git directory inside the nested repository is not its own"
+        );
+        git(&outer, &["rev-parse", "--verify", "refs/heads/merged"]);
+
+        // An outer git directory whose name ends in a carriage return or a line feed, around a
+        // nested repository whose `.git` links to one named the same without it: git's answer
+        // is read up to its one line end and no further.
+        let unread = around.path().join(format!("{name}3")).join("store");
+        git(around.path(), &["init", "--bare", unread.to_str().unwrap()]);
+        std::fs::write(unread.join("HEAD"), "").unwrap();
+        for (end, ends) in [("\r", "a carriage return"), ("\n", "a line feed")] {
+            let store = around
+                .path()
+                .join(format!("{name}3"))
+                .join(format!("store{end}"));
+            git(
+                around.path(),
+                &[
+                    "clone",
+                    "--quiet",
+                    "--bare",
+                    outer.to_str().unwrap(),
+                    store.to_str().unwrap(),
+                ],
             );
-            assert!(GitCli.head_ref(&root).is_err(), "{how}: head_ref");
-            assert!(GitCli.github_slug(&root).is_err(), "{how}: github_slug");
+            let store_checkout = around
+                .path()
+                .join(format!("{name}3-checkout"))
+                .join(ends.replace(' ', "-"));
+            git(
+                &store,
+                &[
+                    "worktree",
+                    "add",
+                    "--detach",
+                    store_checkout.to_str().unwrap(),
+                ],
+            );
+            let inner = store.join("inner");
+            std::fs::create_dir(&inner).unwrap();
+            std::os::unix::fs::symlink(&unread, inner.join(".git")).unwrap();
             assert!(
-                GitCli.delete_branch(&root, "merged").is_err(),
-                "{how}: delete_branch"
+                GitCli.delete_branch(&path_str(&inner), "merged").is_err(),
+                "{name}: delete_branch under a git directory whose name ends in {ends}"
             );
             assert!(
                 GitCli
-                    .remove_worktree(&root, &path_str(&outer_checkout))
+                    .remove_worktree(&path_str(&inner), &path_str(&store_checkout))
                     .is_err(),
-                "{how}: remove_worktree"
+                "{name}: remove_worktree under a git directory whose name ends in {ends}"
+            );
+            git(&store, &["rev-parse", "--verify", "refs/heads/merged"]);
+            assert!(
+                store_checkout.exists(),
+                "{name}: the outer repository's checkout is still there"
             );
         }
     }
-    assert!(
-        outer_checkout.exists(),
-        "the outer repository's checkout is still there"
-    );
-    git(
-        outer.path(),
-        &["rev-parse", "--verify", "refs/heads/merged"],
-    );
 }
 
 #[test]

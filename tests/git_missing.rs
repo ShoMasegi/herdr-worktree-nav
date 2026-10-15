@@ -59,4 +59,18 @@ fn a_git_that_cannot_be_started_reaches_the_prompt_line_words_first() {
             && words.ends_with("(`git remote get-url origin`)"),
         "the words first, the call after them: {words}"
     );
+
+    // And where the real parent holds a `:`, which has git asked which git directory it would
+    // answer from before the call: the call named is still the one asked for — issue #96.
+    let around = tempfile::tempdir().unwrap();
+    let app = around.path().join("c:d").join("app");
+    std::fs::create_dir_all(&app).unwrap();
+    let error = GitCli
+        .local_refs(app.to_str().unwrap())
+        .expect_err("there is no git to answer");
+    let words = format!("{error:#}");
+    assert!(
+        words.starts_with("git could not be run: ") && words.ends_with("refs/heads refs/remotes`)"),
+        "the call asked for, not the question before it: {words}"
+    );
 }

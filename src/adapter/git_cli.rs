@@ -1,8 +1,10 @@
 //! `GitPort` backed by the `git` command line.
 
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::num::NonZeroU32;
-use std::path::Path;
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -98,8 +100,10 @@ const GIT_LOCALE: (&str, &str) = ("LC_ALL", "C");
 /// Where git may look for the repository a call is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Search {
-    /// From the directory up, as git does unasked. Only `identify`'s: it is handed a pane's
-    /// working directory, which can be anywhere inside its checkout.
+    /// From the directory up, as git does unasked. `identify`'s, since it is handed a pane's
+    /// working directory, which can be anywhere inside its checkout, and the question
+    /// `answers_for_another` asks of git before a call kept [`Search::Here`] whose real parent
+    /// holds a `:`.
     Upward,
     /// The directory alone, where git can be held to it. Every other call is handed a
     /// repository root or a checkout's own path, and a git that walked past it would answer
@@ -107,9 +111,10 @@ enum Search {
     /// `.git/HEAD` cannot be read, is empty or holds garbage, git does not take its `.git`
     /// for a repository and walks up (issue #93; measured against git 2.43.0 and 2.55.0).
     /// Held by `GIT_CEILING_DIRECTORIES` set to the parent of the directory's real path, so
-    /// git says the directory is not a repository instead. A directory whose real parent
-    /// holds a `:` is not held: git reads the variable as a list split at `:` (measured on
-    /// 2.55.0).
+    /// git says the directory is not a repository instead. Where that parent holds a `:`,
+    /// at which git would split it into entries of the list (issue #96; measured on 2.55.0),
+    /// the variable is not set, and `output` refuses the call where git would answer from a
+    /// git directory that is not the directory's own.
     Here,
 }
 
@@ -123,32 +128,64 @@ impl GitCli {
             .stdin(Stdio::null())
             .env(GIT_LOCALE.0, GIT_LOCALE.1);
         if search == Search::Here {
-            // The real path's parent, since that is what git compares a ceiling with.
-            if let Some(parent) = std::fs::canonicalize(dir)
-                .ok()
-                .as_deref()
-                .and_then(Path::parent)
-            {
+            if let Some(parent) = real_parent(dir).filter(|parent| !holds_colon(parent)) {
                 command.env("GIT_CEILING_DIRECTORIES", parent);
             }
         }
         command
     }
 
-    /// Start git in `dir` and wait for it. `Err` is a git that could not be started at all.
+    /// Start git in `dir` and wait for it. `Err` is a git that could not be started at all, or
+    /// a call [`Search::Here`] refuses before it starts.
     ///
-    /// What every call but one reads its answer from. `run_answering` reads it for every
-    /// call that wants "not here" recognised — `identify` to answer `None`, and through
-    /// `run` the nine behind `run_in_repo`, to turn "not a repository" into an error that
-    /// says so. `github_slug` reads it itself, because the answer it has to pick out is a
-    /// different one and "not a repository" is a failure there rather than an answer. The
-    /// one call that does not come through here is `identify`'s read of the branch, which
-    /// starts from `command` and so runs in the same locale.
+    /// `run_answering` reads it for every call that wants "not here" recognised — `identify`
+    /// to answer `None`, and through `run` the nine behind `run_in_repo`, to turn "not a
+    /// repository" into an error that says so. `github_slug` reads it itself, because the
+    /// answer it has to pick out is a different one and "not a repository" is a failure there
+    /// rather than an answer. The two gits not started here are `identify`'s read of the
+    /// branch and the question `answers_for_another` asks before a call, and both start from
+    /// `command`, so they run in the same locale.
     fn output(dir: &str, search: Search, args: &[&str]) -> Result<Output> {
+        let could_not = |error: std::io::Error| anyhow!("{}", could_not_run(args, &error));
+        if search == Search::Here && Self::answers_for_another(dir).map_err(could_not)? {
+            bail!("{dir} is not a git repository: git answered for the repository around it");
+        }
         Self::command(dir, search)
             .args(args)
             .output()
-            .map_err(|error| anyhow!("{}", could_not_run(args, &error)))
+            .map_err(could_not)
+    }
+
+    /// Whether git, asked about `dir`, would answer from a git directory that is not `dir`'s
+    /// own — `dir` itself, its `.git`, or the directory a `.git` file names. git is asked
+    /// only where no ceiling can be set — see [`Search::Here`] — and a git that cannot be
+    /// started is reported with the call `output` was asked to run.
+    fn answers_for_another(dir: &str) -> std::io::Result<bool> {
+        // swallows: a `dir` with no real path, which `command` sets no ceiling for either.
+        let Some(real) = std::fs::canonicalize(dir)
+            .ok()
+            .filter(|real| real.parent().is_some_and(holds_colon))
+        else {
+            return Ok(false);
+        };
+        let output = Self::command(dir, Search::Upward)
+            .args(["rev-parse", "--absolute-git-dir"])
+            .output()?;
+        // swallows: a git that would not name a git directory, which the call then meets in
+        // its own words.
+        if !output.status.success() {
+            return Ok(false);
+        }
+        // git ends the path with one `\n`, and a name can end in a `\r` or a `\n` of its own.
+        let answer = output.stdout.strip_suffix(b"\n").unwrap_or(&output.stdout);
+        // By real path, as `real` and `own_git_dir` are: git keeps the spelling a `.git` file
+        // gives, and a volume that ignores case may have stored another.
+        // swallows: an answer with no real path, which is refused like any other that is not
+        // `dir`'s own.
+        let Ok(git_dir) = std::fs::canonicalize(OsStr::from_bytes(answer)) else {
+            return Ok(true);
+        };
+        Ok(git_dir != real && Some(git_dir) != own_git_dir(&real))
     }
 
     /// Run git in `dir`. Returns `None` when git said the path is not a repository; any
@@ -185,6 +222,40 @@ impl GitCli {
         Self::run(dir, args)?
             .with_context(|| format!("{dir} is not a git repository, but was expected to be"))
     }
+}
+
+/// The parent of `dir`'s real path, since that is what git compares a ceiling with.
+fn real_parent(dir: &str) -> Option<PathBuf> {
+    std::fs::canonicalize(dir)
+        .ok()?
+        .parent()
+        .map(Path::to_path_buf)
+}
+
+/// The git directory a checkout's `.git` is or names, by real path.
+fn own_git_dir(real: &Path) -> Option<PathBuf> {
+    let dot_git = real.join(".git");
+    if dot_git.is_dir() {
+        return std::fs::canonicalize(dot_git).ok();
+    }
+    let named = std::fs::read(&dot_git).ok()?;
+    let named = line_of(&named).strip_prefix(b"gitdir: ")?;
+    std::fs::canonicalize(real.join(OsStr::from_bytes(named))).ok()
+}
+
+/// A `.git` file's bytes without the run of `\n`s and `\r`s that ends them, the line ends git
+/// strips from one: a path can end in a space.
+fn line_of(bytes: &[u8]) -> &[u8] {
+    let end = bytes
+        .iter()
+        .rposition(|byte| !matches!(byte, b'\n' | b'\r'))
+        .map_or(0, |last| last + 1);
+    &bytes[..end]
+}
+
+/// Whether `path` holds the character git splits `GIT_CEILING_DIRECTORIES` at.
+fn holds_colon(path: &Path) -> bool {
+    path.as_os_str().as_encoded_bytes().contains(&b':')
 }
 
 /// Whether git's refusal says the path is in no repository: [`NOT_A_REPOSITORY`], or
@@ -1104,6 +1175,36 @@ mod tests {
         assert_eq!(ceiling("/", Search::Here), vec![]);
         assert_eq!(ceiling(&format!("{app}/gone"), Search::Here), vec![]);
         assert_eq!(ceiling(app, Search::Upward), vec![]);
+        let under_colon = around.path().join("c:d").join("app");
+        std::fs::create_dir_all(&under_colon).unwrap();
+        assert_eq!(ceiling(under_colon.to_str().unwrap(), Search::Here), vec![]);
+    }
+
+    #[test]
+    fn git_is_asked_which_repository_it_answers_for_only_where_the_real_parent_holds_a_colon() {
+        // A subdirectory of a work tree, which git would answer for from the work tree's own
+        // git directory if asked. A `:` in the subdirectory's own name is not its parent's.
+        let around = tempfile::tempdir().unwrap();
+        for (parent, sub, asked) in [
+            ("plain", "sub", false),
+            ("c:d", "sub", true),
+            ("e", "s:b", false),
+        ] {
+            let repo = around.path().join(parent).join("repo");
+            let sub = repo.join(sub);
+            std::fs::create_dir_all(&sub).unwrap();
+            let init = GitCli::command(repo.to_str().unwrap(), Search::Upward)
+                .args(["init", "--quiet"])
+                .status()
+                .unwrap();
+            assert!(init.success());
+            assert_eq!(
+                GitCli::answers_for_another(sub.to_str().unwrap()).unwrap(),
+                asked,
+                "{}",
+                sub.display()
+            );
+        }
     }
 
     #[test]
