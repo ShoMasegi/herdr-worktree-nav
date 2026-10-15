@@ -10,7 +10,7 @@ use std::path::Path;
 use std::process::Command;
 
 use herdr_worktree_nav::adapter::GitCli;
-use herdr_worktree_nav::port::{GitPort, RefKind, Slug, Track};
+use herdr_worktree_nav::port::{GitPort, ListedHead, RefKind, Slug, Track};
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) {
@@ -713,7 +713,8 @@ fn worktree_heads_reads_each_commit_off_the_registration_rather_than_the_checkou
     // Read where git keeps the registration, a directory that has gone and one that lost its
     // `.git` answer with the commit they were made at, and not with nothing or with the
     // commit of the repository around them; an unborn branch and a ref git could not read
-    // answer with no commit.
+    // answer with no commit, and a registration whose `HEAD` is cut short with none git
+    // resolved.
     use std::collections::BTreeMap;
     use std::os::unix::fs::PermissionsExt;
 
@@ -736,7 +737,8 @@ fn worktree_heads_reads_each_commit_off_the_registration_rather_than_the_checkou
     let detached = around.path().join("a detached one ");
     let gone = around.path().join("gone");
     let nested = repo.path().join(".wt").join("x");
-    for checkout in [&detached, &gone, &nested] {
+    let cut = around.path().join("cut");
+    for checkout in [&detached, &gone, &nested, &cut] {
         add(&["--detach", checkout.to_str().unwrap(), "main"]);
     }
     let orphan = around.path().join("orphan");
@@ -746,11 +748,12 @@ fn worktree_heads_reads_each_commit_off_the_registration_rather_than_the_checkou
     add(&[unread.to_str().unwrap(), "feat2/x"]);
     let at = |checkout: &Path| path_str(checkout);
     let listed = [
-        (at(&detached), Some(first.clone())),
-        (at(&gone), Some(first.clone())),
-        (at(&nested), Some(first.clone())),
-        (at(&orphan), None),
-        (at(&unread), None),
+        (at(&detached), ListedHead::At(first.clone())),
+        (at(&gone), ListedHead::At(first.clone())),
+        (at(&nested), ListedHead::At(first.clone())),
+        (at(&orphan), ListedHead::NoCommit),
+        (at(&unread), ListedHead::NoCommit),
+        (at(&cut), ListedHead::Unresolved),
     ];
 
     git(repo.path(), &["commit", "--allow-empty", "-m", "second"]);
@@ -758,6 +761,11 @@ fn worktree_heads_reads_each_commit_off_the_registration_rather_than_the_checkou
     assert_ne!(first, second);
     std::fs::rename(&gone, around.path().join("moved-away")).expect("the directory moves");
     std::fs::rename(nested.join(".git"), around.path().join("x.git")).expect("the file moves");
+    std::fs::write(
+        repo.path().join(".git/worktrees/cut/HEAD"),
+        format!("{}\n", &first[..12]),
+    )
+    .expect("the registration's HEAD is written");
     let locked = repo.path().join(".git/refs/heads/feat2");
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
     let _put_back = ReadableAgain(&locked);
@@ -772,7 +780,11 @@ fn worktree_heads_reads_each_commit_off_the_registration_rather_than_the_checkou
         GitCli
             .worktree_heads(&root)
             .expect("git listed the checkouts"),
-        BTreeMap::from_iter([(root.clone(), Some(second))].into_iter().chain(listed))
+        BTreeMap::from_iter(
+            [(root.clone(), ListedHead::At(second))]
+                .into_iter()
+                .chain(listed)
+        )
     );
 
     let elsewhere = tempfile::tempdir().unwrap();
@@ -818,10 +830,13 @@ fn worktree_heads_reads_a_sha256_null_id_as_no_commit() {
     );
 
     let heads = GitCli.worktree_heads(&path_str(repo.path())).unwrap();
-    assert_eq!(heads.get(&path_str(&orphan)), Some(&None), "{heads:?}");
     assert_eq!(
-        heads[&path_str(repo.path())].as_ref().map(String::len),
-        Some(64),
+        heads.get(&path_str(&orphan)),
+        Some(&ListedHead::NoCommit),
+        "{heads:?}"
+    );
+    assert!(
+        matches!(&heads[&path_str(repo.path())], ListedHead::At(id) if id.len() == 64),
         "a sha256 id: {heads:?}"
     );
 }
@@ -857,7 +872,7 @@ fn worktree_heads_leaves_a_bare_repository_out() {
     let heads = GitCli.worktree_heads(&path_str(&bare)).unwrap();
     let listed: Vec<(&str, bool)> = heads
         .iter()
-        .map(|(path, commit)| (path.as_str(), commit.is_some()))
+        .map(|(path, head)| (path.as_str(), matches!(head, ListedHead::At(_))))
         .collect();
     assert_eq!(listed, [(path_str(&detached).as_str(), true)]);
 }

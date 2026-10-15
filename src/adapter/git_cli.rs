@@ -6,7 +6,7 @@ use std::process::{Command, Output, Stdio};
 
 use anyhow::{anyhow, bail, Context, Result};
 
-use crate::port::{GitPort, GitRef, RefKind, RefWalk, RepoIdentity, Slug, Track};
+use crate::port::{GitPort, GitRef, ListedHead, RefKind, RefWalk, RepoIdentity, Slug, Track};
 
 /// git's catch-all exit code for a fatal error. It says almost nothing on its own: a path
 /// that is not a repository and a fetch that could not reach the remote both exit 128, so
@@ -457,24 +457,45 @@ fn read_track(upstream: Option<&str>, upstream_track: &str, push_track: &str) ->
     }
 }
 
-/// The commit at each path `git worktree list --porcelain` printed, for
+/// What `git worktree list --porcelain` printed of each path's `HEAD`, for
 /// [`GitPort::worktree_heads`].
 ///
-/// One stanza per registration: `worktree <path>` first, then `HEAD <id>` unless the entry is
-/// a bare repository, then lines this does not read. An id of all zeros is `None`. A path
-/// printed in more than one stanza keeps the commit of the last.
-fn listed_heads(stdout: &str) -> BTreeMap<String, Option<String>> {
+/// One stanza per registration, ended by a blank line: `worktree <path>` first, then
+/// `HEAD <id>` unless the entry is a bare repository, then `branch <ref>` or `detached` where
+/// git resolved `HEAD`, then lines this does not read. An id of all zeros is
+/// [`ListedHead::NoCommit`] with or without either line, since git 2.43.0 prints neither
+/// under it for a ref it could not read. Any other id under neither is
+/// [`ListedHead::Unresolved`]. A path printed in more than one stanza keeps the last.
+fn listed_heads(stdout: &str) -> BTreeMap<String, ListedHead> {
     let mut heads = BTreeMap::new();
-    let mut path = None;
-    for line in stdout.lines() {
-        if let Some(listed) = line.strip_prefix("worktree ") {
-            path = Some(listed);
-        } else if let (Some(listed), Some(id)) = (path, line.strip_prefix("HEAD ")) {
+    let mut stanza: Option<(&str, Option<&str>, bool)> = None;
+    let mut end = |stanza: Option<(&str, Option<&str>, bool)>| {
+        if let Some((path, Some(id), resolved)) = stanza {
             // All zeros, of whatever length the repository's hash has.
-            let commit = Some(id).filter(|id| id.bytes().any(|byte| byte != b'0'));
-            heads.insert(listed.to_string(), commit.map(str::to_string));
+            let head = if id.bytes().all(|byte| byte == b'0') {
+                ListedHead::NoCommit
+            } else if !resolved {
+                ListedHead::Unresolved
+            } else {
+                ListedHead::At(id.to_string())
+            };
+            heads.insert(path.to_string(), head);
+        }
+    };
+    for line in stdout.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            end(stanza.replace((path, None, false)));
+        } else if line.is_empty() {
+            end(stanza.take());
+        } else if let Some((_, id, resolved)) = &mut stanza {
+            if let Some(listed) = line.strip_prefix("HEAD ") {
+                *id = Some(listed);
+            } else if line == "detached" || line.starts_with("branch ") {
+                *resolved = true;
+            }
         }
     }
+    end(stanza);
     heads
 }
 
@@ -741,7 +762,7 @@ impl GitPort for GitCli {
         bail!("{}", refusal(&args, &stderr));
     }
 
-    fn worktree_heads(&self, repo_root: &str) -> Result<BTreeMap<String, Option<String>>> {
+    fn worktree_heads(&self, repo_root: &str) -> Result<BTreeMap<String, ListedHead>> {
         let said = GitCli::run_in_repo(repo_root, &["worktree", "list", "--porcelain"])?;
         Ok(listed_heads(&said.stdout))
     }
@@ -766,7 +787,7 @@ mod tests {
         could_not_run, dropped_refs, github_slug_from_url, listed_heads, no_repository_here,
         no_such_remote, parse_track, read_track, refusal, unread_paths, GitCli, Slug, GIT_LOCALE,
     };
-    use crate::port::Track;
+    use crate::port::{ListedHead, Track};
     use std::collections::BTreeMap;
     use std::num::NonZeroU32;
 
@@ -792,7 +813,10 @@ mod tests {
                     HEAD 000000000000000000000000000000000000000f\n\
                     detached\n\
                     \n";
-        let at = |path: &str, commit: Option<&str>| (path.to_string(), commit.map(Into::into));
+        let at = |path: &str, commit: Option<&str>| {
+            let head = commit.map_or(ListedHead::NoCommit, |id| ListedHead::At(id.into()));
+            (path.to_string(), head)
+        };
         assert_eq!(
             listed_heads(said),
             BTreeMap::from([
@@ -822,8 +846,47 @@ mod tests {
             listed_heads(said),
             BTreeMap::from([(
                 "/wt/m".to_string(),
-                Some("40853987f27a5bb1fa16e4d6b975ce7c32527604".to_string())
+                ListedHead::At("40853987f27a5bb1fa16e4d6b975ce7c32527604".to_string())
             )])
+        );
+    }
+
+    #[test]
+    fn a_non_null_id_under_neither_a_branch_nor_detached_is_unresolved() {
+        // A registration whose `HEAD` holds an id cut to twelve characters is listed at that
+        // id padded with zeros, under neither line (measured against git 2.55.0), so the id
+        // beside it is not one git resolved. The null id is no commit under neither line too,
+        // as git 2.43.0 prints it for a ref it could not read. Lines this does not read change
+        // nothing either way, and the last stanza ends with the output.
+        let said = "worktree /wt/cut\n\
+                    HEAD cce252a55edc0000000000000000000000000000\n\
+                    \n\
+                    worktree /wt/locked\n\
+                    HEAD 6c4e636e328bacff1a7844e967bb8de1cf701720\n\
+                    detached\n\
+                    locked\n\
+                    \n\
+                    worktree /wt/prunable\n\
+                    HEAD 40853987f27a5bb1fa16e4d6b975ce7c32527604\n\
+                    prunable gitdir file points to non-existent location\n\
+                    \n\
+                    worktree /wt/unread\n\
+                    HEAD 0000000000000000000000000000000000000000\n\
+                    \n\
+                    worktree /wt/last\n\
+                    HEAD 6c4e636e328bacff1a7844e967bb8de1cf701720\n";
+        assert_eq!(
+            listed_heads(said),
+            BTreeMap::from([
+                ("/wt/cut".to_string(), ListedHead::Unresolved),
+                (
+                    "/wt/locked".to_string(),
+                    ListedHead::At("6c4e636e328bacff1a7844e967bb8de1cf701720".to_string())
+                ),
+                ("/wt/prunable".to_string(), ListedHead::Unresolved),
+                ("/wt/unread".to_string(), ListedHead::NoCommit),
+                ("/wt/last".to_string(), ListedHead::Unresolved),
+            ])
         );
     }
 
