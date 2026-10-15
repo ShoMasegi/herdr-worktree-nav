@@ -199,6 +199,12 @@ impl ViewOptions {
     fn filtering(&self) -> bool {
         !self.query.trim().is_empty() || self.state_filter.is_some()
     }
+
+    /// Whether checkouts holding no pane, and repositories holding none, are left out: never
+    /// during a sweep.
+    fn hides_empty_checkouts(&self) -> bool {
+        self.hide_worktrees_without_panes && self.sweep.is_none()
+    }
 }
 
 #[cfg(test)]
