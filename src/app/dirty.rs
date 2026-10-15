@@ -200,7 +200,7 @@ mod tests {
     use crate::app::fakes::until;
     use crate::app::fakes::{fake_git, FakeGit};
     use crate::domain::model::Branch;
-    use crate::domain::model::{Refs, RepoNode, WorktreeNode};
+    use crate::domain::model::{Head, Refs, RepoNode, WorktreeNode};
 
     use anyhow::Result;
     use std::sync::Mutex;
@@ -272,6 +272,7 @@ mod tests {
                     .iter()
                     .map(|path| WorktreeNode {
                         branch: Branch::out("b"),
+                        head: Head::NotSaid,
                         checkout_path: (*path).to_string(),
                         is_primary: false,
                         open_workspace_id: None,

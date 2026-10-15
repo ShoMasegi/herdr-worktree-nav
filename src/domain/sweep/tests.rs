@@ -1,10 +1,11 @@
 use super::*;
-use crate::domain::model::{Branch, PaneNode, Refs, RepoNode, Unlisted, WorktreeNode};
+use crate::domain::model::{Branch, Head, PaneNode, Refs, RepoNode, Unlisted, WorktreeNode};
 use crate::port::{AgentStatus, SettledPullRequest};
 
 fn worktree(branch: &str, path: &str) -> WorktreeNode {
     WorktreeNode {
         branch: Branch::out(branch.to_string()),
+        head: Head::NotSaid,
         checkout_path: path.to_string(),
         is_primary: false,
         open_workspace_id: None,
@@ -383,15 +384,20 @@ fn a_working_tree_git_would_not_read_is_never_offered() {
 #[test]
 fn a_detached_checkout_is_not_called_unjudged_when_gh_could_not_be_asked() {
     // Saying "PR unknown" would blame `gh` for a silence git is responsible for. The same
-    // of a checkout whose branch nobody could name: `gh` is asked by branch.
+    // of a checkout herdr named no branch at, whether or not one of the repository's refs
+    // names its path: `gh` is asked by the branch a row names.
     for branch in [
         Branch::NothingOut,
         Branch::Unnamed {
             ref_names_path: false,
         },
+        Branch::Unnamed {
+            ref_names_path: true,
+        },
     ] {
         let mut wt = worktree("feat/login", "/wt/detached");
         wt.branch = branch.clone();
+        wt.head = Head::At("c0ffee".into());
         let trees = clean(&["/wt/detached"]);
         let unavailable = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
         let judged = judged(&tree_of(vec![wt]), &facts(&trees, &unavailable));
@@ -1269,6 +1275,51 @@ fn which_refusal_a_checkout_that_earns_two_of_them_shows() {
         judged[&at("/wt/feat-login")],
         Candidate::Refused(Refusal::Removing)
     );
+
+    // A checkout nothing identifies comes last: below the repository itself, refs git would
+    // not read, a removal already going and panes in it, each a reason not to remove it
+    // whatever anybody answers, where this one is only that an answer about it could not be
+    // kept apart.
+    let mut unknown = worktree("", "/wt/detached");
+    unknown.branch = Branch::NothingOut;
+    unknown.head = Head::Unknown("git lists this checkout at no commit".into());
+    let mut primary = unknown.clone();
+    primary.is_primary = true;
+    let mut open = unknown.clone();
+    open.panes = vec![PaneNode {
+        pane_id: "w3:p1".into(),
+        workspace_id: "w3".into(),
+        tab_id: "w3:t1".into(),
+        display_name: None,
+        agent_status: AgentStatus::Idle,
+        focused: false,
+    }];
+    let going = [CheckoutPath::for_test("/wt/detached")];
+    for (tree, removing, refusal) in [
+        (tree_of(vec![primary]), &[][..], Refusal::Primary),
+        (
+            tree_unread(vec![unknown.clone()]),
+            &going[..],
+            Refusal::RefsUnreadable,
+        ),
+        (
+            tree_of(vec![unknown.clone()]),
+            &going[..],
+            Refusal::Removing,
+        ),
+        (tree_of(vec![open]), &[][..], Refusal::Running),
+        (tree_of(vec![unknown]), &[][..], Refusal::Unidentified),
+    ] {
+        let judged = candidates(
+            &tree,
+            &Facts {
+                working_trees: &clean(&["/wt/detached"]),
+                settled: &none,
+                removing,
+            },
+        );
+        assert_eq!(judged[&at("/wt/detached")], Candidate::Refused(refusal));
+    }
 }
 
 #[test]
@@ -1456,9 +1507,10 @@ fn an_answer_is_about_the_checkout_it_was_given_about_and_not_about_the_path() {
     assert!(chosen(&candidates, &changes.still_about(&tree)).contains(&at("/wt/feat-login")));
 
     // Same path, different branch — and the branch now somewhere else, so an answer kept
-    // for the branch wherever it is would still land on this path.
+    // for the branch wherever it is would still land on this path. The new branch's name
+    // begins with the old one's, so comparing a part of the name would take the two for one.
     let moved = tree_of(vec![
-        worktree("release/v2", "/wt/feat-login"),
+        worktree("feat/login-v2", "/wt/feat-login"),
         worktree("feat/login", "/wt/feat-login-2"),
     ]);
     assert!(
@@ -1475,6 +1527,7 @@ fn a_detached_checkout_is_not_the_same_checkout_as_a_branch_at_the_same_path() {
     // Two checkouts with no branch at one path are as different as two branches are.
     let mut detached = worktree("feat/login", "/wt/feat-login");
     detached.branch = Branch::NothingOut;
+    detached.head = Head::At("c0ffee".into());
     let candidates = BTreeMap::from([(at("/wt/feat-login"), Candidate::Available)]);
 
     let mut changes = Changes::default();
@@ -1491,6 +1544,121 @@ fn a_detached_checkout_is_not_the_same_checkout_as_a_branch_at_the_same_path() {
         )
         .contains(&at("/wt/feat-login")),
         "a branch was checked out where there was none"
+    );
+}
+
+#[test]
+fn two_detached_checkouts_at_one_path_on_different_commits_do_not_share_an_answer() {
+    // Neither names a branch, so the commit checked out is all that tells them apart: a
+    // yes said about one is not a yes about the other made there after it (issue #29). One
+    // made there on the same commit reads exactly as `before` read again does, below. The
+    // two ids agree in all but their last two characters, so comparing a prefix that stops
+    // before those, an abbreviated id included, would take the two for one.
+    let mut before = worktree("", "/wt/scratch");
+    before.branch = Branch::NothingOut;
+    before.head = Head::At("c0ffee5eed0000000000000000000000000000a1".into());
+    let mut after = before.clone();
+    after.head = Head::At("c0ffee5eed0000000000000000000000000000b2".into());
+    let candidates = BTreeMap::from([(at("/wt/scratch"), Candidate::Available)]);
+
+    let mut changes = Changes::default();
+    assert_eq!(
+        changes.flip(&only_repo(), &before, &Mark::Staying),
+        Some(true)
+    );
+    assert!(chosen(
+        &candidates,
+        &changes.still_about(&tree_of(vec![before.clone()]))
+    )
+    .contains(&at("/wt/scratch")));
+    assert!(
+        !chosen(&candidates, &changes.still_about(&tree_of(vec![after])))
+            .contains(&at("/wt/scratch")),
+        "the answer was about the commit ending a1, and the one ending b2 is out there now"
+    );
+    // And back on the first commit, it is the checkout the answer was about again.
+    assert!(
+        chosen(&candidates, &changes.still_about(&tree_of(vec![before])))
+            .contains(&at("/wt/scratch"))
+    );
+}
+
+#[test]
+fn a_no_said_about_a_branch_outlives_a_commit_to_it() {
+    // A branch is told apart by its name. Committed to while the sweep is up, it is the
+    // same checkout, and the no stands: going back to what the sweep suggests would put a
+    // removal the user turned down back on the list `Enter` acts on. The picker reads no
+    // commit for a branch; one is put on here to say the answer does not go by it.
+    let mut before = worktree("fix/crash", "/wt/fix-crash");
+    before.head = Head::At("c0ffee".into());
+    let mut after = before.clone();
+    after.head = Head::At("decade".into());
+    let candidates = BTreeMap::from([(at("/wt/fix-crash"), Candidate::Offered(Reason::Gone))]);
+
+    let mut changes = Changes::default();
+    assert_eq!(
+        changes.flip(&only_repo(), &before, &Mark::Going(Reason::Gone)),
+        Some(false)
+    );
+    for tree in [tree_of(vec![before]), tree_of(vec![after])] {
+        assert!(chosen(&candidates, &changes.still_about(&tree)).is_empty());
+    }
+}
+
+#[test]
+fn a_checkout_naming_no_branch_with_no_commit_known_takes_no_answer() {
+    // Nothing tells it from the next checkout at its path, so an answer about it would be
+    // an answer about that one too. Refused rather than left for `Space` to mark, whether
+    // git was asked and named none or nobody has asked yet, and whatever is known of its
+    // working tree and from `gh`: neither tells it from the next checkout either.
+    let working_trees = [
+        WorkingTree::Clean,
+        WorkingTree::Dirty,
+        WorkingTree::Unreadable,
+    ]
+    .map(|answer| BTreeMap::from([(CheckoutPath::for_test("/wt/scratch"), answer)]));
+    let unavailable = BTreeMap::from([(RepoRoot::of(&only_repo()), None)]);
+    let gh = [
+        BTreeMap::new(),
+        unavailable,
+        asked(Vec::new()),
+        told(Vec::new(), false),
+    ];
+    for head in [
+        Head::NotSaid,
+        Head::Unknown("git lists this checkout at no commit".into()),
+    ] {
+        let mut wt = worktree("", "/wt/scratch");
+        wt.branch = Branch::NothingOut;
+        wt.head = head.clone();
+        let tree = tree_of(vec![wt.clone()]);
+        for trees in working_trees.iter().chain([&BTreeMap::new()]) {
+            for settled in &gh {
+                assert_eq!(
+                    judged(&tree, &facts(trees, settled))[&at("/wt/scratch")],
+                    Candidate::Refused(Refusal::Unidentified),
+                    "{head:?}, {trees:?}, {settled:?}"
+                );
+            }
+        }
+
+        // And `flip` would not write one down if it were handed a mark that let it.
+        let mut changes = Changes::default();
+        assert_eq!(changes.flip(&only_repo(), &wt, &Mark::Staying), None);
+    }
+
+    // A branch is a name to tell it by, so a branch whose commit nobody said is not refused
+    // as `Unidentified`.
+    let mut named = worktree("feat/login", "/wt/feat-login");
+    named.branch.set_position(Position::NotSaid);
+    let none = BTreeMap::new();
+    let judged = judged(
+        &tree_of(vec![named]),
+        &facts(&clean(&["/wt/feat-login"]), &none),
+    );
+    assert_eq!(
+        judged[&at("/wt/feat-login")],
+        Candidate::Unjudged(Half::NoRef)
     );
 }
 
@@ -1752,6 +1920,7 @@ fn what_the_sweep_marks_and_what_the_user_may_mark_are_different_questions() {
         Refusal::RefsUnreadable,
         Refusal::Running,
         Refusal::Removing,
+        Refusal::Unidentified,
     ] {
         let refused = Candidate::Refused(refusal);
         assert!(!refused.is_offered());
@@ -1767,6 +1936,7 @@ fn a_detached_checkout_is_never_offered_by_a_pull_request() {
     // Nothing points at it, so there is no head ref for a pull request to match.
     let mut wt = worktree("feat/login", "/wt/detached");
     wt.branch = Branch::NothingOut;
+    wt.head = Head::At("c0ffee".into());
     let trees = clean(&["/wt/detached"]);
     let settled = asked(vec![merged(9, "feat/login")]);
     let judged = judged(&tree_of(vec![wt]), &facts(&trees, &settled));

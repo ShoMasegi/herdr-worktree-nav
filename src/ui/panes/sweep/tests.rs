@@ -1,6 +1,6 @@
 use super::*;
 use crate::domain::model::{
-    Branch, Position, Refs, RepoNode, Tree, Unlisted, WorkingTree, WorktreeNode,
+    Branch, Head, Position, Refs, RepoNode, Tree, Unlisted, WorkingTree, WorktreeNode,
 };
 use crate::domain::notice::Condition;
 use crate::domain::sweep::{Half, Reason, Refusal};
@@ -729,6 +729,7 @@ fn only_a_swept_checkout_with_a_branch_deletes_one() {
     let mut state = sweeping();
     state.tree.repos[0].worktrees.push(WorktreeNode {
         branch: Branch::NothingOut,
+        head: Head::At("c0ffee".into()),
         checkout_path: "/wt/app/scratch".into(),
         is_primary: false,
         open_workspace_id: None,
@@ -754,6 +755,50 @@ fn only_a_swept_checkout_with_a_branch_deletes_one() {
         .collect();
     assert_eq!(deleting, [("fix/crash", true), ("scratch", false)]);
     assert_eq!(sweep.branches(), 1);
+}
+
+#[test]
+fn a_detached_checkout_made_again_at_a_marked_path_on_another_commit_is_not_marked() {
+    // Marked by hand, then removed and another detached checkout made in its place on
+    // another commit while the sweep is up. Neither names a branch, so the commit is what
+    // says the yes was about the other one, and `Enter` must not act on it (issue #29).
+    let detached = |commit: &str| WorktreeNode {
+        branch: Branch::NothingOut,
+        head: Head::At(commit.into()),
+        checkout_path: "/wt/app/scratch".into(),
+        is_primary: false,
+        open_workspace_id: None,
+        panes: vec![],
+    };
+    let mut state = sweeping();
+    let mut tree = state.tree.clone();
+    tree.repos[0].worktrees.push(detached("c0ffee"));
+    state.replace_tree(tree.clone());
+    state.set_working_trees(answers(&[
+        ("/src/app", WorkingTree::Clean),
+        ("/wt/app/feat-login", WorkingTree::Clean),
+        ("/wt/app/fix-crash", WorkingTree::Clean),
+        ("/wt/app/feat-wip", WorkingTree::Clean),
+        ("/wt/app/scratch", WorkingTree::Clean),
+    ]));
+    select(&mut state, "scratch");
+    state.handle_key(key(KeyCode::Char(' ')));
+    assert_eq!(mark_of(&state, "scratch"), Some(Mark::GoingByHand));
+
+    // The same checkout read again keeps the answer.
+    state.replace_tree(tree.clone());
+    assert_eq!(mark_of(&state, "scratch"), Some(Mark::GoingByHand));
+
+    let last = tree.repos[0].worktrees.len() - 1;
+    tree.repos[0].worktrees[last] = detached("decade");
+    state.replace_tree(tree);
+    assert_eq!(
+        mark_of(&state, "scratch"),
+        Some(Mark::Staying),
+        "the yes was said about c0ffee"
+    );
+    ask(&mut state);
+    assert_eq!(box_labels(&state), ["fix/crash"]);
 }
 
 #[test]
@@ -888,6 +933,7 @@ fn a_row_dropped_by_the_re_read_is_named_by_the_repository_its_key_names() {
                 name: "chore/deps".into(),
                 position: Position::Said(Some(Track::Gone)),
             },
+            head: Head::NotSaid,
             checkout_path: "/wt/app/fix-crash".into(),
             is_primary: false,
             open_workspace_id: None,
@@ -928,6 +974,7 @@ fn two_marks_asked() -> PanesState {
                 name: "chore/deps".into(),
                 position: Position::Said(Some(Track::Gone)),
             },
+            head: Head::NotSaid,
             checkout_path: "/wt/app/fix-crash".into(),
             is_primary: false,
             open_workspace_id: None,

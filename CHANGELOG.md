@@ -30,11 +30,14 @@ All notable changes to this project are documented here. The format follows
   a contested checkout herdr lists once per registration is refused this way, and one listed
   once is refused too, since git rather than the row would pick the registration.
   `Space` marks and unmarks, and a mark keeps its reason at every width
-  the picker supports. `Enter` removes what is marked: it reads the list and the working
-  trees again first, asks once with the count, and then removes each checkout the way
-  `Shift-D` does and, where it has one, deletes its branch with `git branch -d` — never
-  `-D`, so a branch git does not call merged stays and the notification says `branch kept`
-  with git's words. See
+  the picker supports. A mark is about the checkout it was put on, not its path: one made
+  again at a marked path on another branch, or at another commit where it names no branch,
+  goes back to what the sweep would suggest for it, and a checkout naming no branch that git
+  names no commit for is never swept. `Enter` removes what is marked: it reads the list and
+  the working trees again first, asks once with the count, and then removes each checkout
+  the way `Shift-D` does and, where it has one, deletes its branch with `git branch -d` —
+  never `-D`, so a branch git does not call merged stays and the notification says
+  `branch kept` with git's words. See
   [ADR 0011](docs/adr/0011-what-may-be-swept.md).
 
 - **`Shift-D` deletes a checkout that has panes in it**, which is what a finished worktree
@@ -91,7 +94,8 @@ All notable changes to this project are documented here. The format follows
   was out and one out through a symbolic ref to a branch that does not exist, which git says
   the same of, an unreadable ref no checkout has out, and one out at a checkout herdr lists
   without `is_detached`, never listed, or lists with no branch where a ref of the
-  repository still names the path — `dump` says git was not asked there.
+  repository still names the path — `dump` says git was not asked there whether that
+  branch has no commit yet.
 - **`dump` prints what the markers are drawn from.** Under each checkout: the upstream it
   tracks, where it stands against it — `level`, `gone`, `↑2↓1`, `none` when there is no
   upstream and git said nothing about where it would push, or `unreadable` where git printed

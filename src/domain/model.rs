@@ -251,6 +251,44 @@ pub enum Position {
     NotSaid,
 }
 
+/// The commit a checkout's `HEAD` points at, as git lists the checkout's registration: asked
+/// only where the checkout names no branch.
+///
+/// What a sweep's answer about such a checkout is pinned to
+/// ([`Changes`](crate::domain::sweep::Changes)). A path outlives the checkout that had it.
+/// A sweep goes by a branch's name to tell the checkout that had it from the next one at its
+/// path, and by this where a checkout names none (issue #29), so two made at one path on one
+/// commit are still one checkout to a sweep. A state of its own where git did not say,
+/// because a commit nobody read equals every other commit nobody read, and two checkouts
+/// would be one again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Head {
+    /// The object id `HEAD` resolves to, as git lists the checkout's registration —
+    /// [`GitPort::worktree_heads`](crate::port::GitPort::worktree_heads).
+    At(String),
+    /// Nobody said: the row names a branch, and its name is what a sweep goes by, so git is
+    /// not asked — or the row is waiting for [`app::collect`](crate::app::collect) to ask.
+    NotSaid,
+    /// Asked, and no commit came back, with why: the error where git would not list the
+    /// repository's checkouts — git's words, the plugin's where the root is not a
+    /// repository, or the system's where git could not be run at all — and the plugin's
+    /// words where git listed this one at no commit or not at all. `dump` prints them; a
+    /// sweep refuses a checkout naming no branch with this head where no other refusal
+    /// claims it first, without them —
+    /// [`Refusal::Unidentified`](crate::domain::sweep::Refusal::Unidentified).
+    Unknown(String),
+}
+
+impl Head {
+    /// The object id, where git said one.
+    pub fn commit(&self) -> Option<&str> {
+        match self {
+            Head::At(id) => Some(id),
+            Head::NotSaid | Head::Unknown(_) => None,
+        }
+    }
+}
+
 /// One checkout of a repository: the primary one, or a linked worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeNode {
@@ -259,6 +297,9 @@ pub struct WorktreeNode {
     /// branch the row does not name is one nobody can act on:
     /// `a_branchless_row_draws_no_track_whether_or_not_herdr_listed_it`.
     pub branch: Branch,
+    /// The commit checked out here, where the row names no branch: what tells this checkout
+    /// from the next one at its path when it has no name to — [`Head`].
+    pub head: Head,
     pub checkout_path: String,
     pub is_primary: bool,
     /// The workspace herdr has this checkout open in, when it has one.
@@ -588,6 +629,7 @@ mod tests {
     fn falls_back_to_the_directory_name_for_a_detached_checkout() {
         let detached = WorktreeNode {
             branch: Branch::NothingOut,
+            head: Head::At("c0ffee".into()),
             checkout_path: "/tmp/wt/detached-head".into(),
             is_primary: false,
             open_workspace_id: None,

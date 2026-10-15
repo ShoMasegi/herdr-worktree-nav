@@ -72,18 +72,24 @@ says which kind of silence that is: `no branch reported` where herdr listed the 
 as detached, or with no branch and no word on whether it is detached;
 `no branch reported, not detached` where herdr listed it as not detached and named no
 branch — git cannot name the branch, as with a ref under a directory in `.git/refs/heads`
-it may not open, and where git, asked about it, refused or found a commit, the line under
-the row says so as above. A row like this that the picker's read found a ref of the
-repository at is not asked, and says `git not asked: the picker's read named a ref at this
-path` under it; refs git would not read leave none asked. And `herdr did not list this
+it may not open, and where git, asked about it, refused or found a commit, a line under
+the row says so in the words above. A row like this that the picker's read found a ref of the
+repository at is not asked that, and says `git not asked whether its branch has no commit
+yet: the picker's read named a ref at this path` under it; refs git would not read leave
+none asked that. And `herdr did not list this
 checkout` where herdr never mentioned it — the picker shows that row for a pane whose
 directory it recognized, and a branch may well be out there. In each case
 `git names at this path:` follows with that same list where git names refs there, and where it names more than one
 and herdr lists the path once, a sweep and `Shift-D` refuse the row as
 `more than one ref names this checkout`, though it draws no `contested`; where git would not read the
 refs it says `refs not read`, and `refs not read on the second read` where only this
-page's own read failed. Each checkout's working tree is walked in the open, one after
-another, so on many checkouts this takes a moment.
+page's own read failed. A row with no branch on it takes its commit from git's list of the
+repository's checkouts, and where git names none, `commit unknown:` follows with why: the
+error where git would not list them, or that it lists this checkout at no commit or not at
+all. Where no refusal checked ahead of it claims the row first, a sweep refuses it as
+`git names no commit for this checkout`, because the commit is all that tells it from the
+next checkout made at its path. Each checkout's working tree is walked in the open, one
+after another, so on many checkouts this takes a moment.
 
 git's words arrive in English here and on the prompt line whatever language your git speaks
 in a terminal: the plugin runs git under `LC_ALL=C`, because it decides five things by
@@ -222,8 +228,9 @@ through this against a real session.
       and that herdr reports such a checkout as detached is the assumption this item
       confirms; git alone cannot show it. `dump` reads `no branch reported` for it. A herdr
       that sent `is_detached: false` with no branch would make it read
-      `no branch reported, not detached` there instead, with `git not asked: the picker's
-      read named a ref at this path` under it; the prompt line stays silent either way,
+      `no branch reported, not detached` there instead, with `git not asked whether its
+      branch has no commit yet: the picker's read named a ref at this path` under it; the
+      prompt line stays silent either way,
       since a ref of the repository still names the path.
 - [ ] Break a loose ref — `printf 'not-a-sha\n' > .git/refs/heads/<branch>` in a repository
       with checkouts open — and reopen the picker. The prompt line names the repository where

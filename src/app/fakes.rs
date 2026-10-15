@@ -332,6 +332,12 @@ pub trait FakeGit {
     fn has_no_commit_yet(&self, _checkout_path: &str) -> Result<bool> {
         refused("GitPort::has_no_commit_yet")
     }
+    fn worktree_heads(
+        &self,
+        _repo_root: &str,
+    ) -> Result<std::collections::BTreeMap<String, Option<String>>> {
+        refused("GitPort::worktree_heads")
+    }
 }
 
 /// The `gh` half of the same arrangement — see [`FakeGit`].
@@ -434,6 +440,12 @@ macro_rules! fake_git {
             }
             fn has_no_commit_yet(&self, checkout_path: &str) -> ::anyhow::Result<bool> {
                 $crate::app::fakes::FakeGit::has_no_commit_yet(self, checkout_path)
+            }
+            fn worktree_heads(
+                &self,
+                repo_root: &str,
+            ) -> ::anyhow::Result<::std::collections::BTreeMap<String, Option<String>>> {
+                $crate::app::fakes::FakeGit::worktree_heads(self, repo_root)
             }
         }
     };

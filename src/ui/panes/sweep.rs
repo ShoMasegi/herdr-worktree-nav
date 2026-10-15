@@ -282,7 +282,7 @@ impl PanesState {
             return Action::Consumed;
         }
         // The whole checkout, not its path: what the user said is about the branch the row
-        // was showing, and a path is reused.
+        // was showing, or the commit where it shows none, and a path is reused.
         let answer = mark.clone();
         let checkout = self.tree.repos[repo].worktrees[worktree].clone();
         if let Some(sweeping) = self.sweep.as_mut() {

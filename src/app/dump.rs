@@ -3,11 +3,13 @@
 //! `herdr-worktree-nav dump` is for the moment the picker shows something surprising: it
 //! separates "herdr or git told us something odd" from "the UI drew it wrong". So it prints
 //! what the rows are drawn from, and the answers the rows deliberately leave out — that git
-//! would not read a repository's refs, that a branch has no upstream to be level with, and why
-//! git would not read a working tree. A row draws nothing for the first two and only `?` for
-//! the third, because no marker beats a wrong one
-//! ([`domain::model::Refs`](crate::domain::model::Refs),
-//! [`domain::model::WorkingTree`](crate::domain::model::WorkingTree)). A sweep and `Shift-D`
+//! would not read a repository's refs, that a branch has no upstream to be level with, why
+//! git would not read a working tree, and why no commit is known for a checkout naming no
+//! branch. A row draws nothing for the first two and only `?` for the third, because no
+//! marker beats a wrong one ([`domain::model::Refs`](crate::domain::model::Refs),
+//! [`domain::model::WorkingTree`](crate::domain::model::WorkingTree)), and nothing for the
+//! fourth, which a sweep's refusal of the row says without the words where no other refusal
+//! claims the row first. A sweep and `Shift-D`
 //! refuse every checkout of a repository whose refs git would not read, without git's words,
 //! which are here and on the prompt line.
 
@@ -18,7 +20,8 @@ use crate::adapter::plugin_config::Loaded;
 use crate::app::one_line;
 use crate::domain::chrome::Chrome;
 use crate::domain::model::{
-    normalize_path, Branch, CheckoutPath, Position, Refs, RepoKey, RepoNode, Tree, WorktreeNode,
+    normalize_path, Branch, CheckoutPath, Head, Position, Refs, RepoKey, RepoNode, Tree,
+    WorktreeNode,
 };
 use crate::port::{GitPort, GitRef, RefKind, Snapshot, Track};
 
@@ -151,13 +154,20 @@ pub fn report(
                 branch_words(repo, worktree, refs),
                 working_tree_words(working_trees.get(&worktree.checkout_path))
             );
+            // Why a sweep refuses a checkout naming no branch as one nothing identifies, where
+            // no other refusal claims it first: the row has only the refusal, and these are
+            // the words behind it.
+            if let Head::Unknown(words) = &worktree.head {
+                let _ = writeln!(out, "      commit unknown: {words}");
+            }
             // What git said when asked whether the branch has no commit yet: its refusal, the
             // only reason git gives for a ref missing from this checkout, or that it found a
             // commit there, which is herdr and git disagreeing about what is out where. A
-            // checkout git said has no commit yet has no line, and neither does one nobody
-            // asked about — except a nameless one the picker's own read found a ref at, which
-            // says why: `git names at this path:` above is this page's second read, and may
-            // not agree with it. The picker's read can find one only under refs git read.
+            // checkout git said has no commit yet has no line from that question, and neither
+            // does one nobody asked about — except a nameless one the picker's own read found
+            // a ref at, which says why: `git names at this path:` above is this page's second
+            // read, and may not agree with it. The picker's read can find one only under refs
+            // git read.
             match tree
                 .trouble
                 .ref_missing
@@ -178,7 +188,8 @@ pub fn report(
                     ) {
                         let _ = writeln!(
                             out,
-                            "      git not asked: the picker's read named a ref at this path"
+                            "      git not asked whether its branch has no commit yet: the \
+                             picker's read named a ref at this path"
                         );
                     }
                 }
@@ -396,9 +407,9 @@ fn each_of(named: &[&GitRef]) -> String {
 /// says which ([`Branch`]), so the page does too: on the last, `no branch reported` would be
 /// this side's inference dressed as herdr's answer. None carries a position — [`Branch`]
 /// keeps one only on the answer that names a branch — so the refs git names at the path are
-/// named and not explained (issue #49). What git said when asked about the second row, or
-/// that it was not asked because the picker's read found a ref at its path, is on the line
-/// `report` prints under it.
+/// named and not explained (issue #49). What git said when asked whether the second row's
+/// branch has no commit yet, or that it was not asked that because the picker's read found
+/// a ref at its path, is on a line `report` prints under it.
 ///
 /// No `upstream …` either way: this row names no branch for one to be about.
 fn detached_words(worktree: &WorktreeNode, read: RefsRead<'_>) -> String {

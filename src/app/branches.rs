@@ -797,7 +797,7 @@ mod tests {
     /// A repository herdr listed at `/src/{name}`, with a checkout herdr names no branch at
     /// for each of `checkouts`.
     fn nameless_at(name: &str, checkouts: &[&str]) -> RepoNode {
-        use crate::domain::model::{Branch, WorktreeNode};
+        use crate::domain::model::{Branch, Head, WorktreeNode};
         let mut repo = bare(&format!("/src/{name}"));
         repo.repo_key = format!("/src/{name}/.git");
         repo.worktrees = checkouts
@@ -806,6 +806,7 @@ mod tests {
                 branch: Branch::Unnamed {
                     ref_names_path: false,
                 },
+                head: Head::NotSaid,
                 checkout_path: path.to_string(),
                 is_primary: false,
                 open_workspace_id: None,
@@ -1005,6 +1006,7 @@ mod tests {
             refs: Refs::Read,
             worktrees: vec![crate::domain::model::WorktreeNode {
                 branch: crate::domain::model::Branch::out("chore/deps"),
+                head: crate::domain::model::Head::NotSaid,
                 checkout_path: "/wt/shared".into(),
                 is_primary: false,
                 open_workspace_id: None,

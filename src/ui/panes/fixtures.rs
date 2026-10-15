@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::domain::model::{
-    Branch, CheckoutPath, PaneNode, Position, Refs, RepoKey, RepoNode, Tree, WorkingTree,
+    Branch, CheckoutPath, Head, PaneNode, Position, Refs, RepoKey, RepoNode, Tree, WorkingTree,
     WorktreeNode,
 };
 use crate::domain::rows::DisplayLine;
@@ -63,6 +63,7 @@ pub(crate) fn state() -> PanesState {
                 worktrees: vec![
                     WorktreeNode {
                         branch: Branch::out("main"),
+                        head: Head::NotSaid,
                         checkout_path: "/src/app".into(),
                         is_primary: true,
                         open_workspace_id: Some("w1".into()),
@@ -70,6 +71,7 @@ pub(crate) fn state() -> PanesState {
                     },
                     WorktreeNode {
                         branch: Branch::out("feat/login"),
+                        head: Head::NotSaid,
                         checkout_path: "/wt/app/feat-login".into(),
                         is_primary: false,
                         open_workspace_id: Some("w2".into()),
@@ -77,6 +79,7 @@ pub(crate) fn state() -> PanesState {
                     },
                     WorktreeNode {
                         branch: Branch::out("fix/crash"),
+                        head: Head::NotSaid,
                         checkout_path: "/wt/app/fix-crash".into(),
                         is_primary: false,
                         open_workspace_id: None,
@@ -134,6 +137,7 @@ pub(crate) fn sweeping() -> PanesState {
             name: "feat/wip".into(),
             position: Position::Said(Some(Track::Gone)),
         },
+        head: Head::NotSaid,
         checkout_path: "/wt/app/feat-wip".into(),
         is_primary: false,
         open_workspace_id: Some("w3".into()),

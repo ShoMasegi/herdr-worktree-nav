@@ -6,6 +6,7 @@
 
 pub mod types;
 
+use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 
 use anyhow::Result;
@@ -382,9 +383,8 @@ pub trait GitPort: Send + Sync {
     /// `false`: a working tree git could not look at is not one with nothing in it, and
     /// `false` is the one answer a sweep acts on.
     ///
-    /// One process per checkout, and the only thing here that cannot be folded into an
-    /// existing call — so it is asked in the background rather than in front of the first
-    /// frame.
+    /// One process per checkout, each walking that checkout's working tree, so it is asked in
+    /// the background rather than in front of the first frame.
     fn is_dirty(&self, checkout_path: &str) -> Result<bool>;
 
     /// Current `HEAD` of `repo_root`, used as the base for a brand new branch.
@@ -407,6 +407,25 @@ pub trait GitPort: Send + Sync {
     /// whose ref was deleted while it was out, and of one out through a symbolic ref to a
     /// branch that does not exist, so those are quiet too.
     fn has_no_commit_yet(&self, checkout_path: &str) -> Result<bool>;
+
+    /// The commit each of the repository's checkouts is at, by path, as
+    /// `git worktree list --porcelain` lists their registrations.
+    ///
+    /// Read off the registration rather than out of the checkout: a registration whose
+    /// directory has gone still names its commit there, and a checkout that lost its `.git`
+    /// would answer from inside with the commit of whatever repository encloses it. `None`
+    /// for a checkout git lists at the null object id, as it does an unborn branch and a ref
+    /// it could not read. A registration whose `HEAD` holds a cut-off id is listed at that id
+    /// padded with zeros, under no `detached` or `branch` line, and reads here as a commit at
+    /// it (measured on git 2.55.0). A path git does not list is absent. Where git lists one
+    /// path for two registrations, the commit of the one it prints last is kept: herdr lists
+    /// that path twice (measured on 0.9.3), and a sweep refuses both of its rows as
+    /// [`Refusal::ListedTwice`](crate::domain::sweep::Refusal::ListedTwice) whatever their
+    /// commits.
+    /// Asked only of a repository with a checkout that names no branch: with no name, the
+    /// commit is all that tells it from the next checkout made at its path —
+    /// [`Head`](crate::domain::model::Head).
+    fn worktree_heads(&self, repo_root: &str) -> Result<BTreeMap<String, Option<String>>>;
 }
 
 /// A pull request, used only to annotate branches. Never load-bearing.

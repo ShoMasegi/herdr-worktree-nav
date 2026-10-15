@@ -1,5 +1,6 @@
 //! `GitPort` backed by the `git` command line.
 
+use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 use std::process::{Command, Output, Stdio};
 
@@ -109,7 +110,7 @@ impl GitCli {
     ///
     /// What every call but one reads its answer from. `run_answering` reads it for every
     /// call that wants "not here" recognised — `identify` to answer `None`, and through
-    /// `run` the eight behind `run_in_repo`, to turn "not a repository" into an error that
+    /// `run` the nine behind `run_in_repo`, to turn "not a repository" into an error that
     /// says so. `github_slug` reads it itself, because the answer it has to pick out is a
     /// different one and "not a repository" is a failure there rather than an answer. The
     /// one call that does not come through here is `identify`'s read of the branch, which
@@ -456,6 +457,27 @@ fn read_track(upstream: Option<&str>, upstream_track: &str, push_track: &str) ->
     }
 }
 
+/// The commit at each path `git worktree list --porcelain` printed, for
+/// [`GitPort::worktree_heads`].
+///
+/// One stanza per registration: `worktree <path>` first, then `HEAD <id>` unless the entry is
+/// a bare repository, then lines this does not read. An id of all zeros is `None`. A path
+/// printed in more than one stanza keeps the commit of the last.
+fn listed_heads(stdout: &str) -> BTreeMap<String, Option<String>> {
+    let mut heads = BTreeMap::new();
+    let mut path = None;
+    for line in stdout.lines() {
+        if let Some(listed) = line.strip_prefix("worktree ") {
+            path = Some(listed);
+        } else if let (Some(listed), Some(id)) = (path, line.strip_prefix("HEAD ")) {
+            // All zeros, of whatever length the repository's hash has.
+            let commit = Some(id).filter(|id| id.bytes().any(|byte| byte != b'0'));
+            heads.insert(listed.to_string(), commit.map(str::to_string));
+        }
+    }
+    heads
+}
+
 /// Extract `owner/repo` from any GitHub remote URL form:
 /// `https://github.com/o/r.git`, `git@github.com:o/r.git`, `ssh://git@github.com/o/r`.
 fn github_slug_from_url(url: &str) -> Option<Slug> {
@@ -719,6 +741,11 @@ impl GitPort for GitCli {
         bail!("{}", refusal(&args, &stderr));
     }
 
+    fn worktree_heads(&self, repo_root: &str) -> Result<BTreeMap<String, Option<String>>> {
+        let said = GitCli::run_in_repo(repo_root, &["worktree", "list", "--porcelain"])?;
+        Ok(listed_heads(&said.stdout))
+    }
+
     fn head_ref(&self, repo_root: &str) -> Result<String> {
         let head = GitCli::run_in_repo(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
         let head = head.stdout.trim();
@@ -736,11 +763,69 @@ impl GitPort for GitCli {
 #[cfg(test)]
 mod tests {
     use super::{
-        could_not_run, dropped_refs, github_slug_from_url, no_repository_here, no_such_remote,
-        parse_track, read_track, refusal, unread_paths, GitCli, Slug, GIT_LOCALE,
+        could_not_run, dropped_refs, github_slug_from_url, listed_heads, no_repository_here,
+        no_such_remote, parse_track, read_track, refusal, unread_paths, GitCli, Slug, GIT_LOCALE,
     };
     use crate::port::Track;
+    use std::collections::BTreeMap;
     use std::num::NonZeroU32;
+
+    #[test]
+    fn a_commit_id_is_a_commit_wherever_its_zeros_are() {
+        // Only an id of all zeros is git's null id, as it prints it for an `--orphan`
+        // checkout (measured against git 2.55.0). One that starts with a zero, as about one
+        // commit in sixteen does, holds a few, or is zeros up to its last character, names
+        // a commit like any other.
+        let said = "worktree /src/app\n\
+                    HEAD 0fb0dbd0e1c2a3b4c5d6e7f8091a2b3c4d5e6f70\n\
+                    branch refs/heads/main\n\
+                    \n\
+                    worktree /wt/zero\n\
+                    HEAD 00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee\n\
+                    detached\n\
+                    \n\
+                    worktree /wt/fresh\n\
+                    HEAD 0000000000000000000000000000000000000000\n\
+                    branch refs/heads/fresh\n\
+                    \n\
+                    worktree /wt/last\n\
+                    HEAD 000000000000000000000000000000000000000f\n\
+                    detached\n\
+                    \n";
+        let at = |path: &str, commit: Option<&str>| (path.to_string(), commit.map(Into::into));
+        assert_eq!(
+            listed_heads(said),
+            BTreeMap::from([
+                at("/src/app", Some("0fb0dbd0e1c2a3b4c5d6e7f8091a2b3c4d5e6f70")),
+                at("/wt/zero", Some("00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee")),
+                at("/wt/fresh", None),
+                at("/wt/last", Some("000000000000000000000000000000000000000f")),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_path_printed_for_two_registrations_keeps_the_commit_printed_last() {
+        // A checkout moved into another's place and repaired leaves two registrations
+        // naming one path, and git prints a stanza for each (measured against git 2.55.0).
+        // herdr 0.9.3 lists the path twice too, so a sweep refuses both rows whatever this
+        // keeps; what it keeps is the one the port says it does.
+        let said = "worktree /wt/m\n\
+                    HEAD 6c4e636e328bacff1a7844e967bb8de1cf701720\n\
+                    detached\n\
+                    \n\
+                    worktree /wt/m\n\
+                    HEAD 40853987f27a5bb1fa16e4d6b975ce7c32527604\n\
+                    branch refs/heads/feat/login\n\
+                    \n";
+        assert_eq!(
+            listed_heads(said),
+            BTreeMap::from([(
+                "/wt/m".to_string(),
+                Some("40853987f27a5bb1fa16e4d6b975ce7c32527604".to_string())
+            )])
+        );
+    }
 
     #[test]
     fn reads_every_shape_git_prints_for_upstream_track() {

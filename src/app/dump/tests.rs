@@ -1,6 +1,6 @@
 use super::*;
 use crate::app::fakes::{fake_git, FakeGit};
-use crate::domain::model::{Branch, PaneNode, Unlisted, WorktreeNode};
+use crate::domain::model::{Branch, Head, PaneNode, Unlisted, WorktreeNode};
 use crate::domain::settings::{Panes, Settings};
 use crate::port::{AgentStatus, Track};
 use serde_json::json;
@@ -48,6 +48,7 @@ fn worktree(branch: Option<&str>, path: &str, track: Option<Track>) -> WorktreeN
             name: name.to_string(),
             position: track.map_or(Position::NotSaid, |track| Position::Said(Some(track))),
         }),
+        head: Head::NotSaid,
         checkout_path: path.to_string(),
         is_primary: branch == Some("main"),
         open_workspace_id: None,
@@ -98,6 +99,33 @@ fn every_answer_a_row_leaves_out_is_on_the_page() {
     // nothing where `gone` would go, and an unreadable working tree draws only `?`.
     let mut main = nothing_to_report("main", "/src/app");
     main.open_workspace_id = Some("w1".into());
+    // Where git listed a commit, the page says nothing more than the row does.
+    let mut detached = worktree(None, "/wt/detached", None);
+    detached.head = Head::At("c0ffee".into());
+    // Where git's list of checkouts leaves it out, the page says so under the row.
+    let mut lost = worktree(None, "/wt/lost", None);
+    lost.head = Head::Unknown("git does not list this checkout".into());
+    // Where git listed it at no commit, the page says so under the row.
+    let unread = WorktreeNode {
+        branch: Branch::Unnamed {
+            ref_names_path: false,
+        },
+        head: Head::Unknown("git lists this checkout at no commit".into()),
+        ..worktree(None, "/wt/unread", None)
+    };
+    // And under a row herdr never listed, which git's list of checkouts leaves out too.
+    let elsewhere = WorktreeNode {
+        head: Head::Unknown("git does not list this checkout".into()),
+        panes: vec![PaneNode {
+            pane_id: "w4:p1".into(),
+            workspace_id: "w4".into(),
+            tab_id: "w4:t1".into(),
+            display_name: Some("shell".into()),
+            agent_status: AgentStatus::Idle,
+            focused: false,
+        }],
+        ..unlisted("/wt/elsewhere")
+    };
     main.panes = vec![PaneNode {
         pane_id: "w1:p1".into(),
         workspace_id: "w1".into(),
@@ -122,7 +150,10 @@ fn every_answer_a_row_leaves_out_is_on_the_page() {
                         "/wt/chore-deps",
                         Some(Track::Ahead(NonZeroU32::new(2).unwrap())),
                     ),
-                    worktree(None, "/wt/detached", None),
+                    detached,
+                    lost,
+                    unread,
+                    elsewhere,
                 ],
             },
             RepoNode {
@@ -185,6 +216,16 @@ me/app  [/src/app]
       upstream none  track \u{2191}2  working tree clean
   - detached  /wt/detached
       no branch reported  working tree not asked
+  - lost  /wt/lost
+      no branch reported  working tree not asked
+      commit unknown: git does not list this checkout
+  - unread  /wt/unread
+      no branch reported, not detached  working tree not asked
+      commit unknown: git lists this checkout at no commit
+  - elsewhere  /wt/elsewhere
+      herdr did not list this checkout  working tree not asked
+      commit unknown: git does not list this checkout
+      w4:p1  Idle  shell
 
 me/site  [/src/site]
   refs unreadable: fatal: bad ref (`git for-each-ref …`)
@@ -1008,13 +1049,16 @@ fn a_row_with_no_branch_and_no_ref_reads_no_branch_reported_alone() {
 fn a_checkout_a_ref_is_missing_from_carries_what_git_said_of_it() {
     // herdr lists the checkout under a directory in `refs/heads` git may not open as not
     // detached with no branch, and git's refusal is the only reason it gives. The page
-    // prints it under the row's branch line, ahead of its panes, and the same for a named
-    // branch git refused about. A checkout git found a commit at has no words of git's to
-    // print, and the page says what git found instead.
+    // prints it under the row's branch line and what git listed of its commit, ahead of its
+    // panes, and for a named branch git refused about, straight under its branch line. A
+    // checkout git found a commit at has no words of git's to print, and the page says what
+    // git found instead.
+    let no_commit = || Head::Unknown("git lists this checkout at no commit".into());
     let mut locked = WorktreeNode {
         branch: Branch::Unnamed {
             ref_names_path: false,
         },
+        head: no_commit(),
         ..unlisted("/wt/feat2-x")
     };
     locked.panes = vec![PaneNode {
@@ -1032,11 +1076,13 @@ fn a_checkout_a_ref_is_missing_from_carries_what_git_said_of_it() {
         },
         ..unlisted(&format!("/wt/{name}"))
     };
-    // Nameless too, but the picker's read found a ref at its path, so git was not asked.
+    // Nameless too, but the picker's read found a ref at its path, so git was not asked
+    // whether its branch has no commit yet.
     let named = WorktreeNode {
         branch: Branch::Unnamed {
             ref_names_path: true,
         },
+        head: Head::At("c0ffee".into()),
         ..unlisted("/wt/shared")
     };
     let mut tree = one_repo(
@@ -1046,11 +1092,13 @@ fn a_checkout_a_ref_is_missing_from_carries_what_git_said_of_it() {
             no_ref("broken"),
             no_ref("moved"),
             named,
-            // Nameless and asked about, and git said its branch has no commit yet: nothing.
+            // Nameless and asked about, and git said its branch has no commit yet: nothing
+            // from that question, and the commit git lists is none.
             WorktreeNode {
                 branch: Branch::Unnamed {
                     ref_names_path: false,
                 },
+                head: no_commit(),
                 ..unlisted("/wt/unborn")
             },
         ],
@@ -1070,8 +1118,9 @@ fn a_checkout_a_ref_is_missing_from_carries_what_git_said_of_it() {
     let page = page(&tree, &refs);
     assert!(
         page.contains(&format!(
-            "      no branch reported, not detached  working tree not asked\n      {words}\n      \
-             w2:p1  Idle  claude\n"
+            "      no branch reported, not detached  working tree not asked\n      commit \
+             unknown: git lists this checkout at no commit\n      {words}\n      w2:p1  Idle  \
+             claude\n"
         )),
         "got:\n{page}"
     );
@@ -1092,13 +1141,15 @@ fn a_checkout_a_ref_is_missing_from_carries_what_git_said_of_it() {
     assert!(
         page.contains(
             "      no branch reported, not detached  working tree not asked\n      git not \
-             asked: the picker's read named a ref at this path\n"
+             asked whether its branch has no commit yet: the picker's read named a ref at \
+             this path\n"
         ),
         "got:\n{page}"
     );
     assert!(
         page.ends_with(
-            "/wt/unborn\n      no branch reported, not detached  working tree not asked\n"
+            "/wt/unborn\n      no branch reported, not detached  working tree not asked\n      \
+             commit unknown: git lists this checkout at no commit\n"
         ),
         "got:\n{page}"
     );
