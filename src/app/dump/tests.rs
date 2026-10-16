@@ -236,6 +236,62 @@ me/site  [/src/site]
 }
 
 #[test]
+fn a_commit_git_names_none_for_is_said_on_a_primary_row_and_under_unread_refs() {
+    // A sweep refuses the primary row as `Primary` before anything about its commit, so the
+    // line is the page's only word for it there; and refs git would not read are no reason
+    // to keep quiet about what `worktree list` said.
+    let primary = WorktreeNode {
+        head: Head::Unknown("git lists this checkout at no commit".into()),
+        is_primary: true,
+        ..worktree(None, "/src/app", None)
+    };
+    let under_unread = WorktreeNode {
+        head: Head::Unknown("git does not list this checkout".into()),
+        ..worktree(None, "/wt/lost", None)
+    };
+    let tree = Tree {
+        repos: vec![
+            RepoNode {
+                repo_key: "/src/app/.git".into(),
+                repo_root: "/src/app".into(),
+                display_name: "me/app".into(),
+                refs: Refs::Read,
+                worktrees: vec![primary],
+            },
+            RepoNode {
+                repo_key: "/src/site/.git".into(),
+                repo_root: "/src/site".into(),
+                display_name: "me/site".into(),
+                refs: Refs::Unreadable("fatal: bad ref (`git for-each-ref …`)".into()),
+                worktrees: vec![under_unread],
+            },
+        ],
+        ungrouped: Vec::new(),
+        ..Default::default()
+    };
+    let page = report(
+        &snapshot(),
+        &Chrome::default(),
+        &plugin_config(None, true, None),
+        &tree,
+        &RefsByRepo::new(),
+        &WorkingTrees::new(),
+    );
+    let primary_block = "\
+  * app  /src/app
+      no branch reported  refs not read on the second read  working tree not asked
+      commit unknown: git lists this checkout at no commit
+";
+    let unread_block = "\
+  - lost  /wt/lost
+      no branch reported  refs not read  working tree not asked
+      commit unknown: git does not list this checkout
+";
+    assert!(page.contains(primary_block), "{page}");
+    assert!(page.contains(unread_block), "{page}");
+}
+
+#[test]
 fn a_missing_plugin_file_is_reported_as_defaults() {
     let tree = Tree {
         repos: Vec::new(),

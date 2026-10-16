@@ -85,8 +85,8 @@ and herdr lists the path once, a sweep and `Shift-D` refuse the row as
 refs it says `refs not read`, and `refs not read on the second read` where only this
 page's own read failed. A row with no branch on it takes its commit from git's list of the
 repository's checkouts, and where git names none, `commit unknown:` follows with why: the
-error where git would not list them, or that it lists this checkout at no commit or not at
-all. Where no refusal checked ahead of it claims the row first, a sweep refuses it as
+error where git would not list them, or that it lists this checkout at no commit, on
+neither a branch nor a detached HEAD, or not at all. Where no refusal checked ahead of it claims the row first, a sweep refuses it as
 `git names no commit for this checkout`, because the commit is all that tells it from the
 next checkout made at its path. Each checkout's working tree is walked in the open, one
 after another, so on many checkouts this takes a moment.

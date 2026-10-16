@@ -13,7 +13,7 @@ use crate::domain::model::{
     is_inside, normalize_path, Branch, CheckoutPath, Head, Position, RepoKey, Tree, Unlisted,
 };
 use crate::domain::tree::{self, PanePlacement, RepoInput};
-use crate::port::{GitPort, HerdrPort, Snapshot};
+use crate::port::{GitPort, HerdrPort, ListedHead, Snapshot};
 
 /// Fetch everything and build the tree.
 pub fn collect_tree(herdr: &dyn HerdrPort, git: &dyn GitPort) -> Result<(Snapshot, Tree)> {
@@ -98,8 +98,13 @@ fn read_heads(git: &dyn GitPort, tree: &mut Tree) {
             }
             worktree.head = match &listed {
                 Ok(heads) => match heads.get(&worktree.checkout_path) {
-                    Some(Some(commit)) => Head::At(commit.clone()),
-                    Some(None) => Head::Unknown("git lists this checkout at no commit".into()),
+                    Some(ListedHead::At(commit)) => Head::At(commit.clone()),
+                    Some(ListedHead::NoCommit) => {
+                        Head::Unknown("git lists this checkout at no commit".into())
+                    }
+                    Some(ListedHead::Unresolved) => Head::Unknown(
+                        "git lists this checkout on neither a branch nor a detached HEAD".into(),
+                    ),
                     None => Head::Unknown("git does not list this checkout".into()),
                 },
                 Err(error) => Head::Unknown(one_line(&format!("{error:#}"))),
@@ -386,8 +391,8 @@ mod tests {
     };
     use crate::domain::tree::{PanePlacement, RepoInput};
     use crate::port::{
-        AgentStatus, Pane, Slug, Snapshot, Workspace, WorkspaceWorktree, Worktree, WorktreeList,
-        WorktreeSource,
+        AgentStatus, ListedHead, Pane, Slug, Snapshot, Workspace, WorkspaceWorktree, Worktree,
+        WorktreeList, WorktreeSource,
     };
 
     /// A herdr that knows one repository, and a git that may or may not know its name on
@@ -518,16 +523,20 @@ mod tests {
     }
 
     /// A git that lists each repository's checkouts with the commit each is at — `/src/app`
-    /// with one at no commit and one naming no branch left out — or refuses to list them,
+    /// with one at no commit, one on neither a branch nor a detached `HEAD`, and one naming
+    /// no branch left out — or refuses to list them,
     /// and records which repositories it was asked about.
     struct Heads {
         asked: std::sync::Mutex<Vec<String>>,
     }
 
     impl FakeGit for Heads {
-        fn worktree_heads(&self, repo_root: &str) -> Result<BTreeMap<String, Option<String>>> {
+        fn worktree_heads(&self, repo_root: &str) -> Result<BTreeMap<String, ListedHead>> {
             self.asked.lock().unwrap().push(repo_root.to_string());
-            let at = |path: &str, commit: Option<&str>| (path.to_string(), commit.map(Into::into));
+            let at = |path: &str, commit: Option<&str>| {
+                let head = commit.map_or(ListedHead::NoCommit, |id| ListedHead::At(id.into()));
+                (path.to_string(), head)
+            };
             match repo_root {
                 "/src/app" => Ok(BTreeMap::from([
                     at("/src/app", Some("feed")),
@@ -537,6 +546,7 @@ mod tests {
                         Some("c0ffee0000000000000000000000000000000001"),
                     ),
                     at("/wt/feat2-x", None),
+                    ("/wt/cut".to_string(), ListedHead::Unresolved),
                 ])),
                 "/src/site" => Ok(BTreeMap::from([
                     at("/src/site", Some("5eed")),
@@ -598,6 +608,7 @@ mod tests {
                             },
                         ),
                         with("/wt/unlisted", Branch::NotSaid),
+                        with("/wt/cut", Branch::NothingOut),
                     ],
                 ),
                 repo("/src/docs", vec![with("/src/docs", Branch::out("main"))]),
@@ -662,6 +673,12 @@ mod tests {
                 (
                     "/wt/unlisted",
                     &Head::Unknown("git does not list this checkout".into())
+                ),
+                (
+                    "/wt/cut",
+                    &Head::Unknown(
+                        "git lists this checkout on neither a branch nor a detached HEAD".into()
+                    )
                 ),
                 ("/src/docs", &Head::NotSaid),
                 ("/src/site", &Head::NotSaid),

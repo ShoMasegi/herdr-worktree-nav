@@ -305,6 +305,19 @@ pub enum RefKind {
     Remote,
 }
 
+/// What `git worktree list --porcelain` says of one registration's `HEAD`, for
+/// [`GitPort::worktree_heads`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListedHead {
+    /// The object id `HEAD` resolves to.
+    At(String),
+    /// The null object id, whatever line is under it.
+    NoCommit,
+    /// Another id under neither a `branch` nor a `detached` line, which is git saying it
+    /// could not resolve the registration's `HEAD`.
+    Unresolved,
+}
+
 /// Identity of a repository, as resolved from any path inside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoIdentity {
@@ -413,19 +426,16 @@ pub trait GitPort: Send + Sync {
     ///
     /// Read off the registration rather than out of the checkout: a registration whose
     /// directory has gone still names its commit there, and a checkout that lost its `.git`
-    /// would answer from inside with the commit of whatever repository encloses it. `None`
-    /// for a checkout git lists at the null object id, as it does an unborn branch and a ref
-    /// it could not read. A registration whose `HEAD` holds a cut-off id is listed at that id
-    /// padded with zeros, under no `detached` or `branch` line, and reads here as a commit at
-    /// it (measured on git 2.55.0). A path git does not list is absent. Where git lists one
-    /// path for two registrations, the commit of the one it prints last is kept: herdr lists
-    /// that path twice (measured on 0.9.3), and a sweep refuses both of its rows as
+    /// would answer from inside with the commit of whatever repository encloses it. A bare
+    /// repository and a path git does not list are absent. Where git lists one path for two
+    /// registrations, what it prints last is kept: herdr lists that path twice (measured on
+    /// 0.9.3), and a sweep refuses both of its rows as
     /// [`Refusal::ListedTwice`](crate::domain::sweep::Refusal::ListedTwice) whatever their
     /// commits.
     /// Asked only of a repository with a checkout that names no branch: with no name, the
     /// commit is all that tells it from the next checkout made at its path —
     /// [`Head`](crate::domain::model::Head).
-    fn worktree_heads(&self, repo_root: &str) -> Result<BTreeMap<String, Option<String>>>;
+    fn worktree_heads(&self, repo_root: &str) -> Result<BTreeMap<String, ListedHead>>;
 }
 
 /// A pull request, used only to annotate branches. Never load-bearing.

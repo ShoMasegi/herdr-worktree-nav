@@ -59,10 +59,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
         let mut subtrees: Vec<(u32, Vec<Row>)> = Vec::new();
         {
             for (worktree_index, worktree) in repo.worktrees.iter().enumerate() {
-                if options.hide_worktrees_without_panes
-                    && options.sweep.is_none()
-                    && worktree.panes.is_empty()
-                {
+                if options.hides_empty_checkouts() && worktree.panes.is_empty() {
                     continue;
                 }
                 let worktree_haystack = format!("{} {}", repo.display_name, worktree.label());
@@ -131,7 +128,7 @@ pub fn flatten(tree: &Tree, options: &ViewOptions) -> Vec<Row> {
             }
         }
 
-        if options.hide_worktrees_without_panes && options.sweep.is_none() && panes.is_empty() {
+        if options.hides_empty_checkouts() && panes.is_empty() {
             continue;
         }
         if filtering && !repo_matches && subtrees.is_empty() {
@@ -354,6 +351,21 @@ mod tests {
             },
         );
         assert!(names(&rows).contains(&"  fix/crash".to_string()));
+    }
+
+    #[test]
+    fn a_sweep_shows_a_repository_whose_checkouts_all_stand_empty() {
+        let mut tree = tree();
+        tree.repos[1].worktrees[0].panes.clear();
+        let rows = flatten(
+            &tree,
+            &ViewOptions {
+                hide_worktrees_without_panes: true,
+                sweep: Some(BTreeMap::new()),
+                ..Default::default()
+            },
+        );
+        assert!(names(&rows).contains(&"me/site".to_string()));
     }
 
     #[test]

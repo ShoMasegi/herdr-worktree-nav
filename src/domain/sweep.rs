@@ -224,11 +224,9 @@ fn judge(
     // end, and panes close whenever somebody closes them. A checkout git names no commit for
     // comes after all of them: each of those is a reason the checkout should not be removed
     // whatever anybody answers, and this one is only that an answer about it could not be
-    // told from an answer about the next checkout at its path. git names none where it lists
-    // the checkout at no commit — a ref it could not read, or an unborn branch at a checkout
-    // herdr did not list — where it does not list the checkout, and where it would not list
-    // the repository's checkouts at all. A path listed twice is refused by `candidates`
-    // before any of this, being about the key rather than about a row.
+    // told from an answer about the next checkout at its path; where git names none is
+    // `Head::Unknown`'s. A path listed twice is refused by `candidates` before any of this,
+    // being about the key rather than about a row.
     if worktree.is_primary {
         return Candidate::Refused(Refusal::Primary);
     }

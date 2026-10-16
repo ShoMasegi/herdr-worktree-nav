@@ -335,7 +335,7 @@ pub trait FakeGit {
     fn worktree_heads(
         &self,
         _repo_root: &str,
-    ) -> Result<std::collections::BTreeMap<String, Option<String>>> {
+    ) -> Result<std::collections::BTreeMap<String, crate::port::ListedHead>> {
         refused("GitPort::worktree_heads")
     }
 }
@@ -444,7 +444,8 @@ macro_rules! fake_git {
             fn worktree_heads(
                 &self,
                 repo_root: &str,
-            ) -> ::anyhow::Result<::std::collections::BTreeMap<String, Option<String>>> {
+            ) -> ::anyhow::Result<::std::collections::BTreeMap<String, $crate::port::ListedHead>>
+            {
                 $crate::app::fakes::FakeGit::worktree_heads(self, repo_root)
             }
         }

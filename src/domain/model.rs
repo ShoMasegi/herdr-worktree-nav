@@ -272,7 +272,8 @@ pub enum Head {
     /// Asked, and no commit came back, with why: the error where git would not list the
     /// repository's checkouts — git's words, the plugin's where the root is not a
     /// repository, or the system's where git could not be run at all — and the plugin's
-    /// words where git listed this one at no commit or not at all. `dump` prints them; a
+    /// words where git listed this one at no commit, on neither a branch nor a detached
+    /// `HEAD`, or not at all. `dump` prints them; a
     /// sweep refuses a checkout naming no branch with this head where no other refusal
     /// claims it first, without them —
     /// [`Refusal::Unidentified`](crate::domain::sweep::Refusal::Unidentified).

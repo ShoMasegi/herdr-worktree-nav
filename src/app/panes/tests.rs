@@ -9,8 +9,8 @@ use crate::app::fakes::{
 use crate::app::settled::Settled;
 use crate::domain::model::{Branch, CheckoutPath, RepoKey};
 use crate::port::{
-    AgentStatus, GitRef, RefKind, RefWalk, RemovalOutcome, Slug, Snapshot, Track, Workspace,
-    WorkspaceWorktree, Worktree, WorktreeList, WorktreeSource,
+    AgentStatus, GitRef, ListedHead, RefKind, RefWalk, RemovalOutcome, Slug, Snapshot, Track,
+    Workspace, WorkspaceWorktree, Worktree, WorktreeList, WorktreeSource,
 };
 use crate::ui::panes::PanesState;
 use anyhow::Result;
@@ -2206,12 +2206,15 @@ impl FakeGit for MissingRefs {
         }
     }
 
-    fn worktree_heads(&self, repo_root: &str) -> Result<BTreeMap<String, Option<String>>> {
+    fn worktree_heads(&self, repo_root: &str) -> Result<BTreeMap<String, ListedHead>> {
         assert_eq!(repo_root, "/src/app", "the one repository there is");
         Ok(BTreeMap::from([
-            ("/src/app".to_string(), Some("feed".to_string())),
-            ("/wt/feat2-x".to_string(), None),
-            ("/wt/stale/".to_string(), Some("c0ffee".to_string())),
+            ("/src/app".to_string(), ListedHead::At("feed".to_string())),
+            ("/wt/feat2-x".to_string(), ListedHead::NoCommit),
+            (
+                "/wt/stale/".to_string(),
+                ListedHead::At("c0ffee".to_string()),
+            ),
         ]))
     }
 }

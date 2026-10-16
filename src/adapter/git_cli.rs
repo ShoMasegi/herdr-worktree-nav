@@ -1,12 +1,15 @@
 //! `GitPort` backed by the `git` command line.
 
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::num::NonZeroU32;
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use anyhow::{anyhow, bail, Context, Result};
 
-use crate::port::{GitPort, GitRef, RefKind, RefWalk, RepoIdentity, Slug, Track};
+use crate::port::{GitPort, GitRef, ListedHead, RefKind, RefWalk, RepoIdentity, Slug, Track};
 
 /// git's catch-all exit code for a fatal error. It says almost nothing on its own: a path
 /// that is not a repository and a fetch that could not reach the remote both exit 128, so
@@ -94,47 +97,111 @@ struct Said {
 /// measured from.
 const GIT_LOCALE: (&str, &str) = ("LC_ALL", "C");
 
+/// Where git may look for the repository a call is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Search {
+    /// From the directory up, as git does unasked. `identify`'s, since it is handed a pane's
+    /// working directory, which can be anywhere inside its checkout, and the question
+    /// `answers_for_another` asks of git before a call kept [`Search::Here`] whose real parent
+    /// holds a `:`.
+    Upward,
+    /// The directory alone, where git can be held to it. Every other call is handed a
+    /// repository root or a checkout's own path, and a git that walked past it would answer
+    /// for the repository around it, exit 0 and say nothing of it: where a repository's
+    /// `.git/HEAD` cannot be read, is empty or holds garbage, git does not take its `.git`
+    /// for a repository and walks up (issue #93; measured against git 2.43.0 and 2.55.0).
+    /// Held by `GIT_CEILING_DIRECTORIES` set to the parent of the directory's real path, so
+    /// git says the directory is not a repository instead. Where that parent holds a `:`,
+    /// at which git would split it into entries of the list (issue #96; measured on 2.55.0),
+    /// the variable is not set, and `output` refuses the call where git would answer from a
+    /// git directory that is not the directory's own.
+    Here,
+}
+
 impl GitCli {
     /// The command every call here runs, before its arguments.
-    fn command(dir: &str) -> Command {
+    fn command(dir: &str, search: Search) -> Command {
         let mut command = Command::new("git");
         command
             .arg("-C")
             .arg(dir)
             .stdin(Stdio::null())
             .env(GIT_LOCALE.0, GIT_LOCALE.1);
+        if search == Search::Here {
+            if let Some(parent) = real_parent(dir).filter(|parent| !holds_colon(parent)) {
+                command.env("GIT_CEILING_DIRECTORIES", parent);
+            }
+        }
         command
     }
 
-    /// Start git in `dir` and wait for it. `Err` is a git that could not be started at all.
+    /// Start git in `dir` and wait for it. `Err` is a git that could not be started at all, or
+    /// a call [`Search::Here`] refuses before it starts.
     ///
-    /// What every call but one reads its answer from. `run_answering` reads it for every
-    /// call that wants "not here" recognised — `identify` to answer `None`, and through
-    /// `run` the nine behind `run_in_repo`, to turn "not a repository" into an error that
-    /// says so. `github_slug` reads it itself, because the answer it has to pick out is a
-    /// different one and "not a repository" is a failure there rather than an answer. The
-    /// one call that does not come through here is `identify`'s read of the branch, which
-    /// starts from `command` and so runs in the same locale.
-    fn output(dir: &str, args: &[&str]) -> Result<Output> {
-        Self::command(dir)
+    /// `run_answering` reads it for every call that wants "not here" recognised — `identify`
+    /// to answer `None`, and through `run` the nine behind `run_in_repo`, to turn "not a
+    /// repository" into an error that says so. `github_slug` reads it itself, because the
+    /// answer it has to pick out is a different one and "not a repository" is a failure there
+    /// rather than an answer. The two gits not started here are `identify`'s read of the
+    /// branch and the question `answers_for_another` asks before a call, and both start from
+    /// `command`, so they run in the same locale.
+    fn output(dir: &str, search: Search, args: &[&str]) -> Result<Output> {
+        let could_not = |error: std::io::Error| anyhow!("{}", could_not_run(args, &error));
+        if search == Search::Here && Self::answers_for_another(dir).map_err(could_not)? {
+            bail!("{dir} is not a git repository: git answered for the repository around it");
+        }
+        Self::command(dir, search)
             .args(args)
             .output()
-            .map_err(|error| anyhow!("{}", could_not_run(args, &error)))
+            .map_err(could_not)
+    }
+
+    /// Whether git, asked about `dir`, would answer from a git directory that is not `dir`'s
+    /// own — `dir` itself, its `.git`, or the directory a `.git` file names. git is asked
+    /// only where no ceiling can be set — see [`Search::Here`] — and a git that cannot be
+    /// started is reported with the call `output` was asked to run.
+    fn answers_for_another(dir: &str) -> std::io::Result<bool> {
+        // swallows: a `dir` with no real path, which `command` sets no ceiling for either.
+        let Some(real) = std::fs::canonicalize(dir)
+            .ok()
+            .filter(|real| real.parent().is_some_and(holds_colon))
+        else {
+            return Ok(false);
+        };
+        let output = Self::command(dir, Search::Upward)
+            .args(["rev-parse", "--absolute-git-dir"])
+            .output()?;
+        // swallows: a git that would not name a git directory, which the call then meets in
+        // its own words.
+        if !output.status.success() {
+            return Ok(false);
+        }
+        // git ends the path with one `\n`, and a name can end in a `\r` or a `\n` of its own.
+        let answer = output.stdout.strip_suffix(b"\n").unwrap_or(&output.stdout);
+        // By real path, as `real` and `own_git_dir` are: git keeps the spelling a `.git` file
+        // gives, and a volume that ignores case may have stored another.
+        // swallows: an answer with no real path, which is refused like any other that is not
+        // `dir`'s own.
+        let Ok(git_dir) = std::fs::canonicalize(OsStr::from_bytes(answer)) else {
+            return Ok(true);
+        };
+        Ok(git_dir != real && Some(git_dir) != own_git_dir(&real))
     }
 
     /// Run git in `dir`. Returns `None` when git said the path is not a repository; any
     /// other non-zero exit is an error carrying git's words.
     fn run(dir: &str, args: &[&str]) -> Result<Option<Said>> {
-        Self::run_answering(dir, args, no_repository_here)
+        Self::run_answering(dir, Search::Here, args, no_repository_here)
     }
 
     /// `run`, with what reads as "not here" chosen by the caller.
     fn run_answering(
         dir: &str,
+        search: Search,
         args: &[&str],
         not_here: impl Fn(&str) -> bool,
     ) -> Result<Option<Said>> {
-        let output = Self::output(dir, args)?;
+        let output = Self::output(dir, search, args)?;
         let stderr = String::from_utf8_lossy(&output.stderr);
         if output.status.success() {
             return Ok(Some(Said {
@@ -155,6 +222,40 @@ impl GitCli {
         Self::run(dir, args)?
             .with_context(|| format!("{dir} is not a git repository, but was expected to be"))
     }
+}
+
+/// The parent of `dir`'s real path, since that is what git compares a ceiling with.
+fn real_parent(dir: &str) -> Option<PathBuf> {
+    std::fs::canonicalize(dir)
+        .ok()?
+        .parent()
+        .map(Path::to_path_buf)
+}
+
+/// The git directory a checkout's `.git` is or names, by real path.
+fn own_git_dir(real: &Path) -> Option<PathBuf> {
+    let dot_git = real.join(".git");
+    if dot_git.is_dir() {
+        return std::fs::canonicalize(dot_git).ok();
+    }
+    let named = std::fs::read(&dot_git).ok()?;
+    let named = line_of(&named).strip_prefix(b"gitdir: ")?;
+    std::fs::canonicalize(real.join(OsStr::from_bytes(named))).ok()
+}
+
+/// A `.git` file's bytes without the run of `\n`s and `\r`s that ends them, the line ends git
+/// strips from one: a path can end in a space.
+fn line_of(bytes: &[u8]) -> &[u8] {
+    let end = bytes
+        .iter()
+        .rposition(|byte| !matches!(byte, b'\n' | b'\r'))
+        .map_or(0, |last| last + 1);
+    &bytes[..end]
+}
+
+/// Whether `path` holds the character git splits `GIT_CEILING_DIRECTORIES` at.
+fn holds_colon(path: &Path) -> bool {
+    path.as_os_str().as_encoded_bytes().contains(&b':')
 }
 
 /// Whether git's refusal says the path is in no repository: [`NOT_A_REPOSITORY`], or
@@ -457,24 +558,45 @@ fn read_track(upstream: Option<&str>, upstream_track: &str, push_track: &str) ->
     }
 }
 
-/// The commit at each path `git worktree list --porcelain` printed, for
+/// What `git worktree list --porcelain` printed of each path's `HEAD`, for
 /// [`GitPort::worktree_heads`].
 ///
-/// One stanza per registration: `worktree <path>` first, then `HEAD <id>` unless the entry is
-/// a bare repository, then lines this does not read. An id of all zeros is `None`. A path
-/// printed in more than one stanza keeps the commit of the last.
-fn listed_heads(stdout: &str) -> BTreeMap<String, Option<String>> {
+/// One stanza per registration, ended by a blank line: `worktree <path>` first, then
+/// `HEAD <id>` unless the entry is a bare repository, then `branch <ref>` or `detached` where
+/// git resolved `HEAD`, then lines this does not read. An id of all zeros is
+/// [`ListedHead::NoCommit`] with or without either line, since git 2.43.0 prints neither
+/// under it for a ref it could not read. Any other id under neither is
+/// [`ListedHead::Unresolved`]. A path printed in more than one stanza keeps the last.
+fn listed_heads(stdout: &str) -> BTreeMap<String, ListedHead> {
     let mut heads = BTreeMap::new();
-    let mut path = None;
-    for line in stdout.lines() {
-        if let Some(listed) = line.strip_prefix("worktree ") {
-            path = Some(listed);
-        } else if let (Some(listed), Some(id)) = (path, line.strip_prefix("HEAD ")) {
+    let mut stanza: Option<(&str, Option<&str>, bool)> = None;
+    let mut end = |stanza: Option<(&str, Option<&str>, bool)>| {
+        if let Some((path, Some(id), resolved)) = stanza {
             // All zeros, of whatever length the repository's hash has.
-            let commit = Some(id).filter(|id| id.bytes().any(|byte| byte != b'0'));
-            heads.insert(listed.to_string(), commit.map(str::to_string));
+            let head = if id.bytes().all(|byte| byte == b'0') {
+                ListedHead::NoCommit
+            } else if !resolved {
+                ListedHead::Unresolved
+            } else {
+                ListedHead::At(id.to_string())
+            };
+            heads.insert(path.to_string(), head);
+        }
+    };
+    for line in stdout.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            end(stanza.replace((path, None, false)));
+        } else if line.is_empty() {
+            end(stanza.take());
+        } else if let Some((_, id, resolved)) = &mut stanza {
+            if let Some(listed) = line.strip_prefix("HEAD ") {
+                *id = Some(listed);
+            } else if line == "detached" || line.starts_with("branch ") {
+                *resolved = true;
+            }
         }
     }
+    end(stanza);
     heads
 }
 
@@ -496,6 +618,7 @@ impl GitPort for GitCli {
         // query runs from the repository root, which would not be a usable identity.
         let Some(paths) = GitCli::run_answering(
             cwd,
+            Search::Upward,
             &[
                 "rev-parse",
                 "--path-format=absolute",
@@ -518,7 +641,7 @@ impl GitPort for GitCli {
         // HEAD makes it exit 1 without a word, which is "no branch".
         // swallows: any other failure to name the branch. The identity is what the caller
         // needs; the branch rides along, and no caller reads it to place a pane.
-        let branch = GitCli::command(cwd)
+        let branch = GitCli::command(cwd, Search::Upward)
             .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
             .output()
             .ok()
@@ -535,7 +658,7 @@ impl GitPort for GitCli {
 
     fn github_slug(&self, repo_root: &str) -> Result<Option<Slug>> {
         let args = ["remote", "get-url", "origin"];
-        let output = GitCli::output(repo_root, &args)?;
+        let output = GitCli::output(repo_root, Search::Here, &args)?;
         if output.status.success() {
             let url = String::from_utf8_lossy(&output.stdout);
             return Ok(github_slug_from_url(&url));
@@ -729,7 +852,7 @@ impl GitPort for GitCli {
 
     fn has_no_commit_yet(&self, checkout_path: &str) -> Result<bool> {
         let args = ["log", "-1", "--format=%H"];
-        let output = GitCli::output(checkout_path, &args)?;
+        let output = GitCli::output(checkout_path, Search::Here, &args)?;
         if output.status.success() {
             return Ok(false);
         }
@@ -741,7 +864,7 @@ impl GitPort for GitCli {
         bail!("{}", refusal(&args, &stderr));
     }
 
-    fn worktree_heads(&self, repo_root: &str) -> Result<BTreeMap<String, Option<String>>> {
+    fn worktree_heads(&self, repo_root: &str) -> Result<BTreeMap<String, ListedHead>> {
         let said = GitCli::run_in_repo(repo_root, &["worktree", "list", "--porcelain"])?;
         Ok(listed_heads(&said.stdout))
     }
@@ -764,9 +887,10 @@ impl GitPort for GitCli {
 mod tests {
     use super::{
         could_not_run, dropped_refs, github_slug_from_url, listed_heads, no_repository_here,
-        no_such_remote, parse_track, read_track, refusal, unread_paths, GitCli, Slug, GIT_LOCALE,
+        no_such_remote, parse_track, read_track, refusal, unread_paths, GitCli, Search, Slug,
+        GIT_LOCALE,
     };
-    use crate::port::Track;
+    use crate::port::{ListedHead, Track};
     use std::collections::BTreeMap;
     use std::num::NonZeroU32;
 
@@ -792,7 +916,10 @@ mod tests {
                     HEAD 000000000000000000000000000000000000000f\n\
                     detached\n\
                     \n";
-        let at = |path: &str, commit: Option<&str>| (path.to_string(), commit.map(Into::into));
+        let at = |path: &str, commit: Option<&str>| {
+            let head = commit.map_or(ListedHead::NoCommit, |id| ListedHead::At(id.into()));
+            (path.to_string(), head)
+        };
         assert_eq!(
             listed_heads(said),
             BTreeMap::from([
@@ -822,8 +949,47 @@ mod tests {
             listed_heads(said),
             BTreeMap::from([(
                 "/wt/m".to_string(),
-                Some("40853987f27a5bb1fa16e4d6b975ce7c32527604".to_string())
+                ListedHead::At("40853987f27a5bb1fa16e4d6b975ce7c32527604".to_string())
             )])
+        );
+    }
+
+    #[test]
+    fn a_non_null_id_under_neither_a_branch_nor_detached_is_unresolved() {
+        // A registration whose `HEAD` holds an id cut to twelve characters is listed at that
+        // id padded with zeros, under neither line (measured against git 2.55.0), so the id
+        // beside it is not one git resolved. The null id is no commit under neither line too,
+        // as git 2.43.0 prints it for a ref it could not read. Lines this does not read change
+        // nothing either way, and the last stanza ends with the output.
+        let said = "worktree /wt/cut\n\
+                    HEAD cce252a55edc0000000000000000000000000000\n\
+                    \n\
+                    worktree /wt/locked\n\
+                    HEAD 6c4e636e328bacff1a7844e967bb8de1cf701720\n\
+                    detached\n\
+                    locked\n\
+                    \n\
+                    worktree /wt/prunable\n\
+                    HEAD 40853987f27a5bb1fa16e4d6b975ce7c32527604\n\
+                    prunable gitdir file points to non-existent location\n\
+                    \n\
+                    worktree /wt/unread\n\
+                    HEAD 0000000000000000000000000000000000000000\n\
+                    \n\
+                    worktree /wt/last\n\
+                    HEAD 6c4e636e328bacff1a7844e967bb8de1cf701720\n";
+        assert_eq!(
+            listed_heads(said),
+            BTreeMap::from([
+                ("/wt/cut".to_string(), ListedHead::Unresolved),
+                (
+                    "/wt/locked".to_string(),
+                    ListedHead::At("6c4e636e328bacff1a7844e967bb8de1cf701720".to_string())
+                ),
+                ("/wt/prunable".to_string(), ListedHead::Unresolved),
+                ("/wt/unread".to_string(), ListedHead::NoCommit),
+                ("/wt/last".to_string(), ListedHead::Unresolved),
+            ])
         );
     }
 
@@ -975,13 +1141,70 @@ mod tests {
         // hands back, so it says nothing about whether a call uses the helper. The other two
         // thirds are `scripts/check-invariants.sh`, which counts the places a git is
         // started, and `tests/git_locale.rs`, which watches a real git obey.
-        let command = GitCli::command("/src/app");
+        let command = GitCli::command("/src/app", Search::Here);
         let locale: Vec<_> = command
             .get_envs()
             .filter(|(key, _)| *key == GIT_LOCALE.0)
             .map(|(_, value)| value.map(|v| v.to_string_lossy().into_owned()))
             .collect();
         assert_eq!(locale, vec![Some("C".to_string())]);
+    }
+
+    #[test]
+    fn a_search_kept_here_sets_the_ceiling_at_the_parent_of_the_real_path() {
+        // What keeps git from answering for the repository around one it could not take for
+        // a repository; `tests/git_adapter.rs` watches a real git stop there.
+        let ceiling = |dir: &str, search: Search| {
+            GitCli::command(dir, search)
+                .get_envs()
+                .filter(|(key, _)| *key == "GIT_CEILING_DIRECTORIES")
+                .map(|(_, value)| value.map(|v| v.to_string_lossy().into_owned()))
+                .collect::<Vec<_>>()
+        };
+        let around = tempfile::tempdir().unwrap();
+        let app = around.path().join("real").join("app");
+        std::fs::create_dir_all(&app).unwrap();
+        let link = around.path().join("link");
+        std::os::unix::fs::symlink(&app, &link).unwrap();
+        let real = std::fs::canonicalize(around.path().join("real")).unwrap();
+        let parent = vec![Some(real.to_string_lossy().into_owned())];
+        let app = app.to_str().unwrap();
+        assert_eq!(ceiling(app, Search::Here), parent);
+        assert_eq!(ceiling(&format!("{app}/"), Search::Here), parent);
+        assert_eq!(ceiling(link.to_str().unwrap(), Search::Here), parent);
+        assert_eq!(ceiling("/", Search::Here), vec![]);
+        assert_eq!(ceiling(&format!("{app}/gone"), Search::Here), vec![]);
+        assert_eq!(ceiling(app, Search::Upward), vec![]);
+        let under_colon = around.path().join("c:d").join("app");
+        std::fs::create_dir_all(&under_colon).unwrap();
+        assert_eq!(ceiling(under_colon.to_str().unwrap(), Search::Here), vec![]);
+    }
+
+    #[test]
+    fn git_is_asked_which_repository_it_answers_for_only_where_the_real_parent_holds_a_colon() {
+        // A subdirectory of a work tree, which git would answer for from the work tree's own
+        // git directory if asked. A `:` in the subdirectory's own name is not its parent's.
+        let around = tempfile::tempdir().unwrap();
+        for (parent, sub, asked) in [
+            ("plain", "sub", false),
+            ("c:d", "sub", true),
+            ("e", "s:b", false),
+        ] {
+            let repo = around.path().join(parent).join("repo");
+            let sub = repo.join(sub);
+            std::fs::create_dir_all(&sub).unwrap();
+            let init = GitCli::command(repo.to_str().unwrap(), Search::Upward)
+                .args(["init", "--quiet"])
+                .status()
+                .unwrap();
+            assert!(init.success());
+            assert_eq!(
+                GitCli::answers_for_another(sub.to_str().unwrap()).unwrap(),
+                asked,
+                "{}",
+                sub.display()
+            );
+        }
     }
 
     #[test]
