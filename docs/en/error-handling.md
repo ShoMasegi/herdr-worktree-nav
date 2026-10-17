@@ -46,8 +46,7 @@ never arrived, an act the picker cannot proceed without has failed under it. The
 screen to say it on, because there is no screen.
 
 **What it gets:** the failure travels up to `main`, which prints it on stderr and exits with
-`ExitCode::FAILURE`. herdr keeps that for `herdr plugin log list`, which is where the
-troubleshooting page sends people.
+`ExitCode::FAILURE`.
 
 **The rule:** this route is for a failure that leaves nothing to draw. A picker that could
 still show a list and one fewer marker never takes it — that is kind 3.
