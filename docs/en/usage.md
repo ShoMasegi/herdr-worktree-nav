@@ -787,8 +787,7 @@ that said it:
 ```
 
 Nothing is left half-done: the failing step is the one that stopped, and the steps before it
-either did not touch anything (the fetch) or completed. The same message also goes to
-`herdr plugin log list`, in full.
+either did not touch anything (the fetch) or completed.
 
 ## Diagnostics
 

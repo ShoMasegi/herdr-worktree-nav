@@ -8,7 +8,7 @@
 herdr plugin log list --plugin herdr-worktree-nav --limit 5
 ```
 
-herdr は実行したプラグインコマンドを、終了コードと stderr つきで記録しています。ピッカーが出てこない場合、ほぼ必ずここに理由が残っています。
+herdr はプラグインのアクションを実行するたびに、終了コードと stderr つきでここに記録しています。
 
 ```sh
 herdr-worktree-nav dump
@@ -163,7 +163,7 @@ herdr 側は CI ではテストできません（サーバーが無いため）�
 - [ ] Branches がコマンドモードで開く。`j`/`k` で移動し、`f`/`i`/`Shift-I`/`q` がキーヒントどおりに効き、`/` を押して初めて英字が検索フィールドに入る
 - [ ] `Ctrl-F` で fetch できる。`fetching origin…` が出て、`ls-remote` しか知らなかったブランチに日付と件名が付き、リモートで削除済みのブランチが一覧から消える
 - [ ] その処理中、ピッカーが画面に残り、今の段階名を表示し、スピナーが回る。`Ctrl-C` は fetch 中は効き、`working…` 表示中は効かない
-- [ ] 失敗した段階で画面が保持され、git または herdr の言い分がそのまま出て、`Enter` か `Esc` で閉じる。同じメッセージが `herdr plugin log list` にも残る。リモートに到達できないことが「not a git repository」と報告されないこと
+- [ ] 失敗した段階で画面が保持され、git または herdr の言い分がそのまま出て、`Enter` か `Esc` で閉じる。リモートに到達できないことが「not a git repository」と報告されないこと
 - [ ] すでに pane で開いているブランチは、二重にチェックアウトせずジャンプする
 - [ ] 4 つの行き先すべてが動く: ここに split / 既存 tab / 既存 space / 新規 space
 - [ ] 作成して移動した後、`herdr workspace list` に余分な workspace が残っておらず、checkout はディスク上に残っている
