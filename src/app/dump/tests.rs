@@ -663,6 +663,37 @@ fn a_branch_git_lists_at_another_checkout_is_not_this_checkout_s_ref() {
 }
 
 #[test]
+fn a_checkout_herdr_and_git_name_differently_says_so_rather_than_print_the_other_upstream() {
+    // Issues #36 and #51. herdr's `worktree.branch` was read when the tree was built and
+    // this page's walk afterwards, so a `git switch` between them leaves one ref at the
+    // path that is not the branch herdr named. Its upstream is that other branch's.
+    let tree = one_repo(
+        Refs::Read,
+        vec![nothing_to_report("feat/login", "/wt/shared")],
+    );
+    let refs = RefsByRepo::from([(
+        "/src/app".to_string(),
+        Ok(vec![local(
+            "chore/deps",
+            "/wt/shared",
+            Some("origin/chore/deps"),
+        )]),
+    )]);
+    let page = page(&tree, &refs);
+    assert!(
+        page.contains(
+            "      git says chore/deps is out here, not feat/login  track nothing reported  \
+             working tree"
+        ),
+        "got:\n{page}"
+    );
+    assert!(
+        !page.contains("origin/chore/deps"),
+        "nor the other branch's upstream anywhere:\n{page}"
+    );
+}
+
+#[test]
 fn a_checkout_git_lists_no_ref_at_is_not_called_a_branch_nobody_pushed() {
     // The words `upstream none` are what a never-pushed branch reads as, and this is
     // not that: it is git and herdr disagreeing, which is the thing to go and look at.

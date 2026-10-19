@@ -50,7 +50,10 @@ commit yet, git and herdr disagree about what is checked out where, or git could
 the branch — and where git, asked whether the branch has no commit yet, refused to say,
 its words are on the line under the row, and where it found a commit the line under the
 row says `git found a commit here`. The prompt line names those two, refused and found, as
-well. A
+well. A checkout where git lists one ref that is not the branch herdr names — a
+`git switch` there after herdr's record was read — says
+`git says <other> is out here, not <branch>` and leaves out the other branch's upstream,
+which would read as this one's. A
 checkout git names more than one ref at reads `more than one ref at this checkout:` and
 then each of them as `<branch> → <upstream> <where it stands>`; more than one of the repository's
 worktree registrations names that path, and which of them is stale is not something this
