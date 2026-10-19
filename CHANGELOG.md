@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`dump` no longer prints another branch's upstream as a row's own.** Where git lists one
+  ref at a checkout and it is not the branch herdr names — a `git switch` after herdr's
+  record was read — the row printed that ref's upstream under herdr's branch name. It now
+  reads `git says <other> is out here, not <branch>`.
+
 ## [0.2.0] - 2026-10-18
 
 ### Added

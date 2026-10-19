@@ -251,7 +251,8 @@ pub fn report(
 /// own walk could not get, beside the marker the picker is drawing or `not known`. When git
 /// lists no ref at this checkout — a branch with no commit yet, git's list and herdr's
 /// disagreeing about what is out where, or a ref git could not read — it says so rather
-/// than `upstream none`; `report` prints under the row what git said when asked: its
+/// than `upstream none`, and when the one ref git lists there is another branch it names
+/// that branch rather than print its upstream; `report` prints under the row what git said when asked: its
 /// refusal, or `git found a commit here` for the disagreement. And when
 /// git names more than one it names
 /// each, because `domain::tree::tracks` declines to choose between them. Issue #48 is the
@@ -280,6 +281,16 @@ fn branch_words(repo: &RepoNode, worktree: &WorktreeNode, refs: &RefsByRepo) -> 
     ) {
         (Count::None, Count::None, _) => {
             format!("no ref at this checkout for {name}  track {found}")
+        }
+        // herdr's record and git's name different branches out here, and the ref's upstream
+        // is the other branch's: printed after herdr's name it would read as this branch's
+        // own (issues #36, #51). Matched by path all the same, for the reason `refs_at`
+        // gives; the name is only compared.
+        (Count::One, Count::One, [only]) if only.name != *name => {
+            format!(
+                "git says {} is out here, not {name}  track {found}",
+                only.name
+            )
         }
         (Count::One, Count::One, [only]) => {
             let upstream = only.upstream.as_deref();
