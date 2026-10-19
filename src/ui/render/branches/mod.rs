@@ -242,6 +242,49 @@ mod tests {
     }
 
     #[test]
+    fn a_list_git_left_a_local_ref_out_of_says_so_and_so_does_the_branch_it_may_be() {
+        // Issue #44. `Enter` on a branch the walk dropped fetches it from the remote rather
+        // than opening the ref on disk, so the list says it is short, and a branch only the
+        // remote has says it may be the one left out.
+        let mut state = branches_state();
+        let line = |state: &crate::ui::branches::BranchesState| -> String {
+            branches_screen(state, 140, 12)
+                .lines()
+                .next()
+                .unwrap()
+                .to_string()
+        };
+        let remote_only = |state: &mut crate::ui::branches::BranchesState| {
+            for _ in 0..state.rows().len() {
+                if state.detail().starts_with("feat/search") {
+                    return state.detail();
+                }
+                state.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+            }
+            panic!("feat/search is listed");
+        };
+        assert!(remote_only(&mut state).contains("on the remote, never fetched"));
+        assert!(!line(&state).contains("not listed"));
+
+        state.set_data(BranchData {
+            dropped: Some("warning: ignoring broken ref refs/heads/feat/search".into()),
+            ..branch_data()
+        });
+        assert!(
+            line(&state).contains(
+                "a local ref is not listed: warning: ignoring broken ref refs/heads/feat/search"
+            ),
+            "{}",
+            line(&state)
+        );
+        assert!(
+            remote_only(&mut state).contains(crate::ui::words::REMOTE_ONLY_OR_DROPPED),
+            "{}",
+            state.detail()
+        );
+    }
+
+    #[test]
     fn the_branch_search_field_hides_its_placeholder_too() {
         let mut state = branches_state();
         state.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));

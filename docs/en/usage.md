@@ -697,6 +697,12 @@ plugin writes nothing to disk.
 | `↓ remote` | on the remote, never fetched | fetches it, then cuts from `origin/<branch>` |
 | `+ create` | nothing yet — you typed it | creates it from `HEAD`, then cuts |
 
+A local ref git would not read is left out of the list, so its branch reads as `↓ remote`
+where the remote has it. The search line then says so in git's words —
+`a local ref is not listed: warning: ignoring broken ref refs/heads/feat/login` — and the
+line under the list says of each `↓ remote` branch that git would not read every local
+ref, since `Enter` would fetch the remote's copy rather than open the one on disk.
+
 A branch can also be `gone`, which is not a state of its own but a note beside one:
 `checked out gone`, `local gone`. It means git cannot find the ref the branch tracks —
 usually a merged pull request whose head GitHub deleted, noticed by a pruning fetch. The

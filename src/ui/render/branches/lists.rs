@@ -35,7 +35,12 @@ pub(super) fn branch_search_line(
                 .add_modifier(Modifier::BOLD),
         ));
     } else if state.query().is_empty() {
-        if !state.is_filtering() {
+        // A list short by a ref git left out displaces the placeholder, as a condition does
+        // in the panes view: `Enter` on the branch it left out would fetch it from the
+        // remote rather than open what is on disk.
+        if let Some(dropped) = state.dropped().filter(|_| !state.is_filtering()) {
+            spans.push(Span::styled(words::refs_dropped(dropped), theme.dim()));
+        } else if !state.is_filtering() {
             spans.push(Span::styled("search branches", theme.dim()));
         }
     } else {

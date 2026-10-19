@@ -26,7 +26,7 @@ use crate::domain::notice::{self, Condition};
 use crate::domain::progress::Stage;
 use crate::domain::resolve::{self, BranchPlan};
 use crate::port::{
-    GhPort, GitPort, GitRef, HerdrPort, Pane, PullRequest, Snapshot, WorktreeCreate, WorktreeOpen,
+    GhPort, GitPort, HerdrPort, Pane, PullRequest, RefWalk, Snapshot, WorktreeCreate, WorktreeOpen,
 };
 use crate::ui::branches::{self, BranchAction, BranchData, BranchesState, Choice};
 use crate::ui::render;
@@ -311,13 +311,14 @@ pub fn run(
 
 /// One repository as the picker draws it: the local refs it just read, and whatever it
 /// remembers about the remote.
-fn shown(local_refs: Vec<GitRef>, remote: listing::Remote) -> BranchData {
+fn shown(local_refs: RefWalk, remote: listing::Remote) -> BranchData {
     BranchData {
-        local_refs,
+        local_refs: local_refs.refs,
         remote_heads: remote.heads,
         pull_requests: remote.pull_requests,
         loading: remote.loading,
         fetching: false,
+        dropped: local_refs.dropped,
     }
 }
 
@@ -351,20 +352,23 @@ fn annotations(git: &dyn GitPort, gh: &dyn GhPort, repo_root: &str) -> Vec<PullR
     }
 }
 
-/// The branches to list, including when git dropped a ref it could not read.
+/// The branches to list, including when git dropped a ref it could not read, with git's
+/// words for what it dropped.
 ///
 /// The refs git did list are real whatever it left out, and this list is read as a list of
 /// branches: one missing from it is one that is missing. An empty list says instead that
 /// every branch here exists only on the remote, which sends `Enter` off to fetch a branch
 /// git already has locally. The panes view makes the opposite choice for the opposite
-/// reason, and [`crate::port::RefWalk`] holds both.
+/// reason, and [`crate::port::RefWalk`] holds both. What this view loses by listing them is
+/// the branch git left out, which reads as one only the remote has, so git's words go up
+/// with the list and the screen says it is short (issue #44).
 ///
 /// A walk git refused outright is still nothing: no branch is worse than a wrong one here
 /// too, and the repository step already lists the repository.
-fn listed(git: &dyn GitPort, repo_root: &str) -> Vec<GitRef> {
+// swallows: a walk git refused outright, for the reason above.
+fn listed(git: &dyn GitPort, repo_root: &str) -> RefWalk {
     git.local_refs(repo_root)
-        .map(|walk| walk.refs)
-        .unwrap_or_default()
+        .unwrap_or_else(|_| RefWalk::of(Vec::new()))
 }
 
 /// Everything `run` decides before the first frame: which repositories there are, where the
@@ -620,7 +624,7 @@ mod tests {
     use crate::app::fakes::{fake_gh, fake_git, FakeGh, FakeGit};
     use std::sync::Mutex;
 
-    use crate::port::{RefWalk, Slug};
+    use crate::port::{GitRef, Slug};
 
     /// A git that knows one repository by name, or refuses to say.
     struct Origin(std::result::Result<Option<Slug>, ()>);
@@ -683,17 +687,27 @@ mod tests {
             refs: vec![a_ref("feat/login")],
             dropped: Some("warning: ignoring broken ref refs/heads/x".to_string()),
         }));
+        let walk = listed(&dropped, "/src/app");
         assert_eq!(
-            listed(&dropped, "/src/app")
+            walk.refs
                 .iter()
                 .map(|git_ref| git_ref.name.as_str())
                 .collect::<Vec<_>>(),
             vec!["feat/login"]
         );
+        // And git's words with it, so the screen can say the list is short (issue #44).
+        let data = shown(walk, listing::Remote::default());
+        assert_eq!(
+            data.dropped.as_deref(),
+            Some("warning: ignoring broken ref refs/heads/x")
+        );
 
         // A walk git refused is a different thing: nothing was read, so there is nothing
-        // to list.
-        assert!(listed(&Walked(Err(())), "/src/app").is_empty());
+        // to list, and nothing was dropped from a list.
+        assert_eq!(
+            listed(&Walked(Err(())), "/src/app"),
+            RefWalk::of(Vec::new())
+        );
     }
 
     #[test]

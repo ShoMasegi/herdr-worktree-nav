@@ -51,6 +51,11 @@ impl BranchesState {
                 parts.push(checkout_path.clone());
             }
             BranchState::LocalRef => parts.push("local branch, no worktree yet".to_string()),
+            // A branch whose local ref git would not read is listed as one it never saw, so
+            // here that is only what the list says, and `Enter` would fetch it.
+            BranchState::RemoteOnly if self.dropped().is_some() => {
+                parts.push(words::REMOTE_ONLY_OR_DROPPED.to_string());
+            }
             BranchState::RemoteOnly => {
                 parts.push("on the remote, never fetched".to_string());
             }
