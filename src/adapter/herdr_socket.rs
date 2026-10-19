@@ -25,6 +25,38 @@ use crate::port::*;
 /// short enough that a wedged server surfaces as an error rather than a hung picker.
 const TIMEOUT: Duration = Duration::from_secs(30);
 
+/// herdr's answer to a request it refused: the error object's two fields, kept apart.
+///
+/// Kept as a value rather than flattened into a sentence, so that a caller deciding on the
+/// refusal reads its `code` with [`refused_with`]: `message` is free text the server writes,
+/// and a sentence one `.with_context(..)` away from changing is not something to match on
+/// (issue #19).
+#[derive(Debug)]
+struct HerdrError {
+    method: String,
+    code: String,
+    message: String,
+}
+
+impl std::fmt::Display for HerdrError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "herdr rejected {}: {} ({})",
+            self.method, self.message, self.code
+        )
+    }
+}
+
+impl std::error::Error for HerdrError {}
+
+/// Whether `error` is herdr refusing with `code`, through any context added since.
+fn refused_with(error: &anyhow::Error, code: &str) -> bool {
+    error
+        .downcast_ref::<HerdrError>()
+        .is_some_and(|refused| refused.code == code)
+}
+
 pub struct SocketHerdr {
     socket_path: PathBuf,
     /// Atomic rather than a `Cell` so the picker can call herdr from its worker thread
@@ -91,7 +123,12 @@ impl SocketHerdr {
                 .get("message")
                 .and_then(Value::as_str)
                 .unwrap_or("no message");
-            bail!("herdr rejected {method}: {message} ({code})");
+            return Err(HerdrError {
+                method: method.to_string(),
+                code: code.to_string(),
+                message: message.to_string(),
+            }
+            .into());
         }
 
         response
@@ -182,7 +219,7 @@ impl HerdrPort for SocketHerdr {
             // happens on its own — a pane whose command finishes closes itself — and
             // stopping a removal for it would kill the panes before it and then abandon the
             // checkout because one of them had already gone.
-            Err(error) if error.to_string().contains("pane_not_found") => Ok(()),
+            Err(error) if refused_with(&error, "pane_not_found") => Ok(()),
             Err(error) => Err(error),
         }
     }
@@ -278,5 +315,51 @@ impl HerdrPort for SocketHerdr {
             }),
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn refusal(code: &str, message: &str) -> anyhow::Error {
+        HerdrError {
+            method: "pane.close".to_string(),
+            code: code.to_string(),
+            message: message.to_string(),
+        }
+        .into()
+    }
+
+    #[test]
+    fn a_refusal_is_read_by_its_code_and_never_by_its_words() {
+        assert!(refused_with(
+            &refusal("pane_not_found", "no pane w1:p9"),
+            "pane_not_found"
+        ));
+        // Issue #19: a message is the server's free text, and one that names the code
+        // is not a refusal with it.
+        assert!(!refused_with(
+            &refusal(
+                "invalid_params",
+                "pane_id must name a pane; expected one of the errors pane_not_found, …"
+            ),
+            "pane_not_found"
+        ));
+        assert!(!refused_with(
+            &anyhow!("herdr closed the connection without answering pane.close"),
+            "pane_not_found"
+        ));
+    }
+
+    #[test]
+    fn context_added_at_the_call_site_does_not_change_what_a_refusal_is() {
+        let error = refusal("pane_not_found", "no pane w1:p9").context("closing w1:p9");
+        assert!(refused_with(&error, "pane_not_found"));
+        assert_eq!(
+            format!("{error:#}"),
+            "closing w1:p9: herdr rejected pane.close: no pane w1:p9 (pane_not_found)",
+            "and the sentence a reader gets is the one it always was"
+        );
     }
 }
