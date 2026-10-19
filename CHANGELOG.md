@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **git's refusal reads as git's words under a trace variable.** With `GIT_TRACE`,
+  `GIT_TRACE2` or another of git's trace variables exported where herdr was started, a
+  refusal on the prompt line began with a timestamped trace line from git's internals. No
+  git the plugin starts inherits those variables any more.
+
 ## [0.2.0] - 2026-10-18
 
 ### Added
