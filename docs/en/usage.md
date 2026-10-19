@@ -51,7 +51,9 @@ bottom. They are still panes, and a picker that hides some of them makes you won
 
 Worktrees without panes are visible by default. Press `p` to show or hide them. The plugin
 configuration can change the initial value. A sweep always shows them because they are its
-main cleanup candidates.
+main cleanup candidates. While they are hidden the prompt line says how many, as
+`1 checkout hidden`, where a state filter's chip goes; a list with nothing else in it reads
+`no panes open — 4 checkouts hidden (p)`, so it does not look like an empty session.
 
 The cursor stops only where there is somewhere to go: a pane, and a checkout with nothing
 running in it. Repository headings and checkouts that already have panes are stepped over —

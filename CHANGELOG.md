@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A list `p` has shortened says so.** With worktrees without panes hidden, the prompt line
+  says how many, as `1 checkout hidden`, where a state filter's chip goes, and a list left
+  with nothing in it reads `no panes open — 4 checkouts hidden (p)` rather than
+  `no panes open`, which is what an empty session says.
+- **`p` is in the key hint at a popup's ordinary width.** It was named only from 121 columns.
+  The hint now says `n new` and `p no-pane`, and gives up `r reload` and `shift+d remove`
+  before `p`, which it keeps from 85 columns.
+
 ## [0.2.0] - 2026-10-18
 
 ### Added

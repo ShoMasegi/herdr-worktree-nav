@@ -341,6 +341,11 @@ impl PanesState {
         !self.options.hide_worktrees_without_panes
     }
 
+    /// How many checkouts the list leaves out for holding no pane.
+    pub fn hidden_checkouts(&self) -> usize {
+        rows::hidden_checkouts(&self.tree, &self.options)
+    }
+
     /// Set visibility from the plugin configuration or the runtime `p` toggle.
     pub fn set_show_worktrees_without_panes(&mut self, show: bool) {
         if self.shows_worktrees_without_panes() == show {

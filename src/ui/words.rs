@@ -117,6 +117,24 @@ pub fn stage(stage: &Stage) -> String {
     }
 }
 
+/// The checkouts the panes view is leaving out for holding no pane, as the prompt line's
+/// chip says it.
+pub fn hidden_checkouts(count: usize) -> String {
+    format!("{count} {} hidden", plural(count, "checkout"))
+}
+
+/// What the panes view says when it lists nothing: `hidden` is
+/// [`PanesState::hidden_checkouts`](crate::ui::panes::PanesState::hidden_checkouts).
+///
+/// An empty session and one whose checkouts are all hidden by `p` read differently, because
+/// the second has something to show and a key that shows it.
+pub fn no_panes_open(hidden: usize) -> String {
+    match hidden {
+        0 => "no panes open".to_string(),
+        hidden => format!("no panes open \u{2014} {} (p)", hidden_checkouts(hidden)),
+    }
+}
+
 /// What the branch list is ordered by.
 pub fn sort_key(key: SortKey) -> &'static str {
     match key {
