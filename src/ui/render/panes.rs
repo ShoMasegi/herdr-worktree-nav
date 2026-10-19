@@ -667,6 +667,7 @@ mod tests {
     use crate::adapter::plugin_config;
     use crate::domain::chrome::Chrome;
     use crate::domain::model::{Branch, CheckoutPath, Position, WorkingTree};
+    use crate::domain::notice::SweepTrouble;
     use crate::ui::render::fixtures::*;
     use ratatui::backend::TestBackend;
     use ratatui::crossterm::event::KeyCode;
@@ -1068,7 +1069,7 @@ mod tests {
             .iter()
             .map(|repo| (RepoRoot::of(repo), Some(answered.clone())))
             .collect();
-        state.set_settled(asked, None, false);
+        state.set_settled(asked, Vec::new(), false);
         insta::assert_snapshot!(screen(&state, 46, 16));
     }
 
@@ -1089,7 +1090,7 @@ mod tests {
             .iter()
             .map(|repo| (RepoRoot::of(repo), Some(answered.clone())))
             .collect();
-        state.set_settled(asked, None, false);
+        state.set_settled(asked, Vec::new(), false);
         for width in [46u16, 53, 60, 92] {
             let drawn = screen(&state, width, 16);
             let row = drawn
@@ -1123,7 +1124,7 @@ mod tests {
             .iter()
             .map(|repo| (RepoRoot::of(repo), Some(answered.clone())))
             .collect();
-        marked.set_settled(asked, None, false);
+        marked.set_settled(asked, Vec::new(), false);
         let mut removing = PanesState::new(tree(), None);
         removing.set_removing(vec![CheckoutPath::for_test("/wt/fix-crash")]);
 
@@ -1181,7 +1182,7 @@ mod tests {
             .iter()
             .map(|repo| (RepoRoot::of(repo), Some(answered.clone())))
             .collect();
-        state.set_settled(asked, None, false);
+        state.set_settled(asked, Vec::new(), false);
 
         for width in [34u16, 35, 38, 39] {
             let drawn = screen(&state, width, 16);
@@ -1202,7 +1203,7 @@ mod tests {
         // The rows show what git alone decided; without the spinner that reads as a
         // finished answer.
         let mut state = swept();
-        state.set_settled(BTreeMap::new(), None, true);
+        state.set_settled(BTreeMap::new(), Vec::new(), true);
         insta::assert_snapshot!(screen(&state, 92, 20));
     }
 
@@ -1218,7 +1219,10 @@ mod tests {
             .collect();
         state.set_settled(
             asked,
-            Some("gh could not be run: no such file or directory".to_string()),
+            vec![SweepTrouble {
+                repo: "me/app".into(),
+                words: "gh could not be run: no such file or directory".into(),
+            }],
             false,
         );
         insta::assert_snapshot!(screen(&state, 92, 20));
@@ -1235,7 +1239,14 @@ mod tests {
             .iter()
             .map(|repo| (RepoRoot::of(repo), None))
             .collect();
-        state.set_settled(asked, Some("gh could not be run".to_string()), false);
+        state.set_settled(
+            asked,
+            vec![SweepTrouble {
+                repo: "me/app".into(),
+                words: "gh could not be run".into(),
+            }],
+            false,
+        );
         for _ in 0..20 {
             if label_under_cursor(&state) == "chore/deps" {
                 break;
@@ -1319,7 +1330,7 @@ mod tests {
             .iter()
             .map(|repo| (RepoRoot::of(repo), Some(answered.clone())))
             .collect();
-        state.set_settled(asked, None, false);
+        state.set_settled(asked, Vec::new(), false);
         insta::assert_snapshot!(screen(&state, 92, 20));
     }
 

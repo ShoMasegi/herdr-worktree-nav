@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::domain::model::{CheckoutPath, RepoKey};
-use crate::domain::notice::{self, Condition};
+use crate::domain::notice::{self, Condition, SweepTrouble};
 use crate::domain::rows::RowRef;
 use crate::domain::sweep::{self, Mark, RepoRoot};
 use crate::port::SettledPullRequests;
@@ -51,7 +51,7 @@ impl PanesState {
     pub fn set_settled(
         &mut self,
         settled: BTreeMap<RepoRoot, Option<SettledPullRequests>>,
-        trouble: Option<String>,
+        trouble: Vec<SweepTrouble>,
         waiting: bool,
     ) {
         let Some(sweeping) = self.sweep.as_mut() else {
@@ -71,9 +71,11 @@ impl PanesState {
         self.relist();
     }
 
-    /// What went wrong asking `gh`, for the prompt line.
-    pub fn sweep_trouble(&self) -> Option<&str> {
-        self.sweep.as_ref()?.trouble.as_deref()
+    /// What went wrong asking `gh`, one entry per repository.
+    pub fn sweep_trouble(&self) -> &[SweepTrouble] {
+        self.sweep
+            .as_ref()
+            .map_or(&[], |sweeping| sweeping.trouble.as_slice())
     }
 
     /// Whether a sweep has been entered since this was last asked. True once per entry.
@@ -217,7 +219,7 @@ impl PanesState {
                     let unplaced = lost
                         .iter()
                         .any(|key| !is_unlisted(key))
-                        .then(|| notice::conditions(&self.tree, None, None))
+                        .then(|| notice::conditions(&self.tree, None, &[]))
                         .into_iter()
                         .flatten()
                         .filter(|condition| matches!(condition, Condition::Unplaced { .. }));

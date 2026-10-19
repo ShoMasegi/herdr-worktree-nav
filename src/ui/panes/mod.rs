@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::domain::model::{CheckoutPath, RepoKey, Tree, WorkingTree};
-use crate::domain::notice::{self, Condition};
+use crate::domain::notice::{self, Condition, SweepTrouble};
 use crate::domain::removal::{Removal, SweepRemoval};
 use crate::domain::rows::{self, DisplayLine, Row, RowRef, StateFilter, ViewOptions};
 use crate::domain::sweep::{Changes, RepoRoot};
@@ -132,9 +132,9 @@ enum Anchor {
 struct Sweeping {
     changes: Changes,
     settled: BTreeMap<RepoRoot, Option<SettledPullRequests>>,
-    /// What went wrong asking `gh`, for the prompt line. Names the repository and says why;
+    /// What went wrong asking `gh`, one entry per repository, each naming it and saying why;
     /// the rows say which checkouts it cost.
-    trouble: Option<String>,
+    trouble: Vec<SweepTrouble>,
     /// Whether `gh` is still being waited on. Its own flag rather than the picker's
     /// `waiting`: the two are waited for at different times and say different sentences.
     waiting: bool,
@@ -623,10 +623,13 @@ mod tests {
         state.handle_key(key(KeyCode::Char('S')));
         state.set_settled(
             BTreeMap::from([(RepoRoot::of(&state.tree.repos[0]), None)]),
-            Some("me/app: gh could not be run".to_string()),
+            vec![SweepTrouble {
+                repo: "me/app".into(),
+                words: "gh could not be run".into(),
+            }],
             false,
         );
-        assert_eq!(state.sweep_trouble(), Some("me/app: gh could not be run"));
+        assert_eq!(state.sweep_trouble().len(), 1);
         assert_eq!(
             state.trouble().as_deref(),
             Some("me/app: refs unreadable: fatal: bad ref (+1 more)")

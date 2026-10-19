@@ -13,7 +13,7 @@
 use crate::domain::dest::{Destination, Landing, SpaceName, TabName};
 use crate::domain::model::WorkingTree;
 use crate::domain::model::{Position, Tree};
-use crate::domain::notice::Condition;
+use crate::domain::notice::{Condition, SweepTrouble};
 use crate::domain::order::{Order, SortKey};
 use crate::domain::preview::Refusal;
 use crate::domain::progress::Stage;
@@ -155,7 +155,7 @@ pub fn condition(condition: &Condition) -> String {
             checkouts.join(", ")
         ),
         Condition::RefsDisagree { repo, checkout } => format!("{repo}: refs disagree: {checkout}"),
-        Condition::SweepTrouble(words) => words.clone(),
+        Condition::SweepTrouble(SweepTrouble { repo, words }) => format!("{repo}: {words}"),
     }
 }
 
@@ -691,11 +691,12 @@ mod tests {
              about it: the words are this side's and name every checkout"
         );
         assert_eq!(
-            condition(&Condition::SweepTrouble(
-                "me/app: gh could not be run".into()
-            )),
+            condition(&Condition::SweepTrouble(SweepTrouble {
+                repo: "me/app".into(),
+                words: "gh could not be run".into(),
+            })),
             "me/app: gh could not be run",
-            "what gh said already names its repository"
+            "named by its repository, as git's refusals are"
         );
     }
 
@@ -715,7 +716,10 @@ mod tests {
                 repo: "me/docs".into(),
                 words: "fatal: index file corrupt".into(),
             },
-            Condition::SweepTrouble("me/app: gh could not be run".into()),
+            Condition::SweepTrouble(SweepTrouble {
+                repo: "me/app".into(),
+                words: "gh could not be run".into(),
+            }),
         ];
         assert_eq!(
             conditions_line(&conditions).as_deref(),

@@ -473,7 +473,7 @@ fn ref_missing_words(
         ..Default::default()
     };
     tree.trouble.ref_missing = missing;
-    let conditions: Vec<Condition> = notice::conditions(&tree, None, None)
+    let conditions: Vec<Condition> = notice::conditions(&tree, None, &[])
         .into_iter()
         .filter(|condition| {
             matches!(

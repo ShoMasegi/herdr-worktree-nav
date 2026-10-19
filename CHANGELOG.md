@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`!` lists every repository `gh` could not answer for.** A sweep over several such
+  repositories put one sentence for all of them on the prompt line, with a count of the
+  rest, and `!` showed the same sentence, so the other repositories' reasons were on the
+  screen nowhere. Each now has a sentence of its own in the panel, and the prompt line
+  names the first and counts the rest as it does for anything else that is wrong.
+
 ## [0.2.0] - 2026-10-18
 
 ### Added

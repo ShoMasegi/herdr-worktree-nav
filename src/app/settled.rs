@@ -19,6 +19,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 
 use crate::domain::model::Tree;
+use crate::domain::notice::SweepTrouble;
 use crate::domain::sweep::RepoRoot;
 use crate::port::{GhPort, GitPort, SettledPullRequests};
 
@@ -225,40 +226,38 @@ impl Settled {
             .any(|repo| matches!(self.answers.get(&repo.repo_root), Some(Answer::Asking)))
     }
 
-    /// What went wrong, for the prompt line, or `None` when nothing did.
+    /// What went wrong, one entry per repository, or nothing when nothing did.
     ///
-    /// One sentence however many repositories are in trouble, because this ends up on one
-    /// line — with a count of the rest, so that one repository's trouble does not read as
-    /// the whole of it. It names its repository, because the rows cannot be relied on to: a
-    /// repository whose checkouts are all primary, running or `gone` never reaches
-    /// `PR unknown`.
+    /// One entry each, so the `!` panel can say every repository's reason in full; the
+    /// prompt line names the first and counts the rest, as it does for any condition. Each
+    /// names its repository, because the rows cannot be relied on to: a repository whose
+    /// checkouts are all primary, running or `gone` never reaches `PR unknown`.
     ///
-    /// A refusal is named ahead of a missing remote. The second is a fact about the
-    /// repository that the user can do nothing about and that the rows already say; the
-    /// first is the one that a login or a network fixes.
+    /// Refusals come ahead of missing remotes, so the prompt line names a refusal when there
+    /// is one. A missing remote is a fact about the repository that the user can do nothing
+    /// about and that the rows already say; a refusal is the one that a login or a network
+    /// fixes.
     ///
-    /// Within a kind, the repository named is the first in the tree — the order the screen
-    /// lists them in, which is the same on every frame; walking the map gives path order
-    /// instead. Read from the tree for the reason [`answers`](Self::answers) is: a
+    /// Within a kind, repositories come in the order the tree lists them — the order the
+    /// screen lists them in, which is the same on every frame; walking the map gives path
+    /// order instead. Read from the tree for the reason [`answers`](Self::answers) is: a
     /// repository that has left the list leaves the prompt line with it.
-    pub fn trouble(&self, tree: &Tree) -> Option<String> {
-        let mut refused = None;
-        let mut unaskable = None;
-        let mut in_trouble = 0;
+    pub fn trouble(&self, tree: &Tree) -> Vec<SweepTrouble> {
+        let mut refused = Vec::new();
+        let mut unaskable = Vec::new();
         for repo in &tree.repos {
-            let (slot, why) = match self.answers.get(&repo.repo_root) {
+            let (kind, why) = match self.answers.get(&repo.repo_root) {
                 Some(Answer::Refused(why)) => (&mut refused, why),
                 Some(Answer::Unaskable(why)) => (&mut unaskable, why),
                 Some(Answer::Asking) | Some(Answer::Answered(_)) | None => continue,
             };
-            in_trouble += 1;
-            slot.get_or_insert_with(|| format!("{}: {why}", repo.display_name));
+            kind.push(SweepTrouble {
+                repo: repo.display_name.clone(),
+                words: why.clone(),
+            });
         }
-        let first = refused.or(unaskable)?;
-        Some(match in_trouble {
-            1 => first,
-            more => format!("{first} (+{} more)", more - 1),
-        })
+        refused.extend(unaskable);
+        refused
     }
 }
 

@@ -963,7 +963,7 @@ fn what_gh_said_reaches_the_rows_and_what_went_wrong_reaches_the_prompt() {
     settle(&mut state, &mut pending);
 
     assert_eq!(
-        state.sweep_trouble(),
+        crate::ui::words::conditions_line(&state.conditions()).as_deref(),
         Some("me/app: gh refused the question this asked: no auth"),
         "the rows can say a checkout could not be judged; only this says which and why"
     );
@@ -1041,7 +1041,7 @@ fn entering_a_sweep_again_asks_gh_again_where_it_refused() {
     press(&mut state, 'S');
     settle(&mut state, &mut pending);
     assert_eq!(
-        state.sweep_trouble(),
+        crate::ui::words::conditions_line(&state.conditions()).as_deref(),
         Some("me/app: gh refused the question this asked: could not connect")
     );
 
@@ -1050,7 +1050,7 @@ fn entering_a_sweep_again_asks_gh_again_where_it_refused() {
     settle(&mut state, &mut pending);
     assert_eq!(
         state.sweep_trouble(),
-        None,
+        [],
         "asked again on the way back in, and this time it answered"
     );
     assert_eq!(port.asked(), 2, "and not on any frame between");
@@ -2257,7 +2257,7 @@ fn a_reading_hands_the_conditions_every_checkout_a_ref_is_missing_from() {
     let git = MissingRefs { fresh_only: false };
     let (_, tree) = collect::collect_tree(&git, &git).expect("the first reading");
     assert_eq!(
-        conditions(&tree, None, None),
+        conditions(&tree, None, &[]),
         [
             Condition::RefMissingRefused {
                 repo: "me/app".into(),
@@ -2280,5 +2280,5 @@ fn a_reading_hands_the_conditions_every_checkout_a_ref_is_missing_from() {
         BTreeMap::new(),
         "a branch git says has no commit yet is the ordinary way to have no ref"
     );
-    assert_eq!(conditions(&tree, None, None), []);
+    assert_eq!(conditions(&tree, None, &[]), []);
 }
