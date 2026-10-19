@@ -97,6 +97,18 @@ struct Said {
 /// measured from.
 const GIT_LOCALE: (&str, &str) = ("LC_ALL", "C");
 
+/// What every variable that turns on one of git's traces starts with — `GIT_TRACE`,
+/// `GIT_TRACE2`, `GIT_TRACE_SETUP`, `GIT_TRACE_PERFORMANCE` and the rest — none of which
+/// a git started here inherits.
+///
+/// A trace writes to stderr on every call, ahead of git's own words, and every reader here
+/// takes git's words off stderr: a refusal carried the trace line where git's failure
+/// belongs, and the prompt line, cut at the pane's width, showed a timestamp and a source
+/// location from git's internals (issue #39). Dropped rather than filtered by shape,
+/// because the trace formats are not documented and the plugin has no use for them; a
+/// trace target set in git's configuration rather than the environment is not reached.
+const GIT_TRACE_PREFIX: &str = "GIT_TRACE";
+
 /// Where git may look for the repository a call is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Search {
@@ -127,6 +139,14 @@ impl GitCli {
             .arg(dir)
             .stdin(Stdio::null())
             .env(GIT_LOCALE.0, GIT_LOCALE.1);
+        for (key, _) in std::env::vars_os() {
+            if key
+                .as_encoded_bytes()
+                .starts_with(GIT_TRACE_PREFIX.as_bytes())
+            {
+                command.env_remove(key);
+            }
+        }
         if search == Search::Here {
             if let Some(parent) = real_parent(dir).filter(|parent| !holds_colon(parent)) {
                 command.env("GIT_CEILING_DIRECTORIES", parent);
@@ -274,6 +294,11 @@ fn no_repository_here(stderr: &str) -> bool {
 /// long enough on its own to push git's words past the right edge of every prompt line the
 /// picker draws — so the sentence that exists to show them shows the plugin's own argv
 /// instead.
+///
+/// All of stderr, where `dropped_refs` and `unread_paths` keep only the lines of a shape:
+/// those two read a call that succeeded, whose stderr can carry lines from a walk that went
+/// well, and a refusal is git's account of a failure, which can run over several lines.
+/// Neither has a trace's lines to weigh, since [`GIT_TRACE_PREFIX`] keeps them out.
 fn refusal(args: &[&str], stderr: &str) -> String {
     let said = stderr.trim();
     match said.is_empty() {
@@ -395,12 +420,11 @@ fn lstat_failed(line: &str) -> bool {
 /// same way — `fatal: cannot exec '<hook>': Permission denied` from a `core.fsmonitor` hook
 /// that cannot run, `error: cannot run <command>: No such file or directory` from one named
 /// by a command that is not on the path, `warning: could not open '<file>' for tracing:
-/// Permission denied` — are not read; after each git looked at everything itself. The lines
-/// `GIT_TRACE`, `GIT_TRACE_SETUP` and `GIT_TRACE_PERFORMANCE` write have nothing starting
-/// with a capital letter after their last `: ` when git runs at a checkout's root, as it does
-/// here — measured — and are not read either. `GIT_TRACE2` is different: it repeats each of
-/// git's own errors without its opening, so with it on stderr the lines above are read — `?`
-/// where git's answer was whole, the safe side. The cost
+/// Permission denied` — are not read; after each git looked at everything itself. No trace
+/// variable reaches the git started here ([`GIT_TRACE_PREFIX`]), so a trace's lines are not
+/// weighed; a trace target set in git's configuration that writes to stderr would be, and
+/// `GIT_TRACE2`'s repeats each of git's own errors without its opening, so there the lines
+/// above are read — `?` where git's answer was whole, the safe side. The cost
 /// is a hook that runs and fails inside itself: its own `<hook>: line 2: <tool>: Permission
 /// denied` reads as one, and the row says `?` though git's answer was whole — the safe side,
 /// for a case that needs a broken hook to happen.
@@ -419,7 +443,7 @@ fn lstat_failed(line: &str) -> bool {
 /// after the last colon are the C library's, not git's: `LC_ALL=C` keeps them English where
 /// the library translates them at all (glibc ships translations; the macOS one measured does
 /// not translate them). Three shapes rather than "stderr said something", for the reason
-/// `dropped_refs` gives: a trace variable writes to stderr on every call. Every matching line
+/// `dropped_refs` gives: stderr carries lines from a walk that went well. Every matching line
 /// is kept — a line repeated straight after itself only once — and not passed through
 /// [`refusal`], for the reason `dropped_refs` gives first: it is always this call, so naming
 /// it tells a reader nothing they could act on.
