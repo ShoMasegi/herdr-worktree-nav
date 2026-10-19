@@ -153,11 +153,15 @@ fn sweep_box(row: &Row) -> Option<&'static str> {
 }
 
 /// Widest first; the picker draws the first that fits. Each rung drops the least useful
-/// thing left, so a narrow pane loses `p no-pane` before it loses remove, states, or reload.
+/// thing left, so a narrow pane loses reload and remove before `p no-pane`, and `p` before
+/// states.
 pub(crate) const HELP_PANES: &[&str] = &[
-    "\u{21b5} jump  n new pane  p no-pane rows  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  shift+d remove  r reload  esc close",
-    "\u{21b5} jump  n new pane  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  shift+d remove  r reload  esc close",
-    "\u{21b5} jump  n new  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  shift+d remove  esc close",
+    "\u{21b5} jump  n new  p no-pane  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  shift+d remove  r reload  esc close",
+    // `p` outlasts `r reload` and `shift+d remove`: a list it has shortened says so only on
+    // the prompt line, and the key that undoes it is worth more at a popup's ordinary width
+    // than two the user has seen since the picker opened. Issue #62.
+    "\u{21b5} jump  n new  p no-pane  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  shift+d remove  esc close",
+    "\u{21b5} jump  n new  p no-pane  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  esc close",
     "\u{21b5} jump  n new  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  esc close",
     "\u{21b5} jump  n new  \u{2190}\u{2192} repo  \u{21e5} branches  / search  esc close",
     // Narrow enough that something has to go: the other view outranks a way of moving
@@ -173,8 +177,8 @@ pub(crate) const HELP_PANES: &[&str] = &[
 /// has only just become worth pressing. It is also the last thing to go as the rungs
 /// narrow, because the narrow end is where the line has given up its words for a count.
 const HELP_PANES_TROUBLE: &[&str] = &[
-    "\u{21b5} jump  n new pane  p no-pane rows  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  shift+d remove  r reload  ! what is wrong  esc close",
-    "\u{21b5} jump  n new pane  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  shift+d remove  ! what is wrong  esc close",
+    "\u{21b5} jump  n new  p no-pane  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  shift+d remove  r reload  ! what is wrong  esc close",
+    "\u{21b5} jump  n new  p no-pane  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  ! what is wrong  esc close",
     "\u{21b5} jump  n new  \u{2190}\u{2192} repo  \u{21e5} branches  / search  b/w/i/d/a states  ! what is wrong  esc close",
     "\u{21b5} jump  n new  \u{21e5} branches  / search  ! what is wrong  esc close",
     "\u{21b5} jump  \u{21e5} branches  ! what is wrong  esc close",
@@ -381,12 +385,29 @@ fn search_line(state: &PanesState, theme: &Theme, width: u16) -> Paragraph<'stat
                 style.add_modifier(Modifier::BOLD),
             ));
         }
-        if !state.query().is_empty() {
+        // `p` dropping rows says so the way a state filter does, so a list that is short by
+        // its empty checkouts does not read as the whole session.
+        let hidden = state.hidden_checkouts();
+        if hidden > 0 {
             if state.state_filter().is_some() {
                 spans.push(Span::raw("  "));
             }
+            let used = spans_width(&spans) - before;
+            spans.push(Span::styled(
+                truncate(
+                    &words::hidden_checkouts(hidden),
+                    left_room.saturating_sub(used),
+                ),
+                theme.dim(),
+            ));
+        }
+        let chips = state.state_filter().is_some() || hidden > 0;
+        if !state.query().is_empty() {
+            if chips {
+                spans.push(Span::raw("  "));
+            }
             spans.push(Span::raw(truncate(state.query(), left_room)));
-        } else if state.state_filter().is_none() && !state.is_filtering() && condition.is_none() {
+        } else if !chips && !state.is_filtering() && condition.is_none() {
             // The placeholder is what to do when the field is not focused; once it is, the
             // cursor says everything and the hint is in the way of what is being typed. It
             // is also the one thing a condition does displace outright: a hint the reader
@@ -439,10 +460,11 @@ fn render_rows(frame: &mut Frame, state: &PanesState, theme: &Theme, area: Rect)
     if lines.is_empty() {
         let text = if state.query().is_empty() && state.state_filter().is_none() {
             // Panes outside a repository are listed too, so an empty list means an empty
-            // session rather than a session with nothing checked out.
-            "no panes open"
+            // session rather than a session with nothing checked out — unless `p` is hiding
+            // the checkouts, which it says.
+            words::no_panes_open(state.hidden_checkouts())
         } else {
-            "nothing matches"
+            "nothing matches".to_string()
         };
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(text, theme.dim()))),
@@ -801,7 +823,7 @@ mod tests {
     }
 
     #[test]
-    fn panes_help_drops_p_before_remove_states_or_reload() {
+    fn panes_help_keeps_p_while_reload_or_remove_is_there_and_at_a_popups_width() {
         // Same pick as `footer`: first rung whose length is strictly less than the width.
         for text in super::HELP_PANES {
             assert!(
@@ -810,24 +832,24 @@ mod tests {
             );
         }
         for width in 18..=140u16 {
+            let trouble = super::super::first_that_fits(super::HELP_PANES_TROUBLE, width);
+            for text in [panes_help(width), trouble] {
+                if text.contains("reload") || text.contains("remove") {
+                    assert!(
+                        text.contains("p no-pane"),
+                        "p does not fall before reload or remove: {width} {text}"
+                    );
+                }
+            }
             let text = panes_help(width);
-            if width >= 121 {
-                assert!(text.contains("no-pane"), "p fits from 121: {width} {text}");
-                assert!(
-                    text.contains("reload"),
-                    "reload stays on the p rung: {width} {text}"
-                );
-            } else {
-                assert!(
-                    !text.contains("no-pane"),
-                    "p is gone before reload/remove/states: {width} {text}"
-                );
+            if width >= 85 {
+                assert!(text.contains("p no-pane"), "p from 85: {width} {text}");
             }
-            if width >= 105 {
-                assert!(text.contains("reload"), "reload from 105: {width} {text}");
+            if width >= 111 {
+                assert!(text.contains("reload"), "reload from 111: {width} {text}");
             }
-            if width >= 90 {
-                assert!(text.contains("remove"), "remove from 90: {width} {text}");
+            if width >= 101 {
+                assert!(text.contains("remove"), "remove from 101: {width} {text}");
             }
             if width >= 74 {
                 assert!(
@@ -836,6 +858,69 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_list_p_has_emptied_says_how_many_checkouts_it_is_hiding() {
+        // Issue #62. `no panes open` is what the picker says of an empty session, and here
+        // there are four checkouts and a key that shows them.
+        let mut tree = tree();
+        for repo in &mut tree.repos {
+            for worktree in &mut repo.worktrees {
+                worktree.panes.clear();
+            }
+        }
+        tree.ungrouped.clear();
+        let mut state = PanesState::new(tree, None);
+        state.set_show_worktrees_without_panes(false);
+        let drawn = screen(&state, 92, 6);
+        assert!(
+            drawn.contains("no panes open \u{2014} 4 checkouts hidden (p)"),
+            "{drawn}"
+        );
+
+        press(&mut state, KeyCode::Char('p'));
+        let drawn = screen(&state, 92, 10);
+        assert!(
+            !drawn.contains("no panes open"),
+            "and p shows them:\n{drawn}"
+        );
+    }
+
+    #[test]
+    fn a_list_p_has_shortened_says_so_where_a_state_chip_goes() {
+        let mut state = PanesState::new(tree(), None);
+        assert!(
+            !prompt_line(&state, 92).contains("hidden"),
+            "nothing is hidden while the preference shows them"
+        );
+        state.set_show_worktrees_without_panes(false);
+        for width in 24..=92u16 {
+            let line = prompt_line(&state, width);
+            assert!(
+                line.trim_end().ends_with("5 panes"),
+                "the count is still there at {width}: {line}"
+            );
+            if width >= 40 {
+                assert!(
+                    line.contains("1 checkout hidden"),
+                    "the chip at {width}: {line}"
+                );
+            }
+        }
+
+        press(&mut state, KeyCode::Char('b'));
+        let line = prompt_line(&state, 92);
+        assert!(
+            line.contains("blocked") && line.contains("1 checkout hidden"),
+            "beside a state chip: {line}"
+        );
+
+        press(&mut state, KeyCode::Char('S'));
+        assert!(
+            !prompt_line(&state, 92).contains("hidden"),
+            "a sweep lists them, so it hides nothing"
+        );
     }
 
     #[test]

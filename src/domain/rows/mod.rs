@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::domain::model::{CheckoutPath, Position, RepoKey, WorkingTree};
+use crate::domain::model::{CheckoutPath, Position, RepoKey, Tree, WorkingTree};
 use crate::domain::sweep::Mark;
 use crate::port::AgentStatus;
 
@@ -205,6 +205,19 @@ impl ViewOptions {
     fn hides_empty_checkouts(&self) -> bool {
         self.hide_worktrees_without_panes && self.sweep.is_none()
     }
+}
+
+/// How many of `tree`'s checkouts [`flatten()`] leaves out for holding no pane, so the screen
+/// can say the list is short by them. Zero wherever they are listed.
+pub fn hidden_checkouts(tree: &Tree, options: &ViewOptions) -> usize {
+    if !options.hides_empty_checkouts() {
+        return 0;
+    }
+    tree.repos
+        .iter()
+        .flat_map(|repo| &repo.worktrees)
+        .filter(|worktree| worktree.panes.is_empty())
+        .count()
 }
 
 #[cfg(test)]
