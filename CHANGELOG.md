@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A pane herdr says is gone is told apart by herdr's error code.** Removing a checkout
+  closes its panes first and treats a pane that has already gone as closed. That was decided
+  by looking for `pane_not_found` anywhere in herdr's sentence, so a different refusal whose
+  message mentioned it passed as a closed pane. It is now decided on the code alone.
+
 ## [0.2.0] - 2026-10-18
 
 ### Added
