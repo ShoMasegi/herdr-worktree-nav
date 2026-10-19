@@ -2,7 +2,7 @@
 source: src/ui/render/panes.rs
 expression: "screen(&state, 92, 20)"
 ---
-" / gh could not be run: no such file or directory                                  1 marked "
+" / me/app: gh could not be run: no such file or directory                          1 marked "
 "────────────────────────────────────────────────────────────────────────────────────────────"
 " ◆ ● me/app (3)                                                                             "
 "   ├── ● main                           /wt/main                                            "

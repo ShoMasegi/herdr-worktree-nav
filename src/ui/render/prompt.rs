@@ -514,6 +514,8 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use crate::domain::model::{Branch, CheckoutPath, RepoKey, WorkingTree};
+    use crate::domain::notice::SweepTrouble;
+    use crate::domain::sweep::RepoRoot;
 
     use super::*;
     use crate::ui::panes::PanesState;
@@ -621,6 +623,54 @@ mod tests {
             "the one that fit, whole:\n{panel}"
         );
         assert!(panel.contains("+2 more"), "and what did not:\n{panel}");
+    }
+
+    #[test]
+    fn every_repository_gh_could_not_answer_for_is_read_in_the_panel() {
+        // Issue #97. The line names one and counts the rest; the panel is where the rest
+        // are, so each repository's reason has to reach it as a sentence of its own.
+        let mut state = swept();
+        let asked = state
+            .tree()
+            .repos
+            .iter()
+            .map(|repo| (RepoRoot::of(repo), None))
+            .collect();
+        let trouble = |repo: &str, words: &str| SweepTrouble {
+            repo: repo.into(),
+            words: words.into(),
+        };
+        state.set_settled(
+            asked,
+            vec![
+                trouble("me/app", "gh could not be run: No such file or directory"),
+                trouble("me/site", "no GitHub remote to ask about"),
+                trouble("me/docs", "no GitHub remote to ask about"),
+            ],
+            false,
+        );
+
+        let line = prompt_line(&state, 200);
+        assert!(
+            line.contains("me/app: gh could not be run: No such file or directory (+2 more)"),
+            "the line names the first and counts the rest: {line}"
+        );
+
+        press(&mut state, KeyCode::Char('!'));
+        let panel = screen(&state, 92, 18);
+        let panel = panel.lines().skip(1).collect::<Vec<&str>>().join("\n");
+        assert!(panel.contains("3 things are wrong"), "the count:\n{panel}");
+        for said in [
+            "me/app: gh could not be run: No such file or directory",
+            "me/site: no GitHub remote to ask about",
+            "me/docs: no GitHub remote to ask about",
+        ] {
+            assert!(panel.contains(said), "{said} is in the panel:\n{panel}");
+        }
+        assert!(
+            !panel.contains("more)"),
+            "and nothing is left to count:\n{panel}"
+        );
     }
 
     #[test]

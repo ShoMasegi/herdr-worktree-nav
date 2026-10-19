@@ -2,7 +2,7 @@ use super::*;
 use crate::domain::model::{
     Branch, Head, Position, Refs, RepoNode, Tree, Unlisted, WorkingTree, WorktreeNode,
 };
-use crate::domain::notice::Condition;
+use crate::domain::notice::{Condition, SweepTrouble};
 use crate::domain::sweep::{Half, Reason, Refusal};
 use crate::port::{AgentStatus, PullRequestOutcome, SettledPullRequest, Track};
 use crate::ui::panes::fixtures::*;
@@ -431,7 +431,10 @@ fn a_row_gh_could_not_judge_says_so_and_is_still_the_users_to_mark() {
     let mut state = sweeping();
     state.set_settled(
         BTreeMap::from([(RepoRoot::of(&state.tree.repos[0]), None)]),
-        Some("gh could not be run: no such file or directory".to_string()),
+        vec![SweepTrouble {
+            repo: "me/app".into(),
+            words: "gh could not be run: no such file or directory".into(),
+        }],
         false,
     );
 
@@ -446,7 +449,10 @@ fn a_row_gh_could_not_judge_says_so_and_is_still_the_users_to_mark() {
     );
     assert_eq!(
         state.sweep_trouble(),
-        Some("gh could not be run: no such file or directory")
+        [SweepTrouble {
+            repo: "me/app".into(),
+            words: "gh could not be run: no such file or directory".into(),
+        }]
     );
 
     select(&mut state, "feat/login");
@@ -471,7 +477,7 @@ fn a_pull_request_gh_found_widens_the_sweep_and_says_which_one() {
                 outcome: PullRequestOutcome::Merged,
             }])),
         )]),
-        None,
+        Vec::new(),
         false,
     );
 
@@ -482,7 +488,7 @@ fn a_pull_request_gh_found_widens_the_sweep_and_says_which_one() {
             outcome: PullRequestOutcome::Merged,
         }))
     );
-    assert_eq!(state.sweep_trouble(), None);
+    assert_eq!(state.sweep_trouble(), []);
     assert_eq!(
         state.chosen(),
         vec![
@@ -501,7 +507,7 @@ fn gh_landing_does_not_move_the_cursor() {
     let at = state.cursor;
     state.set_settled(
         BTreeMap::from([(RepoRoot::of(&state.tree.repos[0]), None)]),
-        None,
+        Vec::new(),
         false,
     );
     assert_eq!(state.cursor, at);
@@ -541,10 +547,13 @@ fn what_gh_says_outside_a_sweep_has_nowhere_to_go() {
     let mut state = state();
     state.set_settled(
         BTreeMap::from([(RepoRoot::of(&state.tree.repos[0]), None)]),
-        Some("gh could not be run".to_string()),
+        vec![SweepTrouble {
+            repo: "me/app".into(),
+            words: "gh could not be run".into(),
+        }],
         false,
     );
-    assert_eq!(state.sweep_trouble(), None);
+    assert_eq!(state.sweep_trouble(), []);
     assert!(state.chosen().is_empty());
 }
 

@@ -73,10 +73,22 @@ pub enum Condition {
     /// it has no one branch to measure: [`Position::Contested`]. One per repository and
     /// checkout path, carrying the path.
     RefsDisagree { repo: String, checkout: String },
-    /// What could not be asked of `gh` in this sweep, already counted by
-    /// [`app::settled`](crate::app::settled) because which repositories were asked is not
-    /// something the tree knows.
-    SweepTrouble(String),
+    /// A repository `gh` could not be asked about in this sweep. One per repository, so the
+    /// panel can show each and the prompt line counts the rest the way it counts any other
+    /// condition.
+    SweepTrouble(SweepTrouble),
+}
+
+/// What `gh` could not be asked about one repository, and why.
+///
+/// Built by [`app::settled`](crate::app::settled), because which repositories were asked is
+/// not something the tree knows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SweepTrouble {
+    /// What the list calls the repository.
+    pub repo: String,
+    /// Why `gh` could not answer for it, in one line.
+    pub words: String,
 }
 
 /// Everything that is wrong right now, worst first.
@@ -109,10 +121,14 @@ pub enum Condition {
 ///
 /// `stale` and `sweep_trouble` are passed in rather than read off the tree. The first is
 /// about the reading that built it, which a tree cannot report about itself; the second is
-/// already one sentence for however many repositories `gh` could not be asked about, which
+/// the repositories `gh` could not be asked about, in the order they are named, which
 /// [`app::settled`](crate::app::settled) builds because which repositories were asked is
 /// not something the tree knows.
-pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>) -> Vec<Condition> {
+pub fn conditions(
+    tree: &Tree,
+    stale: Option<&str>,
+    sweep_trouble: &[SweepTrouble],
+) -> Vec<Condition> {
     // In front of the rest: the others are about what a row is missing, and this one is
     // about whether the rows are the right rows at all.
     let mut conditions: Vec<Condition> = stale
@@ -206,7 +222,7 @@ pub fn conditions(tree: &Tree, stale: Option<&str>, sweep_trouble: Option<&str>)
             });
         }
     }
-    conditions.extend(sweep_trouble.map(|words| Condition::SweepTrouble(words.to_string())));
+    conditions.extend(sweep_trouble.iter().cloned().map(Condition::SweepTrouble));
     conditions
 }
 
@@ -225,6 +241,13 @@ mod tests {
         }
     }
 
+    fn gh_trouble(repo: &str) -> SweepTrouble {
+        SweepTrouble {
+            repo: repo.to_string(),
+            words: "gh could not be run".to_string(),
+        }
+    }
+
     fn tree(repos: Vec<RepoNode>) -> Tree {
         Tree {
             repos,
@@ -235,7 +258,7 @@ mod tests {
     #[test]
     fn a_tree_git_answered_for_with_no_sweep_trouble_has_nothing_to_say() {
         let tree = tree(vec![repo("me/app", Refs::Read)]);
-        assert_eq!(conditions(&tree, None, None), Vec::new());
+        assert_eq!(conditions(&tree, None, &[]), Vec::new());
     }
 
     #[test]
@@ -249,7 +272,7 @@ mod tests {
             ),
         ]);
         assert_eq!(
-            conditions(&tree, None, None),
+            conditions(&tree, None, &[]),
             vec![
                 Condition::RefsUnreadable {
                     repo: "me/app".into(),
@@ -303,12 +326,12 @@ mod tests {
             checkout: checkout.into(),
         };
         assert_eq!(
-            conditions(&tree, None, Some("me/app: gh could not be run")),
+            conditions(&tree, None, &[gh_trouble("me/app")]),
             vec![
                 disagree("/wt/a"),
                 disagree("/wt/c"),
                 disagree("/wt/a"),
-                Condition::SweepTrouble("me/app: gh could not be run".into()),
+                Condition::SweepTrouble(gh_trouble("me/app")),
             ]
         );
     }
@@ -388,7 +411,7 @@ mod tests {
         );
         missing(2, "/wt/draft", None);
         assert_eq!(
-            conditions(&tree, None, None),
+            conditions(&tree, None, &[]),
             vec![
                 Condition::RefsUnreadable {
                     repo: "me/docs".into(),
@@ -427,13 +450,13 @@ mod tests {
             Refs::Unreadable("fatal: bad ref".into()),
         )]);
         assert_eq!(
-            conditions(&tree, None, Some("me/app: gh could not be run")),
+            conditions(&tree, None, &[gh_trouble("me/app")]),
             vec![
                 Condition::RefsUnreadable {
                     repo: "me/app".into(),
                     words: "fatal: bad ref".into(),
                 },
-                Condition::SweepTrouble("me/app: gh could not be run".into()),
+                Condition::SweepTrouble(gh_trouble("me/app")),
             ],
             "the track markers are missing sweep or no sweep; gh is only asked during one"
         );
@@ -443,10 +466,26 @@ mod tests {
     fn what_gh_said_stands_alone_once_git_has_answered() {
         let tree = tree(vec![repo("me/app", Refs::Read)]);
         assert_eq!(
-            conditions(&tree, None, Some("me/app: gh could not be run")),
-            vec![Condition::SweepTrouble(
-                "me/app: gh could not be run".into()
-            )]
+            conditions(&tree, None, &[gh_trouble("me/app")]),
+            vec![Condition::SweepTrouble(gh_trouble("me/app"))]
+        );
+    }
+
+    #[test]
+    fn every_repository_gh_could_not_answer_for_is_a_condition_of_its_own_in_the_order_given() {
+        let tree = tree(vec![repo("me/app", Refs::Read)]);
+        let trouble = [
+            gh_trouble("me/site"),
+            gh_trouble("me/app"),
+            gh_trouble("me/lib"),
+        ];
+        assert_eq!(
+            conditions(&tree, None, &trouble),
+            trouble
+                .iter()
+                .cloned()
+                .map(Condition::SweepTrouble)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -456,7 +495,7 @@ mod tests {
         // condition is the whole of it. What a reader needs is the words and how much of the
         // session they cost, not the same line once per pane.
         let mut tree = tree(vec![repo("me/app", Refs::Read)]);
-        assert_eq!(conditions(&tree, None, None), Vec::new());
+        assert_eq!(conditions(&tree, None, &[]), Vec::new());
 
         let refused = "git could not be run: no such file or directory (`git rev-parse`)";
         for pane in ["w1:p1", "w2:p1"] {
@@ -465,7 +504,7 @@ mod tests {
                 .insert(pane.to_string(), refused.to_string());
         }
         assert_eq!(
-            conditions(&tree, None, None),
+            conditions(&tree, None, &[]),
             vec![Condition::Unplaced {
                 panes: 2,
                 words: refused.into(),
@@ -485,7 +524,7 @@ mod tests {
             .unplaced
             .insert("w4:p1".to_string(), warned.to_string());
         assert_eq!(
-            conditions(&tree, None, None),
+            conditions(&tree, None, &[]),
             vec![
                 Condition::Unplaced {
                     panes: 2,
@@ -523,7 +562,7 @@ mod tests {
             "git could not be run: no such file or directory (`git rev-parse`)".into(),
         );
         assert_eq!(
-            conditions(&tree, None, None)[0],
+            conditions(&tree, None, &[])[0],
             Condition::Unplaced {
                 panes: 1,
                 words: "git could not be run: no such file or directory (`git rev-parse`)".into(),
@@ -542,7 +581,7 @@ mod tests {
             panes: Default::default(),
         });
         assert_eq!(
-            conditions(&tree, None, None),
+            conditions(&tree, None, &[]),
             vec![Condition::Unlisted {
                 repo: "old".into(),
                 words: "herdr rejected worktree.list: internal error".into(),
@@ -564,7 +603,7 @@ mod tests {
             panes: Default::default(),
         });
         assert_eq!(
-            conditions(&tree, None, None),
+            conditions(&tree, None, &[]),
             vec![
                 Condition::Unlisted {
                     repo: "old".into(),
@@ -586,7 +625,7 @@ mod tests {
             Refs::Unreadable("fatal: bad ref".into()),
         )]);
         assert_eq!(
-            conditions(&tree, Some("herdr did not answer"), None)[0],
+            conditions(&tree, Some("herdr did not answer"), &[])[0],
             Condition::Stale("herdr did not answer".into()),
             "whether these are the right rows at all comes before what one of them lacks"
         );

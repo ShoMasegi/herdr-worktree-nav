@@ -6,6 +6,7 @@ use super::*;
 use crate::app::fakes::until;
 use crate::app::fakes::{fake_gh, fake_git, FakeGh, FakeGit};
 use crate::domain::model::{Refs, RepoNode};
+use crate::domain::notice::SweepTrouble;
 use crate::port::Slug;
 
 /// A git that names one repository, and a `gh` that answers about it — both counting
@@ -281,8 +282,8 @@ fn a_repository_github_has_never_heard_of_is_asked_and_answered_for() {
         "and its answer is that there is not one"
     );
     assert_eq!(
-        settled.trouble(&tree),
-        Some("me/app: no GitHub remote to ask about".to_string())
+        said(settled.trouble(&tree)),
+        vec!["me/app: no GitHub remote to ask about"]
     );
 }
 
@@ -306,9 +307,12 @@ fn a_git_that_would_not_name_the_repository_says_so_rather_than_nothing() {
     );
     assert_eq!(settled.answers(&tree).len(), 1, "but it was asked");
     assert!(settled.answers(&tree).values().all(Option::is_none));
-    let said = settled
-        .trouble(&tree)
-        .expect("a sentence for the prompt line");
+    let said = said(settled.trouble(&tree)).concat();
+    assert_eq!(
+        settled.trouble(&tree).len(),
+        1,
+        "one sentence for the one repository"
+    );
     assert!(
         said.contains("git could not name the repository"),
         "and it says which half went wrong: {said}"
@@ -345,8 +349,8 @@ fn the_first_repository_on_screen_that_failed_is_the_one_named() {
     until_answered(&mut settled, &tree);
 
     assert_eq!(
-        settled.trouble(&tree),
-        Some("me/site: gh is out (+1 more)".to_string())
+        said(settled.trouble(&tree)),
+        vec!["me/site: gh is out", "me/app: gh is out"]
     );
 }
 
@@ -364,9 +368,9 @@ fn a_repository_that_left_the_tree_leaves_the_prompt_line_with_it() {
 
     settled.ask(&listed);
     until_answered(&mut settled, &listed);
-    assert!(settled.trouble(&listed).is_some());
+    assert!(!settled.trouble(&listed).is_empty());
 
-    assert_eq!(settled.trouble(&gone), None);
+    assert_eq!(settled.trouble(&gone), Vec::new());
 }
 
 #[test]
@@ -380,7 +384,7 @@ fn entering_a_sweep_again_asks_again_where_gh_refused_and_nowhere_else() {
     held.release_err(1, "gh is out");
     held.release(2, SettledPullRequests::All(Vec::new()));
     until_answered(&mut settled, &tree);
-    assert!(settled.trouble(&tree).is_some());
+    assert!(!settled.trouble(&tree).is_empty());
 
     settled.forget_failures();
     settled.ask(&tree);
@@ -390,7 +394,7 @@ fn entering_a_sweep_again_asks_again_where_gh_refused_and_nowhere_else() {
     held.release(3, SettledPullRequests::All(Vec::new()));
     until_answered(&mut settled, &tree);
 
-    assert_eq!(settled.trouble(&tree), None);
+    assert_eq!(settled.trouble(&tree), Vec::new());
     assert_eq!(
         held.started(),
         3,
@@ -468,7 +472,7 @@ fn nothing_is_wrong_while_an_answer_is_still_coming() {
     assert!(settled.is_waiting(&tree));
     assert_eq!(
         settled.trouble(&tree),
-        None,
+        Vec::new(),
         "still asking is not a failure"
     );
     held.release(1, SettledPullRequests::All(Vec::new()));
@@ -493,10 +497,7 @@ fn a_repository_that_answered_does_not_hide_the_one_after_it_that_could_not() {
     held.release_err(held.call_for("me/site"), "gh is out");
     until_answered(&mut settled, &tree);
 
-    assert_eq!(
-        settled.trouble(&tree),
-        Some("me/site: gh is out".to_string())
-    );
+    assert_eq!(said(settled.trouble(&tree)), vec!["me/site: gh is out"]);
 }
 
 #[test]
@@ -517,8 +518,8 @@ fn a_refusal_is_named_ahead_of_a_repository_with_nothing_to_ask() {
         settled.answers(&tree).len() == 1
     });
     assert_eq!(
-        settled.trouble(&tree),
-        Some("me/local: no GitHub remote to ask about".to_string()),
+        said(settled.trouble(&tree)),
+        vec!["me/local: no GitHub remote to ask about"],
         "the only trouble so far, while the other is still asking"
     );
 
@@ -526,8 +527,11 @@ fn a_refusal_is_named_ahead_of_a_repository_with_nothing_to_ask() {
     until_answered(&mut settled, &tree);
 
     assert_eq!(
-        settled.trouble(&tree),
-        Some("me/site: gh refused the question this asked: no auth (+1 more)".to_string())
+        said(settled.trouble(&tree)),
+        vec![
+            "me/site: gh refused the question this asked: no auth",
+            "me/local: no GitHub remote to ask about",
+        ]
     );
 }
 
@@ -548,8 +552,8 @@ fn a_repository_with_no_github_remote_is_not_asked_again_on_the_way_back_in() {
 
     assert_eq!(remote.named(), 1, "git was not asked to name it again");
     assert_eq!(
-        settled.trouble(&tree),
-        Some("me/app: no GitHub remote to ask about".to_string()),
+        said(settled.trouble(&tree)),
+        vec!["me/app: no GitHub remote to ask about"],
         "and the answer is still the answer"
     );
 }
@@ -569,7 +573,7 @@ fn entering_a_sweep_again_leaves_a_question_still_out_alone() {
     held.release_err(held.call_for("me/app"), "gh is out");
     until("the refusal never landed", || {
         settled.drain();
-        settled.trouble(&tree).is_some()
+        !settled.trouble(&tree).is_empty()
     });
 
     settled.forget_failures();
@@ -693,9 +697,12 @@ fn a_gh_that_refused_says_so_once_and_leaves_the_rows_to_say_the_rest() {
     until_answered(&mut settled, &tree);
 
     assert_eq!(
-        settled.trouble(&tree),
-        Some("me/app: gh refused the question this asked: no auth (+1 more)".to_string()),
-        "one sentence however many repositories failed — it goes on one line, and counts"
+        said(settled.trouble(&tree)),
+        vec![
+            "me/app: gh refused the question this asked: no auth",
+            "me/lib: gh refused the question this asked: no auth",
+        ],
+        "one sentence per repository that failed, each naming it"
     );
     let answers = settled.answers(&tree);
     assert_eq!(answers.len(), 2, "both were asked");
@@ -736,10 +743,18 @@ fn nothing_went_wrong_is_not_a_sentence() {
     settled.ask(&tree);
     until_answered(&mut settled, &tree);
 
-    assert_eq!(settled.trouble(&tree), None);
+    assert_eq!(settled.trouble(&tree), Vec::new());
     assert_eq!(
         settled.answers(&tree).into_values().next(),
         Some(Some(SettledPullRequests::All(Vec::new()))),
         "an empty answer is an answer: nothing here is finished with"
     );
+}
+
+/// Each repository in trouble as `repo: words`, in the order `trouble` gives them.
+fn said(trouble: Vec<SweepTrouble>) -> Vec<String> {
+    trouble
+        .into_iter()
+        .map(|SweepTrouble { repo, words }| format!("{repo}: {words}"))
+        .collect()
 }
