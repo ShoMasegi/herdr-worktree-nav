@@ -117,6 +117,16 @@ pub fn stage(stage: &Stage) -> String {
     }
 }
 
+/// What the branch list says when git left a local ref out of it: `words` is git's.
+pub fn refs_dropped(words: &str) -> String {
+    format!("a local ref is not listed: {words}")
+}
+
+/// What the line under the branch list says of a branch only the remote has, when git left a
+/// local ref out of the list: the branch may be the one it left out.
+pub const REMOTE_ONLY_OR_DROPPED: &str =
+    "not listed locally, but git would not read every local ref";
+
 /// What the branch list is ordered by.
 pub fn sort_key(key: SortKey) -> &'static str {
     match key {

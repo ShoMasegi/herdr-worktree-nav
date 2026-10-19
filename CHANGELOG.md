@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The branches view says when git left a local ref out of its list.** A branch whose local
+  ref git would not read was listed as one only the remote has, and `Enter` fetched it from
+  the remote rather than opening what is on disk, with nothing on screen to say why. The
+  search line now carries git's words, and the line under the list says of a `↓ remote`
+  branch that git would not read every local ref.
+
 ## [0.2.0] - 2026-10-18
 
 ### Added

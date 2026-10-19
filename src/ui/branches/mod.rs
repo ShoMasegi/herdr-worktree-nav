@@ -91,6 +91,11 @@ pub struct BranchData {
     pub loading: bool,
     /// A `git fetch` of the whole repository is running, asked for by the user.
     pub fetching: bool,
+    /// git's words when its walk of the local refs left one out it could not read, in which
+    /// case `local_refs` is short by it — see [`RefWalk`](crate::port::RefWalk). A branch
+    /// missing from them reads as one only on the remote, so the screen says the list is
+    /// short.
+    pub dropped: Option<String>,
 }
 
 /// What the picker is doing, once the choosing is over.
@@ -318,6 +323,11 @@ impl BranchesState {
 
     pub fn is_fetching(&self) -> bool {
         self.data.fetching
+    }
+
+    /// git's words for a local ref it left out of this repository's list, or nothing.
+    pub fn dropped(&self) -> Option<&str> {
+        self.data.dropped.as_deref()
     }
 
     /// Whether the search field has the keyboard, rather than the list.

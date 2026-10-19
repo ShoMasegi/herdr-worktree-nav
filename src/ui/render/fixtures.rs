@@ -408,6 +408,7 @@ pub(crate) fn branch_data() -> BranchData {
         }],
         loading: false,
         fetching: false,
+        dropped: None,
     }
 }
 

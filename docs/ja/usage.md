@@ -358,6 +358,8 @@ herdr が開いているリポジトリがすべて並びます。Panes ビュ�
 | `↓ remote` | リモートにあるが未 fetch | fetch してから `origin/<branch>` を基点に作る |
 | `+ create` | まだ存在しない（入力した名前） | `HEAD` から作成し、そこから worktree を作る |
 
+git が読めなかったローカルの ref は一覧から外れるため、リモートにあるブランチなら `↓ remote` と表示されます。そのときは検索行が git の言葉でそれを伝え（`a local ref is not listed: warning: ignoring broken ref refs/heads/feat/login`）、一覧の下の行は `↓ remote` のブランチごとに、git がローカルの ref をすべては読めなかったことを伝えます。`Enter` がディスク上のものを開かず、リモートのものを fetch するためです。
+
 これに加えて `gone` が付くことがあります。独立した状態ではなく、状態への注記です（`checked out gone`、`local gone`）。そのブランチが追跡している ref を git が見つけられない、という意味です。たいていはマージされた pull request の head を GitHub が削除し、prune 付きの fetch がそれに気づいた状態です。ブランチも checkout もまだここにありますが、追跡していたものはもうありません。
 
 **一度も push していないブランチは `gone` になりません。** 追跡するものが無いことと、追跡していたものが消えたことは別であり、ピッカーはこの 2 つを混同しません。
