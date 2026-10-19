@@ -7,7 +7,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Result};
 
 use crate::port::{GitPort, GitRef, ListedHead, RefKind, RefWalk, RepoIdentity, Slug, Track};
 
@@ -73,7 +73,7 @@ pub struct GitCli;
 /// says the same way that it left part of the tree out, or read it by rules it could not
 /// see — see `is_dirty`.
 /// Those two read both streams; the rest read a clean exit's `stdout` alone, and a non-zero
-/// exit's `stderr` is what `run` turns into the error.
+/// exit's `stderr` is what [`said`] turns into the error.
 struct Said {
     stdout: String,
     stderr: String,
@@ -138,11 +138,10 @@ impl GitCli {
     /// Start git in `dir` and wait for it. `Err` is a git that could not be started at all, or
     /// a call [`Search::Here`] refuses before it starts.
     ///
-    /// `run_answering` reads it for every call that wants "not here" recognised — `identify`
-    /// to answer `None`, and through `run` the nine behind `run_in_repo`, to turn "not a
-    /// repository" into an error that says so. `github_slug` reads it itself, because the
-    /// answer it has to pick out is a different one and "not a repository" is a failure there
-    /// rather than an answer. The two gits not started here are `identify`'s read of the
+    /// `run_answering` reads it for `identify`, which answers `None` where git said the path
+    /// is in no repository, and `run_in_repo` for every other call but `github_slug`, where
+    /// that is an error in git's words like any other. `github_slug` reads it itself,
+    /// because the answer it has to pick out is a different one. The two gits not started here are `identify`'s read of the
     /// branch and the question `answers_for_another` asks before a call, and both start from
     /// `command`, so they run in the same locale.
     fn output(dir: &str, search: Search, args: &[&str]) -> Result<Output> {
@@ -188,13 +187,11 @@ impl GitCli {
         Ok(git_dir != real && Some(git_dir) != own_git_dir(&real))
     }
 
-    /// Run git in `dir`. Returns `None` when git said the path is not a repository; any
-    /// other non-zero exit is an error carrying git's words.
-    fn run(dir: &str, args: &[&str]) -> Result<Option<Said>> {
-        Self::run_answering(dir, Search::Here, args, no_repository_here)
-    }
-
-    /// `run`, with what reads as "not here" chosen by the caller.
+    /// Run git in `dir` and read what it found, or why it found nothing.
+    ///
+    /// `None` when git said the path is in no repository, by `not_here`'s reading of its
+    /// words; any other non-zero exit is an error carrying them. `identify`'s, the one call
+    /// for which "no repository" is an answer.
     fn run_answering(
         dir: &str,
         search: Search,
@@ -202,26 +199,39 @@ impl GitCli {
         not_here: impl Fn(&str) -> bool,
     ) -> Result<Option<Said>> {
         let output = Self::output(dir, search, args)?;
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if output.status.success() {
-            return Ok(Some(Said {
-                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                stderr: stderr.into_owned(),
-            }));
-        }
         // Matching the exit code alone would turn every fatal error into "not a git
         // repository", a diagnosis that sends the reader looking in entirely the wrong place.
-        if output.status.code() == Some(GIT_FATAL) && not_here(&stderr) {
+        if output.status.code() == Some(GIT_FATAL)
+            && not_here(&String::from_utf8_lossy(&output.stderr))
+        {
             return Ok(None);
         }
-        bail!("{}", refusal(args, &stderr));
+        said(args, output).map(Some)
     }
 
-    /// Run git where a "not a repository" answer would itself be a bug.
+    /// Run git in a directory herdr named as a repository or a checkout, where every non-zero
+    /// exit is an error carrying git's words.
+    ///
+    /// "Not a repository" included, because here it is not an answer: git says
+    /// `cannot change to …: No such file or directory` of a checkout that has gone and
+    /// `not a git repository` of one whose `.git` it no longer takes for one, and those
+    /// words say which happened. A sentence of the plugin's own in their place would say the
+    /// same of both (issue #34).
     fn run_in_repo(dir: &str, args: &[&str]) -> Result<Said> {
-        Self::run(dir, args)?
-            .with_context(|| format!("{dir} is not a git repository, but was expected to be"))
+        said(args, Self::output(dir, Search::Here, args)?)
     }
+}
+
+/// What git printed, if it exited 0, or its refusal.
+fn said(args: &[&str], output: Output) -> Result<Said> {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        bail!("{}", refusal(args, &stderr));
+    }
+    Ok(Said {
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: stderr.into_owned(),
+    })
 }
 
 /// The parent of `dir`'s real path, since that is what git compares a ceiling with.
@@ -445,7 +455,7 @@ fn unread_paths(stderr: &str) -> Option<String> {
 /// Whether git's answer to `remote get-url` is the ordinary "there is no such remote" rather
 /// than a failure to name the repository at all.
 ///
-/// Both halves, for the reason `run` gives for [`NOT_A_REPOSITORY`]: an exit code alone
+/// Both halves, for the reason `run_answering` gives for [`NOT_A_REPOSITORY`]: an exit code alone
 /// diagnoses by number, and git's numbers say almost nothing — `remote get-url` exits 2 for
 /// this and 128 for everything from an unparseable config to a root that has gone. The words
 /// alone would be no better the day another subcommand's error carries them.

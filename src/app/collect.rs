@@ -559,7 +559,11 @@ mod tests {
                      fatal: unable to access '.git/config': Permission denied \
                      (`git worktree list --porcelain`)"
                 ),
-                _ => anyhow::bail!("/src/gone is not a git repository, but was expected to be"),
+                // What git says of a repository root that has gone, then the call.
+                _ => anyhow::bail!(
+                    "fatal: cannot change to '/src/gone': No such file or directory \
+                     (`git worktree list --porcelain`)"
+                ),
             }
         }
     }
@@ -686,7 +690,9 @@ mod tests {
                 (
                     "/wt/gone",
                     &Head::Unknown(
-                        "/src/gone is not a git repository, but was expected to be".into()
+                        "fatal: cannot change to '/src/gone': No such file or directory \
+                         (`git worktree list --porcelain`)"
+                            .into()
                     )
                 ),
                 (

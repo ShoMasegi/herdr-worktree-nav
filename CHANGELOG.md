@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A checkout or repository root that has gone is said to have gone.** git's words for it,
+  `fatal: cannot change to '…': No such file or directory`, were dropped and replaced with
+  `… is not a git repository, but was expected to be`, which says the opposite of what
+  happened and sent the reader looking for a `.git`. The prompt line and `dump` now carry
+  git's own words, as they do for every other refusal.
+
 ## [0.2.0] - 2026-10-18
 
 ### Added

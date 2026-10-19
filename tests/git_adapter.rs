@@ -162,10 +162,40 @@ fn a_directory_git_could_not_enter_is_an_error_rather_than_no_repository() {
 }
 
 #[test]
+fn a_checkout_that_has_gone_is_said_to_have_gone_in_gits_words() {
+    // Issue #34. The other side of `identify`'s answer above: to a call handed a checkout
+    // herdr lists, a directory that has gone is an error, and git's words for it say what
+    // happened. A sentence of the plugin's own saying the path is not a repository would
+    // send the reader looking for a `.git` in a directory that is not there.
+    let gone = tempfile::tempdir().unwrap();
+    let path = path_str(gone.path());
+    drop(gone);
+
+    for (call, error) in [
+        ("is_dirty", GitCli.is_dirty(&path).map(|_| ()).unwrap_err()),
+        (
+            "local_refs",
+            GitCli.local_refs(&path).map(|_| ()).unwrap_err(),
+        ),
+    ] {
+        let words = format!("{error:#}");
+        assert!(
+            words.starts_with("fatal: cannot change to")
+                && words.contains("No such file or directory"),
+            "{call}: git's own words, first: {words}"
+        );
+        assert!(
+            !words.contains("not a git repository"),
+            "{call}: and nothing that says it was never one: {words}"
+        );
+    }
+}
+
+#[test]
 fn a_repository_git_may_not_enter_is_not_one_that_is_not_there() {
     // The same refusal reaching a call that expects a repository. Read as "no repository",
-    // it would say `… is not a git repository, but was expected to be`, and the reader would
-    // look for a repository that is there rather than at its permissions.
+    // it would say the repository is not one, and the reader would look for a repository
+    // that is there rather than at its permissions.
     use std::os::unix::fs::PermissionsExt;
     let repo = repository();
     let root = path_str(repo.path());
@@ -531,7 +561,7 @@ fn a_repository_git_does_not_take_for_one_is_not_answered_for_by_the_one_around_
                 let how = format!("{how} at {root}");
                 let words = format!("{:#}", GitCli.local_refs(&root).unwrap_err());
                 let refused = if name == "outer" {
-                    "is not a git repository, but was expected to be"
+                    "fatal: not a git repository"
                 } else {
                     "is not a git repository: git answered for the repository around it"
                 };
@@ -858,7 +888,7 @@ fn a_fetch_that_cannot_reach_the_remote_says_so_rather_than_blaming_the_reposito
         "the failure should be git's own account of it, got: {error}"
     );
     assert!(
-        !error.contains("is not a git repository, but was expected to be"),
+        !error.contains("not a git repository"),
         "the repository is fine; the remote is not: {error}"
     );
 }
